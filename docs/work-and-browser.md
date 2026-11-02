@@ -228,7 +228,7 @@ Direct requests to the browser-control addresses and to the underlying server po
 
 ## Choose the proving test tier
 
-<!-- cockpit:ref command=test-run --> <!-- cockpit:ref schema=testing.gates --> Product stages and gates are declared in configuration. Use the narrowest proving gate for isolated behavior, and the complete declared gate for shared behavior. Documentation-only changes need no behavioral gate when behavior is unchanged.
+<!-- cockpit:ref command=test-run --> <!-- cockpit:ref schema=testing.gates --> Product stages and gates are declared in configuration. Use the narrowest proving gate for isolated behavior, and the complete declared gate for shared behavior. Documentation-only changes need no behavioral gate when behavior is unchanged. `init` proposes stages and gates from the test entry points it finds. With no `[testing]` declared, the generated guide tells agents to add a characterization test in the product's own runner and never to report work as passing, and `doctor` warns that nothing can be graded PASS.
 
 ### Choosing stage commands
 

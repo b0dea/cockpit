@@ -4415,6 +4415,23 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
     })])
 }
 
+// A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;
+// a docs-only cockpit has no product to test and stays quiet.
+async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
+    const loaded = await loading
+    if (loaded.kind !== 'complete' || loaded.result.config.testing || declaredRuntime(loaded.result.config.environment) === 'none') {
+        return Object.freeze([])
+    }
+    return Object.freeze([Object.freeze({
+        severity: 'warning' as const,
+        // A literal, so the diagnostic inventory captures the fix beside the code.
+        code: 'TESTING_GATE_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.TESTING_GATE_UNDECLARED,
+        message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
+        target: 'testing',
+        fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; npx --no cockpit init proposes them from the test entry points it finds',
+    })])
+}
+
 // init records answers no person stated under `unconfirmed`. They look exactly like stated values
 // in the file, so doctor keeps naming them until a person confirms each and deletes its entry.
 async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
@@ -4962,10 +4979,10 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
-    const [outcome, guardHosts, unconfirmed, hookTrust] = await Promise.all([doctorHealth(input, adapters, config),
-        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([])])
+    const [outcome, guardHosts, unconfirmed, testingGate, hookTrust] = await Promise.all([doctorHealth(input, adapters, config),
+        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([])])
     const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
-    const warnings = [...unconfirmed, ...guardHosts, ...hookTrust, ...unreadableState ? [unreadableState] : []]
+    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...unreadableState ? [unreadableState] : []]
     return warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
 }

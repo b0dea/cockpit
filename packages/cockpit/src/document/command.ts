@@ -8,7 +8,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { snapshotJson } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
-import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, configurationDefaults } from '../schema.js'
+import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
 import {
@@ -109,7 +109,7 @@ export interface DocumentCommandInput {
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
     | 'environment.install_policies' | 'environment.test_data' | 'environment.generated' | 'environment.machine'
-    | 'environment.posture' | 'guards' | 'configuration.defaults'
+    | 'environment.posture' | 'testing' | 'guards' | 'configuration.defaults'
 export interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
     readonly field: DocumentConfigurationField
@@ -733,7 +733,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
         || typeof record.sourceObservationSha256 !== 'string' || !SHA256.test(record.sourceObservationSha256)
         || record.classification !== undefined && !['one-sibling', 'incomplete-multi-repository',
             'no-runnable-product', 'ready-multi-repository'].includes(record.classification as string)
-        || !Array.isArray(record.answers) || record.answers.length > 11) return undefined
+        || !Array.isArray(record.answers) || record.answers.length > 12) return undefined
     const answers: DocumentConfigurationAnswer[] = []
     for (const value of record.answers) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -764,6 +764,7 @@ const QUESTION_WHY = {
     generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer environment.compose_files instead: compose_files = ["compose.yml"] under [environment] in an answers file, or { "compose_files": ["compose.yml"] } typed at this question',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements, so cockpit proposes them only from the product\'s own files and never invents them',
     posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
+    testing: 'declare the product\'s test commands as [testing] stages and gates: a targeted gate agents run while iterating and a full gate they run before handing back shared changes; init proposes them from test entry points it finds on disk. Answer "none" when the product has no tests yet: no work can then be graded PASS, and doctor warns until gates are declared',
     guards: 'name the database hosts and live vendor API hosts of every non-local environment the product has (production, staging, shared dev or QA): cockpit runs only locally, so the guard denies agent commands that reach them; answer { "hosted_db_hosts": [], "vendor_endpoint_hosts": [] } to record that none exists',
     defaults: 'confirm the exact surfaced inferred and schema-default values before completing the document',
 } as const
@@ -803,6 +804,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
             { field: 'environment.generated' as const, why: QUESTION_WHY.generated },
             { field: 'environment.machine' as const, why: QUESTION_WHY.machine },
             { field: 'environment.posture' as const, why: QUESTION_WHY.posture },
+            { field: 'testing' as const, why: QUESTION_WHY.testing },
         ]),
         // Asked even with nothing to run: the guard governs the agent's commands, not the runtime.
         { field: 'guards' as const, why: QUESTION_WHY.guards },
@@ -1088,6 +1090,8 @@ function completeConfigurationDocument(
 
     let environment = defaults.environment
     let testData: Readonly<{ seeded_data: boolean; signed_in_users: boolean; provenance: AnswerProvenance }> | undefined
+    let testing: Testing | undefined
+    let testingNone: AnswerProvenance | undefined
     if (!surfacesOnly) {
         const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
         const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
@@ -1205,6 +1209,26 @@ function completeConfigurationDocument(
         environment = parsedPosture.data
         record('environment.posture', postureRead.provenance)
         answerIndex += 1
+
+        // Asked, never defaulted: a cockpit with no gate cannot grade work, and "none" is a decision
+        // a person makes, not the absence of an answer.
+        const testingQuestion = configurationQuestion(context, 'testing', QUESTION_WHY.testing)
+        const testingRead = readConfigurationAnswer(configuration.answers, answerIndex, testingQuestion)
+        if (testingRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, testingQuestion)
+        if (testingRead.kind === 'refusal') return testingRead.outcome
+        if (testingRead.value === 'none') testingNone = testingRead.provenance
+        else {
+            const answer = testingRead.value
+            const parsedTesting = answer && typeof answer === 'object' && !Array.isArray(answer)
+                ? Testing.safeParse({ native_hooks: { install: 'inspect' }, ...answer }) : undefined
+            if (!parsedTesting?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the testing answer must be "none" or a [testing] table of stages and gates${parsedTesting
+                    ? `: ${issueSummary(parsedTesting.error)}` : ''}`, testingQuestion.field)
+            testing = parsedTesting.data
+        }
+        record('testing', testingRead.provenance)
+        answerIndex += 1
     }
 
     // Left as schema defaults, both lists are empty and the guard denies nothing by host, which no
@@ -1232,7 +1256,7 @@ function completeConfigurationDocument(
     const candidate = CockpitConfig.safeParse({ ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map(row => row.field) }),
         ...defaults, cockpit: { ...defaults.cockpit, name,
         ...(siblingsRoot === undefined ? {} : { siblings_root: siblingsRoot }) },
-        sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment })
+        sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment, ...(testing ? { testing } : {}) })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)
     if (configuration.classification === 'one-sibling' && candidate.data.sibling.length !== 1
@@ -1261,6 +1285,7 @@ function completeConfigurationDocument(
 
     const decisions = [
         ...(noGuardHosts ? [`guards: ${noGuardHostsDecision(guardRead.provenance)}; list those hosts under [guards] once one exists`] : []),
+        ...(testingNone ? [`testing: no test gate is declared because ${STATED_BY[testingNone]} the product has no tests to run yet; declare [testing] once it does`] : []),
         ...(testData ? [testData.seeded_data
             ? candidate.data.environment.generated?.data?.modes.some(mode => mode.mode === 'seeded')
                 ? 'seeded data: declared by the product-owned seeded mode in environment.generated.data'

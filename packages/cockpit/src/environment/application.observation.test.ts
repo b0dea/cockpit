@@ -316,6 +316,28 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it('warns that no work can be graded PASS while a product declares no test gate', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-testing-')))
+        try {
+            const doctorFor = async (body: string) => {
+                const configPath = join(directory, 'cockpit.toml')
+                writeFileSync(configPath, ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
+                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
+                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', '', body, ''].join('\n'))
+                const result = await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })
+                return result.diagnostics.filter(row => row.code === 'TESTING_GATE_UNDECLARED')
+            }
+            const compose = '[environment]\ncompose_files = ["compose.yml"]'
+            expect(await doctorFor(compose)).toEqual([{ severity: 'warning', code: 'TESTING_GATE_UNDECLARED', target: 'testing',
+                message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
+                fix: expect.stringContaining('npx --no cockpit sync --config <your cockpit.toml>') }])
+            expect(await doctorFor(`${compose}\n\n[testing]\nstages = [{ id = "unit", command = ["make", "test"], requires_stack = false }]\n`
+                + 'gates = [{ id = "all", tier = "full", stages = ["unit"], changes = "Any behavior" }]\nnative_hooks = { install = "inspect" }')).toEqual([])
+            // A docs-only cockpit has no product to test.
+            expect(await doctorFor('')).toEqual([])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it('warns about declarations no person has confirmed until they are removed from unconfirmed', async () => {
         const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-unconfirmed-')))
         try {

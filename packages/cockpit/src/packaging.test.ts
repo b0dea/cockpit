@@ -931,10 +931,13 @@ it('runs installed init for each isolated target and refuses missing roots or br
     const listed = JSON.parse(first.stdout).result
     expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
         'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
-        'environment.generated', 'environment.machine', 'environment.posture', 'guards', 'configuration.defaults',
+        'environment.generated', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults',
     ])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
+    ])
+    expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'testing').inferred).toEqual([
+        expect.objectContaining({ target: 'testing.library', provenance: expect.objectContaining({ kind: 'inferred', source: 'library/package.json' }) }),
     ])
 
     // An agent has no terminal at any point: three runs, each given only what the previous one printed.

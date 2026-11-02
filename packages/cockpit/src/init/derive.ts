@@ -3,7 +3,8 @@
 // fact is inferred: init surfaces it with its source and the operator confirms it, because a
 // config that looks complete but holds guesses is the failure cockpit exists to prevent.
 // Deliberately cheap and exact: Dockerfile, env template variable names, Compose files and CI
-// service containers. Orchestrator manifests are not parsed; their shape is too varied to read reliably.
+// service containers, and test entry points from build and package manifests. Orchestrator manifests are
+// not parsed; their shape is too varied to read reliably.
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -116,6 +117,14 @@ async function readBounded(root: string, directory: string, name: string): Promi
     }
 }
 
+/** Presence only: a lockfile or build marker can exceed the read limit and is never parsed here. */
+async function fileExists(root: string, directory: string, name: string): Promise<Read['kind'] | 'present'> {
+    const parent = await inspectDirectory(root, directory)
+    if (parent.kind !== 'complete') return parent.kind
+    try { return (await lstat(resolve(parent.path, name))).isFile() ? 'present' : 'skipped' }
+    catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'skipped' }
+}
+
 function joinLogical(text: string): string[] {
     const lines: string[] = []
     let pending = ''
@@ -193,6 +202,39 @@ function workflowServices(document: unknown): Array<{ job: string; name: string;
     return found
 }
 
+// Test entry points, in the order they take precedence within one repository. A build tool that
+// selects what a change affects wins over a plain runner, so the targeted gate can rely on it.
+const TEST_ENTRY_LOOKED_FOR = 'MODULE.bazel or WORKSPACE, nx.json, turbo.json with a test task, a Makefile test target, a package.json test script, pytest configuration in pyproject.toml or pytest.ini, go.mod and Cargo.toml'
+const NODE_LOCKFILES = [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lock', 'bun'], ['bun.lockb', 'bun'], ['package-lock.json', 'npm']] as const
+type NodeManager = typeof NODE_LOCKFILES[number][1]
+// `bun test` runs Bun's own runner instead of the script, so Bun runs the script by name.
+const NODE_TEST: Readonly<Record<NodeManager, readonly string[]>> = { npm: ['npm', 'test'], pnpm: ['pnpm', 'test'], yarn: ['yarn', 'test'], bun: ['bun', 'run', 'test'] }
+// --no keeps npx from downloading a tool the repository does not install.
+const NODE_EXEC: Readonly<Record<NodeManager, readonly string[]>> = { npm: ['npx', '--no'], pnpm: ['pnpm', 'exec'], yarn: ['yarn'], bun: ['bun', 'x'] }
+// `npm init` writes this placeholder; proposing it would declare a gate that always fails.
+const NPM_PLACEHOLDER_TEST = /no test specified/
+
+type TestEntry = Readonly<{ file: string; full: readonly string[]; affected?: readonly string[]; tool: string; reason: string }>
+
+const SHELL_SAFE = /^[A-Za-z0-9_./:=@%+-]+$/
+const shellWord = (word: string) => SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`
+
+/** A stage command runs from the cockpit root, so a repository elsewhere is entered first. */
+function stageCommand(directory: string, argv: readonly string[]): readonly string[] {
+    return directory === '.' ? argv : ['sh', '-c', `cd ${shellWord(directory)} && exec ${argv.map(shellWord).join(' ')}`]
+}
+
+function jsonObject(text: string | undefined): Record<string, unknown> | undefined {
+    if (text === undefined) return undefined
+    try {
+        const parsed: unknown = JSON.parse(text)
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
+    } catch { return undefined }
+}
+
+const field = (value: unknown, key: string): unknown =>
+    value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined
+
 const PORT_VARIABLE = /^\$\{([A-Z][A-Z0-9_]*)(?:(:?-)(\d{1,5}))?\}$|^\$([A-Z][A-Z0-9_]*)$/
 
 function entries(value: unknown): readonly unknown[] {
@@ -252,6 +294,66 @@ function composeFacts(
     return Object.freeze({ binds: Object.freeze(binds), bases, ...(basesSource === undefined ? {} : { basesSource }) })
 }
 
+async function detectTestEntry(
+    read: (name: string) => Promise<string | undefined>,
+    present: (name: string) => Promise<boolean>,
+): Promise<TestEntry | undefined> {
+    for (const name of ['MODULE.bazel', 'WORKSPACE.bazel', 'WORKSPACE']) {
+        if (await present(name)) return { file: name, tool: 'Bazel', full: ['bazel', 'test', '//...'],
+            reason: `${name} makes this a Bazel workspace; Bazel reports cached results for tests whose inputs did not change, so the targeted gate runs the same command` }
+    }
+    let manager: NodeManager = 'npm'
+    let lockfile: string | undefined
+    for (const [name, candidate] of NODE_LOCKFILES) if (await present(name)) { manager = candidate; lockfile = name; break }
+    const managerReason = lockfile ? `${lockfile} selects ${manager}` : 'no lockfile names a package manager, so npm runs it'
+    const exec = NODE_EXEC[manager]
+    if (await present('nx.json')) return { file: 'nx.json', tool: 'Nx', affected: [...exec, 'nx', 'affected', '-t', 'test'], full: [...exec, 'nx', 'run-many', '-t', 'test'],
+        reason: `nx.json makes this an Nx workspace; nx affected compares its defaultBase (main when unset) with the working tree; ${managerReason}` }
+    const turbo = jsonObject(await read('turbo.json'))
+    if (turbo && (field(field(turbo, 'tasks'), 'test') !== undefined || field(field(turbo, 'pipeline'), 'test') !== undefined)) {
+        return { file: 'turbo.json', tool: 'Turborepo', affected: [...exec, 'turbo', 'run', 'test', '--affected'], full: [...exec, 'turbo', 'run', 'test'],
+            reason: `turbo.json declares a test task; --affected compares main...HEAD, so it sees committed changes only; ${managerReason}` }
+    }
+    const makefile = await read('Makefile')
+    if (makefile !== undefined && /^test\s*:(?!=)/m.test(makefile)) return { file: 'Makefile', tool: 'make', full: ['make', 'test'],
+        reason: 'the Makefile has a test target and nothing on disk selects a subset, so the targeted gate runs the same command' }
+    const scripts = field(jsonObject(await read('package.json')), 'scripts')
+    const test = field(scripts, 'test')
+    if (typeof test === 'string' && test.trim() !== '' && !NPM_PLACEHOLDER_TEST.test(test)) {
+        const others = Object.keys(scripts as Record<string, unknown>).filter(name => name.startsWith('test:')).sort()
+        return { file: 'package.json', tool: manager, full: NODE_TEST[manager],
+            reason: `package.json has a test script; ${managerReason}; nothing on disk selects a subset, so the targeted gate runs the same command${others.length
+                ? `; ${others.join(', ')} are not proposed, so declare any that test does not already run` : ''}` }
+    }
+    const pyproject = await read('pyproject.toml')
+    const pytestFile = pyproject !== undefined && /^\[tool\.pytest\.ini_options\]/m.test(pyproject) ? 'pyproject.toml'
+        : await present('pytest.ini') ? 'pytest.ini' : undefined
+    if (pytestFile) {
+        const uv = await present('uv.lock')
+        return { file: pytestFile, tool: 'pytest', full: uv ? ['uv', 'run', 'pytest'] : ['python3', '-m', 'pytest'],
+            reason: `${pytestFile} configures pytest${uv ? ' and uv.lock selects uv' : ''}; nothing on disk selects a subset, so the targeted gate runs the same command` }
+    }
+    if (await present('go.mod')) return { file: 'go.mod', tool: 'go', full: ['go', 'test', './...'],
+        reason: 'go.mod makes this a Go module; go test caches results for unchanged packages, so the targeted gate runs the same command' }
+    if (await present('Cargo.toml')) return { file: 'Cargo.toml', tool: 'cargo', full: ['cargo', 'test'],
+        reason: 'Cargo.toml makes this a Cargo package; nothing on disk selects a subset, so the targeted gate runs the same command' }
+    return undefined
+}
+
+/** The [testing] proposal for one repository: a full gate, and a targeted gate on the tool's affected run when it has one. */
+function testingProposal(slug: string, entry: TestEntry, directory: string): Readonly<{ stages: unknown[]; gates: unknown[] }> {
+    const full = { id: `${slug}-test`, command: stageCommand(directory, entry.full), requires_stack: false }
+    const affected = entry.affected ? { id: `${slug}-affected`, command: stageCommand(directory, entry.affected), requires_stack: false } : undefined
+    return {
+        stages: affected ? [affected, full] : [full],
+        gates: [
+            { id: `${slug}-targeted`, tier: 'targeted', stages: [(affected ?? full).id],
+                changes: affected ? `Isolated behavior in ${slug}; ${entry.tool} selects the affected tests` : `Isolated behavior in ${slug}` },
+            { id: `${slug}-full`, tier: 'full', stages: [full.id], changes: `Shared or cross-system behavior in ${slug}` },
+        ],
+    }
+}
+
 export async function deriveInferredFacts(input: InferenceInput): Promise<InferenceResult> {
     const facts: InferredFact[] = []
     const skipped: SkippedInference[] = []
@@ -287,6 +389,19 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     for (const directory of directories) {
         const slug = directory.slug
         if (slug !== undefined) {
+            const present = async (name: string) => {
+                const state = await fileExists(input.root, directory.path, name)
+                if (state === 'skipped') skipped.push({ source: relative(directory.path, name), reason: 'is not a readable regular file' })
+                return state === 'present'
+            }
+            // An unreadable repository directory is already reported by the reads below.
+            const readable = (await inspectDirectory(input.root, directory.path)).kind === 'complete'
+            const entry = readable ? await detectTestEntry(name => read(directory.path, name), present) : undefined
+            if (entry) facts.push({ fields: ['testing'], target: `testing.${slug}`, value: testingProposal(slug, entry, relative(directory.path)),
+                provenance: { kind: 'inferred', source: relative(directory.path, entry.file),
+                    reason: `${entry.reason}; requires_stack is false because nothing on disk says these tests need the running stack` } })
+            else if (readable) skipped.push({ source: relative(directory.path),
+                reason: `no test entry point was found, so no [testing] gate is proposed for ${slug}; looked for ${TEST_ENTRY_LOOKED_FOR}` })
             const dockerfile = await read(directory.path, 'Dockerfile')
             if (dockerfile !== undefined) {
                 const source = relative(directory.path, 'Dockerfile')

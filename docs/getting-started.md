@@ -242,6 +242,7 @@ vendor_endpoint_hosts = []
 | `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
 | `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |
 | `environment.posture` | exactly `addressing`, `authentication` and `posture_requirements`: how the product is reached locally and how sign-in works; asked only where a runtime is declared, and a posture that would fail `preflight` is refused ([Declare environment postures](environment.md#declare-environment-postures)) |
+| `testing` | the product's `[testing]` stages and gates, asked only where a runtime is declared; `"none"` records that the product has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; `[]` for both records that none exists |
 | `provenance` | optional; who chose each answer, keyed by field: `"human"` (the default) or `"agent-default"`, for example `"environment.machine" = "agent-default"`. Each key must be a field the same file answers; `cockpit.root` takes none |
 
@@ -263,7 +264,7 @@ and defaults acceptance again. A field the interview never asked for is reported
 Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, variable
 names (never values) in env templates such as `.env.example`, an existing Compose file, and the
 `services:` of GitHub workflows. A name that suggests a database or vendor endpoint, such as
-`DATABASE_URL`, becomes a `guards` question about its host. Sources `init` could not use are listed
+`DATABASE_URL`, becomes a `guards` question about its host. Test stages and gates are proposed from a repository's test entry point: a Bazel workspace, `nx.json`, a `turbo.json` test task, a Makefile `test` target, a `package.json` test script (run by the package manager its lockfile names), pytest configuration, `go.mod` or `Cargo.toml`; a tool that selects affected tests supplies the targeted gate. A repository with none is listed in `interview.inferenceSkipped` with what was looked for. Sources `init` could not use are listed
 in `interview.inferenceSkipped`. That includes Compose files outside the cockpit directory or in
 several repositories, because compose-first accepts only paths inside the cockpit and resolves them
 against the first file's directory: choose a generated environment, or write one `compose.yml` at

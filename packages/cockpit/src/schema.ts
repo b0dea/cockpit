@@ -1181,7 +1181,7 @@ export function configurationDefaults() {
  */
 export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
     'environment.test_data', 'environment.generated', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'guards'] as const
+    'testing', 'guards'] as const
 
 export const CockpitConfig = z
     .object({

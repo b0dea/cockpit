@@ -185,4 +185,35 @@ describe('inferred interview answers', () => {
             expect.objectContaining({ source: 'api/.env.example', reason: 'is not valid UTF-8' }),
         ]))
     })
+
+    it('proposes a test script as both gates, run by the lockfile package manager from the cockpit root', async () => {
+        const root = estate({ 'api/package.json': JSON.stringify({ scripts: { test: 'vitest run', 'test:e2e': 'playwright test' } }), 'api/pnpm-lock.yaml': '' })
+        const { facts } = await deriveInferredFacts({ root, repositories: api })
+        const stage = { id: 'api-test', command: ['sh', '-c', 'cd api && exec pnpm test'], requires_stack: false }
+        expect(byTarget(facts, 'testing.api')).toEqual({ fields: ['testing'], target: 'testing.api', value: { stages: [stage], gates: [
+            { id: 'api-targeted', tier: 'targeted', stages: ['api-test'], changes: 'Isolated behavior in api' },
+            { id: 'api-full', tier: 'full', stages: ['api-test'], changes: 'Shared or cross-system behavior in api' },
+        ] }, provenance: { kind: 'inferred', source: 'api/package.json', reason: expect.stringMatching(
+            /pnpm-lock\.yaml selects pnpm.*targeted gate runs the same command.*test:e2e are not proposed.*requires_stack is false/) } })
+    })
+
+    it('proposes the affected run of a build tool as the targeted gate', async () => {
+        const root = estate({ 'api/nx.json': '{}', 'api/package.json': JSON.stringify({ scripts: { test: 'nx run-many -t test' } }) })
+        const { facts } = await deriveInferredFacts({ root, repositories: api })
+        expect(byTarget(facts, 'testing.api')).toMatchObject({ value: {
+            stages: [{ id: 'api-affected', command: ['sh', '-c', 'cd api && exec npx --no nx affected -t test'] },
+                { id: 'api-test', command: ['sh', '-c', 'cd api && exec npx --no nx run-many -t test'] }],
+            gates: [{ id: 'api-targeted', stages: ['api-affected'], changes: 'Isolated behavior in api; Nx selects the affected tests' },
+                { id: 'api-full', stages: ['api-test'] }],
+        }, provenance: { source: 'api/nx.json', reason: expect.stringContaining('defaultBase') } })
+    })
+
+    it('proposes no gate and names what it looked for when a repository has no test entry point', async () => {
+        // npm init writes a test script that only fails; declaring it would make every gate FAIL.
+        const root = estate({ 'api/package.json': JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }) })
+        const result = await deriveInferredFacts({ root, repositories: api })
+        expect(result.facts.filter(fact => fact.fields.includes('testing'))).toEqual([])
+        expect(result.skipped).toContainEqual({ source: 'api', reason: expect.stringMatching(
+            /^no test entry point was found, so no \[testing\] gate is proposed for api; looked for MODULE\.bazel.*package\.json test script.*Cargo\.toml$/) })
+    })
 })

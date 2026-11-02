@@ -245,7 +245,9 @@ describe('the public synthetic cockpit', () => {
         expect(guide).toContain('| `api` | Tiny api | none: already on disk |')
         expect(guide).toContain('npx --no cockpit session --config cockpit.toml -- <command>')
         expect(guide).toContain('npx --no cockpit sync --config cockpit.toml --dry-run')
-        expect(guide).toContain('npx --no cockpit test-run --config cockpit.toml --gate <id> --select <kind>:<value>')
+        // The minimal example declares no [testing], so agents are told no gate exists rather than to run one.
+        expect(guide).toContain('This cockpit declares no product test gate, so no change can be graded PASS.')
+        expect(guide).not.toContain('npx --no cockpit test-run')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
         // Sync refuses a hand edit rather than replacing it, so the guide must not promise an overwrite.

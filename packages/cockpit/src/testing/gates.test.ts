@@ -140,17 +140,16 @@ describe('product-owned gates', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
-    it('derives all three tiers from the registry within the unchanged total guide cap', () => {
-        const guide = renderTierGuide(TESTING_GUIDE_REGISTRY, guideInput())
+    it('derives all three tiers from a declared registry within the unchanged total guide cap', () => {
+        const guide = renderTierGuide(registry(), guideInput())
         expect(guide.kind).toBe('complete')
         if (guide.kind !== 'complete') throw new Error('guide refused')
         // The guide is compared with the shipped file on every sync, so a version marker rendered
         // from the installed package made sync refuse after each release bump.
         expect(guide.bytes).not.toContain('cockpit:verified')
         expect(guide.bytes).toContain('| None |')
-        expect(guide.bytes).toContain('Targeted')
+        expect(guide.bytes).toContain('`focused` (unit)')
         expect(guide.bytes).toContain('Full')
-        expect(guide.bytes).not.toContain('focused')
         expect(guide.bytes).toContain('--select')
         expect(guide.bytes).toContain('Extend an existing behavior test')
         expect(guide.bytes).toContain('Each test must fail when that behavior regresses')
@@ -160,15 +159,27 @@ describe('product-owned gates', () => {
         expect(guide.costs).toHaveLength(3)
         expect(guide.costs.every(cost => cost.status === 'within_cap' && cost.value === guide.lines + 1)).toBe(true)
         const existing = guideInput()
-        const rerender = renderTierGuide(TESTING_GUIDE_REGISTRY, { ...existing, guideCapLines: guide.lines + 1,
+        const rerender = renderTierGuide(registry(), { ...existing, guideCapLines: guide.lines + 1,
             standingSources: [...existing.standingSources, ...(['claudecode', 'codexcli', 'opencode'] as const).map(target => ({
                 target, path: 'packages/cockpit/surfaces/references/testing-tiers.md', content: 'Old guide\n'.repeat(200), scope: 'always' as const,
             }))] })
         expect(rerender).toMatchObject({ kind: 'complete', bytes: guide.bytes, costs: guide.costs.map(cost => ({ ...cost, cap: guide.lines + 1 })) })
-        expect(renderTierGuide(TESTING_GUIDE_REGISTRY, { ...guideInput(), guideCapLines: guide.lines }).kind).toBe('refusal')
-        expect(renderTierGuide(TESTING_GUIDE_REGISTRY, { ...guideInput(), loadCharacterizations: {} }).kind).toBe('refusal')
-        expect(renderTierGuide(registry(), guideInput())).toMatchObject({ kind: 'complete', bytes: expect.stringContaining('focused') })
+        expect(renderTierGuide(registry(), { ...guideInput(), guideCapLines: guide.lines }).kind).toBe('refusal')
+        expect(renderTierGuide(registry(), { ...guideInput(), loadCharacterizations: {} }).kind).toBe('refusal')
         expect(() => renderTierGuide({ ...TESTING_GUIDE_REGISTRY }, guideInput())).toThrow('issued')
+    })
+
+    it('tells agents with no declared gate to add a characterization test and never claim PASS, as the shipped guide', () => {
+        const guide = renderTierGuide(TESTING_GUIDE_REGISTRY, guideInput())
+        if (guide.kind !== 'complete') throw new Error('guide refused')
+        expect(guide.bytes).toContain('declares no product test gate, so no change can be graded PASS')
+        expect(guide.bytes).toContain('add a characterization test at the nearest public boundary')
+        expect(guide.bytes).toContain('do not add a test framework unasked')
+        expect(guide.bytes).toContain('Never report work as verified or passing')
+        expect(guide.bytes).toContain('`./node_modules/@b0dea/cockpit/docs/work-and-browser.md`')
+        // A tier table here would send agents to run a gate that does not exist.
+        expect(guide.bytes).not.toMatch(/test-run|\| Tier \|/)
+        expect(guide.costs.every(cost => cost.status === 'within_cap')).toBe(true)
         expect(stripDevelopmentMarkers(readFileSync(new URL('../../surfaces/references/testing-tiers.md', import.meta.url), 'utf8'))).toBe(guide.bytes)
     })
 })

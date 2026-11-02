@@ -2,20 +2,10 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Choose the narrowest product-owned gate that proves the change.
+This cockpit declares no product test gate, so no change can be graded PASS.
 
-| Tier | Change | Gate and ordered stages |
-| --- | --- | --- |
-| None | Comments or documentation only, when no behavior changes | No gate required |
-| Targeted | Isolated behavior | Select the narrowest proving product gate |
-| Full | Shared or cross-system behavior | Run the complete declared product gate |
+Before changing behavior, add a characterization test at the nearest public boundary in the product's existing test runner and run it with that runner. If the product has no test runner, propose one to a person; do not add a test framework unasked. Comments or documentation changes that leave behavior unchanged need no test.
 
-Extend an existing behavior test at the nearest public boundary when it can prove the change; add a test only when no existing test owns that behavior. Each test must fail when that behavior regresses. Do not duplicate proof already supplied by a stronger test.
+Never report work as verified or passing: report which tests you ran and how they exited, and that no gate graded them.
 
-Run a gate with `npx --no cockpit test-run --config cockpit.toml --gate <id>`. Narrow it with `npx --no cockpit test-run --config cockpit.toml --gate <id> --select <kind>:<value>`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.
-
-Use the targeted gate while iterating. When a stage runs the affected or changed-since selection of the product build or test tool, let that tool choose the tests instead of narrowing by hand. If the declared tier is Full, run the complete gate once after implementation and review stabilize, before handing back. A targeted tier ends with its declared targeted gate.
-
-Only the complete declared gate can PASS. Subsets and staged selftest are PARTIAL; unavailable checks are DEGRADED; changed subjects are VOID. Executed failures remain FAIL.
-
-All selected stages run. Stack-dependent stages name an unavailable stack. Generated hooks run no tests; call correctness gates explicitly or through CI.
+Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` describes.

@@ -159,6 +159,14 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     return Object.freeze({ ...result, observations: Object.freeze(observations), reasons: Object.freeze([...result.reasons, ...stabilityReasons]) })
 }
 
+// Without a declared gate there is nothing for test-run to run, and a tier table would send agents
+// looking for a gate that does not exist; so the guide says what to do instead and never promises PASS.
+const NO_GATE_GUIDE = '# Testing tiers\n\n'
+    + 'This cockpit declares no product test gate, so no change can be graded PASS.\n\n'
+    + 'Before changing behavior, add a characterization test at the nearest public boundary in the product\'s existing test runner and run it with that runner. If the product has no test runner, propose one to a person; do not add a test framework unasked. Comments or documentation changes that leave behavior unchanged need no test.\n\n'
+    + 'Never report work as verified or passing: report which tests you ran and how they exited, and that no gate graded them.\n\n'
+    + 'Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` describes.\n'
+
 export type TierGuideResult = Readonly<{ kind: 'complete'; bytes: string; lines: number; costs: readonly StandingCost[] }>
     | Readonly<{ kind: 'refusal'; reason: string }>
 
@@ -169,7 +177,7 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
         const gates = registry.gates.filter(gate => gate.tier === tier.id)
         return `| ${tier.title} | ${gates.map(gate => cell(gate.changes)).join('; ') || tier.changes} | ${gates.map(gate => `\`${gate.id}\` (${gate.stages.join(', ')})`).join('; ') || tier.gate} |`
     })
-    const bytes = `# Testing tiers\n\nChoose the narrowest product-owned gate that proves the change.\n\n`
+    const bytes = registry.kind === 'unbound' ? NO_GATE_GUIDE : `# Testing tiers\n\nChoose the narrowest product-owned gate that proves the change.\n\n`
         + '| Tier | Change | Gate and ordered stages |\n| --- | --- | --- |\n' + rows.join('\n') + '\n\n'
         + 'Extend an existing behavior test at the nearest public boundary when it can prove the change; add a test only when no existing test owns that behavior. Each test must fail when that behavior regresses. Do not duplicate proof already supplied by a stronger test.\n\n'
         + `Run a gate with \`npx --no cockpit test-run --config cockpit.toml --gate <id>\`. Narrow it with \`npx --no cockpit test-run --config cockpit.toml --gate <id> ${GATE_SELECTOR_OPTION} <kind>:<value>\`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.\n\n`

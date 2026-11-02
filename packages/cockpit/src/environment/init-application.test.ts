@@ -778,7 +778,7 @@ describe('init application', () => {
         // The name is asked even when the directory name is a valid one: agents renamed cockpits by hand
         // afterwards, and a rename after sync is a migration, not an edit.
         expect(planned.map(row => row.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies',
-            'environment.test_data', 'environment.generated', 'environment.machine', 'environment.posture', 'guards', 'configuration.defaults'])
+            'environment.test_data', 'environment.generated', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults'])
         expect(planned.find(row => row.field === 'cockpit.name')!.inferred).toEqual([{ target: 'cockpit.name', value: 'checkout',
             provenance: { kind: 'inferred', source: f.root, reason: 'the cockpit root directory name' } }])
         expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
@@ -795,7 +795,7 @@ describe('init application', () => {
         expect(second.result!.interview).toMatchObject({ answered: ['cockpit.name', 'sibling'] })
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
             'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.machine',
-            'environment.posture', 'guards', 'configuration.defaults'])
+            'environment.posture', 'testing', 'guards', 'configuration.defaults'])
     })
 
     it('refuses a different target after bootstrap state is bound', async () => {
@@ -919,7 +919,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     const accepted = { ...greenfieldInput, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
-        expect(count).toBeLessThan(10)
+        expect(count).toBeLessThan(11)
         const question = outcome.result.question
         if (question.field === 'configuration.defaults') {
             if (largePurpose) expect(Buffer.byteLength(defaultsDocument!)).toBeGreaterThan(65_536)
@@ -975,6 +975,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
                 : question.field === 'environment.machine'
                     ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
+                : question.field === 'testing' ? 'none'
                 : question.field === 'guards' ? { hosted_db_hosts: [], vendor_endpoint_hosts: [] }
                     : question.field === 'configuration.defaults'
                         ? { confirmed: true, sha256: question.expectedSha256 }
@@ -1035,7 +1036,7 @@ it.each([
     const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
-        expect(count).toBeLessThan(10)
+        expect(count).toBeLessThan(11)
         const question = outcome.result.question
         const value = question.field === 'cockpit.name' ? 'synthetic-shop' : question.field === 'sibling'
             ? [{ slug: 'checkout', dir: '.', mount: 'none', acquire: 'none', var: 'CHECKOUT_DIR', purpose: 'Synthetic shop' }]
@@ -1046,6 +1047,7 @@ it.each([
                             : question.field === 'environment.machine'
                                 ? { runtime_memory_mb: 256, runtime_cpus: 1, free_disk_mb: 512, cold_start_seconds: 120 }
                                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
+                                    : question.field === 'testing' ? 'none'
                                     : question.field === 'guards' ? { hosted_db_hosts: [], vendor_endpoint_hosts: [] }
                                         : question.field === 'configuration.defaults' ? { confirmed: true, sha256: question.expectedSha256 }
                                             : undefined
@@ -1132,7 +1134,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question
         && outcome.result.question.field !== 'configuration.defaults'; count += 1) {
-        expect(count).toBeLessThan(9)
+        expect(count).toBeLessThan(10)
         const question = outcome.result.question
         const value = question.field === 'cockpit.name' ? 'checkout' : question.field === 'sibling' ? sourceConfig.sibling
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
@@ -1142,6 +1144,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
                             : question.field === 'environment.machine'
                                 ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
                                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
+                                : question.field === 'testing' ? 'none'
                                 : question.field === 'guards' ? guards : undefined
         expect(value, question.field).toBeDefined()
         const bytes = JSON.stringify(value)
