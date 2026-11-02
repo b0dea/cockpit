@@ -1117,7 +1117,8 @@ async function decodeRequest(
         return usageOutcome('REGISTRY_SIBLINGS_ROOT_REQUIRED', 'provide --siblings-root <path>', '--siblings-root')
     }
     if (!values.adoption) {
-        return usageOutcome('REGISTRY_ADOPTION_REQUIRED', 'provide --adoption <file>', '--adoption')
+        return usageOutcome('REGISTRY_ADOPTION_REQUIRED',
+            'provide --adoption <file>: five lines registry=, environment=, surfaces=, guards=, grading=, each migrated or documented-only (see the adoption guide)', '--adoption')
     }
     return {
         handler,

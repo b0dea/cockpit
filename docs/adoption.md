@@ -83,6 +83,36 @@ Three rules matter in the generated-environment layer:
   environment credentials, then follow
   [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas).
 
+## Keep shell scripts on the registry while you migrate
+
+While old scripts still read the shell registry, `registry-resolve` validates it and prints the
+same rows as data a script can `source`, so the scripts and cockpit read one checked copy. It
+takes three required flags:
+
+```sh
+./node_modules/.bin/cockpit registry-resolve \
+  --registry ./env/lib/instance.sh --siblings-root .. --adoption ./adoption.state > resolved.sh
+```
+
+`--adoption` names a five-line file that records how far each layer has moved to cockpit. The
+lines name the layers in this order, each set to `migrated` or `documented-only`, and the migrated
+layers come first:
+
+```text
+registry=migrated
+environment=documented-only
+surfaces=documented-only
+guards=documented-only
+grading=documented-only
+```
+
+The output assigns `COCKPIT_REGISTRY_ROWS`, `COCKPIT_SIBLING_PATHS`, `COCKPIT_SIBLING_VARIABLES`
+and `COCKPIT_ADOPTION_STATES`, exports one `*_DIR` variable per sibling, and records the registry
+digest in `COCKPIT_REGISTRY_SHA256`. `COCKPIT_SOURCE_REVISION` is the cockpit commit that produced
+the data. A cockpit installed from a tarball packed from source has no release commit, so the
+value is `development` and the command warns with `COCKPIT_REVISION_UNSTAMPED`. Nothing is printed
+unless every input passed validation.
+
 ## Adopt existing agent settings
 
 For a repository that already commits its own `.claude/settings.json`, `.codex/config.toml` or
