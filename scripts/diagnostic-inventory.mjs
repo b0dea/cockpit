@@ -429,8 +429,15 @@ export function diagnosticInventoryFromSources(paths, sources) {
         }
         visit(source)
     }
-    const commandDiagnostics = commandDiagnosticsFromSources(parsedSources, resolveSourceImport, sites, new Set(owners.keys()))
-    return { items: [...owners.keys()].sort().map((code) => `diagnostic:${code}`), owners, remedies, commandDiagnostics }
+    // Computed on first read: the documentation lint reads only the code list, on every run.
+    let commandDiagnostics
+    return {
+        items: [...owners.keys()].sort().map((code) => `diagnostic:${code}`), owners, remedies,
+        get commandDiagnostics() {
+            commandDiagnostics ??= commandDiagnosticsFromSources(parsedSources, resolveSourceImport, sites, new Set(owners.keys()))
+            return commandDiagnostics
+        },
+    }
 }
 
 const CLI_PATH = 'packages/cockpit/src/cli.ts'
