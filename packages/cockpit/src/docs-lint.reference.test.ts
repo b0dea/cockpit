@@ -120,9 +120,6 @@ describe('maintainer reference boundary', () => {
                 'COMPOSE_TOPOLOGY_UNAVAILABLE',
             ]))
 
-            // A code named through ENVIRONMENT_CODES keeps the literal fix stated beside it.
-            expect([...inventory.remedies.get('SETUP_CLONE_FAILED') ?? []]).toEqual([expect.stringContaining('npx --no cockpit setup')])
-
             for (const [code, owners] of expectedOwners) {
                 expect(inventory.items).toContain(`diagnostic:${code}`)
                 expect([...inventory.owners.get(code) ?? []].sort()).toEqual([...owners].sort())

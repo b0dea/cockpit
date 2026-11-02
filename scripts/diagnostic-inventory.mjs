@@ -354,11 +354,7 @@ export function diagnosticInventoryFromSources(paths, sources) {
                 && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? [[property.name.text, unwrapExpression(property.initializer)]] : []))
             const codeValue = properties.get('code')
             const fixValue = properties.get('fix')
-            // `code: ENVIRONMENT_CODES.X` names its code through the registry, as the architecture
-            // contract requires for environment codes, and still states a literal fix beside it.
-            const registryCode = codeValue && ts.isPropertyAccessExpression(codeValue) && ts.isIdentifier(codeValue.expression)
-                && environmentCodeBindings.has(codeValue.expression.text) ? environmentCodes.get(codeValue.name.text) : undefined
-            const codes = registryCode ? [registryCode] : codeValue ? staticStrings(codeValue).filter(uppercaseDiagnostic) : []
+            const codes = codeValue ? staticStrings(codeValue).filter(uppercaseDiagnostic) : []
             const fixes = fixValue ? staticStrings(fixValue).filter(value => value.length > 0 && !/[\r\n]/.test(value)) : []
             for (const code of codes) for (const fix of fixes) {
                 addCode(code, path, object)
