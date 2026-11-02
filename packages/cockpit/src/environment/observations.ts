@@ -25,7 +25,12 @@ import { observationDeclarations as runtimeDeclarations, runtimeHealthObservatio
 import { observationDeclarations as stateDeclarations } from './state.js'
 import { observationDeclarations as templateDeclarations } from './templates.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
-import { authenticateObservationPostureContext, type PreflightContext, type ResolvedPostureAuthority } from './posture-observation.js'
+import {
+    authenticateObservationPostureContext,
+    POSTURE_REQUIREMENT_OWNER,
+    type PreflightContext,
+    type ResolvedPostureAuthority,
+} from './posture-observation.js'
 
 export { resolveObservationPostures, refreshObservationPostures } from './posture-observation.js'
 export type { PreflightContext, ResolvedPostureAuthority } from './posture-observation.js'
@@ -33,7 +38,7 @@ export type { PreflightContext, ResolvedPostureAuthority } from './posture-obser
 export const mechanism = {
     id: 'environment-observation-evaluation',
     module: 'packages/cockpit/src/environment/observations.ts',
-    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'evaluatePreflight', 'projectDoctor', 'validateObservationDeclarations', 'allObservationDeclarations', 'aggregateObservations', 'observationSatisfiesExpectation'],
+    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'evaluatePreflight', 'projectDoctor', 'validateObservationDeclarations', 'allObservationDeclarations', 'aggregateObservations', 'observationSatisfiesExpectation', 'stoppedStackApplicability'],
 } as const
 
 export interface EvaluatedObservation {
@@ -216,6 +221,35 @@ if (productionDeclarations.declarations.some(({ issuedAt }) => typeof issuedAt !
 }
 const validatedProductionDeclarations = productionDeclarations.declarations
 const issuedPreflights = new WeakSet<object>()
+
+// Rows whose evidence exists only while the stack's services run. Before the first `up`, and while
+// the stack sleeps, doctor and preflight still evaluate every other row; these are reported as not
+// applicable with the reason, because reporting them as missing evidence hid the rows that can fail
+// before bring-up behind an "unavailable" verdict.
+const RUNNING_STACK_ROWS = Object.freeze([
+    'running-checkout', 'runtime-availability', 'mount-posture', 'runtime-mount-materialization', 'runtime-port-family',
+    'generated-environment', 'registry-authentication', 'data-mode', 'external-dependencies', 'dependency-install',
+])
+// Rows and posture checks that describe a runtime; a cockpit that declares none has nothing for them to measure.
+const RUNTIME_ROWS = Object.freeze(['runtime-measurement', POSTURE_REQUIREMENT_OWNER])
+for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) {
+    if (id !== POSTURE_REQUIREMENT_OWNER && !validatedProductionDeclarations.some((declaration) => declaration.id === id)) {
+        throw new Error(`stopped-stack applicability names an undeclared observation: ${id}`)
+    }
+}
+
+/**
+ * Which rows cannot be observed when no stack runs, and why. The key is a declaration id, or the
+ * posture-requirement owner for the posture checks.
+ */
+export function stoppedStackApplicability(input: { readonly runtimeDeclared: boolean }): ReadonlyMap<string, string> {
+    const rows = new Map<string, string>(RUNNING_STACK_ROWS.map((id) =>
+        [id, `${id} is observed only while the stack runs; run up, then rerun this command to check it`]))
+    if (!input.runtimeDeclared) {
+        for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) rows.set(id, 'this cockpit declares no runtime, so there is nothing for it to measure')
+    }
+    return rows
+}
 function jsonEqual(left: JsonSnapshot, right: JsonSnapshot): boolean {
     return JSON.stringify(left) === JSON.stringify(right)
 }
@@ -294,21 +328,23 @@ function declaredApplicability(
     declaration: ObservationDeclaration,
     authority: ResolvedPostureAuthority,
     stage: ObservationLifecycleStage,
+    unobservable: ReadonlyMap<string, string>,
 ): EnvironmentObservation['applicability'] {
     const posture = declaration.postures.find((value) => authority.postures.includes(value))
     if (!posture) {
         return { state: 'not-applicable', posture: authority.postures.join('+'), reason: `${declaration.id} does not apply to the resolved posture` }
     }
     const disposition = declaration.stages.find((entry) => entry.stage === stage)!
-    return disposition.disposition === 'required'
-        ? { state: 'required', posture }
-        : { state: 'not-applicable', posture, reason: disposition.reason }
+    if (disposition.disposition !== 'required') return { state: 'not-applicable', posture, reason: disposition.reason }
+    const reason = unobservable.get(declaration.id)
+    return reason === undefined ? { state: 'required', posture } : { state: 'not-applicable', posture, reason }
 }
 
 function missingObservation(
     declaration: ObservationDeclaration,
     authority: ResolvedPostureAuthority,
     stage: ObservationLifecycleStage,
+    unobservable: ReadonlyMap<string, string>,
 ): EnvironmentObservation {
     return {
         code: declaration.code,
@@ -317,13 +353,21 @@ function missingObservation(
         source: declaration.id,
         observed: { state: 'unavailable', reason: `${declaration.id} evidence is missing`, observedAt: authority.evaluatedAt },
         expectation: { kind: 'present' },
-        applicability: declaredApplicability(declaration, authority, stage),
+        applicability: declaredApplicability(declaration, authority, stage, unobservable),
         freshness: { state: 'missing', reason: `${declaration.id} has no current observation` },
         remedy: `provide a current ${declaration.id} observation`,
     }
 }
 
-export function evaluatePreflight(values: readonly EnvironmentObservation[], context: PreflightContext): PreflightEvaluation {
+/**
+ * `unobservable` comes from {@link stoppedStackApplicability}: rows no producer can observe in the
+ * stack's current state, reported as not applicable with its reason instead of as missing.
+ */
+export function evaluatePreflight(
+    values: readonly EnvironmentObservation[],
+    context: PreflightContext,
+    unobservable: ReadonlyMap<string, string> = new Map(),
+): PreflightEvaluation {
     const observations: EnvironmentObservation[] = []
     const observationInputs = boundedDenseArray(values)
     if (!observationInputs) throw new TypeError('preflight observations must be a bounded dense array')
@@ -345,7 +389,7 @@ export function evaluatePreflight(values: readonly EnvironmentObservation[], con
         suppliedKeys.add(key)
         const authority = authorities.get(snapshot.stackId)
         if (!authority) throw new TypeError('environment observation has no resolved posture authority')
-        const applicability = declaredApplicability(declaration, authority, stages.get(authority.stackId)!)
+        const applicability = declaredApplicability(declaration, authority, stages.get(authority.stackId)!, unobservable)
         const observedTime = Date.parse(snapshot.observed.observedAt)
         const freshness = observedTime < Date.parse(authority.evaluatedAt)
             || observedTime > Date.parse(authority.validThrough)
@@ -369,10 +413,12 @@ export function evaluatePreflight(values: readonly EnvironmentObservation[], con
             if (!suppliedKeys.has(key)) missing.push([declaration, authority])
         }
     }
-    for (const [declaration, authority] of missing) observations.push(missingObservation(declaration, authority, stages.get(authority.stackId)!))
+    for (const [declaration, authority] of missing) observations.push(missingObservation(declaration, authority, stages.get(authority.stackId)!, unobservable))
+    const postureReason = unobservable.get(POSTURE_REQUIREMENT_OWNER)
     const checks = [...observations
         .sort((left, right) => compareCodeUnits(`${left.stackId}\0${left.code}\0${left.owner}\0${left.source}`, `${right.stackId}\0${right.code}\0${right.owner}\0${right.source}`))
-        .map(evaluate), ...postureChecks]
+        .map(evaluate), ...postureReason === undefined ? postureChecks
+        : postureChecks.map((check) => Object.freeze({ ...check, verdict: 'not-applicable' as const, reason: postureReason }))]
         .sort((left, right) => compareCodeUnits(`${left.stackId}\0${left.code}\0${left.owner}\0${left.source}`, `${right.stackId}\0${right.code}\0${right.owner}\0${right.source}`))
     const verdict = stackIds.length === 0 && checks.length === 0 ? 'unavailable'
         : checks.some((check) => check.verdict === 'fail')
@@ -405,7 +451,11 @@ export function projectDoctor(preflight: PreflightEvaluation): DoctorProjection 
     })
 }
 
-export function aggregateObservations(groups: readonly (readonly EnvironmentObservation[])[], context: PreflightContext): PreflightEvaluation {
+export function aggregateObservations(
+    groups: readonly (readonly EnvironmentObservation[])[],
+    context: PreflightContext,
+    unobservable?: ReadonlyMap<string, string>,
+): PreflightEvaluation {
     const groupInputs = boundedDenseArray(groups)
     if (!groupInputs) throw new TypeError('observation groups must be a bounded dense array')
     const values: EnvironmentObservation[] = []
@@ -416,5 +466,5 @@ export function aggregateObservations(groups: readonly (readonly EnvironmentObse
         }
         for (const observation of observations) values.push(observation as EnvironmentObservation)
     }
-    return evaluatePreflight(values, context)
+    return evaluatePreflight(values, context, unobservable)
 }

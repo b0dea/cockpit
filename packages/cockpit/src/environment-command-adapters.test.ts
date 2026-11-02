@@ -334,7 +334,7 @@ else if (args.includes('exec')) {
                 const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                     cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({
                     checkout, configuration: fresh.result, preflight: { authorities: [posture], stages: [stage.authority] },
-                    env: {}, gitExecutable: git.value, timeoutMs: 1_000, producers, refreshPreflight,
+                    env: {}, gitExecutable: git.value, timeoutMs: 1_000, producers, refreshPreflight, stopped: null, notices: () => [],
                 }))
                 if (!source) throw new Error('generated health source was not issued')
                 return source
@@ -460,7 +460,7 @@ else if (args.includes('exec')) {
                     const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                         cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({
                         checkout, configuration: fresh.result, preflight, env: {}, gitExecutable: git.value, timeoutMs: 1_000,
-                        producers, refreshPreflight,
+                        producers, refreshPreflight, stopped: null, notices: () => [],
                     }))
                     if (!source) throw new Error(`health source was not issued for ${row.name}`)
                     return source

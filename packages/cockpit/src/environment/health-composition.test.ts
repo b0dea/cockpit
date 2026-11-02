@@ -326,33 +326,39 @@ else process.exit(64)
         }
     })
 
-    it('explains an unseeded lifecycle before observing Docker', async () => {
-        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
-        const execute = vi.fn(executeProbe)
+    it('runs every check that needs no running stack before the first bring-up, and names the bring-up', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true, uncommitted: true })
+        // The synthetic runtime reports 2 GiB, so this floor cannot be met.
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8'))
+            .replace('runtime_memory_mb = 1024', 'runtime_memory_mb = 99999999'))
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
             timeoutMs: 5_000,
-        }, execute)
+        }, executeProbe)
 
         const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
         const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
         const fix = `npx --no cockpit up --config ${candidate.configPath}`
 
-        expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable', checks: [] } })
-        expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'unavailable', checks: [] } })
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'fail' } })
+        expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'fail' } })
         for (const outcome of [preflight, doctor]) {
-            expect(outcome.diagnostics).toContainEqual(expect.objectContaining({
+            expect(outcome.diagnostics[0]).toMatchObject({
                 severity: 'error', code: 'STATE_UNSEEDED', target: candidate.configPath,
-                message: expect.stringMatching(/bootstrap.*steady/),
-                fix,
-            }))
-            expect(outcome.diagnostics[0]?.message).toContain(`fix: ${fix}`)
+                message: expect.stringContaining(`fix: ${fix}`), fix,
+            })
+            expect(outcome.result.checks).toEqual(expect.arrayContaining([
+                expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', verdict: 'fail' }),
+                expect.objectContaining({ code: 'MACHINE_MEMORY_BELOW_FLOOR', verdict: 'fail' }),
+                expect.objectContaining({ code: 'SIBLING_MISSING', verdict: 'pass' }),
+                expect.objectContaining({ code: 'MOUNT_MATERIALIZATION_UNAVAILABLE', verdict: 'not-applicable',
+                    reason: expect.stringContaining('observed only while the stack runs') }),
+            ]))
         }
-        expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
     })
 
-    it('says a sleeping stack is asleep and to run up, before observing Docker', async () => {
+    it('says a sleeping stack is asleep and to run up, and still checks what needs no running stack', async () => {
         const candidate = await fixture({ configuredRuntime: true })
         const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'slept-session' })
         // What `sleep` leaves behind: no session holds the stack and its port lease is released.
@@ -364,26 +370,30 @@ else process.exit(64)
                 lease: { offset: 0, ports: { APP_PORT: 61230 }, released: true, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
         }))
         expect(asleep.kind).toBe('complete')
-        const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
             timeoutMs: 5_000,
-        }, execute)
+        }, executeProbe)
 
         const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
         const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
 
-        expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable' } })
-        expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'unavailable' } })
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2 })
+        expect(doctor).toMatchObject({ kind: 'complete', status: 0 })
         for (const outcome of [preflight, doctor]) {
-            expect(outcome.diagnostics).toContainEqual(expect.objectContaining({
+            expect(outcome.diagnostics[0]).toMatchObject({
                 severity: 'error', code: 'STACK_NOT_RUNNING', target: candidate.stack,
                 message: expect.stringContaining('is asleep'),
                 fix: `npx --no cockpit up --config ${candidate.configPath}`,
-            }))
+            })
+            expect(outcome.result.checks).toEqual(expect.arrayContaining([
+                expect.objectContaining({ code: 'MACHINE_MEMORY_BELOW_FLOOR', verdict: 'pass' }),
+                expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable',
+                    reason: expect.stringContaining('observed only while the stack runs') }),
+            ]))
+            expect(outcome.result.verdict).not.toBe('pass')
         }
-        expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
     })
 
     it('names a cockpit root that is not a Git checkout instead of an unavailable observation', async () => {
@@ -401,6 +411,17 @@ else process.exit(64)
             severity: 'error', code: 'SETUP_PATH_TYPE_INVALID', target: candidate.configPath,
             message: expect.stringContaining(`git -C ${candidate.checkout} init`),
         }] })
+
+        // A cockpit that declares no runtime depends on its Git working tree all the same, so doctor names it.
+        const surfacesOnly = await fixture({ unseeded: true })
+        await rm(join(surfacesOnly.checkout, '.git'), { recursive: true, force: true })
+        const doctor = await runDoctor({ configPath: surfacesOnly.configPath }, createHealthCommandAdapters({
+            configPath: surfacesOnly.configPath, env: { PATH: process.env.PATH, HOME: surfacesOnly.home }, timeoutMs: 5_000,
+        }, executeProbe))
+        expect(doctor.diagnostics).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }),
+            expect.objectContaining({ code: 'SETUP_PATH_TYPE_INVALID', message: expect.stringContaining(`git -C ${surfacesOnly.checkout} init`) }),
+        ]))
     })
 
     it('names a cockpit repository with no commits yet once, with the commands that commit it', async () => {
@@ -420,6 +441,20 @@ else process.exit(64)
             message: expect.stringContaining('has no commits yet'),
             fix: expect.stringContaining(`git -C ${candidate.checkout} add -A && git -C ${candidate.checkout} commit`),
         })])
+
+        // Doctor checks an uncommitted cockpit that declares no runtime; preflight, the runtime gate, still only refuses it.
+        const surfacesOnly = await fixture({ unseeded: true, uncommitted: true })
+        const surfacesAdapters = createHealthCommandAdapters({
+            configPath: surfacesOnly.configPath, env: { PATH: process.env.PATH, HOME: surfacesOnly.home }, timeoutMs: 5_000,
+        }, executeProbe)
+        const doctor = await runDoctor({ configPath: surfacesOnly.configPath }, surfacesAdapters)
+        expect(doctor.diagnostics[0]).toMatchObject({ code: 'ENVIRONMENT_NOT_DECLARED' })
+        expect(doctor.result.checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', verdict: 'fail' }),
+            expect.objectContaining({ code: 'RUNTIME_UNMEASURED', verdict: 'not-applicable', reason: expect.stringContaining('declares no runtime') }),
+        ]))
+        expect((await runPreflight({ configPath: surfacesOnly.configPath }, surfacesAdapters)).diagnostics.map(({ code }) => code))
+            .toEqual(['ENVIRONMENT_NOT_DECLARED'])
     })
 
     it('warns from doctor when Codex on this machine has not trusted the published guard hook', async () => {

@@ -378,9 +378,11 @@ describe('cockpits without a generated environment', () => {
         expect(up!.status).toBe(2)
         expect(up!.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
         const doctor = run(root, ['cockpit', 'doctor', '--config', 'cockpit.toml', '--json'])
-        expect(doctor.response.result.verdict).toBe('unavailable')
+        // A docs-only cockpit still depends on its Git working tree, and this copy has no commit yet.
+        expect(doctor.response.result.verdict).toBe('fail')
         // The surfaces publish a Codex hook that no person has trusted in this fresh home.
         expect(doctor.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }),
+            expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', message: expect.stringContaining('no commits yet') }),
             expect.objectContaining({ code: 'CODEX_HOOK_UNTRUSTED', severity: 'warning' })])
         expect(doctor.response.result.declarations).toContainEqual(expect.objectContaining({ subject: 'runtime', state: 'not-declared' }))
     })

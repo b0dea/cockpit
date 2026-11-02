@@ -17,8 +17,11 @@ import { isStateObservation } from './state.js'
 export const mechanism = {
     id: 'environment-posture-observation',
     module: 'packages/cockpit/src/environment/posture-observation.ts',
-    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'authenticateObservationPostureContext', 'judgePostureDeclaration'],
+    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'authenticateObservationPostureContext', 'judgePostureDeclaration', 'POSTURE_REQUIREMENT_OWNER'],
 } as const
+
+/** The owner of the posture-requirement checks preflight derives from the declared postures. */
+export const POSTURE_REQUIREMENT_OWNER = 'posture-requirements'
 
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
@@ -315,7 +318,7 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     const postureChecks = [...authorities.values()].flatMap((authority): PostureRequirementCheck[] =>
         judgePostureDeclaration(authority.environmentPostures, authority.postureRequirements).map(({ dimension, selected, pass, reason }) => Object.freeze({
             code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-            owner: 'posture-requirements',
+            owner: POSTURE_REQUIREMENT_OWNER,
             stackId: authority.stackId,
             source: `${authority.source}:${dimension}`,
             verdict: pass ? 'pass' as const : 'fail' as const,

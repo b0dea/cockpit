@@ -75,7 +75,7 @@ import {
 } from './lifecycle-stage.js'
 import { generatedApplicationProjection, prepareGeneratedEnvironmentCurrentness, type GeneratedApplicationProjection, type GeneratedEnvironmentCurrentness } from './generated-application.js'
 import { observeComposeTopology } from './compose-topology.js'
-import { declaredRuntime, DeclarationRefusalError } from './declaration.js'
+import { declaredRuntime, declaresNothingToRun, DeclarationRefusalError } from './declaration.js'
 import type { ReleaseFreshness } from '../freshness.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import type { ActiveSurfaceOverride, SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -215,6 +215,7 @@ import {
     aggregateObservations,
     observationSatisfiesExpectation,
     projectDoctor,
+    stoppedStackApplicability,
     type DoctorCheck,
     type EvaluatedObservation,
     type PreflightContext,
@@ -4361,6 +4362,10 @@ export interface HealthObservationSourceInput {
     readonly timeoutMs: number
     readonly producers: HealthObservationProducers
     readonly refreshPreflight: (previous: PreflightContext) => Promise<PreflightContext | undefined>
+    /** Why no stack runs to observe (never brought up, asleep, or no runtime declared); null while one runs. */
+    readonly stopped: EnvironmentDiagnostic | null
+    /** Refusals the producers met that explain missing evidence, read once evaluation has finished. */
+    readonly notices: () => readonly EnvironmentDiagnostic[]
 }
 
 export interface HealthObservationSource {
@@ -4372,6 +4377,8 @@ interface ObservationCommandAdapters {
         input: { readonly configPath: string },
         issue: (source: HealthObservationSourceInput) => HealthObservationSource | undefined,
         refuse?: ReadinessRefusal<undefined>,
+        // Doctor also reports on a cockpit that declares no runtime; preflight, a gate, refuses it.
+        purpose?: 'doctor' | 'preflight',
     ) => Promise<HealthObservationSource | undefined>
     readonly execute: (
         step: ExecutionStep,
@@ -4660,6 +4667,8 @@ interface HealthEvaluation {
     readonly comparisons: readonly ComparisonRemoteEvaluation[]
     readonly producerFailures: readonly typeof healthProducerNames[number][]
     readonly verdict: PreflightEvaluation['verdict']
+    readonly stopped: EnvironmentDiagnostic | null
+    readonly notices: readonly EnvironmentDiagnostic[]
 }
 
 interface PreparedHealthObservation {
@@ -4668,7 +4677,10 @@ interface PreparedHealthObservation {
     readonly comparisons: readonly ComparisonRemoteInput[]
     readonly producers: HealthObservationProducers
     readonly refreshPreflight: (previous: PreflightContext) => Promise<PreflightContext | undefined>
-    readonly expectedPreflight: Readonly<{ stackId: StackId; source: string; revision: string }>
+    readonly expectedPreflight: Readonly<{ stackId: StackId; source: string; revision: string; stage: 'bootstrap' | 'steady' }>
+    readonly stopped: EnvironmentDiagnostic | null
+    readonly notices: () => readonly EnvironmentDiagnostic[]
+    readonly unobservable: ReadonlyMap<string, string>
 }
 
 const issuedHealthObservationSources = new WeakMap<object, PreparedHealthObservation>()
@@ -4758,7 +4770,7 @@ function exactDataObject(value: unknown, keys: readonly string[]): Readonly<Reco
 
 function boundPreflightContext(
     value: unknown,
-    expected: { readonly stackId: StackId; readonly source: string; readonly revision: string },
+    expected: { readonly stackId: StackId; readonly source: string; readonly revision: string; readonly stage: 'bootstrap' | 'steady' },
 ): PreflightContext | undefined {
     const context = exactDataObject(value, ['authorities', 'stages'])
     const authority = exactDataObject(singleDataElement(context?.authorities), [
@@ -4770,7 +4782,7 @@ function boundPreflightContext(
     if (!context || !authority || !stage
         || authority.stackId !== expected.stackId || stage.stackId !== expected.stackId
         || authority.source !== expected.source || authority.revision !== expected.revision
-        || stage.stage !== 'steady'
+        || stage.stage !== expected.stage
         || typeof authority.evaluatedAt !== 'string' || !isCanonicalTimestamp(authority.evaluatedAt)
         || typeof authority.validThrough !== 'string' || !isCanonicalTimestamp(authority.validThrough)
         || typeof stage.observedAt !== 'string' || !isCanonicalTimestamp(stage.observedAt)
@@ -4793,7 +4805,8 @@ function issueHealthObservationSource(
     try {
         if (!rawSource || typeof rawSource !== 'object' || Array.isArray(rawSource)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(rawSource)
-        const keys = ['checkout', 'configuration', 'preflight', 'env', 'gitExecutable', 'timeoutMs', 'producers', 'refreshPreflight'] as const
+        const keys = ['checkout', 'configuration', 'preflight', 'env', 'gitExecutable', 'timeoutMs', 'producers', 'refreshPreflight',
+            'stopped', 'notices'] as const
         if (Reflect.ownKeys(descriptors).length !== keys.length
             || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))) return undefined
         const checkout = consumeSetupCheckoutProjection(descriptors.checkout!.value as SetupCheckoutProjection)
@@ -4804,8 +4817,11 @@ function issueHealthObservationSource(
         const timeoutMs = descriptors.timeoutMs!.value
         const producers = exactHealthProducers(descriptors.producers!.value)
         const refreshPreflight = descriptors.refreshPreflight!.value
+        const stopped = descriptors.stopped!.value as EnvironmentDiagnostic | null
+        const notices = descriptors.notices!.value
         if (!checkout || loaded.kind !== 'complete' || !env || !executable || !producers
-            || typeof refreshPreflight !== 'function'
+            || typeof refreshPreflight !== 'function' || typeof notices !== 'function'
+            || stopped !== null && (typeof stopped !== 'object' || typeof stopped.code !== 'string' || typeof stopped.message !== 'string')
             || !sameSource(checkout.source, loaded.source) || checkout.cockpitName !== loaded.config.cockpit.name
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
         ) return undefined
@@ -4815,11 +4831,12 @@ function issueHealthObservationSource(
             checkoutId: checkout.checkoutId,
             variant: { kind: 'shared' },
         })
-        const preflight = boundPreflightContext(rawPreflight, {
-            stackId: stack,
-            source: loaded.source.path,
-            revision: loaded.source.sha256,
-        })
+        // Only a stack that has run and still runs is observed in the steady stage; otherwise the
+        // rows that need no running stack are, and the reason none runs travels with them.
+        const stage = stopped === null || stageMatches(rawPreflight as PreflightContext, 'steady') ? 'steady' as const : 'bootstrap' as const
+        const runtimeDeclared = !declaresNothingToRun(loaded.config.environment)
+        const expectedPreflight = Object.freeze({ stackId: stack, source: loaded.source.path, revision: loaded.source.sha256, stage })
+        const preflight = boundPreflightContext(rawPreflight, expectedPreflight)
         if (!preflight) return undefined
         const siblingsRoot = resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root)
         const comparisons = loaded.config.sibling.map((sibling) => {
@@ -4844,7 +4861,10 @@ function issueHealthObservationSource(
             comparisons: Object.freeze(comparisons),
             producers,
             refreshPreflight: refreshPreflight as (previous: PreflightContext) => Promise<PreflightContext | undefined>,
-            expectedPreflight: Object.freeze({ stackId: stack, source: loaded.source.path, revision: loaded.source.sha256 }),
+            expectedPreflight,
+            stopped: stopped === null ? null : Object.freeze({ ...stopped }),
+            notices: notices as () => readonly EnvironmentDiagnostic[],
+            unobservable: stopped === null ? new Map<string, string>() : stoppedStackApplicability({ runtimeDeclared }),
         })
         const source = Object.freeze({ kind: 'health-observation-source' as const })
         issuedHealthObservationSources.set(source, prepared)
@@ -4863,7 +4883,7 @@ function prepareHealthObservation(
         const prepared = issuedHealthObservationSources.get(source)
         issuedHealthObservationSources.delete(source)
         return prepared && typeof input.configPath === 'string' && resolve(input.configPath) === prepared.configPath
-            && stageMatches(prepared.preflight, 'steady')
+            && stageMatches(prepared.preflight, prepared.expectedPreflight.stage)
             ? prepared
             : undefined
     } catch {
@@ -4932,7 +4952,7 @@ async function evaluateApplicationHealth(
     if (!initial || initial.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
         throw new TypeError('health preflight authority could not preserve its observation window')
     }
-    aggregateObservations(observations, initial)
+    aggregateObservations(observations, initial, input.unobservable)
     const comparisons: ComparisonRemoteEvaluation[] = []
     for (const comparisonInput of input.comparisons) {
         const result = await observeComparisonRemote(comparisonInput, adapters)
@@ -4942,14 +4962,18 @@ async function evaluateApplicationHealth(
     if (!refreshed || refreshed.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
         throw new TypeError('health preflight authority could not preserve its observation window')
     }
-    const preflight = aggregateObservations(observations, refreshed)
+    const preflight = aggregateObservations(observations, refreshed, input.unobservable)
     const frozenComparisons = Object.freeze(comparisons)
     const observedVerdict = combinedVerdict(preflight.verdict, frozenComparisons)
+    // Rows a running stack would answer were not observed, so passing the rest never passes health.
+    const incomplete = producerFailures.length > 0 || input.stopped !== null
     return Object.freeze({
         preflight,
         comparisons: frozenComparisons,
         producerFailures,
-        verdict: producerFailures.length > 0 && observedVerdict === 'pass' ? 'unavailable' : observedVerdict,
+        verdict: incomplete && observedVerdict === 'pass' ? 'unavailable' : observedVerdict,
+        stopped: input.stopped,
+        notices: Object.freeze([...input.notices()]),
     })
 }
 
@@ -4981,7 +5005,8 @@ function healthDiagnostics(health: HealthEvaluation): readonly EnvironmentDiagno
         target: sibling,
         fix: `install Varlock (${VARLOCK_INSTALL_URL}) and put it on PATH`,
     })))
-    return Object.freeze([...checks, ...advisories, ...producerFailures, ...comparisons])
+    return Object.freeze([...health.stopped === null ? [] : [health.stopped], ...health.notices,
+        ...checks, ...advisories, ...producerFailures, ...comparisons])
 }
 
 const unavailableSurfaceOverrideInspection = Object.freeze({
@@ -5076,7 +5101,7 @@ export async function runPreflight(
     let health: HealthEvaluation
     let refused: readonly EnvironmentDiagnostic[] | undefined
     try {
-        const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined })
+        const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined }, 'preflight')
         if (!source) return unavailablePreflight('preflight observation source is unavailable', refused)
         const observed = prepareHealthObservation(input, source)
         if (!observed) return unavailablePreflight('preflight requires authenticated steady lifecycle evidence')
@@ -5092,9 +5117,11 @@ export async function runPreflight(
         checks: health.preflight.checks,
         comparisons: health.comparisons,
     })
+    // A stopped stack never passes the gate, whatever the rows observable without it say.
+    const passed = health.verdict === 'pass' && health.stopped === null
     return Object.freeze({
-        kind: health.verdict === 'pass' ? 'complete' : 'blocked',
-        status: health.verdict === 'pass' ? 0 : 2,
+        kind: passed ? 'complete' : 'blocked',
+        status: passed ? 0 : 2,
         diagnostics: healthDiagnostics(health),
         result,
     }) as PreflightCommandResult
@@ -5142,7 +5169,7 @@ async function doctorHealth(
     let doctor: ReturnType<typeof projectDoctor>
     try {
         let refused: readonly EnvironmentDiagnostic[] | undefined
-        const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined })
+        const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined }, 'doctor')
         if (!source) {
             return unavailableDoctor(
                 ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,

@@ -172,6 +172,19 @@ async function sleepingStack(
     })
 }
 
+// Before the first `up` doctor still measures the machine, so a missing runtime is named there
+// rather than first at bring-up.
+function runtimeUnavailable(reason: string, target: string): EnvironmentDiagnostic {
+    return Object.freeze({
+        severity: 'error' as const,
+        // A literal, so the diagnostic inventory captures the fix beside the code.
+        code: 'RUNTIME_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+        message: `the container runtime that runs this stack is not usable on this machine: ${reason}`,
+        target,
+        fix: 'install or start Docker so that docker info succeeds, then rerun this command',
+    })
+}
+
 function producers(input: {
     readonly checkout: ConsumedSetupCheckoutObservation
     readonly config: Awaited<ReturnType<typeof loadCockpitConfig>> & { readonly kind: 'complete' }
@@ -184,18 +197,27 @@ function producers(input: {
     // Why the running stack could not be read (a configuration edited since `up`, say) reaches the
     // command through here instead of surfacing only as missing evidence.
     readonly refuse?: (diagnostics: readonly EnvironmentDiagnostic[]) => undefined
+    // No stack runs (never brought up, asleep, or no runtime declared): every row that needs none is
+    // still observed, from the declaration and the machine, and the rest are left to the evaluation.
+    readonly stopped: boolean
+    // Refusals met on the way that explain missing evidence (no container runtime, for one).
+    readonly notice: (diagnostics: readonly EnvironmentDiagnostic[]) => void
 }): Readonly<{ observations: HealthObservationProducers; revalidate: () => Promise<boolean> }> {
     const observedAt = () => new Date().toISOString()
     const siblingRoot = resolve(dirname(input.config.result.source.path), input.config.result.config.cockpit.siblings_root)
     const generated = input.config.result.config.environment.generated
-    const runningStack = generated !== undefined || input.config.result.config.environment.compose_files.length > 0
+    const declaresStack = generated !== undefined || input.config.result.config.environment.compose_files.length > 0
+    const runningStack = declaresStack && !input.stopped
     const configuredRuntime = generated !== undefined
         || input.config.result.config.environment.compose_files.length > 0
         || input.config.result.config.environment.machine !== undefined
         || input.config.result.config.sibling.some(({ mount }) => mount !== 'none')
     const runtimeMeasurement = configuredRuntime && !runningStack ? (async () => {
         const docker = await resolveDockerExecutable(input.env)
-        if (docker.state !== 'available') return undefined
+        if (docker.state !== 'available') {
+            if (input.stopped) input.notice([runtimeUnavailable(docker.reason, input.stack)])
+            return undefined
+        }
         const observed = await observeDockerRuntime({
             executable: docker.value,
             cwd: input.checkout.currentCheckoutPath,
@@ -260,15 +282,14 @@ function producers(input: {
         return session?.adapters.withGeneratedRuntime(session.context, session.readiness, async (value) => value)
     })()
     const checkedApplication = (async () => {
-        if (generated !== undefined) return (await generatedRuntime)?.application
+        if (generated !== undefined && runningStack) return (await generatedRuntime)?.application
         const session = await runtimeSession
         if (runningStack && !session) return undefined
         const checked = await checkGeneratedEnvironment({ configPath: input.config.result.source.path }, session?.ports,
             { execute: input.execute })
         return checked.kind === 'complete' ? generatedApplicationProjection(checked.result.application) : undefined
     })()
-    const machineFloor = generated === undefined && input.config.result.config.environment.machine
-        && input.config.result.config.environment.compose_files.length === 0 ? (async () => {
+    const machineFloor = !runningStack && input.config.result.config.environment.machine ? (async () => {
             const adapters = createLifecycleCommandAdapters({
                 configPath: input.config.result.source.path,
                 env: input.env,
@@ -277,7 +298,8 @@ function producers(input: {
             }, input.execute)
             const loaded = await adapters.load({ configPath: input.config.result.source.path })
             if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
-            return adapters.withMachineFloorReadiness(loaded.result, async (value) => value)
+            return adapters.withMachineFloorReadiness(loaded.result, async (value) => value,
+                (diagnostics) => { input.notice(diagnostics); return undefined })
         })() : undefined
     const inspectCurrentServices = async () => {
         const session = await stableSession()
@@ -303,7 +325,7 @@ function producers(input: {
             return observations
         },
         generated: async () => {
-            if (generated === undefined) return Object.freeze([])
+            if (generated === undefined || !runningStack) return Object.freeze([])
             const [session, prepared] = await Promise.all([runtimeSession, generatedRuntime])
             if (!session || !prepared) throw new TypeError('generated health needs authenticated runtime readiness')
             const observations = await observeGeneratedApplicationHealth(prepared.application,
@@ -313,7 +335,7 @@ function producers(input: {
         },
         data: async () => {
             const data = generated?.data
-            if (generated === undefined || data === undefined) return Object.freeze([])
+            if (generated === undefined || data === undefined || !runningStack) return Object.freeze([])
             const session = await runtimeSession
             const lifecycle = session?.lifecycle
             if (!session || !lifecycle) throw new TypeError('data health needs authenticated runtime readiness')
@@ -367,7 +389,7 @@ function producers(input: {
             return Object.freeze([observation])
         },
         external: async () => {
-            if (generated === undefined || generated.vendors.length === 0) return Object.freeze([])
+            if (generated === undefined || generated.vendors.length === 0 || !runningStack) return Object.freeze([])
             const [session, services] = await Promise.all([runtimeSession, currentServices])
             if (!session || !services) throw new TypeError('external dependency health needs current runtime services')
             const observation = await session.adapters.withGeneratedRuntime(
@@ -476,6 +498,8 @@ function producers(input: {
             if (input.config.result.config.environment.machine) {
                 if (machineFloor) {
                     const current = await machineFloor
+                    // A stopped stack's unusable runtime is already a notice that names why.
+                    if (!current && input.stopped) return Object.freeze([])
                     if (!current) throw new TypeError('configured host capacity needs authenticated machine-floor execution evidence')
                     return current
                 }
@@ -487,7 +511,7 @@ function producers(input: {
         },
         installs: async () => {
             const dependencies = input.config.result.config.sibling.filter(({ toolchain }) => toolchain !== 'none')
-            if (dependencies.length === 0) return Object.freeze([])
+            if (dependencies.length === 0 || input.stopped) return Object.freeze([])
             const [session, services] = await Promise.all([runtimeSession, currentServices])
             if (!generated || !session || !services) {
                 throw new TypeError('configured dependency health needs authenticated generated runtime services')
@@ -561,6 +585,8 @@ function producers(input: {
             if (!configuredRuntime) return Object.freeze([])
             if (!runningStack) {
                 const measured = await runtimeMeasurement
+                // A stopped stack's missing runtime is already a notice; its rows are left unobserved.
+                if (!measured && input.stopped) return Object.freeze([])
                 if (!measured) throw new TypeError('configured runtime measurement needs authenticated runtime identity evidence')
                 return Object.freeze([measured])
             }
@@ -648,7 +674,7 @@ export function createHealthCommandAdapters(
 ): HealthCommandAdapterComposition {
     const input = captureInput(rawInput)
     let selectedNamespace: StateNamespace | undefined
-    const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse) => {
+    const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse, purpose) => {
         const requestedPath = commandConfigPath(command)
         if (!input || typeof execute !== 'function' || typeof issue !== 'function'
             || requestedPath !== input.configPath) return undefined
@@ -656,12 +682,16 @@ export function createHealthCommandAdapters(
         // A malformed cockpit.toml is the user's to fix, so the loader's own diagnostics reach them.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
-        // Health is about a running stack or a machine floor; with neither declared it is not declared, never healthy.
-        if (declaresNothingToRun(loaded.result.config.environment)) return refuse?.([runtimeNotDeclared(loaded.result.source.path)])
+        // Health is about a running stack or a machine floor; with neither declared it is not declared,
+        // never healthy, and preflight refuses. Doctor still checks what such a cockpit does depend on:
+        // its Git working tree, its siblings and its surfaces.
+        const notDeclared = declaresNothingToRun(loaded.result.config.environment)
+            ? runtimeNotDeclared(loaded.result.source.path) : undefined
+        if (notDeclared && purpose !== 'doctor') return refuse?.([notDeclared])
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return undefined
         const checkout = await checkoutProjection(input, loaded, git.value)
-        if (checkout && 'failed' in checkout) return refuse?.([checkout.failed])
+        if (checkout && 'failed' in checkout) return refuse?.([...notDeclared ? [notDeclared] : [], checkout.failed])
         if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
         const namespace = await selectStateRoot({
             platform: process.platform,
@@ -677,6 +707,7 @@ export function createHealthCommandAdapters(
             checkoutId: checkout.checkoutId,
             variant: { kind: 'shared' },
         })
+        let stopped: EnvironmentDiagnostic | null = notDeclared ?? null
         const refreshPreflight = async (previous?: PreflightContext): Promise<PreflightContext | undefined> => {
             const observedAt = new Date().toISOString()
             const configuration = (await observeConfiguration({
@@ -702,17 +733,15 @@ export function createHealthCommandAdapters(
                     observedAt,
                 })
                 if (stage.kind !== 'complete') return refuse?.(stage.diagnostics)
-                if (stage.authority.stage !== 'steady') {
-                    const fix = cockpitCommand('up', { config: loaded.result.source.path })
-                    return refuse?.([{
-                        severity: 'error', code: ENVIRONMENT_CODES.STATE_UNSEEDED, target: loaded.result.source.path,
-                        message: `lifecycle is still in bootstrap — ordinary health checks require a steady lifecycle after the first bring-up; fix: ${fix}; then retry the command that stopped`,
-                        fix,
-                    }])
-                }
-                if (previous === undefined) {
-                    const asleep = await sleepingStack(namespace.value, currentStack, loaded.result.source.path)
-                    if (asleep) return refuse?.([asleep])
+                if (previous === undefined && !notDeclared) {
+                    if (stage.authority.stage !== 'steady') {
+                        const fix = cockpitCommand('up', { config: loaded.result.source.path })
+                        stopped = Object.freeze({
+                            severity: 'error' as const, code: ENVIRONMENT_CODES.STATE_UNSEEDED, target: loaded.result.source.path,
+                            message: `lifecycle is still in bootstrap — the stack has never completed a first bring-up, so only the checks that need no running stack ran; fix: ${fix}; then retry the command that stopped`,
+                            fix,
+                        })
+                    } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path) ?? null
                 }
                 return Object.freeze({
                 authorities: Object.freeze([authority]),
@@ -724,6 +753,7 @@ export function createHealthCommandAdapters(
         }
         const preflight = await refreshPreflight()
         if (!preflight) return undefined
+        const notices: EnvironmentDiagnostic[] = []
         const sourceProducers = producers({
             checkout,
             config: loaded,
@@ -734,6 +764,12 @@ export function createHealthCommandAdapters(
             timeoutMs: input.timeoutMs,
             execute,
             ...(refuse ? { refuse: (diagnostics: readonly EnvironmentDiagnostic[]) => refuse(diagnostics) } : {}),
+            stopped: stopped !== null,
+            notice: (diagnostics) => {
+                for (const diagnostic of diagnostics) {
+                    if (!notices.some(({ code, target }) => code === diagnostic.code && target === diagnostic.target)) notices.push(diagnostic)
+                }
+            },
         })
         const secondObservedAt = new Date().toISOString()
         const secondObservation = await observeSetupCheckout({
@@ -756,6 +792,8 @@ export function createHealthCommandAdapters(
             timeoutMs: input.timeoutMs,
             producers: sourceProducers.observations,
             refreshPreflight: async (previous) => await sourceProducers.revalidate() ? refreshPreflight(previous) : undefined,
+            stopped,
+            notices: () => Object.freeze([...notices]),
         }))
     }
     const inspectSurfaceOverrides: NonNullable<HealthCommandAdapterComposition['inspectSurfaceOverrides']> = async (configPath) => {

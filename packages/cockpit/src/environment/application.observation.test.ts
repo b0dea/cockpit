@@ -449,8 +449,8 @@ describe('observation application runners', () => {
         const doctor = await runDoctor(second.input, { load, execute })
 
         expect(load).toHaveBeenCalledTimes(2)
-        expect(load).toHaveBeenNthCalledWith(1, first.input, expect.any(Function), expect.any(Function))
-        expect(load).toHaveBeenNthCalledWith(2, second.input, expect.any(Function), expect.any(Function))
+        expect(load).toHaveBeenNthCalledWith(1, first.input, expect.any(Function), expect.any(Function), 'preflight')
+        expect(load).toHaveBeenNthCalledWith(2, second.input, expect.any(Function), expect.any(Function), 'doctor')
         expect(aggregate).toHaveBeenCalledTimes(4)
         for (const [index, preflight] of [first.preflight, first.preflight, second.preflight, second.preflight].entries()) {
             expect(aggregate.mock.calls[index]?.[0]).toHaveLength(healthProducerNames.length)
@@ -1224,6 +1224,8 @@ async function healthSourceFixture(
             timeoutMs: 1_000,
             producers: transformProducers(producers),
             refreshPreflight: async (previous: PreflightContext) => previous === boundPreflight ? boundPreflight : undefined,
+            stopped: null,
+            notices: () => [],
         } as never))
         if (!source && required) throw new Error('health source was not issued')
         return source
