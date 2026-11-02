@@ -451,7 +451,11 @@ export async function loadCockpitConfig(
             `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source; add observed_on for any other source`, path)
     }
 
+    // A sibling row's generated service joins environment.generated when the registry is derived, so
+    // its operations are planned the same way and are checked here too.
     const hostOperation = unboundHostOperation(validated.data.environment.generated, ['environment', 'generated'])
+        ?? validated.data.sibling.reduce<ReturnType<typeof unboundHostOperation>>((found, sibling, index) =>
+            found ?? unboundHostOperation(sibling.derives?.generated, ['sibling', String(index), 'derives', 'generated']), undefined)
     if (hostOperation !== undefined) {
         return { kind: 'refusal', status: 2, result: null, diagnostics: [{
             severity: 'error',

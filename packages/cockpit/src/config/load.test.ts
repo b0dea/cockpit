@@ -426,6 +426,19 @@ health = { property = "the process answers", probe = { location = "in-stack", se
         }] })
 
         expect((await loadCockpitConfig(fixture(withManifestProbe(['node', '-e', '0'])))).kind).toBe('complete')
+
+        // A sibling row's generated service is planned with the baseline's, so its host operations are refused the same way.
+        const baseline = readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
+            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
+        const row = readFileSync(resolve('packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')
+        const hostRow = row.replace(/(\[sibling\.derives\.generated\.service\.image\.manifest_probe\]\n)location = "in-stack"\nservice = "worker"\ncwd = "\."\nargv = \["node", "probe\.mjs", "manifest"\]/,
+            '$1location = "host"\ncwd = "."\nargv = ["docker", "image", "inspect", "worker"]')
+        expect(hostRow).not.toBe(row)
+        expect((await loadCockpitConfig(fixture(`${baseline}\n${row}`))).kind).toBe('complete')
+        expect(await loadCockpitConfig(fixture(`${baseline}\n${hostRow}`))).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED',
+            message: expect.stringMatching(/^sibling\.\d+\.derives\.generated\.service\.image\.manifest_probe runs "docker" on the host/),
+        }] })
     })
 
     it('names port families whose bases overlap across stacks and the step that separates them', async () => {
