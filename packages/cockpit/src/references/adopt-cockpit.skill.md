@@ -82,8 +82,10 @@ Look at the directory before asking. Several cases can apply; bootstrap first.
 
 ## After bootstrap
 
-Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0 and, where a
-runtime is declared, `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes.
+Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0, where a
+runtime is declared `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes,
+and every gap in `result.readiness` of `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`
+has been cleared or reported to the human.
 
 - **Before the first `up`**, run
   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json`.

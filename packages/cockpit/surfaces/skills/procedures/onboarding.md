@@ -37,14 +37,36 @@ file keyed by field, show the human that file and the preview digest, and only t
 `--accept-preview` and `--answers`. The run stops at `configuration.defaults`; once the human has read
 the surfaced defaults, add `--accept-defaults` with the digest the run printed. Each digest binds
 consent to the bytes the human saw, so never copy one from anywhere but the latest pending run; ask
-init for `--help` to list its flags. The step is done when the result reports
-`environment-verified`. Re-run the same explicit root and target to
+init for `--help` to list its flags. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
-named gaps. Preflight passes only once the cockpit repository is committed and clean, so a new one
-reports `GIT_STATE_UNHEALTHY` (no commits yet) with the commands that commit the generated files.
-Show the human `git status --short` and ask before committing, unless they asked you to commit;
-then re-run the same command. Native discovery, a real interview and a clean-machine run each still need their own check.
+named gaps. Where a runtime is declared, preflight needs a completed first bring-up, so the run
+stops with `STATE_UNSEEDED` (exit 2, stage `draft-observed`); that is the expected stop, and the
+diagnostics beside it name every other gap found without a running stack. Preflight also passes
+only once the cockpit repository is committed and clean, so a new one reports `GIT_STATE_UNHEALTHY`
+(no commits yet) with the commands that commit the generated files. Show the human
+`git status --short` and ask before committing, unless they asked you to commit. Then bring the
+stack up (step 6 of **Create a local setup**) and re-run the same command. The step is done when
+the result reports `environment-verified`; a cockpit that declares no runtime reports it, with
+`ENVIRONMENT_NOT_DECLARED` as information, without a bring-up. Native discovery, a real interview
+and a clean-machine run each still need their own check.
+
+Walk the human through what is still missing. Every `init` stop, and
+`./node_modules/.bin/cockpit doctor --config cockpit.toml --json`, carries `result.readiness`:
+`gaps` lists each prerequisite cockpit depends on that a check reported missing, each with its
+`level` (a `required` one is refused by the command that needs it), `needs` (why cockpit needs it)
+and `findings` (the diagnostic, its message and its fix); `noFinding` lists the ones no check
+reported. Take the gaps one at a time, required ones first:
+say what is missing, why cockpit needs it, and the exact change you propose. Ask before touching
+any product repository; committing, installing cockpit, recording a remote, untracking a file or
+adding a test changes it for everyone who works on it. Where a gap needs judgement (which test
+runner to adopt, whether the existing tests prove anything, where characterization tests for
+untested code should live), propose with what you read and let the human decide. A gap is a fact:
+clear it by changing what it reports, then re-run `doctor` to confirm. `noFinding` is not proof,
+because a check that could not run reports nothing. The `cockpit-installed` gap is the first to
+clear: `init` ran from a temporary copy, so run `npm install` in the cockpit root, then ask the
+human to run `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal so the guard
+hook runs the installed copy.
 
 If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine, and
 again whenever sync changes the hook: Codex silently skips a project hook nobody has trusted, so

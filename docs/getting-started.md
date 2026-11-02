@@ -261,9 +261,11 @@ then repeat with `--accept-reset <previewSha256>`; the resumed interview asks fo
 and defaults acceptance again. A field the interview never asked for is reported as
 `INIT_ANSWER_UNUSED`.
 
-Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, variable
-names (never values) in env templates such as `.env.example`, an existing Compose file, and the
-`services:` of GitHub workflows. A name that suggests a database or vendor endpoint, such as
+Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD`, `ENTRYPOINT` and
+`HEALTHCHECK`, a `package.json` `start`, `serve` or `dev` script, the `node` toolchain a Node
+lockfile names, each repository's `origin` remote in `.git/config` (a URL carrying credentials is
+skipped, never shown), variable names (never values) in env templates such as `.env.example`, an
+existing Compose file, and the `services:` of GitHub workflows. A name that suggests a database or vendor endpoint, such as
 `DATABASE_URL`, becomes a `guards` question about its host. Test stages and gates are proposed from a repository's test entry point: a Bazel workspace, `nx.json`, a `turbo.json` test task, a Makefile `test` target, a `package.json` test script (run by the package manager its lockfile names), pytest configuration, `go.mod` or `Cargo.toml`; a tool that selects affected tests supplies the targeted gate. A repository with none is listed in `interview.inferenceSkipped` with what was looked for. Sources `init` could not use are listed
 in `interview.inferenceSkipped`. That includes Compose files outside the cockpit directory or in
 several repositories, because compose-first accepts only paths inside the cockpit and resolves them
@@ -274,6 +276,26 @@ the cockpit root that reaches each checkout through its sibling variable
 A run that declares a runtime ends with `preflight`, which needs a completed first bring-up. If it
 reports `STATE_UNSEEDED`, follow [Bring the product up](#bring-the-product-up), then rerun the same
 accepted `init` command to finish verification.
+
+## What cockpit checks in your project
+
+cockpit depends on a few things in your product and cockpit, and reports each one missing rather
+than guessing around it: the cockpit root in Git and committed, cockpit installed in the cockpit
+root, every declared repository present and, for a teammate's clone, recorded with its remote, a
+reachable and measured container runtime, the declared machine floor, a valid `.env.schema`
+wherever a repository has one, declared guard hosts and test gates, no secret files committed in a
+repository, and a trusted Codex hook and evaluator where you use Codex. Every `init` stop and
+`cockpit doctor` show them as a readiness section, one line per gap with why cockpit needs it:
+
+```sh
+./node_modules/.bin/cockpit doctor --config ./cockpit.toml
+./node_modules/.bin/cockpit doctor --config ./cockpit.toml --json   # result.readiness
+```
+
+A `required` gap is also refused by the command that needs it (`setup`, `check`, `up` or
+`preflight`); a `recommended` one only warns. Before the first `up`, `doctor` and `preflight` still
+run every check that needs no running stack. cockpit reports facts here and changes nothing; the
+setup skill walks you through each gap and asks before touching a product repository.
 
 ## Bring the product up
 

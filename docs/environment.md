@@ -783,7 +783,11 @@ validates the declared tags; deciding which requirements need tags is still a ma
 ## Health and evidence
 
 `preflight` is the blocking gate; `doctor` reports the same checks without repairing anything or
-changing the baseline. Ordinary checks require a steady lifecycle stage. A check can pass, fail, be
+changing the baseline. Before the first bring-up (`STATE_UNSEEDED`), while the stack sleeps
+(`STACK_NOT_RUNNING`), and for a cockpit that declares no runtime (`ENVIRONMENT_NOT_DECLARED`,
+`doctor` only), both still run every check that needs no running stack, such as Git state, sibling
+presence, the machine floor and the runtime measurement, and report the checks that need running
+services as not applicable; `preflight` never passes in those states. A check can pass, fail, be
 unavailable, or not apply to the declared setup, and an unavailable required check never becomes a
 pass because another check succeeded. Host capacity, dependency installation and runtime health
 need complete results from processes cockpit itself ran; when those results are missing, the

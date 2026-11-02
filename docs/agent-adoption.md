@@ -110,8 +110,10 @@ repositories and covers the exceptions. If it is not a Git repository yet, ask b
 
 ### Empty directory
 
-Done when `cockpit check --config cockpit.toml --json` exits 0 and every repository the human
-named is declared.
+Done when `cockpit check --config cockpit.toml --json` and `cockpit setup --config cockpit.toml --json`
+exit 0 and every repository the human named is declared. `setup` refuses a cockpit root outside
+Git (`SETUP_PATH_TYPE_INVALID`); `init` and `doctor` report it under `cockpit-git` in
+`result.readiness`.
 
 With no repository under the root, `init` builds a surfaces-only cockpit whose first sibling is
 the root itself: the schema needs one sibling, and the root holds the product's notes and
@@ -275,20 +277,44 @@ several: instructions, guards and settings. Each step stops for the human.
    ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
    ```
 
-   This writes `cockpit.toml`, syncs, checks and runs `preflight`. Rerun the same command after
-   clearing each stop:
-   - Where a runtime is declared, `preflight` needs a measured runtime
-     ([Measure the runtime](#measure-the-runtime)).
-   - `preflight` needs the cockpit repository committed and clean
+   This writes `cockpit.toml`, syncs, checks and runs `preflight`. Where a runtime is declared,
+   the run stops with `STATE_UNSEEDED` (exit 2, `result.stage = "draft-observed"`): `preflight`
+   needs a completed first bring-up. The diagnostics beside it are every other gap found without
+   a running stack; `result.readiness` groups them ([Walk through readiness](#walk-through-readiness)).
+   Clear them, then rerun the same command:
+   - The cockpit repository must be committed and clean
      ([Preflight observations](environment.md#preflight-observations)). A new one reports
      `GIT_STATE_UNHEALTHY` (no commits yet), and the row's fix stages and commits every file Git
      does not ignore. Show the human `git status --short` and ask before committing (rule 1 of the
      [Safety contract](#safety-contract)).
+   - The runtime must be measured ([Measure the runtime](#measure-the-runtime)), and then the stack
+     brought up once with `cockpit up --config cockpit.toml`.
 
 Rerunning with the same answers file resumes. A changed value for a recorded answer is refused with
 `INIT_ANSWER_CONFLICT`: drop that key to keep the recorded answer, or follow the
 [recorded-answer reset](getting-started.md#bootstrap-without-a-terminal) before `cockpit.toml` is
 prepared.
+
+### Walk through readiness
+
+Done when every gap in `result.readiness` is cleared, or reported to the human with its fix.
+
+Every `init` stop and `cockpit doctor --config cockpit.toml --json` carry `result.readiness`: the
+prerequisites cockpit depends on, grouped from the diagnostics that run reported. Each entry in
+`gaps` has an `id`, a `level` (`required` ones are refused by the command that needs them;
+`recommended` ones only warn), `needs` (why cockpit needs it) and `findings` (each diagnostic with
+its message and fix). `noFinding` lists the prerequisites no check reported; a check that could not
+run reports nothing, so it is not proof. Before the first `up`, `doctor` and `preflight` still run
+every check that needs no running stack, and report the rest as not applicable.
+
+Take the gaps one at a time, required ones first: what is missing, why cockpit needs it, and the
+exact change you propose. Ask before touching a product repository (rule 1 of the
+[Safety contract](#safety-contract)). Judgement calls (which test runner to adopt, whether the
+existing tests prove anything, where characterization tests go) are the human's: propose, with
+what you read. `init` runs from a temporary install, so `cockpit-installed` is reported on every
+new cockpit: run `npm install` in the cockpit root, then ask the human to run
+`./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal so the guard hook runs the
+installed copy. Rerun `doctor` after each fix.
 
 ### Mark the answers you chose
 
@@ -392,8 +418,9 @@ Follow **Create a local setup** in the shipped procedure,
 [packages/cockpit/surfaces/skills/procedures/onboarding.md](../packages/cockpit/surfaces/skills/procedures/onboarding.md#create-a-local-setup).
 It derives each value from the repository's manifests, CI workflows and deployment files, records
 it as inferred with its source, and keeps every unknown a named gap. The `init` preview already
-proposes some of these: a Dockerfile's `EXPOSE` and `CMD`, `.env.example` variable names, and the
-`services:` of GitHub workflows.
+proposes some of these: a Dockerfile's `EXPOSE`, `CMD` and `HEALTHCHECK`, a `package.json`
+`start`, `serve` or `dev` script, the toolchain a Node lockfile names, each repository's `origin`
+remote, `.env.example` variable names, and the `services:` of GitHub workflows.
 
 ### Existing agent settings
 
