@@ -1,6 +1,6 @@
 ---
 name: cockpit-work
-description: "Use when a change needs a second person to certify it, must carry on in a later session, or belongs to a programme, in a cockpit with work orders configured. Experimental; ordinary fixes use cockpit-fix."
+description: "Use when a change needs a second person to certify it, must carry on in a later session, or belongs to a programme, in a cockpit with work orders configured. Review and grading require the Codex CLI; ordinary fixes use cockpit-fix."
 targets: ["*"]
 cockpit:
   tools: [shell]
@@ -25,7 +25,7 @@ opencode:
 
 <!-- cockpit:verified version=0.0.0 -->
 
-# Work an order (experimental)
+# Work an order
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Work**, starting at its step 0: if nobody besides you must certify the result, stop and use cockpit-fix.

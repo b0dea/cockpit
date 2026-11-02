@@ -344,10 +344,10 @@ describe('CLI help', () => {
 
     it('labels experimental command-specific help without labeling stable commands', async () => {
         const experimental = await runInProcess(['upgrade', '--help'])
-        const stable = await runInProcess(['check', '--help'])
-
         expect(experimental.stdout).toContain('Status: experimental. This interface may change before a stable release.')
-        expect(stable.stdout).not.toContain('Status: experimental.')
+        for (const args of [['check'], ['work', 'grade'], ['browser', 'drive']]) {
+            expect((await runInProcess([...args, '--help'])).stdout, args.join(' ')).not.toContain('Status: experimental.')
+        }
     })
 
     it('tells `down --help` and `reset --help` readers which Docker daemon they delete from', async () => {
@@ -486,8 +486,8 @@ describe('CLI help', () => {
             '  baseline-record   Record an explicitly confirmed environment baseline (experimental)\n\n' +
             'Test and grade:\n' +
             '  test-run          Run a declared product test gate and report which tests it selected\n' +
-            '  work              Prepare, accept, execute, review and grade work orders (experimental)\n' +
-            '  browser           Drive, inspect and capture the declared application in a browser (experimental)\n\n' +
+            '  work              Prepare, accept, execute, review and grade work orders\n' +
+            '  browser           Drive, inspect and capture the declared application in a browser\n\n' +
             "Run 'cockpit <command> --help' for its options, and 'cockpit work --help' or 'cockpit browser --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
@@ -508,7 +508,6 @@ describe('CLI help', () => {
         expect(work.status).toBe(0)
         expect(work.stdout).toBe('Usage: cockpit work <subcommand> [options]\n\n' +
             'Prepare, accept, execute, review and grade work orders\n\n' +
-            'Status: experimental. This interface may change before a stable release.\n\n' +
             'Subcommands:\n' +
             '  intake          Prepare a work order from its source document\n' +
             '  status          Report current work-order state\n' +

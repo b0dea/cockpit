@@ -322,7 +322,7 @@ If a second person must certify this, use cockpit-work instead.
 
 ## Work
 
-Experimental. This is the work-order loop for changes a second person must certify. Cockpit owns the
+This is the work-order loop for changes a second person must certify. Cockpit owns the
 contract and the independent grading, not the thinking: reuse the planning skills the harness already has.
 
 0. **Is this a work order?** Ask whether anyone besides you must certify the result, or whether the work

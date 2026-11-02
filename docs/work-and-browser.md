@@ -6,8 +6,9 @@ This page is for anyone deciding whether a change needs a direct fix or a durabl
 [work order](concepts.md#work-order), and then getting it graded independently, checked in a
 browser, and proven with the right test tier.
 
-The `work` and `browser` commands are experimental: their interfaces may change, and each
-command's `--help` is the current contract.
+Each command's `--help` is its current contract. Work orders require the Codex CLI, on `PATH` and
+signed in: the independent reviewers and the grader run in it, whichever agent tool did the work
+(see [Verify and grade independently](#verify-and-grade-independently)).
 
 ## Declare work and the files it may change
 

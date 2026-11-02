@@ -138,9 +138,9 @@ watch `check` catch it, then read the configuration section by section.
   stale files or resetting data needs you to confirm that exact preview.
 - **Tests at the right size.** You declare product test stages and gates once; agents run the
   narrow gate while iterating and the full gate before handing back, with `cockpit test-run`.
-- **Graded work orders** *(experimental)*. Acceptance criteria, declared checks and a separate
+- **Graded work orders**. Acceptance criteria, declared checks and a separate
   evaluator that grades each criterion from the check results.
-- **Browser checks** *(experimental)*. Drive, screenshot and run accessibility checks against the
+- **Browser checks**. Drive, screenshot and run accessibility checks against the
   running application.
 - **Safe on a shared machine.** Port leases and holder tracking mean one agent cannot stop another
   agent's stack.
@@ -156,7 +156,7 @@ watch `check` catch it, then read the configuration section by section.
 | Generate and verify | `sync`, `check`, `selftest` |
 | Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
 | Diagnose | `doctor`, `baseline-record` *(experimental)* |
-| Test and grade | `test-run`, `work` *(experimental)*, `browser` *(experimental)* |
+| Test and grade | `test-run`, `work`, `browser` |
 
 `cockpit --help` lists the same stages; `cockpit work --help` and `cockpit browser --help` list
 their subcommands. Every command and flag is in the [CLI reference](docs/cli-reference.md).
@@ -177,6 +177,9 @@ their subcommands. Every command and flag is in the [CLI reference](docs/cli-ref
 - **macOS and Linux.** Native Windows stops at startup with `CLI_PLATFORM_UNSUPPORTED`.
 - **Running the stack needs Docker Compose** and a measured local runtime. Generation and `check`
   work without Docker; see [which commands need a runtime](docs/environment.md#measure-the-container-runtime).
+- **Work orders need the Codex CLI.** `work review` and `work grade` run the independent reviewers
+  and grader in `codex exec`, so `codex` must be on `PATH` and signed in, whichever agent tool did
+  the work; see [Verify and grade independently](docs/work-and-browser.md#verify-and-grade-independently).
 - **Not a sandbox.** Guards, ignore rules and file permissions stop mistakes, not malicious code
   running as your user.
 - **One maintainer.** See [Governance](CONTRIBUTING.md#governance).
