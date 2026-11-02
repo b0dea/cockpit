@@ -70,7 +70,7 @@ it does not get a second process runner or an independent health verdict.
 
 ```sh
 npm ci --ignore-scripts
-npm run test:changed -- <base-commit>  # tests adjacent to your changes
+npm run test:changed -- <base-commit>  # fast-tier tests adjacent to your changes; --wide adds the slow tier
 npm test -- <test file>                # targeted run; bare `npm test` is the full suite
 npm run typecheck
 npm run lint:docs
@@ -78,8 +78,8 @@ npm run references                     # regenerate generated docs (see Keep doc
 ```
 
 Run adjacent owner tests, review non-adjacent dependents, and typecheck before reporting a
-behaviour change. Run the full suite once before a PR is marked ready or when a shared seam
-changes.
+behaviour change. Run the full suite, which includes the slow tier, before pushing, before a PR is
+marked ready, or when a shared seam changes.
 
 ## Conventions
 

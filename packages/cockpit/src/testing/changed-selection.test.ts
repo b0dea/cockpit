@@ -124,6 +124,48 @@ describe('changed adjacent-owner test runner', () => {
         }
     })
 
+    it('defers slow-tier owners and names the command that runs them unless --wide or --extra-test asks for them', () => {
+        const fixture = repository({
+            'packages/cockpit/src/example.ts': 'export const value = 1\n',
+            'packages/cockpit/src/example.test.ts': 'example\n',
+            'packages/cockpit/src/example.slow.test.ts': 'example end to end\n',
+            'packages/cockpit/src/other.slow.test.ts': 'other end to end\n',
+        })
+        writeFileSync(join(fixture.root, 'packages/cockpit/src/example.ts'), 'export const value = 2\n')
+        writeFileSync(join(fixture.root, 'packages/cockpit/src/other.slow.test.ts'), 'other end to end, changed\n')
+        // Each dispatch leaves a capture and a report; removed so the next run sees the same change.
+        const run = (...args: string[]) => {
+            const result = fixture.run(...args)
+            const dispatched = existsSync(fixture.capture) ? fixture.dispatched() : []
+            rmSync(fixture.capture, { force: true })
+            rmSync(join(fixture.root, '.vitest-reports'), { recursive: true, force: true })
+            return { ...result, dispatched }
+        }
+
+        const listed = run('--list')
+        expect(listed.status, listed.stderr).toBe(0)
+        expect(JSON.parse(listed.stdout)).toEqual([ARCHITECTURE, 'packages/cockpit/src/example.test.ts'])
+        expect(listed.dispatched).toEqual([])
+        expect(listed.stderr).toContain('Slow-tier owners not run (2); npm test runs them, or rerun with --wide:\n'
+            + 'npm test -- packages/cockpit/src/example.slow.test.ts packages/cockpit/src/other.slow.test.ts\n')
+
+        const fast = run()
+        expect(fast.status, fast.stderr).toBe(0)
+        expect(fast.dispatched).toEqual([ARCHITECTURE, 'packages/cockpit/src/example.test.ts'])
+        expect(fast.stderr).toContain('npm test -- packages/cockpit/src/example.slow.test.ts packages/cockpit/src/other.slow.test.ts\n')
+
+        const named = run('--extra-test', 'packages/cockpit/src/other.slow.test.ts')
+        expect(named.status, named.stderr).toBe(0)
+        expect(named.dispatched).toEqual([ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/other.slow.test.ts'])
+        expect(named.stderr).toContain('npm test -- packages/cockpit/src/example.slow.test.ts\n')
+
+        const slow = run('--wide')
+        expect(slow.status, slow.stderr).toBe(0)
+        expect(slow.dispatched).toEqual([ARCHITECTURE, 'packages/cockpit/src/example.slow.test.ts',
+            'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/other.slow.test.ts'])
+        expect(slow.stderr).not.toContain('Slow-tier owners not run')
+    })
+
     it('lists an empty inventory without dispatch when no owners changed', () => {
         const fixture = repository({})
 
@@ -134,7 +176,7 @@ describe('changed adjacent-owner test runner', () => {
         expect(existsSync(fixture.capture)).toBe(false)
     })
 
-    it.each([['--list', '--list'], ['--list', '--unknown'], ['--list', '--extra-test'],
+    it.each([['--list', '--list'], ['--wide', '--list', '--wide'], ['--list', '--unknown'], ['--list', '--extra-test'],
         ['--list', '--extra-test', 'packages/cockpit/src/missing.test.ts'],
         ['--extra-test', '--list']])('refuses invalid inventory arguments %j before dispatch', (...args) => {
         const fixture = repository({})
@@ -252,7 +294,7 @@ describe('changed adjacent-owner test runner', () => {
     const OTHER = { 'packages/cockpit/src/unrelated.test.ts': 'unrelated\n' }
     const withOwners = (files: Record<string, string>) => repository({
         ...Object.fromEntries(DOCS_TESTS.map(path => [path, 'docs\n'])),
-        'packages/cockpit/src/packaging.test.ts': 'packaging\n',
+        'packages/cockpit/src/packaging.slow.test.ts': 'packaging\n',
         'packages/cockpit/src/supply-chain.test.ts': 'supply\n',
         'packages/cockpit/src/test-protection.test.ts': 'protection\n',
         ...OTHER, ...files,
@@ -301,10 +343,10 @@ describe('changed adjacent-owner test runner', () => {
             const fixture = withOwners({ [path]: '{}\n' })
             edit(fixture.root, path)
 
-            const result = fixture.run()
+            const result = fixture.run('--wide')
 
             expect(result.status, result.stderr).toBe(0)
-            expect(fixture.dispatched()).toEqual(['packages/cockpit/src/packaging.test.ts', 'packages/cockpit/src/supply-chain.test.ts'])
+            expect(fixture.dispatched()).toEqual(['packages/cockpit/src/packaging.slow.test.ts', 'packages/cockpit/src/supply-chain.test.ts'])
         })
 
     it('runs the supply-chain, workflow-contract and test-protection tests when a workflow changes', () => {
@@ -441,6 +483,32 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual([
             ARCHITECTURE, 'packages/cockpit/src/barrel-user.test.ts', 'packages/cockpit/src/commands.test.ts',
             'packages/cockpit/src/helper-user.test.ts',
+        ])
+    })
+
+    it('stops at an importer that has adjacent tests unless --wide asks for every test above it', () => {
+        const fixture = withOwners({
+            'packages/cockpit/src/guards/helper.ts': 'export const helper = 1\n',
+            'packages/cockpit/src/guards/evaluator.ts': "import { helper } from './helper.js'\n",
+            'packages/cockpit/src/guards/evaluator.test.ts': "import { evaluate } from './evaluator.js'\n",
+            'packages/cockpit/src/cli.ts': "import { evaluate } from './guards/evaluator.js'\n",
+            'packages/cockpit/src/cli.test.ts': "import { runCli } from './cli.js'\n",
+            'packages/cockpit/src/commands.test.ts': "import { runCli } from './cli.js'\n",
+            'packages/cockpit/src/guards/helper-user.test.ts': "import { helper } from './helper.js'\n",
+        })
+        edit(fixture.root, 'packages/cockpit/src/guards/helper.ts')
+
+        const wide = fixture.run('--wide', '--list')
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([
+            ARCHITECTURE, 'packages/cockpit/src/guards/evaluator.test.ts', 'packages/cockpit/src/guards/helper-user.test.ts',
+        ])
+        expect(wide.status, wide.stderr).toBe(0)
+        expect(JSON.parse(wide.stdout)).toEqual([
+            ARCHITECTURE, 'packages/cockpit/src/cli.test.ts', 'packages/cockpit/src/commands.test.ts',
+            'packages/cockpit/src/guards/evaluator.test.ts', 'packages/cockpit/src/guards/helper-user.test.ts',
         ])
     })
 

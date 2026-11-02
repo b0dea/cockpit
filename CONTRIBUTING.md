@@ -25,7 +25,7 @@ A skill about maintaining the config parser never goes into the shipped surfaces
 template never describes this repository.
 
 The package ships only the allow-list in the `files` field of `packages/cockpit/package.json`,
-which `packages/cockpit/src/packaging.test.ts` checks against real `npm pack` output. Adding a
+which `packages/cockpit/src/packaging.slow.test.ts` checks against real `npm pack` output. Adding a
 file to that list is the review.
 
 ## Setup
@@ -62,10 +62,15 @@ npm test -- packages/cockpit/src/tree-hygiene.test.ts
   `--maxWorkers=1`, `2` or `3` on a busy machine), accepts file paths and `-t '<test name>'` after
   `--`, prints failures as they happen, and writes the latest result to
   **.vitest-reports/latest.json**.
-- `npm run test:changed -- <base-commit>` runs the tests adjacent to what changed since that
-  commit, listing the selected files first. If the run ends early (deadline, failure, interrupt),
-  it writes the unfinished files to **.vitest-reports/remaining-<id>.txt** and prints the
-  `npm test -- $(cat ...)` command that reruns exactly those.
+- `npm run test:changed -- <base-commit>` runs the fast-tier tests adjacent to what changed since
+  that commit, listing the selected files first, and prints the slow-tier owners it left out with
+  the command that runs them; `--wide` runs them too. If the run ends early (deadline,
+  failure, interrupt), it names the files still running at the deadline, writes the unfinished
+  files to **.vitest-reports/remaining-<id>.txt** and prints the `npm test -- $(cat ...)` command
+  that reruns exactly those.
+- Test files named `*.slow.test.ts` are the slow tier: packaging and the installed tarball,
+  end-to-end CLI and composition runs, and the host Docker. `npm test` runs both tiers.
+  [Test tiers](docs/contributing/testing.md#test-tiers) says what belongs where.
 - Test discovery stays inside this checkout's `packages/` tree, so nested worktrees run their own
   tests.
 
@@ -84,11 +89,13 @@ npm run lint:supply-chain
 A targeted pass proves only its target.
 
 **Changed-test selection.** `npm run test:changed -- <base-commit>` follows imports through shared
-test helpers. A change to the Vitest configuration or the shared Git-isolation setup selects every
-package test. Unmapped paths refuse before dispatch: check them yourself rather than treating an
-empty selection as a pass. `node scripts/run-changed-tests.mjs <base-commit> --list` prints the
-same selection as a JSON array without running anything (it also accepts
-`--extra-test <test-path>`); the list is not evidence that the tests passed.
+test helpers and stops at the first importer that has its own adjacent tests. It runs the fast
+tier only, so run `npm test` before pushing. `--wide` runs what CI's changed-test cell runs: the
+slow tier too, and every test that reaches the change through its importers. A change to the Vitest configuration or the shared Git-isolation setup selects
+every package test. Unmapped paths refuse before dispatch: check them yourself rather than
+treating an empty selection as a pass. `node scripts/run-changed-tests.mjs <base-commit> --list`
+prints the tests it would run as a JSON array without running anything (it also accepts `--wide`
+and `--extra-test <test-path>`); the list is not evidence that the tests passed.
 
 **Splitting a run.** When a suite needs several invocations, partition whole test files and run
 each batch with `npm test -- <paths>`. Keep the commit, working tree, dependencies and test

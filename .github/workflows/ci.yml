@@ -189,14 +189,14 @@ jobs:
         run: |
           set -euo pipefail
           if npm run --silent test:changed -- HEAD^1 --list >/dev/null; then
-            npm run test:changed -- HEAD^1
+            npm run test:changed -- HEAD^1 --wide
           else
             echo '::notice::adjacent-owner selection refused this change (reason above); running the full suite'
             npm test
           fi
       - if: matrix.gate == 'compatibility'
         timeout-minutes: 15
-        run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.test.ts
+        run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts
       - name: tests leave the committed schema unchanged
         run: git diff --exit-code -- packages/cockpit/cockpit.schema.json
       # Platform-independent checks run once, on the cell that already holds an install and a

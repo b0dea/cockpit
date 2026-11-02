@@ -5,10 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { runTestsCli } from './run-tests.mjs'
 
 export const mechanism = {
-    id: 'changed-adjacent-owner-tests', module: 'scripts/run-changed-tests.mjs', exports: ['runChangedTestsCli'],
+    id: 'changed-adjacent-owner-tests', module: 'scripts/run-changed-tests.mjs', exports: ['SLOW_TEST_PATH', 'runChangedTestsCli'],
 }
 
 const TEST_PATH = /^packages\/[^/]+\/src\/.+\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/
+// The slow tier (packaging, the installed tarball, end-to-end CLI and composition runs, real Docker)
+// runs in the full suite. The changed-test loop defers it unless --wide asks for it.
+export const SLOW_TEST_PATH = /\.slow\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/
 const SOURCE_PATH = /^(packages\/[^/]+\/src\/.+)\.([cm]?[jt]s|[jt]sx)$/
 const MARKDOWN_PATH = /\.md$/
 const CHANGESET_FRAGMENT = /^\.changeset\/(?!README\.md$)[^/]+\.md$/
@@ -23,7 +26,7 @@ const FIXTURE_PATH = /^fixtures\/([^/]+)\/.+/
 const PACKAGE_FIXTURE_PATH = /^packages\/[^/]+\/src\/(?:.+\/)?fixtures\/(.+)$/
 const EXAMPLE_PATH = /^examples\/([^/]+)\/.+/
 const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
-const EXAMPLE_TEST = 'example-cockpit.test.ts'
+const EXAMPLE_TESTS = ['example-cockpit.test.ts', 'example-cockpit.slow.test.ts']
 const MODULE_PATH = /^packages\/[^/]+\/(?:src|test-support)\/.+\.[cm]?tsx?$/
 const PACKAGE_SCRIPT_MODULE_PATH = /^packages\/[^/]+\/scripts\/.+\.[cm]?js$/
 const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
@@ -34,7 +37,7 @@ const DOCUMENTATION_TESTS = [/^docs-lint(?:\..+)?\.test\.ts$/, /^docs-ownership\
 // Release fragments cannot change linter mechanisms or runnable examples; lint:docs validates
 // their bytes while the prose owner pins their estate.
 const CHANGESET_FRAGMENT_TEST = 'docs-lint.prose.test.ts'
-const MANIFEST_TESTS = ['packaging.test.ts', 'supply-chain.test.ts']
+const MANIFEST_TESTS = ['packaging.slow.test.ts', 'supply-chain.test.ts']
 const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.contracts.test.ts', 'test-protection.test.ts']
 const GENERATED_FIXTURES = 'packages/cockpit/test-support/generated-fixtures.ts'
 const GENERATED_COMMAND_TEST = /^command(?:\..+)?\.test\.ts$/
@@ -65,14 +68,14 @@ function existingFile(root, path) {
 function parseArguments(argv) {
     const [base, ...rest] = argv
     if (!base || base.startsWith('-')) {
-        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--list] [--extra-test <test-path>]...')
+        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--list] [--wide] [--extra-test <test-path>]...')
     }
     const extraTests = []
-    let list = false
+    const flags = new Set()
     for (let index = 0; index < rest.length; index += 1) {
-        if (rest[index] === '--list') {
-            if (list) throw new Error('--list was provided more than once')
-            list = true
+        if (rest[index] === '--list' || rest[index] === '--wide') {
+            if (flags.has(rest[index])) throw new Error(`${rest[index]} was provided more than once`)
+            flags.add(rest[index])
             continue
         }
         if (rest[index] !== '--extra-test' || !rest[index + 1] || rest[index + 1].startsWith('-')) {
@@ -80,7 +83,7 @@ function parseArguments(argv) {
         }
         extraTests.push(rest[++index])
     }
-    return { base, extraTests, list }
+    return { base, extraTests, list: flags.has('--list'), wide: flags.has('--wide') }
 }
 
 function changedPaths(root, baseCommitIsh) {
@@ -129,7 +132,7 @@ function testsReadingFixtures(root, needle, imports) {
     const readers = walkFiles(root, 'packages')
         .filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
         .filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
-    return [...new Set(readers.flatMap(path => TEST_PATH.test(path) ? [path] : testsImporting(imports, path)))]
+    return [...new Set(readers.flatMap(path => TEST_PATH.test(path) ? [path] : testsImporting(root, imports, path)))]
 }
 
 // A libexec program is spawned or required by path, never imported, so its owners are the tests
@@ -145,7 +148,7 @@ function testsNamingLibexecProgram(root, program, imports) {
     while (pending.length) {
         const name = basename(pending.pop())
         for (const path of modules.filter(candidate => readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
-            const owners = TEST_PATH.test(path) ? [path] : SOURCE_PATH.test(path) ? sourceOwners(root, path, () => imports) : testsImporting(imports, path)
+            const owners = TEST_PATH.test(path) ? [path] : SOURCE_PATH.test(path) ? sourceOwners(root, path, () => imports) : testsImporting(root, imports, path)
             for (const test of owners) tests.add(test)
         }
         for (const path of programs.filter(candidate => !visited.has(candidate) && readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
@@ -159,7 +162,7 @@ function testsNamingLibexecProgram(root, program, imports) {
 // A source file whose tests carry another name is owned by the tests that import it, directly or
 // through re-exports and test-support helpers. Static specifiers are
 // resolved against the importing file, so a same-named file in another directory never matches.
-function importedModules(root) {
+function importedModules(root, wide) {
     const imports = new Map()
     for (const path of walkFiles(root, 'packages').filter(candidate =>
         (MODULE_PATH.test(candidate) || PACKAGE_SCRIPT_MODULE_PATH.test(candidate)) && !candidate.endsWith('.d.ts'))) {
@@ -169,14 +172,17 @@ function importedModules(root) {
         }
         imports.set(path, targets)
     }
-    return imports
+    return { modules: imports, wide }
 }
 
-function testsImporting(imports, source) {
+// The walk stops at an importer with adjacent tests: those tests own the path through it. Walking
+// on past it selected every test above a widely imported module (one guard helper reached most
+// of the suite through the CLI), which is the full suite under another name. --wide walks on.
+function testsImporting(root, imports, source) {
     const importers = module => {
         const stem = module.replace(MODULE_EXTENSION, '')
         const names = new Set([stem, stem.replace(/\/index$/, '')])
-        return [...imports].filter(([, targets]) => [...names].some(name => targets.has(name))).map(([path]) => path)
+        return [...imports.modules].filter(([, targets]) => [...names].some(name => targets.has(name))).map(([path]) => path)
     }
     const visited = new Set([source])
     const pending = [source]
@@ -185,27 +191,37 @@ function testsImporting(imports, source) {
         for (const path of importers(pending.pop())) {
             if (visited.has(path)) continue
             visited.add(path)
-            if (TEST_PATH.test(path)) tests.add(path)
+            if (TEST_PATH.test(path)) {
+                tests.add(path)
+                continue
+            }
+            const adjacent = imports.wide ? [] : adjacentTests(root, path)
+            if (adjacent.length) for (const test of adjacent) tests.add(test)
             else pending.push(path)
         }
     }
     return [...tests]
 }
 
-// A source file is owned by its adjacent tests, or, when it has none, by the tests that import it.
-function sourceOwners(root, path, imports) {
+function adjacentTests(root, path) {
     const source = SOURCE_PATH.exec(path)
+    if (!source || TEST_PATH.test(path)) return []
     const directory = dirname(source[1])
     const stem = basename(source[1])
-    const candidates = readdirSync(resolve(root, directory))
+    return readdirSync(resolve(root, directory))
         .filter(name => name === `${stem}.test.${source[2]}` || name === `${stem}.spec.${source[2]}`
             || (name.startsWith(`${stem}.`) && (name.endsWith(`.test.${source[2]}`) || name.endsWith(`.spec.${source[2]}`))))
         .map(name => posix.join(directory, name))
         .filter(candidate => existingFile(root, candidate))
-    return candidates.length ? candidates : testsImporting(imports(), path)
 }
 
-function ownerTests(root, paths, extras) {
+// A source file is owned by its adjacent tests, or, when it has none, by the tests that import it.
+function sourceOwners(root, path, imports) {
+    const candidates = adjacentTests(root, path)
+    return candidates.length ? candidates : testsImporting(root, imports(), path)
+}
+
+function ownerTests(root, paths, extras, wide) {
     const selected = new Set()
     const unmapped = []
     let sourceChanged = false
@@ -221,8 +237,8 @@ function ownerTests(root, paths, extras) {
                 const candidate = posix.join(directory, name)
                 if (existingFile(root, candidate)) selected.add(candidate)
             }
-            imports ??= importedModules(root)
-            for (const test of testsImporting(imports, path)) selected.add(test)
+            imports ??= importedModules(root, wide)
+            for (const test of testsImporting(root, imports, path)) selected.add(test)
             continue
         }
         if (TEST_PATH.test(path)) {
@@ -232,7 +248,7 @@ function ownerTests(root, paths, extras) {
         }
         if (SOURCE_PATH.test(path)) {
             sourceChanged = true
-            const owners = sourceOwners(root, path, () => imports ??= importedModules(root))
+            const owners = sourceOwners(root, path, () => imports ??= importedModules(root, wide))
             if (owners.length) for (const candidate of owners) selected.add(candidate)
             else unmapped.push(path)
             continue
@@ -243,8 +259,8 @@ function ownerTests(root, paths, extras) {
         const example = EXAMPLE_PATH.exec(path)
         const mapped = []
         if (MODULE_PATH.test(path) || PACKAGE_SCRIPT_MODULE_PATH.test(path)) {
-            imports ??= importedModules(root)
-            mapped.push(...testsImporting(imports, path))
+            imports ??= importedModules(root, wide)
+            mapped.push(...testsImporting(root, imports, path))
         }
         if (CHANGESET_FRAGMENT.test(path)) mapped.push(...testsInDirectory(root, [CHANGESET_FRAGMENT_TEST]))
         else if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
@@ -255,15 +271,15 @@ function ownerTests(root, paths, extras) {
         }
         if (script) mapped.push(...testsReferencing(root, `${script[1]}.mjs`))
         if (LIBEXEC_PATH.test(path)) {
-            imports ??= importedModules(root)
+            imports ??= importedModules(root, wide)
             mapped.push(...testsNamingLibexecProgram(root, path, imports))
         }
         if (path === SCHEMA_ARTIFACT) mapped.push(...testsReferencing(root, 'cockpit.schema.json'))
         if (example && !MARKDOWN_PATH.test(path)) {
-            mapped.push(...testsReferencing(root, `examples/${example[1]}`), ...testsInDirectory(root, [EXAMPLE_TEST]))
+            mapped.push(...testsReferencing(root, `examples/${example[1]}`), ...testsInDirectory(root, EXAMPLE_TESTS))
         }
         if (fixture || packageFixture) {
-            imports ??= importedModules(root)
+            imports ??= importedModules(root, wide)
             mapped.push(...testsReadingFixtures(root, fixture ? `fixtures/${fixture[1]}` : `fixtures/${packageFixture[1]}`, imports))
         }
         if (mapped.length) for (const candidate of mapped) selected.add(candidate)
@@ -285,27 +301,41 @@ function ownerTests(root, paths, extras) {
 
 export async function runChangedTestsCli(argv) {
     try {
-        const { base, extraTests, list } = parseArguments(argv)
+        const { base, extraTests, list, wide } = parseArguments(argv)
         const root = repositoryRoot()
         const paths = changedPaths(root, base)
-        const owners = ownerTests(root, paths, extraTests)
+        const owners = ownerTests(root, paths, extraTests, wide)
         if (owners.unmapped.length) {
             for (const path of owners.unmapped) console.error(`CHANGED_TEST_OWNER_UNMAPPED: ${path}`)
             console.error('adjacent-owner tests refused before dispatch; --extra-test adds supplemental affected owners but does not resolve an unmapped path')
             return 2
         }
+        // An owner named with --extra-test was asked for, so it runs whatever its tier.
+        const deferred = wide ? [] : owners.selected.filter(path => SLOW_TEST_PATH.test(path) && !extraTests.includes(path))
+        const dispatched = owners.selected.filter(path => !deferred.includes(path))
+        const reportDeferred = () => {
+            if (!deferred.length) return
+            console.error(`Slow-tier owners not run (${deferred.length}); npm test runs them, or rerun with --wide:`)
+            console.error(`npm test -- ${deferred.join(' ')}`)
+        }
         if (list) {
-            console.log(JSON.stringify(owners.selected))
+            console.log(JSON.stringify(dispatched))
+            reportDeferred()
             return 0
         }
-        if (!owners.selected.length) {
-            console.log('adjacent-owner tests: no executable or test owners changed; no tests dispatched')
+        if (!dispatched.length) {
+            console.log(owners.selected.length
+                ? 'adjacent-owner tests: every changed owner is in the slow tier; no tests dispatched'
+                : 'adjacent-owner tests: no executable or test owners changed; no tests dispatched')
+            reportDeferred()
             return 0
         }
-        console.log(`adjacent-owner tests: ${owners.selected.length} owner files`)
-        for (const path of owners.selected) console.log(path)
+        console.log(`adjacent-owner tests: ${dispatched.length} owner files`)
+        for (const path of dispatched) console.log(path)
         console.log('Adjacent tests only; review non-adjacent dependents and shared seams separately.')
-        return await runTestsCli(owners.selected, { root })
+        const status = await runTestsCli(dispatched, { root })
+        reportDeferred()
+        return status
     } catch (error) {
         console.error(`CHANGED_TEST_SELECTION_INVALID: ${error instanceof Error ? error.message : String(error)}`)
         return 2
