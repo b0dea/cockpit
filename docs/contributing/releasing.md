@@ -146,9 +146,8 @@ The automation above needs these settings, done once by the maintainer:
   the Changesets configuration.
 - **Pre-publication wording:** in the same change, rewrite every statement that the package is not
   yet published or that sends readers to the source install first: `README.md`, `llms.txt`,
-  `docs/faq.md`, `docs/tutorial.md`, `docs/getting-started.md`, `docs/release-policy.md`,
-  `SECURITY.md`, `examples/synthetic/README.md` and the adopt skill source
-  `packages/cockpit/src/references/adopt-cockpit.skill.md`, then run `npm run references`.
+  `docs/tutorial.md`, `docs/getting-started.md`, `examples/synthetic/README.md` and the adopt skill
+  source `packages/cockpit/src/references/adopt-cockpit.skill.md`, then run `npm run references`.
   `docs-ownership.test.ts` fails while this list misses a file with such wording, and fails on any
   that remains once the package is public.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`
