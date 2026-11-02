@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -113,7 +113,7 @@ describe('changed adjacent-owner test runner', () => {
         } else {
             expect(JSON.parse(readFileSync(fixture.capture, 'utf8'))).toEqual([
                 'run', ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/shared.test.ts',
-                'packages/cockpit/src/untracked.test.ts', '--maxWorkers=4', '--allowOnly=false',
+                'packages/cockpit/src/untracked.test.ts', `--maxWorkers=${Math.min(4, availableParallelism())}`, '--allowOnly=false',
                 '--reporter=default', `--reporter=${join(dirname(SCRIPT), 'immediate-failure-reporter.mjs')}`,
                 '--reporter=json', expect.stringMatching(/^--outputFile\.json=/),
             ])
