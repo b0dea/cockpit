@@ -14,7 +14,7 @@ import { renderHumanDiagnostics } from './diagnostics.js'
 import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './registry-resolve/command.js'
 import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
-import type { ConfiguredSurfaceSelftestCommandInput } from './selftest/command.js'
+import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './selftest/command.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -185,6 +185,7 @@ describe('closed ordinary invocation metadata', () => {
             ['document', '../escape'], ['document', '--registry', '/outside/registry'],
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
             ['sync', '--interactive'], ['sync', '--interactive=false'], ['sync', '--adopt', '.claude/settings.json'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
+            ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['upgrade', '--release-evidence', 'release'], ['upgrade', '--release-evidence-sha256', 'a'.repeat(64)],
             ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'A'.repeat(64)],
             ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'a'.repeat(63)],
@@ -861,7 +862,22 @@ describe('generated environment process contract', () => {
             },
         }, { env: { PATH: '/synthetic/bin' } })).toBe(0)
         expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json', env: { PATH: '/synthetic/bin' } }])
-        expect(await runCli(['selftest', '--config', 'cockpit.toml'], captureIo().io)).toBe(2)
+        const missing = captureIo()
+        expect(await runCli(['selftest', '--config', 'cockpit.toml'], missing.io)).toBe(2)
+        expect(missing.output().stderr).toContain('write one with --write-probe-specifications <new file> first')
+        selftestCalls.length = 0
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json'], captureIo().io, {
+            selftest: async (input) => {
+                selftestCalls.push(input)
+                return { status: 0, diagnostics: [], result: null }
+            },
+        })).toBe(0)
+        for (const conflict of [['--probe-specifications', 'other.json'], ['--interactive'], ['--json']]) {
+            expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
+                captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
+            conflict.join(' ')).toBe(2)
+        }
+        expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' }])
         const upgrade = captureIo()
         expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--json'], upgrade.io, {
             upgrade: async (input) => {
@@ -877,7 +893,7 @@ describe('generated environment process contract', () => {
         const env = Object.defineProperty({
             PATH: undefined, Path: '/synthetic/harnesses', UNRELATED_DATA: 'synthetic-unrelated-canary',
         }, 'UNRELATED_ACCESSOR', { enumerable: true, get: unrelated })
-        const selftest = vi.fn(async (_input: ConfiguredSurfaceSelftestCommandInput) => ({
+        const selftest = vi.fn(async (_input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput) => ({
             status: 0, diagnostics: [], result: { pending: ['native'] },
         }))
         const capture = captureIo()
@@ -890,7 +906,8 @@ describe('generated environment process contract', () => {
             configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json',
             env: { PATH: undefined },
         })
-        expect(selftest.mock.calls[0]?.[0].env).toStrictEqual({ PATH: undefined })
+        const dispatched = selftest.mock.calls[0]?.[0]
+        expect(dispatched && 'env' in dispatched ? dispatched.env : null).toStrictEqual({ PATH: undefined })
         expect(unrelated).not.toHaveBeenCalled()
         expect(capture.output().stdout + capture.output().stderr).not.toContain('synthetic-unrelated-canary')
     })
@@ -1010,7 +1027,6 @@ describe('generated environment process contract', () => {
             sha256: 'b'.repeat(64),
             sourceSha256: 'c'.repeat(64),
             generatedManifestSha256: 'd'.repeat(64),
-            specificationsSha256: 'e'.repeat(64),
             commandVectors: [{
                 harness: 'Codex', capability: 'instruction-loading', skill: null,
                 invocation: ['{executable}', '--probe', '{control}'] as const,
@@ -1030,6 +1046,7 @@ describe('generated environment process contract', () => {
             'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--interactive',
         ], capture.io, {
             selftest: async (input) => {
+                if ('writeProbeSpecificationsPath' in input) throw new Error('an interactive run must not reach the file writer')
                 expect(await input.requestProbeSpecificationsApproval?.(specificationCandidate)).toBe(specificationCandidate.sha256)
                 expect(await input.requestExecutableApproval?.(candidate)).toBe(candidate.sha256)
                 return { status: 0, diagnostics: [], result: { pending: [] } }

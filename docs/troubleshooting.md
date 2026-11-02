@@ -159,8 +159,12 @@ file is not a repair.
 ### Selftest and upgrade
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
-digest, generated-manifest digest or specification size failed its check. Produce a fresh
-probe-specification file for the current generated manifest; do not edit the stored digests.
+digest, generated-manifest digest or specification size failed its check, or the file still has a
+`null` where a probe belongs. For a missing or stale file, write a fresh one with
+`npx --no cockpit selftest --config <path> --write-probe-specifications <new file>` and fill in its
+`null` fields; do not edit the stored digests. For a `null`, fill in the rows the message lists.
+[Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes each
+field.
 
 `SELFTEST_EXECUTION_INVALID` has two causes:
 
@@ -491,7 +495,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `RUNTIME_UNAVAILABLE` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SELFTEST_EXECUTION_INVALID` | see the message |
-| `SELFTEST_SOURCE_INVALID` | see the message |
+| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SETUP_CONFIG_REQUIRED` | see the message |

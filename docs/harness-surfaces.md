@@ -212,24 +212,57 @@ must not do, its review requirements and a line cap. The renderer refuses embedd
 undeclared commands, missing tool equivalents, missing procedures, duplicate names, and skills over
 the always-loaded size limit. Codex also receives its generated skill sidecar.
 
-`selftest` reads a probe-specification file tied to both the current source digest and the
-generated manifest:
+`selftest` runs each tool against a probe-specification file: one row per cell the generated
+manifest expects evidence for (each built-in tool's instruction loading, guard firing and the
+parity of each shipped skill, plus custom harness cells). The file is tied to the current
+`cockpit.toml` digest and generated manifest, so it goes stale whenever either changes.
 
-```sh
-./node_modules/.bin/cockpit selftest --interactive \
-  --config ./cockpit.toml \
-  --probe-specifications ./.cockpit/probe-specifications.json
-```
+1. After `sync`, write the file to a new path. It refuses a path that already exists, so a file you
+   have filled in is never overwritten:
 
-For built-in harnesses, it runs each candidate beside a deliberately broken control and captures
-version, help, candidate and broken-control events. It first runs the read-only generated
-environment check, and refuses a file that is missing, malformed, stale, or does not match the
-current source and manifest.
+   ```sh
+   npx --no cockpit selftest --config ./cockpit.toml \
+     --write-probe-specifications ./.cockpit/local/probe-specifications.json
+   ```
 
-Interactive mode needs a terminal and is unavailable in CI and JSON mode. Before running anything
-from the file, it shows the file's canonical path, its SHA-256, the source and manifest digests it
-is tied to, and each exact invocation, version and help command. You type that file digest, then
-approve each executable by its displayed absolute path and SHA-256.
+   It prints which rows it wrote and where each value came from. The generated manifest decides
+   `harness`, `capability`, the skill in `sample` and `unavailableCode`. cockpit fills
+   `versionCommand` and `helpCommand` with the tool's `--version` and `--help`.
+2. Replace every `null` in the file. Nothing in the manifest says how a given tool version can be
+   made to load a control file and report what it did, so these values come from you:
+   - `invocation`: the arguments, starting with the same placeholder as `versionCommand`
+     (`{executable}`, or `{node}` for a custom harness), with exactly one `{control}`. cockpit
+     replaces `{control}` with the path of a control file it writes under `.cockpit/local/probes/`:
+     the generated file under test, or a deliberately broken copy.
+   - `candidateCode` and `brokenCode`: codes you choose (capital letters, digits and underscores,
+     starting with a letter) that the tool prints as a line of their own. With the broken control it must
+     exit non-zero and print `brokenCode`. With the candidate it must exit 0 and print
+     `candidateCode` (instructed), or, for guard firing, exit non-zero and print it (enforced), or
+     print `unavailableCode` (unavailable). Any other result refuses the whole run.
+   - `sample.features` on skill-parity rows: which of `name`, `trigger`, `body-load`, `tools` and
+     `non-goals` your invocation exercises.
+
+   `selftest` refuses a file that still has a `null` and lists the rows.
+3. In a terminal outside CI, outside an agent session, run:
+
+   ```sh
+   npx --no cockpit selftest --interactive --config ./cockpit.toml \
+     --probe-specifications ./.cockpit/local/probe-specifications.json
+   ```
+
+   It first runs the read-only generated environment check and refuses a file that is missing,
+   malformed, stale, or does not match the current source and manifest. It then shows the file's
+   canonical path, its SHA-256, the source and manifest digests it is tied to, and each exact
+   invocation, version and help command. Compare the SHA-256 with `shasum -a 256 <file>` and type
+   it at the prompt. For each tool it then shows the absolute path and SHA-256 of the executable it
+   found on `PATH`; type that SHA-256 to let it run. Anything else leaves that cell `human_needed`
+   and it asks again at the tool's next cell. Approval lasts only for that run. Without `--interactive`, or in CI or JSON
+   mode, nothing in the file runs.
+
+For each approved built-in tool, `selftest` runs the version and help commands, then the invocation
+with the broken control and with the candidate, and records each event. The probes run with an
+empty environment, so a tool that keeps its sign-in in the environment or a keychain may report
+that it is not signed in; that cell stays `human_needed` with `authentication_required`.
 
 Some cells stay `human_needed` regardless:
 

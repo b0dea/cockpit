@@ -471,6 +471,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--probe-specifications` | string | unset |
+| `--write-probe-specifications` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
@@ -483,7 +484,7 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `SELFTEST_EXECUTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SELFTEST_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications; [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 
 | Other diagnostics |
 | --- |

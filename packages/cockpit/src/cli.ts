@@ -103,6 +103,7 @@ import { createReleaseEvidenceDiscovery } from './upgrade/release-evidence.js'
 import {
     runConfiguredSurfaceSelftestOutcome,
     runSelftestOperatorCommand,
+    type SurfaceSelftestDraftInput,
     type SurfaceSelftestExecutableCandidate,
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './selftest/command.js'
@@ -182,7 +183,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
         requestProbeSpecificationsApproval?: (
             candidate: SurfaceSelftestProbeSpecificationsCandidate,
         ) => Promise<string | undefined>
-    }>
+    }> | SurfaceSelftestDraftInput
     session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string }>
     sleep: SleepCommandInput
     sync: GeneratedEnvironmentCommandInput & Readonly<{
@@ -940,10 +941,20 @@ async function decodeRequest(
     }
 
     if (handler === 'selftest') {
-        const values = parsed.values as { config?: string; 'probe-specifications'?: string }
+        const values = parsed.values as { config?: string; 'probe-specifications'?: string; 'write-probe-specifications'?: string; interactive?: boolean; json?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
-        if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID', 'provide --probe-specifications <file>', '--probe-specifications')
+        const draftPath = values['write-probe-specifications']
+        if (draftPath !== undefined) {
+            if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
+            // Writing the file runs nothing, and --json would print the envelope without creating it.
+            const conflict = values['probe-specifications'] !== undefined ? '--probe-specifications'
+                : values.interactive ? '--interactive' : values.json ? '--json' : undefined
+            if (conflict) return usageOutcome('CLI_USAGE_INVALID', `--write-probe-specifications only writes the file; drop ${conflict}`, conflict)
+            return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath } }
+        }
+        if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID',
+            'provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
             'selftest executable search inputs must be bounded own string or undefined values; supply PATH without accessors and run npx --no cockpit selftest --help to retry')
         const env: Record<string, string | undefined> = {}
@@ -1216,7 +1227,11 @@ async function dispatchHandler(
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()))
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
-    if (request.handler === 'selftest') return runSelftestOperatorCommand(request.input, options, io, handlers.selftest ?? (async () => unavailable()))
+    if (request.handler === 'selftest') {
+        const selftest = handlers.selftest ?? (async () => unavailable())
+        return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)
+            : runSelftestOperatorCommand(request.input, options, io, selftest)
+    }
     if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
