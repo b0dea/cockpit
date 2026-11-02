@@ -15,3 +15,4 @@ Generated agent surfaces are portable across clones and tolerate the product tea
 - `preflight` names why it could not read a running stack (for example `GENERATED_ENVIRONMENT_UNAVAILABLE` for a `cockpit.toml` edit that was not synced) instead of a bare `LIFECYCLE_EVIDENCE_INVALID`.
 - `check` tells you to run `sync --interactive` in a terminal for a formerly generated path, since plain `sync` refuses to remove it without a person's approval.
 - The Claude plugin bundle carries the references its `cockpit-setup` skill tells the agent to read.
+- The guide-cost figures rest on the 2026-11-02 instruction-loading measurements and say, for Claude Code, that linked sibling guides are counted even where Claude Code skips them. The capability data marks the Codex and OpenCode instruction measurements as settled, and the Cursor claim now says its instructions reach it only through the root `AGENTS.md`.

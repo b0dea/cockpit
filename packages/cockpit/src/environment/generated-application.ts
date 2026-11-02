@@ -62,7 +62,7 @@ import {
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
 } from '../surfaces/ownership.js'
-import { observeSiblingGuides, planSiblingProjection, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
+import { observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
 import {
     renderSurfaceSet,
     surfaceModelSha256,
@@ -2004,6 +2004,17 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
         .map(grant => `{file:${openCodeGrantFile(grant.slug)}}/**`))].sort(compareCodeUnits).map(pattern => [pattern, 'allow' as const]))
 }
 
+// What each harness loads at start, from the dated instruction-loading runs. Claude Code applies a
+// scoped rule only to matching files, so a scoped source counts separately there.
+const GUIDE_LOAD_CHARACTERIZATIONS = Object.freeze(Object.fromEntries(shippedInstructionCapabilities()
+    .filter(fact => isGuardSurfaceTarget(fact.target))
+    .map(fact => [fact.target, Object.freeze({
+        measuredOn: fact.characterizedOn, metric: 'lines' as const, scopeSemantics: fact.target === 'claudecode' ? 'conditional' as const : 'full' as const,
+        provenance: fact.target === 'claudecode'
+            ? `${fact.provenance}; the count still includes each linked sibling guide, so it is an upper bound where Claude Code skips one`
+            : fact.provenance,
+    })])))
+
 function nativeSources(
     mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
     grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
@@ -2469,11 +2480,7 @@ async function prepareSurfaces(
         priorOwnedLinks: priorOwned.filter((row): row is Extract<SurfacePriorOwnedEntry, { kind: 'symlink' }> => row.kind === 'symlink')
             .map(row => ({ path: row.path, target: row.target })),
         standingSources: [],
-        loadCharacterizations: {
-            claudecode: { measuredOn: '2026-09-26', provenance: 'paired source-estate rule-loading measurement', metric: 'lines', scopeSemantics: 'conditional' },
-            codexcli: { measuredOn: '2026-09-26', provenance: 'root AGENTS loading measurement', metric: 'lines', scopeSemantics: 'full' },
-            opencode: { measuredOn: '2026-09-26', provenance: 'instructions-list loading measurement', metric: 'lines', scopeSemantics: 'full' },
-        },
+        loadCharacterizations: GUIDE_LOAD_CHARACTERIZATIONS,
     }
     let projection = planSiblingProjection(projectionInput)
     if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)

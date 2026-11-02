@@ -162,11 +162,11 @@ describe('live sibling projection planner', () => {
         expect(capabilities).toEqual([
             { target: 'claudecode', mechanism: 'claude-relative-import', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-11-02', measuredVersion: '2.1.316',
                 provenance: 'in a workspace Claude Code had not trusted, CLAUDE.local.md loaded an @-import whose link stayed inside the cockpit checkout but silently skipped one whose link resolved to a sibling beside the checkout, as it skips a missing import; a trusted workspace was not measured' },
-            { target: 'codexcli', mechanism: 'codex-root-instruction', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-11-02', measuredVersion: '0.165.0',
+            { target: 'codexcli', mechanism: 'codex-root-instruction', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-02', measuredVersion: '0.165.0',
                 provenance: 'Codex loaded the root AGENTS.md carrying cockpit\'s line telling the agent to read the sibling guide, but not the guide itself nor a decoy file beside it; reading the guide is left to the agent' },
-            { target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-11-02', measuredVersion: '1.19.4',
+            { target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-02', measuredVersion: '1.19.4',
                 provenance: 'OpenCode loaded the sibling guide named in the opencode.jsonc instructions list through its link, while a linked guide beside it that the list did not name stayed out' },
-            { target: 'cursor', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them' },
+            { target: 'cursor', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit\'s instructions reach Cursor only through the root AGENTS.md, and .cursor/rules holds only rules overlays; no run of the tool beside a broken control has shown that it loads either' },
             { target: 'grokcli', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them' },
         ])
         expect(Object.isFrozen(capabilities)).toBe(true)
@@ -203,8 +203,8 @@ describe('live sibling projection planner', () => {
         expect(result.links[0]!.target).toBe(relative(input.canonicalMainCheckout, result.links[0]!.sourceGuidePath))
         expect(result.native).toEqual([
             expect.objectContaining({ target: 'claudecode', path: 'CLAUDE.local.md', spelling: '@./.sibling-api-CLAUDE.md', ownership: 'shared-region', capability: 'instructed', evidence: 'pending_evidence' }),
-            expect.objectContaining({ target: 'codexcli', path: 'AGENTS.md', spelling: 'Read ./.sibling-api-CLAUDE.md before editing api.', ownership: 'shared-region', capability: 'instructed', evidence: 'pending_evidence' }),
-            expect.objectContaining({ target: 'opencode', path: 'opencode.jsonc', spelling: '.sibling-api-CLAUDE.md', ownership: 'shared-region', capability: 'instructed', evidence: 'pending_evidence' }),
+            expect.objectContaining({ target: 'codexcli', path: 'AGENTS.md', spelling: 'Read ./.sibling-api-CLAUDE.md before editing api.', ownership: 'shared-region', capability: 'instructed', evidence: 'not_applicable' }),
+            expect.objectContaining({ target: 'opencode', path: 'opencode.jsonc', spelling: '.sibling-api-CLAUDE.md', ownership: 'shared-region', capability: 'instructed', evidence: 'not_applicable' }),
         ])
         expect(result.grants.map(grant => [grant.target, grant.spelling])).toEqual([
             ['claudecode', 'permissions.additionalDirectories:../api'],
