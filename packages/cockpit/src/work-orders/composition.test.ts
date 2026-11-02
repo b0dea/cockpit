@@ -359,6 +359,15 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             ])
             const binding = browserRuntimeCoordination(command.runtime)
             expect(binding).toBeDefined()
+            const configBytes = await readFile(fixture.configPath, 'utf8')
+            await writeFile(fixture.configPath, configBytes.replace('version = "0.149.0"', 'version = "0.1.0"'))
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            const unmeasured = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath,
+                env: Object.freeze({ ...fixture.environment, HOME: stateHome, XDG_STATE_HOME: process.env.XDG_STATE_HOME }) })
+            if (unmeasured.kind !== 'complete') throw new Error(unmeasured.reason)
+            await expect(unmeasured.composition.browser('drive', false)).rejects.toThrow(
+                `declared: codexcli 0.1.0; measured: claudecode 2.1.220, codexcli 0.149.0, opencode 1.18.15); set a browser.harnesses row to a measured target and version in ${fixture.configPath}, then run npx --no cockpit sync --config ${fixture.configPath}`)
+            await writeFile(fixture.configPath, configBytes)
             expect(command.state).toEqual({ namespace: binding!.namespace, stackId: currentStack, ownerId: holder })
             await writeFile(join(fixture.root, '.gitignore'), `${await readFile(join(fixture.root, '.gitignore'), 'utf8')}.browser/auth/\n`)
             await reidentifyWorkOrder(fixture.root, 'WO-001', 'WO-301')

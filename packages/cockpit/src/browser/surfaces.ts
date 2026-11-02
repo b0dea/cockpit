@@ -19,7 +19,7 @@ import { assertBrowserArtifactRegistration, assertBrowserStorageStateCurrent, br
 export const mechanism = {
     id: 'browser-surfaces',
     module: 'packages/cockpit/src/browser/surfaces.ts',
-    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'validateBrowserNativeReceipt', 'withBrowserProjectOperationAdmission'],
+    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'measuredBrowserHarnessVersions', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'validateBrowserNativeReceipt', 'withBrowserProjectOperationAdmission'],
 } as const
 
 export type BrowserTestPackage = Readonly<{
@@ -128,6 +128,11 @@ const MEASURED = {
     codexcli: { version: '0.149.0', date: '2026-08-25', tool: 'mcp__playwright__browser_navigate', cli: false },
     opencode: { version: '1.18.15', date: '2026-08-25', tool: 'playwright_browser_navigate', cli: true },
 } as const
+
+/** The harness version each target's browser transport spelling was measured at, for diagnostics. */
+export function measuredBrowserHarnessVersions(): Readonly<Record<GuardSurfaceTarget, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(MEASURED).map(([target, row]) => [target, row.version])) as Record<GuardSurfaceTarget, string>)
+}
 
 const Sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const Version = z.string().regex(/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/).max(128)
