@@ -109,8 +109,11 @@ const GUARD_CONTROL_FILES = [
 // bundle carries its own MCP servers and hook registration, so no file below them is data. Every
 // harness starts the generated MCP wrapper scripts as the server program, so overwriting one changes
 // what runs before the next guarded call. The machine-local guard identity names the handler the
-// guard launches, so it is a control as well.
-const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory] as const
+// guard launches, so it is a control as well. The work-order store holds accepted contracts, state,
+// answers and completions whose digests are unkeyed, so a record an agent wrote there, signed as
+// the operator, would be accepted by the next `cockpit work` command: only cockpit writes it.
+const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
+    '.cockpit/work-orders', '.cockpit/transactions', '.cockpit/actors'] as const
 const SECRETS_ROOT = 'env/.secrets'
 /** Bounds on the policy's installed-code and search path directories and on the secrets files it enumerates. */
 export const GUARD_PROTECTED_LOCATION_LIMIT = 256

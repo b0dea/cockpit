@@ -314,6 +314,9 @@ describe('resolved guard evaluation', () => {
             '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
             '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json',
             '.cockpit/mcp/server.sh', '.cockpit/mcp/added.sh',
+            // An unkeyed work-order record written by an agent would be accepted as the operator's.
+            '.cockpit/work-orders/WO-001/current.json', '.cockpit/work-orders/WO-001/generation-00000001/completion.json',
+            '.cockpit/transactions/pending.json', '.cockpit/actors/operator.json',
             'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
@@ -321,7 +324,8 @@ describe('resolved guard evaluation', () => {
                 shellPayload(`printf ok > ${path}`),
             ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`).toEqual(refusal)
         }
-        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.cockpit/guards/notes.md`, `${root}/.opencode/agents/reviewer.md`]) {
+        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.cockpit/guards/notes.md`, `${root}/.opencode/agents/reviewer.md`,
+            `${root}/workorders/WO-001.md`]) {
             expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: path, content: '{}' })), policy(), inspect).decision, path).toBe('allow')
         }
     })

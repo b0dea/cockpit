@@ -75,8 +75,10 @@ Removing, renaming or directly overwriting a guard control is a hard denial, as 
 directory that contains one or an executable control below a protected plugin directory. Otherwise
 an exact command allow could disable a hook, or change a program a harness starts, before the next
 guarded call. The protected files include every harness's native MCP and permission outputs derived
-from the shipped harness registry, and the MCP wrapper scripts under `.cockpit/mcp/` that those
-outputs start. This boundary follows folded path spellings and verified
+from the shipped harness registry, the MCP wrapper scripts under `.cockpit/mcp/` that those
+outputs start, and the work-order store under `.cockpit/work-orders/`, `.cockpit/transactions/` and
+`.cockpit/actors/`, whose records carry no secret, so one an agent wrote would be accepted as the
+operator's by the next `cockpit work` command. This boundary follows folded path spellings and verified
 filesystem identities, so alternate case and aliases do not bypass it.
 
 The installed code the guard runs is a control too. The guard checks its entry point's digest, but
@@ -149,7 +151,9 @@ name a safe fix. `[[guards.allow]]` matches a command-vector prefix, optionally 
 checkout-relative working directory. An allow cannot bypass a hosted endpoint, protected branch,
 secret path, malformed capture or unavailable filesystem evidence. Wrapped and
 environment-modifying invocations are never allowed by a declared rule, because wrappers can change
-which program actually runs.
+which program actually runs. A rule that admits an interpreter, such as `["node"]`, `["python3"]` or
+`["perl"]`, admits whatever code it is given, inline (`node -e`) or in a file, and the guard cannot
+see what that code writes, guard controls included; without such a rule those invocations ask.
 
 Malformed or oversized input, incomplete policy, escaped or symlinked path evidence, inspection
 failure and exceeded limits produce `unavailable`. The
