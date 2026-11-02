@@ -49,13 +49,17 @@ describe('team metadata', () => {
     })
 
     it('ignores the declared generated host paths so run output such as screenshots cannot be committed', async () => {
-        const root = await fixture('repositories', ['.browser/cli', '.cockpit/generated/session'])
+        const root = await fixture('repositories', ['.browser/cli', '.cockpit/generated/session', 'generated/app.env'])
         expect(spawnSync('git', ['-C', root, 'init', '--quiet']).status).toBe(0)
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
-        expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain('!/env/.secrets/.gitignore\n/.browser/cli/\n/.cockpit/generated/session/\n/repositories/\n# cockpit:ignore:end')
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain('!/env/.secrets/.gitignore\n/.browser/cli\n/.cockpit/generated/session\n/generated/app.env\n/repositories/\n# cockpit:ignore:end')
         await mkdir(join(root, '.browser/cli'), { recursive: true })
         await writeFile(join(root, '.browser/cli/screenshot.png'), 'png')
         expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', '.browser/cli/screenshot.png']).status).toBe(0)
+        // A generated host path can be a file bound into a service.
+        await mkdir(join(root, 'generated'), { recursive: true })
+        await writeFile(join(root, 'generated/app.env'), 'KEY=value\n')
+        expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', 'generated/app.env']).status).toBe(0)
         expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
     })
 
