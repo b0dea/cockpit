@@ -420,7 +420,7 @@ health = { property = "the process answers", probe = { location = "in-stack", se
 `
         const refused = await loadCockpitConfig(fixture(withManifestProbe(['docker', 'image', 'inspect', image])))
         expect(refused).toMatchObject({ kind: 'refusal', result: null, diagnostics: [{
-            severity: 'error', code: 'CONFIG_HOST_EXECUTABLE_UNSUPPORTED',
+            severity: 'error', code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED',
             message: expect.stringContaining('environment.generated.services.1.image.manifest_probe runs "docker" on the host'),
             fix: expect.stringContaining('location = "in-stack"'),
         }] })

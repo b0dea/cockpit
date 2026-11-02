@@ -455,7 +455,7 @@ export async function loadCockpitConfig(
     if (hostOperation !== undefined) {
         return { kind: 'refusal', status: 2, result: null, diagnostics: [{
             severity: 'error',
-            code: 'CONFIG_HOST_EXECUTABLE_UNSUPPORTED' as const satisfies typeof ENVIRONMENT_CODES.CONFIG_HOST_EXECUTABLE_UNSUPPORTED,
+            code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_EXECUTABLE_UNSUPPORTED,
             message: `${hostOperation.path} runs "${hostOperation.executable}" on the host, but cockpit runs host operations only with the Node executable that runs cockpit, so this operation could never be planned`,
             target: path,
             fix: 'make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool',
