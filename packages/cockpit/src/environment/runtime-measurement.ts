@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { selectLocalDockerDaemon } from './docker-daemon.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -235,7 +235,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         `runtime ${identity} on daemon ${JSON.stringify(observed.name)} passed with engine ${row.engineVersion}; recorded with Compose floor ${composeFloor} in ${recorded.path}, shared by every checkout on this machine`,
         ...(recorded.replaced === null ? [] : [`it replaces the measurement from ${recorded.replaced.measuredOn} (engine ${recorded.replaced.engineVersion})`]),
         ...(recorded.discardedUnreadable === null ? [] : [`the previous record was unreadable and was replaced: ${recorded.discardedUnreadable}`]),
-        `cockpit.toml is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,
+        `${basename(configPath)} is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,
     ]
     return Object.freeze({ status: 0, result: Object.freeze({ ...summary, row, recorded: true, path: recorded.path }), destination: null,
         artifact: `${notes.join('\n')}\n`, diagnostics: Object.freeze([]) })

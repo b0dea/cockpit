@@ -14,10 +14,10 @@ import { GeneratedEnvironment } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
 
 const provenance = { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'Synthetic overlay declaration' }
-const overlay = { location: 'host', cwd: '.', argv: [process.execPath, '-e', 'void 0'], timeout_seconds: 30, provenance }
+const overlay = { location: 'host', cwd: '.', argv: ['node', '-e', 'void 0'], timeout_seconds: 30, provenance }
 const freshVolumeOverlay = {
     ...overlay,
-    argv: [process.execPath, '-e', `process.stdout.write(JSON.stringify({volume:'product-data',state:'empty',generation:'${'9'.repeat(64)}'}))`],
+    argv: ['node', '-e', `process.stdout.write(JSON.stringify({volume:'product-data',state:'empty',generation:'${'9'.repeat(64)}'}))`],
 }
 const stackOverlay = { ...overlay, location: 'in-stack', service: 'app' }
 const structuralDecisions = [
@@ -137,7 +137,7 @@ async function planned(
         namespace: state, stackId, holderId: holderA, configuration: await configuration(declaration), generation, observedAt,
         resolve: (operation, context) => ({
             ...nodeStep(context.id, process.cwd()),
-            argv: [operation.argv[0]!, ...operation.argv.slice(1)], argv0: operation.argv[0]!,
+            argv: [process.execPath, ...operation.argv.slice(1)], argv0: process.execPath,
         }),
     })
     if (result.kind !== 'preview') throw new Error(JSON.stringify(result))
@@ -246,7 +246,7 @@ describe('data mode execution', () => {
             namespace: state, stackId, holderId: holderA, configuration: await configuration(environment), generation, observedAt,
             resolve: (operation, context) => ({
                 ...nodeStep(context.id, process.cwd()),
-                argv: [operation.argv[0]!, ...operation.argv.slice(1)], argv0: operation.argv[0]!,
+                argv: [process.execPath, ...operation.argv.slice(1)], argv0: process.execPath,
             }),
         })).toMatchObject({ kind: 'refusal' })
     })
@@ -264,7 +264,7 @@ describe('data mode execution', () => {
             namespace: state, stackId, holderId: holderA, configuration: await configuration(), generation, observedAt,
             resolve: (operation, context) => mutate({
                 ...nodeStep(context.id, process.cwd()),
-                argv: [operation.argv[0]!, ...operation.argv.slice(1)], argv0: operation.argv[0]!,
+                argv: [process.execPath, ...operation.argv.slice(1)], argv0: process.execPath,
             }),
         })).toMatchObject({ kind: 'refusal' })
     })
@@ -274,7 +274,7 @@ describe('data mode execution', () => {
         const declaration = structuredClone(environment)
         const seeded = declaration.data.modes.find(({ mode }) => mode === 'seeded')!
         const sweep = seeded.operations.find(({ id }) => id === 'sweep')!
-        sweep.operation = { ...sweep.operation, argv: [process.execPath, '-e', 'process.exit(7)'] }
+        sweep.operation = { ...sweep.operation, argv: ['node', '-e', 'process.exit(7)'] }
         const plan = await planned('seeded', state, { declaration })
         const result = await executeDataMode(plan, executeProbe)
 
@@ -413,7 +413,7 @@ describe('data mode execution', () => {
         const declaration = structuredClone(environment)
         declaration.data.modes.find(({ mode }) => mode === 'restored')!.operations[0]!.prerequisites[0] = {
             ...freshVolumeOverlay,
-            argv: [process.execPath, '-e', `process.stdout.write(JSON.stringify({volume:'product-data',state:'empty',generation:'${'8'.repeat(64)}'}))`],
+            argv: ['node', '-e', `process.stdout.write(JSON.stringify({volume:'product-data',state:'empty',generation:'${'8'.repeat(64)}'}))`],
         }
         const plan = await planned('restored', state, { declaration })
         const executed: string[] = []

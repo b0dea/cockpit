@@ -364,7 +364,7 @@ describe('runtime logs', () => {
         const result = planLogs(volatile)
         expect(result).toEqual({
             kind: 'unavailable',
-            code: 'RUNTIME_UNMEASURED',
+            code: 'EVIDENCE_UNAVAILABLE',
             reason: 'log request must be readable JSON data',
         })
         expect(reads).toBe(0)
@@ -513,15 +513,20 @@ describe('runtime logs', () => {
 
         const result = await collectLogs(volatile, async () => outcome)
 
-        expect(result).toEqual(expect.objectContaining({ kind: 'unavailable', code: 'RUNTIME_UNMEASURED' }))
+        expect(result).toEqual(expect.objectContaining({ kind: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
         expect(reads).toBe(0)
     })
 
-    it.each([' {', ''])('refuses a partial sensitive container with header %j', async header => {
-        const plan = planWithOutput(`2026-09-07T00:00:01Z "credentials":${header}\n2026-09-07T00:00:01Z "value":"pretty-canary"\n`)
-        if (plan.kind !== 'planned') throw new Error('partial container log plan failed')
-        const result = await collectLogs(plan, executeProbe)
-        expect(result.kind).toBe('unavailable')
+    it.each([' {', ''])('refuses a partial sensitive container with header %j, saying why rather than blaming the runtime measurement', async header => {
+        const { since, tail, follow: _follow, ...request } = input
+        const result = await runLogs({ configPath: '/synthetic/cockpit.toml', service: input.service,
+            since, tail, follow: false, json: true }, {
+            observe: async () => ({ request: { ...request, env: { ...input.env,
+                COCKPIT_TEST_OUTPUT: `2026-09-07T00:00:01Z "credentials":${header}\n2026-09-07T00:00:01Z "value":"pretty-canary"\n` } } }),
+            execute: executeProbe,
+        })
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE',
+            message: `the logs of service ${input.service} are unavailable: a stdout record could not be redacted, so none are shown` }] })
         expect(JSON.stringify(result)).not.toContain('pretty-canary')
     })
 
@@ -579,17 +584,17 @@ describe('runtime logs', () => {
 
         const result = await collectLogs(plan, async () => candidate as never)
 
-        expect(result).toEqual(expect.objectContaining({ kind: 'unavailable', code: 'RUNTIME_UNMEASURED' }))
+        expect(result).toEqual(expect.objectContaining({ kind: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
     })
 
     it('contains rejected, unreadable, and unrelated callback outcomes', async () => {
         const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') return
-        await expect(collectLogs(plan, async () => { throw new Error('executor rejected') })).resolves.toEqual(expect.objectContaining({ kind: 'unavailable', code: 'RUNTIME_UNMEASURED' }))
+        await expect(collectLogs(plan, async () => { throw new Error('executor rejected') })).resolves.toEqual(expect.objectContaining({ kind: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
         const unreadable = { kind: 'complete' }
         Object.defineProperty(unreadable, 'execution', { enumerable: true, get: () => { throw new Error('unreadable') } })
-        expect((await collectLogs(plan, async () => unreadable as never)).code).toBe('RUNTIME_UNMEASURED')
+        expect((await collectLogs(plan, async () => unreadable as never)).code).toBe('EVIDENCE_UNAVAILABLE')
         const unrelated = await executeProbe({ ...plan.step, id: 'runtime:logs:unrelated' })
-        expect((await collectLogs(plan, async () => unrelated)).code).toBe('RUNTIME_UNMEASURED')
+        expect((await collectLogs(plan, async () => unrelated)).code).toBe('EVIDENCE_UNAVAILABLE')
     })
 
     it('rejects a genuine outcome from a caller-authored log command', async () => {
@@ -641,7 +646,7 @@ describe('runtime logs', () => {
 
     it.each([null, 7, {}, { before: {}, after: {}, extra: true }])('rejects malformed restart authority %#', async (restart) => {
         const plan = planWithOutput(''); if (plan.kind !== 'planned') return
-        await expect(collectLogs(plan, executeProbe, undefined, restart as never)).resolves.toEqual(expect.objectContaining({ kind: 'unavailable', code: 'RUNTIME_UNMEASURED' }))
+        await expect(collectLogs(plan, executeProbe, undefined, restart as never)).resolves.toEqual(expect.objectContaining({ kind: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
     })
 
     it('keeps malformed, invalid UTF-8, and failed capture explicitly unavailable', async () => {

@@ -727,7 +727,7 @@ describe('observation application runners', () => {
             configPath: '/synthetic/cockpit.toml', service: 'api', since: '5m', tail: 25, follow: true, json: true,
         } as const
         await expect(runLogs(publicInput, { observe, execute } as never))
-            .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNMEASURED' }] })
+            .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE' }] })
         expect(applicationOwners.logs.planLogs).not.toHaveBeenCalled()
         expect(observe).not.toHaveBeenCalled()
 
@@ -1084,7 +1084,7 @@ describe('observation application runners', () => {
 
         const result = await runLogs(input as never, { observe, execute: vi.fn() } as never)
 
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNMEASURED' }] })
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE' }] })
         expect(observe).not.toHaveBeenCalled()
     })
 
@@ -1100,7 +1100,7 @@ describe('observation application runners', () => {
             configPath: '/synthetic/cockpit.toml', service: 'api', since: '5m', tail: 25, follow: false, json: true,
         }, { observe: async () => observed as never, execute: vi.fn() })
 
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNMEASURED' }] })
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE' }] })
         expect(request).not.toHaveBeenCalled()
         expect(restart).not.toHaveBeenCalled()
     })

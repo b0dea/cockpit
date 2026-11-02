@@ -353,6 +353,20 @@ function undatedForeignProvenance(value: unknown, configName: string, path: read
     return undefined
 }
 
+// A host operation runs only with the Node that runs cockpit: that is the one host executable
+// whose identity cockpit binds into a generated runtime. Any other name could never be planned,
+// and `up` used to report only that the generated observations were incomplete.
+function unboundHostOperation(value: unknown, path: readonly string[]): Readonly<{ path: string; executable: string }> | undefined {
+    if (value === null || typeof value !== 'object') return undefined
+    const { location, argv } = value as { location?: unknown; argv?: unknown }
+    if (location === 'host' && Array.isArray(argv) && argv[0] !== 'node') return { path: path.join('.'), executable: String(argv[0]) }
+    for (const [key, item] of Object.entries(value)) {
+        const nested = unboundHostOperation(item, [...path, key])
+        if (nested !== undefined) return nested
+    }
+    return undefined
+}
+
 function refusal(code: RefusalCode, message: string, target: string, fix?: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
     const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target, ...(fix ? { fix } : {}) }
     return { kind: 'refusal', status: 2, diagnostics: [diagnostic], result: null }
@@ -435,6 +449,17 @@ export async function loadCockpitConfig(
     if (undated !== undefined) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
             `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source; add observed_on for any other source`, path)
+    }
+
+    const hostOperation = unboundHostOperation(validated.data.environment.generated, ['environment', 'generated'])
+    if (hostOperation !== undefined) {
+        return { kind: 'refusal', status: 2, result: null, diagnostics: [{
+            severity: 'error',
+            code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_EXECUTABLE_UNSUPPORTED,
+            message: `${hostOperation.path} runs "${hostOperation.executable}" on the host, but cockpit runs host operations only with the Node executable that runs cockpit, so this operation could never be planned`,
+            target: path,
+            fix: 'make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool',
+        }] }
     }
 
     const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))
