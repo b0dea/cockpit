@@ -11,7 +11,7 @@ import { readBoundedInput } from '../config/load.js'
 
 export const mechanism = {
     id: 'guard-local-identity', module: 'packages/cockpit/src/guards/local-identity.ts',
-    exports: ['GUARD_LOCAL_PATHS', 'encodeGuardLocalIdentity', 'parseGuardLocalIdentity', 'writeGuardLocalIdentity'],
+    exports: ['GUARD_LOCAL_PATHS', 'encodeGuardLocalIdentity', 'parseGuardLocalIdentity', 'writeCockpitLocalFiles', 'writeGuardLocalIdentity'],
 } as const
 
 export interface GuardHandlerIdentity {
@@ -42,7 +42,7 @@ const FORMAT = 'cockpit-guard-local/v1'
 const LOCAL_FILE_MAX_BYTES = 65_536
 const KEYS = ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode',
     'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'] as const satisfies readonly (keyof GuardHandlerIdentity)[]
-const IGNORE_BYTES = '# cockpit-owned: machine-local guard identity, written by `cockpit sync`, never committed\n*\n'
+const IGNORE_BYTES = '# cockpit-owned: machine-local files, written by `cockpit sync`, never committed\n*\n'
 
 export function encodeGuardLocalIdentity(identity: GuardHandlerIdentity): string {
     const ordered = Object.fromEntries(KEYS.map(key => [key, identity[key]]))
@@ -104,20 +104,31 @@ async function replaceFile(directory: string, name: string, bytes: string): Prom
 
 /** Publish the identity after the tracked surfaces it authenticates; the reason names what failed. */
 export async function writeGuardLocalIdentity(root: string, identity: GuardHandlerIdentity): Promise<{ readonly kind: 'complete' } | { readonly kind: 'refusal'; readonly message: string }> {
+    return writeCockpitLocalFiles(root, [{ name: 'guard-identity', bytes: encodeGuardLocalIdentity(identity) }])
+}
+
+/** Replace machine-local files under `.cockpit/local`, a directory that ignores itself; the reason names what failed. */
+export async function writeCockpitLocalFiles(root: string, files: readonly Readonly<{ name: string; bytes: string }>[]): Promise<{ readonly kind: 'complete' } | { readonly kind: 'refusal'; readonly message: string }> {
+    let current: string = GUARD_LOCAL_PATHS.directory
     try {
         const parent = await directoryAt(join(root, '.cockpit'), false)
         if (parent) return { kind: 'refusal', message: parent }
         const directory = join(root, GUARD_LOCAL_PATHS.directory)
         const local = await directoryAt(directory, true)
         if (local) return { kind: 'refusal', message: local }
+        current = GUARD_LOCAL_PATHS.ignore
         const ignore = join(root, GUARD_LOCAL_PATHS.ignore)
         const currentIgnore = await observeLocalFile(ignore)
         if (currentIgnore.kind !== 'complete' || currentIgnore.bytes.toString('utf8') !== IGNORE_BYTES) {
             await replaceFile(directory, '.gitignore', IGNORE_BYTES)
         }
-        await replaceFile(directory, 'guard-identity', encodeGuardLocalIdentity(identity))
+        for (const file of files) {
+            current = `${GUARD_LOCAL_PATHS.directory}/${file.name}`
+            if (!/^[a-z0-9][a-z0-9-]*$/.test(file.name)) return { kind: 'refusal', message: `${current} is not a plain local file name` }
+            await replaceFile(directory, file.name, file.bytes)
+        }
         return { kind: 'complete' }
     } catch (error) {
-        return { kind: 'refusal', message: `${GUARD_LOCAL_PATHS.identity} could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})` }
+        return { kind: 'refusal', message: `${current} could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})` }
     }
 }

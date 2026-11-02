@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { lstat, open, readlink, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
@@ -785,10 +785,12 @@ function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, 
     }
 }
 
-function grantSpelling(targetName: SurfaceTarget, path: string): string {
+// The spelling each tool resolves to the sibling: Codex reads a relative root from `.codex/`, and
+// OpenCode, which matches absolute paths only, reads the absolute directory `sync` writes locally.
+function grantSpelling(targetName: SurfaceTarget, path: string, slug: string): string {
     if (targetName === 'claudecode') return `permissions.additionalDirectories:${path}`
-    if (targetName === 'codexcli') return `sandbox_workspace_write.writable_roots:${path}`
-    if (targetName === 'opencode') return `permission.external_directory:${path}/**=allow`
+    if (targetName === 'codexcli') return `sandbox_workspace_write.writable_roots:${posix.relative('.codex', path)}`
+    if (targetName === 'opencode') return `permission.external_directory:{file:.cockpit/local/opencode-grant-${slug}}/**=allow`
     if (targetName === 'cursor') return `permission.read+write:${path}/**=allow`
     return `permission.read+edit:${path}/**=allow`
 }
@@ -834,7 +836,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
                 slug: sibling.slug,
                 target: harness,
                 path: portablePath,
-                spelling: grantSpelling(harness, portablePath),
+                spelling: grantSpelling(harness, portablePath, sibling.slug),
                 capability: 'instructed',
                 evidence: 'pending_evidence',
             })

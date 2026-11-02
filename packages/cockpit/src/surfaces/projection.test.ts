@@ -208,8 +208,8 @@ describe('live sibling projection planner', () => {
         ])
         expect(result.grants.map(grant => [grant.target, grant.spelling])).toEqual([
             ['claudecode', 'permissions.additionalDirectories:../api'],
-            ['codexcli', 'sandbox_workspace_write.writable_roots:../api'],
-            ['opencode', 'permission.external_directory:../api/**=allow'],
+            ['codexcli', 'sandbox_workspace_write.writable_roots:../../api'],
+            ['opencode', 'permission.external_directory:{file:.cockpit/local/opencode-grant-api}/**=allow'],
             ['cursor', 'permission.read+write:../api/**=allow'],
             ['grokcli', 'permission.read+edit:../api/**=allow'],
         ])

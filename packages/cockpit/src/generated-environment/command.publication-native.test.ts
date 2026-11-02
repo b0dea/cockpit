@@ -64,6 +64,7 @@ describe('public surface publication transaction', () => {
             }
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as {
                 enabledMcpjsonServers: string[]
+                disabledMcpjsonServers: string[]
                 permissions: { deny?: string[] }
             }
             const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
@@ -100,6 +101,10 @@ describe('public surface publication transaction', () => {
             }
             expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect(settings.enabledMcpjsonServers).toEqual(['approved-server'])
+            // Claude Code ignores `disabled` in `.mcp.json`; only this list keeps the server off.
+            expect(settings.disabledMcpjsonServers).toEqual(['unapproved-server'])
+            expect(synchronized.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'unapproved-server' }))
+            expect(claude.mcpServers['approved-server']!.args).toEqual([expect.stringMatching(/^\.cockpit\/mcp\/[a-f0-9]{64}\.sh$/)])
             // Claude's Read, Grep and Glob bypass the guard hook, so the read denial is native: every
             // secrets directory, and each declared instance by its clone-independent sibling suffix.
             expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
@@ -107,7 +112,7 @@ describe('public surface publication transaction', () => {
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({
                 sandbox_mode: 'workspace-write',
-                sandbox_workspace_write: { writable_roots: ['../external', 'app'] },
+                sandbox_workspace_write: { writable_roots: ['../../external', '../app'] },
             })
             expect(codex).not.toHaveProperty('default_permissions')
             expect(codex).not.toHaveProperty('permissions')
@@ -115,9 +120,11 @@ describe('public surface publication transaction', () => {
                 'approved-server': true, 'unapproved-server': false,
             })
             expect(openCode.permission.external_directory).toEqual({
-                '../external/**': 'allow',
-                'app/**': 'allow',
+                '{file:.cockpit/local/opencode-grant-app}/**': 'allow',
+                '{file:.cockpit/local/opencode-grant-external}/**': 'allow',
             })
+            // OpenCode reads the absolute directory from the machine-local file the pattern names.
+            expect(await readFile(join(fixture.root, '.cockpit/local/opencode-grant-external'), 'utf8')).toBe(await realpath(fixture.siblingDirectory))
             // OpenCode's native read is denied the same paths; its patterns are worktree-relative and
             // its `*` crosses directories. OpenCode adds the exact `$schema` value when it is missing,
             // which once made every later check report a conflict, so cockpit writes it itself.
@@ -142,11 +149,11 @@ describe('public surface publication transaction', () => {
 
             const approved = claude.mcpServers['approved-server']!
             const wrapper = approved.args[0]!
-            expect((await stat(wrapper)).mode & 0o111).toBe(0)
+            expect((await stat(join(fixture.root, wrapper))).mode & 0o111).toBe(0)
             const launched = spawnSync(approved.command, approved.args, {
-                cwd: fixture.root, env: { SYNTHETIC_TOKEN: 'named-value', UNDECLARED: 'excluded' }, encoding: 'utf8',
+                cwd: fixture.root, env: { PATH: '/usr/bin:/bin', SYNTHETIC_TOKEN: 'named-value', UNDECLARED: 'excluded' }, encoding: 'utf8',
             })
-            expect(launched).toMatchObject({ status: 0, stdout: 'SYNTHETIC_TOKEN=named-value\n' })
+            expect(launched).toMatchObject({ status: 0, stdout: 'PATH=/usr/bin:/bin\nSYNTHETIC_TOKEN=named-value\n' })
             expect(launched.stdout).not.toContain('UNDECLARED')
 
             const denied = runGeneratedGuard(fixture.root, join(outside, '.env'))

@@ -14,7 +14,7 @@ import {
     writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isProxy } from 'node:util/types'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
@@ -44,7 +44,7 @@ import {
     coreSurfaceDeclarations,
     shippedSkillNames,
 } from '../surfaces/core-declarations.js'
-import { collectMcpDeclarations, hasTargetMcpServers, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration } from '../surfaces/mcp.js'
+import { collectMcpDeclarations, hasTargetMcpServers, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration, type McpDiagnostic } from '../surfaces/mcp.js'
 import {
     renderSharedPostimage,
     bindSurfaceOwnershipIdentity,
@@ -73,7 +73,7 @@ import {
 import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { renderConsumerInstructions } from '../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../surfaces/restrictions.js'
-import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
@@ -249,6 +249,8 @@ interface PreparedEnvironment {
     readonly nativeHookPolicySource?: Readonly<{ path: string; sha256: string; identity: PersonaSourceIdentity }>
     readonly surfaceAssets: readonly SurfaceAssetIdentity[]
     readonly warnings: readonly SurfaceGenerationWarning[]
+    // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
+    readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[] }>[]
     readonly registry: DerivedRegistry
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
@@ -260,6 +262,9 @@ interface PreparedEnvironment {
     readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
     readonly guardHandler?: GuardHandlerIdentity
+    // Each mounted sibling's absolute directory, which `sync` writes to machine-local files that the
+    // committed OpenCode grant reads; see openCodeExternalDirectories.
+    readonly openCodeGrantRoots: readonly Readonly<{ slug: string; root: string }>[]
     readonly now: string
     readonly producedAt: string
 }
@@ -653,6 +658,21 @@ function guideLines(bytes: string): number {
     return bytes.trimEnd().split('\n').length
 }
 
+// An overlay pins the digest of the built-in it replaces, so a cockpit upgrade that changes that
+// built-in is reviewed before the override keeps shadowing it.
+function overrideChanged(finding: SurfaceUpgradeFinding, severity: 'error' | 'warning') {
+    return Object.freeze({
+        severity, code: 'OVERRIDDEN_CORE_CHANGED' as const satisfies SurfaceUpgradeFinding['code'], target: finding.overlaySource,
+        message: `overlay ${finding.name} replaces the built-in ${finding.name} recorded as sha256 ${finding.recordedSha256}, but this cockpit version's built-in is sha256 ${finding.currentSha256}`,
+        fix: 'review the new built-in against your override, set the overlay\'s replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml>',
+    })
+}
+
+function overrideChangedRefusal(finding: SurfaceUpgradeFinding): RefusalOutcome {
+    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: Object.freeze([overrideChanged(finding, 'error')]) })
+}
+
 function refuse(code: string, message: string, target?: string, fix?: string): RefusalOutcome {
     return Object.freeze({
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
@@ -695,9 +715,18 @@ function complete(
     }))
     return Object.freeze({
         kind: 'complete', artifact: null, destination: null,
-        diagnostics: Object.freeze(prepared.warnings.map(({ severity, code, target, path, message }) => Object.freeze({
-            severity, code, target: `${target}:${path}`, message,
-        }))),
+        diagnostics: Object.freeze([
+            ...prepared.warnings.map(({ severity, code, target, path, message }) => Object.freeze({
+                severity, code, target: `${target}:${path}`, message,
+            })),
+            ...prepared.unapprovedMcpServers.map(server => Object.freeze({
+                severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
+                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, is not in [mcp].approved, so every harness keeps it disabled`,
+                fix: 'to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed',
+            })),
+            // Real sync and check refuse a changed original; a preview reports it so it can be reviewed.
+            ...prepared.changedOverrideOriginals.map(finding => overrideChanged(finding, 'warning')),
+        ]),
         status: 0,
         result: Object.freeze({
             action,
@@ -1720,12 +1749,14 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         activeSurfaceOverrides: Object.freeze([]),
         changedOverrideOriginals: Object.freeze([]),
         guideSources: Object.freeze({ requests: Object.freeze([]), observations: Object.freeze([]), missing: Object.freeze([]) }),
+        openCodeGrantRoots: Object.freeze([]),
         sourceEvidence: Object.freeze([]),
         sourceRoots: Object.freeze([]),
         customSources: Object.freeze([]),
         adoptedSources: Object.freeze([]),
         surfaceAssets: Object.freeze([]),
         warnings: Object.freeze([]),
+        unapprovedMcpServers: Object.freeze([]),
         registry: derived.result,
         siblingRoots,
         hostInputRoots: Object.freeze(hostInputRoots),
@@ -1820,6 +1851,28 @@ function claudePluginManifest(): Readonly<{ bytes: string; sha256: string }> {
         description: 'Generated cockpit agent surfaces.',
     }, null, 2)}\n`
     return Object.freeze({ bytes, sha256: sha256(bytes) })
+}
+
+// A rules overlay is written into the instruction file every harness loads at start, so Rulesync
+// must see it as a root rule. A rule that already says `root: false` (Rulesync's default spelling)
+// is still always loaded; one that narrows itself with `globs` cannot be, so it is refused by name
+// rather than published as a rule that silently applies everywhere.
+function alwaysLoadedRule(bytes: string): Readonly<{ kind: 'complete'; bytes: string }> | Readonly<{ kind: 'refusal'; reason: string }> {
+    if (!bytes.startsWith('---\n')) return { kind: 'complete', bytes: `---\nroot: true\ntargets: ["*"]\n---\n${bytes}` }
+    const end = bytes.indexOf('\n---\n', 4)
+    if (end < 0) return { kind: 'refusal', reason: 'opens a frontmatter block that never closes with a `---` line' }
+    const document = parseDocument(bytes.slice(4, end + 1), { uniqueKeys: true })
+    const frontmatter: unknown = document.errors.length === 0 ? document.toJS({ maxAliasCount: 0 }) : undefined
+    if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) {
+        return { kind: 'refusal', reason: 'has frontmatter that is not a YAML mapping' }
+    }
+    const { globs } = frontmatter as Record<string, unknown>
+    if (globs !== undefined && !(Array.isArray(globs) && globs.every(glob => glob === '**/*' || glob === '**'))) {
+        return { kind: 'refusal', reason: 'limits itself to files with `globs`, but cockpit writes rules overlays into the instruction file every harness loads for every file' }
+    }
+    document.set('root', true)
+    if (!document.has('targets')) document.set('targets', ['*'])
+    return { kind: 'complete', bytes: `---\n${document.toString()}---\n${bytes.slice(end + 5)}` }
 }
 
 function expectsCodexSkillSidecar(bytes: string): boolean {
@@ -1925,6 +1978,22 @@ function openCodeReadDenials(
     return [...new Set(paths.flatMap(path => [path, `*/${path}`]))].sort(compareCodeUnits)
 }
 
+const CODEX_CONFIG_DIRECTORY = '.codex'
+
+/** The machine-local file `sync` writes with a sibling's absolute directory, for OpenCode to read. */
+export function openCodeGrantFile(slug: string): string {
+    return `${GUARD_LOCAL_PATHS.directory}/opencode-grant-${slug}`
+}
+
+// OpenCode matches `external_directory` patterns against absolute paths and has no token for the
+// project root, so `../api/**` never matches (measured with OpenCode 1.19.4 on 2026-11-02). The
+// committed pattern names a machine-local file instead; OpenCode substitutes `{file:...}` relative
+// to the config file, and refuses to start, naming the file, while it is missing.
+function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; target: SurfaceTarget }>[]): Readonly<Record<string, 'allow'>> {
+    return Object.fromEntries([...new Set(grants.filter(grant => grant.target === 'opencode')
+        .map(grant => `{file:${openCodeGrantFile(grant.slug)}}/**`))].sort(compareCodeUnits).map(pattern => [pattern, 'allow' as const]))
+}
+
 function nativeSources(
     mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
     grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
@@ -1946,17 +2015,21 @@ function nativeSources(
         sources.push(Object.freeze({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` }))
     }
     const paths = (target: SurfaceTarget) => [...new Set(grants.filter(grant => grant.target === target).map(grant => grant.path))].sort(compareCodeUnits)
-    const enabledMcpjsonServers = mcp.result.harnesses.find(row => row.target === 'claudecode')!.servers
-        .filter(server => server.enabled).map(server => server.name).sort()
+    const claudeServers = mcp.result.harnesses.find(row => row.target === 'claudecode')!.servers
+    const enabledMcpjsonServers = claudeServers.filter(server => server.enabled).map(server => server.name).sort()
+    // Claude Code ignores `disabled` in `.mcp.json` and offers an unlisted server for one-click
+    // approval; only this list keeps it off (measured with Claude Code 2.1.316 on 2026-11-02).
+    const disabledMcpjsonServers = claudeServers.filter(server => !server.enabled).map(server => server.name).sort()
     sources.push(Object.freeze({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
         permission: {},
         claudecode: {
             permission: { read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])) },
             permissions: { additionalDirectories: paths('claudecode') },
             enabledMcpjsonServers,
+            ...(disabledMcpjsonServers.length > 0 ? { disabledMcpjsonServers } : {}),
         },
         opencode: {
-            permission: { external_directory: Object.fromEntries(paths('opencode').map(path => [`${path}/**`, 'allow'])) },
+            permission: { external_directory: openCodeExternalDirectories(grants) },
         },
         cursor: {
             permission: {
@@ -1991,7 +2064,7 @@ function nativeFragmentSet(
 
 function nativeGrantFragmentSet(
     generated: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>,
-    grants: readonly Readonly<{ target: SurfaceTarget; path: string }>[],
+    grants: readonly Readonly<{ slug: string; target: SurfaceTarget; path: string }>[],
     paths: Readonly<Partial<Record<SurfaceTarget, string>>>,
     openCodeReads: readonly string[],
 ): NativeFragmentSet | undefined {
@@ -2016,8 +2089,10 @@ function nativeGrantFragmentSet(
             // Codex permission profiles reject the `..` segment required by a portable sibling
             // grant. Publish the core-owned workspace-write settings alone: mixing the legacy
             // sandbox with a generated profile would make Codex ignore that profile.
+            // Codex resolves a relative writable root against the directory of the config file,
+            // `.codex/`, not the cockpit root (measured with Codex 0.166.0 on 2026-11-02).
             const writableRoots = [...new Set(grants.filter(grant => grant.target === target)
-                .map(grant => grant.path))].sort(compareCodeUnits)
+                .map(grant => posix.relative(CODEX_CONFIG_DIRECTORY, grant.path)))].sort(compareCodeUnits)
             const bytes = stringifyToml({ ...base, sandbox_mode: 'workspace-write', sandbox_workspace_write: { writable_roots: writableRoots } })
             return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
         }
@@ -2030,8 +2105,7 @@ function nativeGrantFragmentSet(
             } catch { return undefined }
             if (Object.hasOwn(base, 'permission')) return undefined
         }
-        const externalDirectory = Object.fromEntries([...new Set(grants.filter(grant => grant.target === target)
-            .map(grant => `${grant.path}/**`))].sort(compareCodeUnits).map(grantPath => [grantPath, 'allow']))
+        const externalDirectory = openCodeExternalDirectories(grants)
         const read = Object.fromEntries(openCodeReads.map(rule => [rule, 'deny']))
         // OpenCode writes `$schema` into a project config that lacks it at every start, which put an
         // unowned member before the owned region; supplying OpenCode's exact value leaves it untouched.
@@ -2415,6 +2489,9 @@ async function prepareSurfaces(
     }
     let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved: config.mcp.approved, targets: SURFACE_TARGETS })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
+    const unapprovedMcpServers = Object.freeze(mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
+        .map(row => Object.freeze({ name: row.server!, sources: Object.freeze((row.sources ?? []).map(source =>
+            source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path)) })))
     if (mcp.diagnostics.some(row => row.code === 'MCP_APPROVAL_UNKNOWN')) {
         const row = mcp.diagnostics.find(candidate => candidate.code === 'MCP_APPROVAL_UNKNOWN')!
         return refuse(row.code, row.message, row.server)
@@ -2586,11 +2663,14 @@ async function prepareSurfaces(
     const shippedSkills = coreDeclarations.filter(declaration => declaration.feature === 'skills').map(declaration => declaration.name)
     const merge = mergeSurfaceDeclarations(coreDeclarations, config.surfaces.overlays)
     if (merge.kind !== 'complete') return refuse(merge.code, merge.message, 'surfaces')
-    const mergedSources = merge.surfaces.flatMap(surface => surface.sources).map(source => ({
-        path: source.path,
-        bytes: source.path.startsWith('rules/') && !source.bytes.startsWith('---\n')
-            ? `---\nroot: true\ntargets: ["*"]\n---\n${source.bytes}` : source.bytes,
-    }))
+    const mergedSources: SurfaceSourceFile[] = []
+    for (const source of merge.surfaces.flatMap(surface => surface.sources)) {
+        if (!source.path.startsWith('rules/')) { mergedSources.push({ path: source.path, bytes: source.bytes }); continue }
+        const rule = alwaysLoadedRule(source.bytes)
+        if (rule.kind === 'refusal') return refuse('SURFACE_RULE_SCOPE_UNSUPPORTED', `rules overlay ${source.path} ${rule.reason}`, source.path,
+            'remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml>')
+        mergedSources.push({ path: source.path, bytes: rule.bytes })
+    }
     // Every sibling directory relative to the cockpit root, whether or not a grant names it.
     const siblingDirectories = [...prepared.siblingRoots.siblings].map(([slug, sibling]) => ({ slug, path: relative(prepared.root, sibling.root) }))
     const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths)
@@ -2620,8 +2700,17 @@ async function prepareSurfaces(
         batch: { targets: SURFACE_TARGETS, features, sources: generatedSources, expectedOutputs: expected },
         ...(bundleRequest ? { bundle: bundleRequest } : {}),
     })
-    if (estate && estate.kind !== 'complete') return refuse('SURFACE_GENERATION_FAILED', estate.diagnostics[0]?.stderr
-        ?? estate.diagnostics[0]?.message ?? 'built-in surface generation was refused', estate.diagnostics[0]?.target)
+    if (estate && estate.kind !== 'complete') {
+        // The generator prints its warnings before the error that stopped it, then a stack; lead with
+        // that error and drop the stack, which names only the worker's scratch files.
+        const failure = estate.diagnostics[0]
+        const said = failure?.stderr?.split('\n').map(line => line.trim().replace(/^Error: /, ''))
+            .filter(line => line.length > 0 && !/^at /.test(line)) ?? []
+        const cause = said.at(-1)
+        return refuse('SURFACE_GENERATION_FAILED', [cause, failure?.message ?? 'built-in surface generation was refused',
+            ...said.length > 1 ? [`generator output: ${said.slice(0, -1).join(' ')}`] : []]
+            .filter((part): part is string => part !== undefined).join('; '), failure?.target)
+    }
     const generated = estate?.kind === 'complete' && estate.batch ? estate.batch : emptyGeneration()
 
     if (config.surfaces.bundles.includes('claudecode-plugin')) {
@@ -2925,7 +3014,16 @@ async function prepareSurfaces(
         ...(browserAuthority ? { browser: browserAuthority } : {}),
         testing: Object.freeze({ registry: testingRegistry }),
     })
-    return Object.freeze({ ...prepared, guardHandler, surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses: Object.freeze(configuredHarnesses),
+    const openCodeGrantRoots = projection.grants.filter(grant => grant.target === 'opencode')
+        .map(grant => Object.freeze({ slug: grant.slug, root: siblingRoots.get(grant.slug)! }))
+    // The file's bytes become part of an OpenCode pattern: a wildcard would widen the grant and a
+    // quote or backslash would change the JSON around it.
+    const unsafeGrant = openCodeGrantRoots.find(row => row.root === undefined || /[*?"\\\x00-\x1f\x7f]/.test(row.root))
+    if (unsafeGrant) return refuse('SURFACE_INPUT_INVALID',
+        `the directory of sibling ${unsafeGrant.slug} contains *, ?, a quote, a backslash or a control character, which OpenCode would read as part of its access pattern; move the checkout to a plain path`,
+        unsafeGrant.slug)
+    return Object.freeze({ ...prepared, guardHandler, openCodeGrantRoots: Object.freeze(openCodeGrantRoots), unapprovedMcpServers,
+        surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses: Object.freeze(configuredHarnesses),
         activeSurfaceOverrides: merge.overrides, changedOverrideOriginals: merge.findings,
         surfaceSelftest,
         surfaceHealth,
@@ -3623,6 +3721,8 @@ export async function applyGeneratedEnvironmentRepair(
     if (!record) return refuse('GENERATED_PUBLICATION_FAILED', 'repair authority is unknown or already consumed', 'generated-environment')
     issuedRepairs.delete(authority)
     const { prepared, adapters } = record
+    const changedOriginal = prepared.changedOverrideOriginals[0]
+    if (changedOriginal && settings.dryRun !== true) return overrideChangedRefusal(changedOriginal)
     const outcome = await runPublicationPlan(record.plan, {
         ...adapters,
         dryRun: settings.dryRun === true,
@@ -3643,6 +3743,13 @@ export async function applyGeneratedEnvironmentRepair(
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses every agent tool call until it exists`,
             GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
+    }
+    if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
+        const local = await writeCockpitLocalFiles(prepared.root, prepared.openCodeGrantRoots.map(row => ({
+            name: basename(openCodeGrantFile(row.slug)), bytes: row.root })))
+        if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
+            `the committed OpenCode settings were published, but ${local.message}; OpenCode refuses to start until it exists`,
+            GUARD_LOCAL_PATHS.directory, 'fix the path, then run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
     }
     return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun ? outcome.staleRemoval : undefined)
 }
@@ -3666,6 +3773,7 @@ async function checkCanonicalGeneratedEnvironment(
     const priorSurfaces = ownership.manifest.entries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row)
     const prepared = seed?.surfaceSelftest ? seed : await prepareSurfaces(base, priorSurfaces, adapters, ownership.manifest)
     if ('status' in prepared) return prepared
+    if (prepared.changedOverrideOriginals[0]) return overrideChangedRefusal(prepared.changedOverrideOriginals[0])
     const ownedInput = await ownedInputOverlap(prepared, ownership.manifest.entries)
     if (ownedInput.kind === 'invalid') return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'authenticated input identity could not be compared with generated ownership metadata', OWNERSHIP_PATH,

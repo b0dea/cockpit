@@ -237,6 +237,22 @@ describe('generated environment command', () => {
         }
     })
 
+    it('writes a rules overlay with Rulesync frontmatter into the always-loaded guide and refuses a scoped one by name', async () => {
+        const fixture = await surfaceConsumer('rules-frontmatter', { rules: true })
+        const config = await readFile(fixture.configPath, 'utf8')
+        const plain = 'bytes = "Read the synthetic sibling guide before editing.\\n"'
+        expect(config).toContain(plain)
+        const withFrontmatter = (frontmatter: string) => config.replace(plain,
+            `bytes = ${JSON.stringify(`---\n${frontmatter}---\nRead the synthetic sibling guide before editing.\n`)}`)
+        await writeFile(fixture.configPath, withFrontmatter('root: false\ntargets: ["*"]\ndescription: Synthetic rule\nglobs: ["**/*"]\n'))
+        const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+        expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')).toContain('Read the synthetic sibling guide before editing.')
+        await writeFile(fixture.configPath, withFrontmatter('root: false\nglobs: ["src/**"]\n'))
+        expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })).toMatchObject({ kind: 'refusal',
+            diagnostics: [expect.objectContaining({ code: 'SURFACE_RULE_SCOPE_UNSUPPORTED', target: 'rules/synthetic.md' })] })
+    })
+
     it('binds shared ownership markers to the cockpit and refuses copied identities before publication', async () => {
         const fixture = await surfaceConsumer('shared-owner-binding', { rules: true })
         const preview = await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })

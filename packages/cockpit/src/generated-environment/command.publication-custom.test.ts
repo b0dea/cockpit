@@ -220,9 +220,21 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
 ]
 `)
 
-            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            // The pin records which built-in the overlay was reviewed against: a preview names the
+            // change, and sync and check refuse until the pin is updated.
+            const pinnedConfig = (await readFile(fixture.configPath, 'utf8')).replace(recordedSha256, originalSha256)
+            const staleConfig = await readFile(fixture.configPath, 'utf8')
+            await writeFile(fixture.configPath, pinnedConfig)
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            await writeFile(fixture.configPath, staleConfig)
+            const changed = expect.objectContaining({ code: 'OVERRIDDEN_CORE_CHANGED', target: 'surfaces/bootstrap-override.json',
+                message: expect.stringContaining(originalSha256) })
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [changed] })
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [changed] })
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })
             expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
             if (synced.kind !== 'complete') return
+            expect(synced.diagnostics).toContainEqual(changed)
             if (additionalSkill) expect(synced.result.paths).toContain('.agents/skills/inspect/SKILL.md')
             const application = generatedApplicationProjection(synced.result.application)
             expect(application?.activeSurfaceOverrides).toEqual([{
@@ -236,6 +248,10 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(Object.isFrozen(application?.activeSurfaceOverrides)).toBe(true)
             expect(Object.isFrozen(application?.changedOverrideOriginals)).toBe(true)
             expect(generatedApplicationProjection({ ...synced.result.application })).toBeUndefined()
+            await writeFile(fixture.configPath, pinnedConfig)
+            const pinned = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(pinned, JSON.stringify(pinned.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(pinned.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'OVERRIDDEN_CORE_CHANGED' }))
         }, 120_000)
 
         it('authenticates enforced custom evidence before invoking its declared module', async () => {
@@ -464,7 +480,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
             await expect(lstat(join(first.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
 
-        })
+        }, 180_000)
 
         it('keeps an active in-repo sibling runnable without projecting root instruction files into themselves', async () => {
             const fixture = await surfaceConsumer('in-repo-active-sibling')
@@ -486,7 +502,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(await readlink(join(fixture.root, '.sibling-app-docs-CONVENTIONS.md'))).toBe('docs/CONVENTIONS.md')
             expect(parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8'))).toEqual({
                 sandbox_mode: 'workspace-write',
-                sandbox_workspace_write: { writable_roots: ['.'] },
+                sandbox_workspace_write: { writable_roots: ['..'] },
             })
         }, 180_000)
 
