@@ -1,7 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
@@ -226,10 +225,7 @@ const result = spawnSync('/usr/bin/git', argv, { stdio: 'inherit' }); process.ex
         await link(join(tools, 'git'), hardlinkedGitAlias)
     }
     await writeFile(join(applicationRoot, '.env.example'), 'SYNTHETIC=true\n')
-    // A Codex CLI installed on this machine must not stand in for the fixture's evaluator, or removing the
-    // fixture's codex would not leave the evaluator missing.
-    const hostPath = (process.env.PATH ?? '').split(delimiter).filter(directory => !existsSync(join(directory, 'codex')))
-    const environment = Object.freeze({ ...process.env, PATH: [tools, ...hostPath].join(delimiter) })
+    const environment = Object.freeze({ ...process.env, PATH: `${tools}${delimiter}${process.env.PATH ?? ''}` })
     const configured = await createConfiguredWorkApplicationComposition({ configPath, env: environment })
     if (configured.kind !== 'complete') throw new Error(configured.reason)
     return { root, applicationRoot, configPath, environment, composition: configured.composition, secondBytes, hardlinkedGitAlias }

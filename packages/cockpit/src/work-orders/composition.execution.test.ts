@@ -455,7 +455,7 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
                 .toMatchObject({ kind: 'complete', operation: 'work-execute' })
         }
         await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
-            kind: 'refusal', operation: 'work-grade', reason: expect.stringContaining('simplification review did not run: the Codex CLI (codex) is not on PATH'),
+            kind: 'refusal', operation: 'work-grade', reason: expect.stringMatching(/simplification review did not run: the Codex CLI at .*\/tools\/codex is unavailable or changed/),
         })
         await expect(runWorkApplication({ operation: 'browser-drive' }, optionalCapabilities.composition))
             .resolves.toMatchObject({ kind: 'refusal', operation: 'browser-drive', reason: expect.stringContaining('browser application projection is unavailable') })
