@@ -355,7 +355,7 @@ export function activateAcceptedWorkOrder(
     let text: string
     try {
         text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(source)
-    } catch {
+    } catch { // Fatal decoding throws only for invalid UTF-8, which the refusal names.
         return refuse('WO_ACCEPTANCE_INVALID', 'Activation source is not valid UTF-8')
     }
     const frontmatter = /^(---\r?\n)([\s\S]*?)(\r?\n---\r?\n)/.exec(text)
@@ -503,7 +503,7 @@ function snapshotAcceptanceRecord(value: unknown): JsonSnapshot | undefined {
 function safeAcceptanceRecord(value: unknown): WorkOrderAcceptanceRecord | undefined {
     try {
         return parseAcceptanceRecord(snapshotAcceptanceRecord(value))
-    } catch (_error) {
+    } catch { // A throwing accessor or proxy trap on a caller-supplied record is malformed input the caller refuses.
         return undefined
     }
 }

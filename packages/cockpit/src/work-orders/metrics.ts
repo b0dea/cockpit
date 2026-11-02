@@ -66,7 +66,7 @@ function processCounts(observation: WorkOrderProcessObservation): ProcessCounts 
         return refuse('WO_METRICS_PROCESS', 'Process metrics require a named writer, bounded argv/output, exit 0, no signal and nonempty output')
     }
     let decoded: unknown
-    try { decoded = JSON.parse(observation.stdout) } catch {
+    try { decoded = JSON.parse(observation.stdout) } catch { // Parser text would quote the process output.
         return refuse('WO_METRICS_PROCESS', 'Process metrics output is not valid JSON')
     }
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)

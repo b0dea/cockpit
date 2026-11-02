@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExecutionStep } from '../environment/contract.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-environment/command.js'
 import { runWorkApplication } from './application.js'
 import { createConfiguredWorkApplicationComposition } from './composition.js'
 import { parseWorkOrder } from './contract.js'
+import { CORE_EVALUATOR_ASSET } from '../surfaces/core-declarations.js'
 import { createWorkCompositionFixtureSupport, reidentifyWorkOrder } from '../../test-support/work-composition-fixture.js'
 
 const executionBoundary = vi.hoisted(() => ({ steps: [] as ExecutionStep[], evaluatorRequests: [] as Record<string, unknown>[] }))
@@ -24,10 +26,30 @@ vi.mock('../environment-exec/execute.js', async importOriginal => {
     } }
 })
 
+// Permission failures chmod cannot stage here: the evaluator source is a shared package file, and an
+// unsearchable tools directory would fail before the Codex CLI itself is inspected.
+const deniedPaths = vi.hoisted(() => ({ open: '', lstat: '' }))
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>()
+    const denied = (syscall: string, path: string) =>
+        Object.assign(new Error(`EACCES: permission denied, ${syscall} '${path}'`), { code: 'EACCES', errno: -13, syscall, path })
+    return { ...actual,
+        openSync: (...args: unknown[]) => {
+            if (deniedPaths.open && args[0] === deniedPaths.open) throw denied('open', deniedPaths.open)
+            return Reflect.apply(actual.openSync, actual, args) as number
+        },
+        lstatSync: (...args: unknown[]) => {
+            if (deniedPaths.lstat && args[0] === deniedPaths.lstat) throw denied('lstat', deniedPaths.lstat)
+            return Reflect.apply(actual.lstatSync, actual, args) as ReturnType<typeof actual.lstatSync>
+        },
+    }
+})
+
 const roots: string[] = []
 afterEach(async () => {
     executionBoundary.steps.length = 0
     executionBoundary.evaluatorRequests.length = 0
+    deniedPaths.open = ''; deniedPaths.lstat = ''
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -488,6 +510,12 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
             kind: 'refusal', operation: 'work-grade', reason: expect.stringMatching(/simplification review did not run: the Codex CLI at .*\/tools\/codex is unavailable or changed/),
         })
+        // An unreadable evaluator source or Codex CLI names the system error, which is what the person has to fix.
+        deniedPaths.open = fileURLToPath(new URL(`../../surfaces/${CORE_EVALUATOR_ASSET}`, import.meta.url))
+        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'refusal', reason: expect.stringContaining('Authenticated evaluator source is unavailable: EACCES: permission denied, open'),
+        })
+        deniedPaths.open = ''
         await expect(runWorkApplication({ operation: 'browser-drive' }, optionalCapabilities.composition))
             .resolves.toMatchObject({ kind: 'refusal', operation: 'browser-drive', reason: expect.stringContaining('browser application projection is unavailable') })
         await rename(unavailableCodexPath, codexPath)
@@ -495,6 +523,11 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             await expect(runWorkApplication({ operation: 'work-execute', workOrderId: 'WO-001', approach }, fixture.composition))
                 .resolves.toMatchObject({ kind: 'complete', operation: 'work-execute' })
         }
+        deniedPaths.lstat = codexPath
+        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'refusal', reason: expect.stringContaining('Executable codex is unavailable: EACCES: permission denied, lstat'),
+        })
+        deniedPaths.lstat = ''
         const actorsPath = join(fixture.root, '.cockpit/actors'); const outsideActors = join(fixture.root, 'outside-actors')
         await Promise.all([rm(actorsPath, { recursive: true }), mkdir(outsideActors)])
         await symlink(outsideActors, actorsPath)

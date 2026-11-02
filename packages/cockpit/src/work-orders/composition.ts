@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { parseDocument } from 'yaml'
 import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
-import { ENVIRONMENT_CODES, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
@@ -259,7 +259,7 @@ function exactSource(source: SourceProvenance): boolean {
     try {
         const bytes = readExactFile(source.path, source.byteLength)
         return bytes.byteLength === source.byteLength && digest(bytes) === source.sha256
-    } catch { return false }
+    } catch { return false } // A source that cannot be read back cannot be shown to be the admitted bytes; callers refuse it as changed.
 }
 
 function contained(root: string, relativePath: string, allowAbsent = false): string {
@@ -302,7 +302,7 @@ function readAnchorsCurrent(anchors: readonly ReadDirectoryAnchor[]): boolean {
                 && (!anchor.trackContents || opened.mtimeNs === anchor.mtimeNs && opened.ctimeNs === anchor.ctimeNs
                     && named.mtimeNs === anchor.mtimeNs && named.ctimeNs === anchor.ctimeNs)
         })
-    } catch { return false }
+    } catch { return false } // An anchor that can no longer be observed is not current; callers refuse the read as changed.
 }
 
 function anchoredReadPath(root: string, relativePath: string, allowAbsent = false, contentRoot = root): Readonly<{
@@ -512,7 +512,7 @@ async function executable(directories: readonly string[], name: string): Promise
         if (resolved.state !== 'available') { unavailableReason = resolved.reason; continue }
         let bytes: number
         try { bytes = lstatSync(resolved.value.canonicalPath).size }
-        catch { unavailableReason = `Executable ${name} is unavailable`; continue }
+        catch (error) { unavailableReason = `Executable ${name} is unavailable: ${errorCause(error)}`; continue }
         return Object.freeze({ state: 'available' as const, value: Object.freeze({
             path: resolved.value.canonicalPath, sha256: resolved.value.sha256, bytes,
         }) })
@@ -613,7 +613,7 @@ function evaluatorFailureCause(stdout: Buffer, stderr: Buffer): string {
             const event = JSON.parse(line) as { type?: unknown; message?: unknown; error?: { message?: unknown } }
             if (event.type === 'error' && typeof event.message === 'string') cause = event.message
             else if (event.type === 'turn.failed' && typeof event.error?.message === 'string') cause = event.error.message
-        } catch { continue }
+        } catch { continue } // The stream interleaves non-JSON lines; only parsed error events name a cause.
     }
     const text = (cause ?? stderr.toString('utf8')).trim()
     return text ? text.slice(-2_048) : 'no error event or stderr output'
@@ -1332,7 +1332,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             try {
                 beforeManifest = record.entries[1]?.before === null ? undefined : parseManifest(journalBytes(record.entries[1]?.before)!)
                 afterManifest = parseManifest(journalBytes(record.entries[1]?.after)!)
-            } catch { return false }
+            } catch { return false } // A journal entry that does not parse makes the record malformed, which the caller refuses.
             return boundedName(record.owner) && contractPath.startsWith('workorders/') && contractPath.endsWith('.md')
                 && !contractPath.startsWith('workorders/programmes/') && contained(root, contractPath) !== root
                 && record.entries[1]?.path === `.cockpit/work-orders/${record.owner}/current.json`
@@ -1345,7 +1345,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (record.kind === 'intake') {
             const contract = parseWorkOrder(journalBytes(record.entries[0]?.after)!)
             let audit: unknown
-            try { audit = JSON.parse(journalBytes(record.entries[1]?.after)!.toString('utf8')) } catch { return false }
+            try { audit = JSON.parse(journalBytes(record.entries[1]?.after)!.toString('utf8')) } catch { return false } // The caller refuses the record as malformed; parser text would quote the journal.
             return boundedName(record.owner) && contract.ok && contract.value.frontmatter.id === record.owner
                 && contract.value.frontmatter.status === 'draft' && record.entries[0]?.before === null && record.entries[1]?.before === null
                 && record.entries[0]?.path === `workorders/${record.owner}.md`
@@ -1358,7 +1358,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         try {
             beforeLedgerProgramme = JSON.parse(journalBytes(record.entries[ledgerIndex]?.before)?.toString('utf8') ?? '')?.programme
             afterLedgerProgramme = JSON.parse(journalBytes(record.entries[ledgerIndex]?.after)?.toString('utf8') ?? '')?.programme
-        } catch { return false }
+        } catch { return false } // The caller refuses the record as malformed; parser text would quote the journal.
         return /^[a-z][a-z0-9-]{0,63}$/.test(programme)
             && /^workorders\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(record.entries[0]?.path ?? '')
             && record.entries[0]?.before === null && beforeLedgerProgramme === programme && afterLedgerProgramme === programme
@@ -1742,7 +1742,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 const evaluatorPath = isAbsolute(evaluator.path) ? evaluator.path : contained(root, evaluator.path)
                 const observed = readExactFile(evaluatorPath, 65_536)
                 if (observed.toString('utf8') !== evaluator.bytes) return { kind: 'never-ran', reason: 'Authenticated evaluator source changed' }
-            } catch { return { kind: 'never-ran', reason: 'Authenticated evaluator source is unavailable' } }
+            } catch (error) { return { kind: 'never-ran', reason: `Authenticated evaluator source is unavailable: ${errorCause(error)}` } }
         }
         const executableDirectories = evaluator.executableDirectories ?? authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES
         const evaluatorResolution = evaluator.executable
@@ -1754,7 +1754,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         const evaluatorExecutable = evaluatorResolution.value
         const observedCli = await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
         if (observedCli.state !== 'available' || JSON.stringify(observedCli.value) !== JSON.stringify(evaluatorExecutable)) {
-            return { kind: 'never-ran', reason: `the Codex CLI at ${evaluatorExecutable.path} is unavailable or changed since cockpit inspected it` }
+            return { kind: 'never-ran', reason: `the Codex CLI at ${evaluatorExecutable.path} is unavailable or changed since cockpit inspected it${
+                observedCli.state === 'unavailable' ? ` (${observedCli.reason})` : ''}` }
         }
         const cli = evaluatorExecutable
         const timeoutMs = config.evaluatorTimeoutSeconds * 1_000
@@ -2225,7 +2226,7 @@ function captureConfiguredInput(value: unknown): Readonly<{ configPath: string; 
             || Object.values(environmentDescriptors).some(row => !('value' in row)
                 || row.value !== undefined && typeof row.value !== 'string')) return undefined
         return Object.freeze({ configPath, env: Object.freeze(Object.fromEntries(Object.entries(environmentDescriptors).map(([key, row]) => [key, row.value]))) })
-    } catch { return undefined }
+    } catch { return undefined } // A throwing accessor or proxy trap on caller-supplied input is malformed input the caller refuses.
 }
 
 function declaredCommandEnvironment(environment: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
@@ -2268,7 +2269,11 @@ function executableDirectoriesFromEnvironment(environment: Readonly<Record<strin
         try {
             const canonical = realpathSync(candidate)
             if (canonical === candidate && lstatSync(candidate).isDirectory() && !directories.includes(candidate)) directories.push(candidate)
-        } catch { continue }
+        } catch (error) {
+            // A PATH entry that is absent or unreachable holds nothing a shell would run, so it is skipped as a shell skips it.
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP')) continue
+            throw error
+        }
     }
     if (!directories.length) throw new Error('canonical executable search directories are unavailable')
     return Object.freeze(directories)
@@ -2372,7 +2377,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             for (const row of entrypoints.values) {
                 if (!declaredNames.has(row.name)) continue
                 let url: URL
-                try { url = new URL(row.value) } catch { continue }
+                try { url = new URL(row.value) } catch { continue } // A value that is not a URL is no browser route; an empty route set is refused below.
                 if (url.origin !== originUrl.origin) continue
                 const prior = routeNames.get(row.name)
                 if (prior !== undefined && prior !== url.href) throw new Error('browser application routes are missing or ambiguous')

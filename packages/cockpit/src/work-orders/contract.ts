@@ -104,7 +104,7 @@ export function parseWorkOrder(input: Uint8Array): WorkOrderParseResult {
     let text: string
     try {
         text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
-    } catch {
+    } catch { // Fatal decoding throws only for invalid UTF-8, which the finding names.
         add('WO_ENCODING_INVALID', 'contract', 'Work-order must be valid UTF-8')
         return refused()
     }
@@ -221,7 +221,7 @@ export function parseWorkOrder(input: Uint8Array): WorkOrderParseResult {
         const match = /^- (AC[1-7]) \| (\[.*\])$/.exec(line)
         let argv: unknown
         if (match) {
-            try { argv = JSON.parse(match[2]) } catch {
+            try { argv = JSON.parse(match[2]) } catch { // Parser text would quote the contract; the finding names the expected shape.
                 add('WO_VERIFICATION_INVALID', 'Verification', 'Verification argv must be a valid JSON array')
             }
         }
