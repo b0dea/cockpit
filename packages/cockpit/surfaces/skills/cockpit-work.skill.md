@@ -29,7 +29,7 @@ opencode:
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Work**, starting at its step 0: if nobody besides you must certify the result, stop and use cockpit-fix.
-Run `npx --no cockpit work-status --config cockpit.toml --json` for capacity and attempt counts, `npx --no cockpit work-intake --config cockpit.toml --intent <intent-file> --candidate <draft-file>` to prepare the order, `npx --no cockpit test-run --config cockpit.toml --gate <id>` for the declared gate and `npx --no cockpit work-grade --config cockpit.toml --work-order <id>` to pass it to the evaluator.
+Run `npx --no cockpit work-status --config cockpit.toml --json` for capacity and attempt counts, `npx --no cockpit work-intake --config cockpit.toml --intent <intent-file> --candidate <draft-file> --json` to prepare the order, `npx --no cockpit work-execute --config cockpit.toml --work-order <id> --approach <text> --json` to check each Plan step, `npx --no cockpit work-review --config cockpit.toml --work-order <id> --json` for the independent reviews and `npx --no cockpit work-grade --config cockpit.toml --work-order <id> --json` to pass it to the evaluator.
 Use `npx --no cockpit work-sweep --config cockpit.toml` when the work-in-progress cap blocks a new order.
 
 The evaluator subagent grades; this skill never does.

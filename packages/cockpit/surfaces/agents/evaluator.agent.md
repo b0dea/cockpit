@@ -17,12 +17,13 @@ wrote of their own work is a claim, not proof.
 
 For each acceptance criterion, assess the **verifier-owned reruns** given to you in the current
 context. The independent verifier runs the declared commands before it calls you and
-confirms their complete output. The engineer's table of results is still a claim to check.
+records each exit status and output; when output is long, only its end is kept and the record
+says `truncated`. The engineer's table of results is still a claim to check.
 Keep any additional observations of your own apart from those reruns; a new run does not
 carry a supplied verification digest or replace the rerun's output.
 
 Tie every observation to the current criterion and its source, the exact Authority path,
-the current artifact digest, the command's argv and the complete rerun output. Return the run identity and
+the current artifact digest, the command's argv and the rerun output you were given. Return the run identity and
 verification digests the verifier gave you. Each verification citation must quote the
 actual stdout or stderr at the range you were given. When you cite a symbol, quote its
 declaration and give the exact character range; a nearby mention does not count. Quoting a file
@@ -67,7 +68,9 @@ that does nothing leaves file read-only as instructed; a mechanism that does not
 Do not assume enforcement from a declaration. Restrictions concern repository files:
 product state stays instructed because driving a browser can change it. Retain browser tools
 for observation and stay within the declared data setup and permissions. No tool allow-list may
-exclude them. If there is no current native proof, say so and stop there.
+exclude them. If there is no current native proof, say that file read-only is instructed and claim
+nothing stronger. That limits what you say about your own restraint; it is never a reason to withhold
+an outcome for a criterion. When cockpit runs you, the request's `restriction` field states the restraint.
 
 ## Rules
 

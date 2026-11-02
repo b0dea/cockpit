@@ -316,23 +316,29 @@ contract and the independent grading, not the thinking: reuse the planning skill
    The contract needs the number of acceptance criteria the parser allows, each a Given/When/Then that independent reviewers could not
    disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from
    intake, then a human accepts it in a terminal with `./node_modules/.bin/cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,
-   replacing `WO-001` with that ID. JSON and CI refuse, so an agent cannot accept its own work. Done when
+   replacing `WO-001` with that ID. Cockpit refuses JSON, CI and calls without a terminal, but it cannot tell a
+   person from a program driving one: never accept on the human's behalf. Done when
    `./node_modules/.bin/cockpit work-status --config cockpit.toml --work-order WO-001 --json` reports it accepted.
-2. **Work test-first inside Authority.** Write the failing test for a criterion, then the code, touching only
+2. **Work test-first inside Authority, one Plan step at a time.** Write the failing test for a criterion, then the code, touching only
    files the Authority lists. If the work needs another file, stop and ask for a renewed contract
-   (`work-renew`) rather than editing outside it. Record progress with `./node_modules/.bin/cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json`.
-3. **Run the criterion's declared gate** with `./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id`,
-   replacing `declared-gate-id` with its ID from `[testing.gates]`. Only the complete declared gate can PASS; a
-   subset reports PARTIAL. Done when that gate reports PASS.
+   (`work-renew`) rather than editing outside it. Record progress with `./node_modules/.bin/cockpit work-record --config cockpit.toml --work-order WO-001 --event-file workorders/events/progress.json`;
+   keep event files under `workorders/events/`, where they do not make earlier proof stale.
+3. **Check each Plan step** with `./node_modules/.bin/cockpit work-execute --config cockpit.toml --work-order WO-001 --approach "what you did" --json`
+   once its work is done. It runs that step's declared verification command; a failure returns the command's exit
+   status and the end of its output in `result.verification`. Fix and rerun. While iterating, the declared gate
+   (`./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id --json`, with its ID from `[testing.gates]`) is
+   faster feedback; it does not check a step. Done when `./node_modules/.bin/cockpit work-resume --config cockpit.toml --json`
+   says every step has current checked proof and the order awaits grading.
 4. **Before grading, run reviews.** Run the harness's installed simplification and code-review skills. Apply security emphasis
    when the change touches authentication, secrets, guards or reach to non-local hosts. Fix their blocking
    findings and re-run affected proof. Then run
-   `./node_modules/.bin/cockpit work-review --config cockpit.toml --work-order WO-001` to run and persist cockpit's independent
-   simplification, code/spec and security findings. Fix every blocking finding and repeat the command until all
-   all required review lanes pass.
-5. **Pass the work to the evaluator subagent** through `./node_modules/.bin/cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
-   your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
-   criterion is one of the verdicts in the evaluator's instructions; anything but "passed with current
+   `./node_modules/.bin/cockpit work-review --config cockpit.toml --work-order WO-001 --json` to run and persist cockpit's independent
+   simplification, code/spec and security findings. Fix every blocking finding and repeat the command until
+   all required review lanes pass. The reviews and the grade run in the Codex CLI, which must be on `PATH` and
+   signed in; if a refusal says it could not run, report that cause to the human instead of retrying.
+5. **Pass the work to the evaluator** through `./node_modules/.bin/cockpit work-grade --config cockpit.toml --work-order WO-001 --json`. Never grade
+   your own work: the evaluator is the grader and there is no separate grader skill. The result lists each
+   criterion's outcome and reasons under `result.criteria`; anything but "passed with current
    supporting evidence" sends you back to step 2 for that criterion.
 6. **Attempt cap.** At the configured failed-attempt cap for one criterion, make a different move, for example a
    root-cause diagnosis in a fresh context, before a third try. Read the count from work-order state, not
@@ -346,4 +352,4 @@ contract and the independent grading, not the thinking: reuse the planning skill
    would be parked to free capacity; add `--apply` to park them. `./node_modules/.bin/cockpit work-reverse --config cockpit.toml --work-order WO-001`
    restores a swept order. An order a human parked by hand is reversed by a human, not by the sweep.
 
-Report the outcome of each criterion with the quotes the evaluator gave, and name any step you could not run.
+Report the outcome of each criterion with the reasons the grade gave, and name any step you could not run.
