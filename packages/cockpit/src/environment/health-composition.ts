@@ -29,7 +29,8 @@ import {
     planExternalDependency,
     verifyExternalDependency,
 } from './external-dependencies.js'
-import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
+import { createGitObservationStep, inspectTrackedSecretFiles, observeGit, observeRunningCheckout } from './git-observation.js'
+import { inspectTeamReadiness } from '../team-metadata.js'
 import { stackId } from './identity.js'
 import { observeDependencyLoad } from './installs.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -668,6 +669,27 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
     })])
 }
 
+// The prerequisites no health row observes: the cockpit's own install, recorded sibling remotes and
+// secret files a repository commits.
+async function inspectProjectReadiness(
+    input: CapturedInput,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<readonly EnvironmentDiagnostic[]> {
+    const team = await inspectTeamReadiness(input.configPath)
+    const loaded = await loadCockpitConfig(input.configPath)
+    const git = await resolveGitExecutable(input.env)
+    if (loaded.kind !== 'complete' || git.state !== 'available') return team
+    const siblingRoot = resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root)
+    const repositories = []
+    for (const sibling of loaded.result.config.sibling) {
+        const root = resolve(siblingRoot, sibling.dir)
+        // Only an existing directory has an index to ask; an absent one is reported as missing elsewhere.
+        if (await lstat(root).then((status) => status.isDirectory(), () => false)) repositories.push({ slug: sibling.slug, root })
+    }
+    const secrets = await inspectTrackedSecretFiles({ executable: git.value, repositories, timeoutMs: input.timeoutMs }, execute)
+    return Object.freeze([...team, ...secrets])
+}
+
 export function createHealthCommandAdapters(
     rawInput: HealthCommandCompositionInput,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
@@ -851,6 +873,7 @@ export function createHealthCommandAdapters(
     const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), env: input.env })
         : undefined
     const inspectEvaluator = input ? () => inspectWorkEvaluator(dirname(input.configPath), input.env) : undefined
+    const inspectReadiness = input ? () => inspectProjectReadiness(input, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
         if (!selectedNamespace) return Object.freeze([])
@@ -858,6 +881,6 @@ export function createHealthCommandAdapters(
         return inventory.kind === 'complete' ? inventory.skipped : Object.freeze([])
     }
     return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
-        ...(inspectEvaluator ? { inspectEvaluator } : {}), readUnreadableState,
+        ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState,
         execute: (step: ExecutionStep) => execute(step) })
 }

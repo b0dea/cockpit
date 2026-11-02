@@ -8,10 +8,12 @@ import { ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './environment/con
 import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
+import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
 
 export const mechanism = {
     id: 'team-metadata', module: 'packages/cockpit/src/team-metadata.ts',
-    exports: ['initializeTeamMetadata', 'prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata', 'productPackageManifest'],
+    exports: ['initializeTeamMetadata', 'prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata', 'productPackageManifest',
+        'inspectTeamReadiness'],
 } as const
 
 const PACKAGE = installedPackageMetadata.name
@@ -423,4 +425,63 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
     }
+}
+
+/**
+ * What a teammate's clone of this cockpit, or the cockpit itself, will lack, read from the
+ * cockpit root and its declaration without changing anything. `init` runs from a temporary copy of
+ * cockpit and leaves none in the cockpit, so every printed `npx --no cockpit` then failed and the
+ * guard hook stayed bound to that copy; and a sibling repository recorded without a remote is one
+ * a teammate's `setup` silently leaves absent.
+ */
+export async function inspectTeamReadiness(configPath: string): Promise<readonly EnvironmentDiagnostic[]> {
+    const root = dirname(resolve(configPath))
+    const findings: EnvironmentDiagnostic[] = []
+    const installed = join(root, 'node_modules', ...PACKAGE.split('/'))
+    const present = await lstat(installed).then((status) => status.isDirectory(), (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false
+        throw error
+    })
+    if (!present) {
+        findings.push(Object.freeze({
+            severity: 'warning' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
+            message: `cockpit is not installed in ${root}, so every npx --no cockpit command the generated instructions print fails there, and the guard hook runs whichever copy last ran sync`,
+            target: 'node_modules',
+            fix: `in a terminal in ${root}, run npm install (package.json pins the version), then run npx --no cockpit sync --config <your cockpit.toml> so the guard hook runs the installed copy`,
+        }))
+    } else {
+        const read = await readBoundedInput(join(root, GUARD_LOCAL_PATHS.identity)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return undefined
+            throw error
+        })
+        const identity = read?.kind === 'complete' ? parseGuardLocalIdentity(Buffer.from(read.bytes).toString('utf8')) : undefined
+        const own = await realpath(installed)
+        if (identity && relative(own, identity.module).startsWith('..')) findings.push(Object.freeze({
+            severity: 'warning' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
+            message: `the guard hook runs the cockpit copy at ${identity.module}, not the one installed in ${own}, so it stops working when that copy is removed and can differ from the pinned version`,
+            target: GUARD_LOCAL_PATHS.identity,
+            fix: `in a terminal in ${root}, run npx --no cockpit sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
+        }))
+    }
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind !== 'complete') return Object.freeze(findings)
+    const siblings = resolve(root, loaded.result.config.cockpit.siblings_root)
+    for (const sibling of loaded.result.config.sibling) {
+        const path = resolve(siblings, sibling.dir)
+        // The cockpit's own directory is cloned with the cockpit; a plain directory is tracked by it.
+        if (sibling.acquire !== 'none' || path === root || !await holdsGitMetadata(path)) continue
+        findings.push(Object.freeze({
+            severity: 'warning' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'SIBLING_REMOTE_UNRECORDED' satisfies typeof ENVIRONMENT_CODES.SIBLING_REMOTE_UNRECORDED,
+            message: `sibling ${sibling.slug} is its own Git repository, but cockpit.toml records no remote for it (acquire = "none"), so setup in a teammate's clone of this cockpit leaves ${sibling.dir} absent`,
+            target: `sibling:${sibling.slug}`,
+            fix: `once the repository is pushed, run npx --no cockpit sibling add ${sibling.slug} --remote <url> --config <your cockpit.toml> and commit cockpit.toml`,
+        }))
+    }
+    return Object.freeze(findings)
 }

@@ -76,6 +76,7 @@ import {
 import { generatedApplicationProjection, prepareGeneratedEnvironmentCurrentness, type GeneratedApplicationProjection, type GeneratedEnvironmentCurrentness } from './generated-application.js'
 import { observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime, declaresNothingToRun, DeclarationRefusalError } from './declaration.js'
+import { readinessReport, type ReadinessReport } from '../readiness.js'
 import type { ReleaseFreshness } from '../freshness.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import type { ActiveSurfaceOverride, SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -4451,6 +4452,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
     readonly inspectEvaluator?: () => Promise<readonly EnvironmentDiagnostic[]>
+    /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
+    readonly inspectReadiness?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Other cockpits' state namespaces this version skipped; read after load has selected this cockpit's state root. */
     readonly readUnreadableState?: () => Promise<readonly SkippedStateNamespace[]>
 }
@@ -4485,6 +4488,8 @@ export interface ApplicationDoctorEvaluation {
     readonly freshness: DoctorFreshness
     /** What the configuration declares, read from cockpit.toml alone; empty when it does not load. */
     readonly declarations: readonly DoctorDeclaration[]
+    /** The reported diagnostics grouped under the prerequisites cockpit depends on; absent when cockpit.toml does not load. */
+    readonly readiness?: ReadinessReport
 }
 
 // Resource ceilings, data modes and vendor guards are rendered into a generated stack. A cockpit that
@@ -5132,17 +5137,22 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
-    const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator] = await Promise.all([doctorHealth(input, adapters, config),
+    const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([]),
-        adapters.inspectEvaluator?.() ?? Object.freeze([])])
+        adapters.inspectEvaluator?.() ?? Object.freeze([]), adapters.inspectReadiness?.() ?? Object.freeze([])])
     const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
-    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...unreadableState ? [unreadableState] : []]
+    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings,
+        ...unreadableState ? [unreadableState] : []]
     const reported = warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero
     // exit would let `doctor && ...` proceed past a missing or unparseable cockpit.toml.
     const loaded = await config
-    if (loaded.kind === 'complete') return reported
+    if (loaded.kind === 'complete') {
+        const state = declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' as const : 'runtime' as const
+        return Object.freeze({ ...reported, result: Object.freeze({ ...reported.result,
+            readiness: readinessReport(state, reported.diagnostics) }) })
+    }
     const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
     return Object.freeze({
         ...reported, kind: 'refusal', status: 2,

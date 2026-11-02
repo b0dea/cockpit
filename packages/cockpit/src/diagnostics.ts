@@ -266,6 +266,16 @@ function doctorSummary(
         const absent = named('not-declared')
         lines.push(`Declared: ${declared.join(', ') || 'nothing'}${absent.length === 0 ? '' : `; not declared: ${absent.join(', ')}`}.`)
     }
+    const readiness = result.readiness as Readonly<{ gaps?: unknown; noFinding?: unknown }> | undefined
+    if (readiness && Array.isArray(readiness.gaps)) {
+        const gaps = readiness.gaps as readonly { id?: unknown; level?: unknown; needs?: unknown; findings?: unknown }[]
+        const clear = Array.isArray(readiness.noFinding) ? readiness.noFinding.length : 0
+        lines.push(`Readiness: ${gaps.length === 0 ? 'no gaps' : plural(gaps.length, 'gap')}; ${plural(clear, 'other prerequisite')} with no finding.`)
+        for (const gap of gaps) {
+            const codes = Array.isArray(gap.findings) ? [...new Set((gap.findings as readonly { code?: unknown }[]).map(({ code }) => String(code)))] : []
+            lines.push(`  ${String(gap.level)} ${String(gap.id)}: ${String(gap.needs)} (${codes.join(', ')})`)
+        }
+    }
     const release = freshness?.release
     if (release?.kind === 'known') {
         lines.push(`Release: ${release.currency === 'same-version' ? `${String(release.installedVersion)} is the latest`

@@ -9,6 +9,7 @@ import {
     isCanonicalTimestamp,
     snapshotExecutionStep,
     type CheckoutId,
+    type EnvironmentDiagnostic,
     type EnvironmentObservation,
     type ExecutionStep,
     type StackId,
@@ -22,7 +23,7 @@ import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './
 export const mechanism = {
     id: 'git-observation',
     module: 'packages/cockpit/src/environment/git-observation.ts',
-    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations'],
+    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations', 'inspectTrackedSecretFiles'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -560,4 +561,57 @@ export function observeRunningCheckout(
         freshness: { state: 'current' }, remedy: 'restart the stack from the current checkout and configuration',
     }
     return { kind: 'complete', observation: issueObservation(observation) }
+}
+
+// The names the guard denies agents from reading: `.env` and `.env.<suffix>`, except the templates
+// meant to be committed. Values are never read; only Git's index is asked which names it tracks.
+const SECRET_FILE = /^\.env(?:\.[^/]+)?$/
+const SECRET_TEMPLATE = /\.(?:example|sample|template|dist)$/
+const TRACKED_SECRET_LIMIT = 65_536
+
+/**
+ * Secret-shaped files a repository commits. The guard keeps agents from reading them, which
+ * protects the session but not the history: every clone already holds the values, and nothing
+ * told the person so. Reports paths only.
+ */
+export async function inspectTrackedSecretFiles(input: {
+    readonly executable: ResolvedExecutable
+    readonly repositories: readonly Readonly<{ slug: string; root: string }>[]
+    readonly timeoutMs: number
+}, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<readonly EnvironmentDiagnostic[]> {
+    const executable = resolvedGitExecutable(input.executable)
+    if (!executable) throw new TypeError('tracked secret inspection needs a resolved Git executable')
+    const findings: EnvironmentDiagnostic[] = []
+    for (const repository of input.repositories) {
+        const step = snapshotExecutionStep({
+            id: `git:tracked-secrets:${repository.slug}`,
+            argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*'],
+            argv0: executable.invocationPath, cwd: repository.root, env: {}, timeoutMs: input.timeoutMs,
+            stdoutLimitBytes: TRACKED_SECRET_LIMIT, stderrLimitBytes: COMPARISON_OUTPUT_LIMIT,
+            paths: [repository.root], ports: [], labels: { sibling: repository.slug },
+            expected: [{ kind: 'path', target: repository.root, state: 'repository' }],
+            consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+                argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+            filesystemChecks: [], compensation: [],
+        })
+        if (!step) throw new TypeError(`tracked secret inspection could not be planned for ${repository.slug}`)
+        const outcome = authenticatedExecutionOutcome(await execute(step), step)
+        // A directory that is not a repository yet tracks nothing; that gap is reported where Git state is.
+        if (!outcome || outcome.kind !== 'complete') continue
+        const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => {
+            const name = path.slice(path.lastIndexOf('/') + 1)
+            return path !== '' && SECRET_FILE.test(name) && !SECRET_TEMPLATE.test(name)
+        })
+        if (tracked.length === 0) continue
+        const shown = tracked.slice(0, 8).join(', ')
+        findings.push(Object.freeze({
+            severity: 'warning' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'SECRET_FILE_TRACKED' satisfies typeof ENVIRONMENT_CODES.SECRET_FILE_TRACKED,
+            message: `sibling ${repository.slug} commits ${tracked.length === 1 ? 'a secret-shaped file' : `${tracked.length} secret-shaped files`} (${shown}${tracked.length > 8 ? ', ...' : ''}); the guard keeps agents from reading ${tracked.length === 1 ? 'it' : 'them'}, but every clone of the repository already holds the values. cockpit did not read ${tracked.length === 1 ? 'it' : 'them'}`,
+            target: `sibling:${repository.slug}`,
+            fix: 'a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead',
+        }))
+    }
+    return Object.freeze(findings)
 }
