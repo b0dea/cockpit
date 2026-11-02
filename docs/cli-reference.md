@@ -48,6 +48,8 @@ Does not read `cockpit.toml`.
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
@@ -137,6 +139,7 @@ Does not read `cockpit.toml`.
 | `GREENFIELD_DISCOVERY_UNAVAILABLE` |
 | `GREENFIELD_OBSERVATION_CHANGED` |
 | `GREENFIELD_OBSERVATION_INVALID` |
+| `GUIDE_CAP_EXCEEDED` |
 | `INIT_ANSWER_RESET_CONFLICT` |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` |
 | `INIT_COCKPIT_ROOT_REQUIRED` |
@@ -168,6 +171,7 @@ Does not read `cockpit.toml`.
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
 | `STATE_ROOT_UNAVAILABLE` |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 
 ## cockpit document
@@ -348,6 +352,8 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -385,9 +391,11 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_SOURCE_CHANGED` |
 | `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GUIDE_CAP_EXCEEDED` |
 | `RESET_CONFIRMATION_MISMATCH` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_ROOT_UNAVAILABLE` |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 
 ## cockpit check
@@ -415,6 +423,8 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -456,9 +466,11 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_SOURCE_CHANGED` |
 | `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GUIDE_CAP_EXCEEDED` |
 | `RESET_CONFIRMATION_MISMATCH` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_ROOT_UNAVAILABLE` |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 
 ## cockpit selftest

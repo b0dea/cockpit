@@ -431,12 +431,12 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `MCP_COMMAND_CONFLICT` | see the message |
 | `MCP_DECLARATION_INVALID` | see the message |
 | `MCP_INPUT_INVALID` | see the message |
-| `MCP_NOT_APPROVED` | see the message |
+| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` | see the message |
 | `MOUNT_POSTURE_UNAVAILABLE` | see the message |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
 | `OUTPUT_WRITE_FAILED` | see the message |
-| `OVERRIDDEN_CORE_CHANGED` | see the message |
+| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `PORT_EXTERNAL_REGISTRATION_GAP` | see the message |
 | `PORT_FAMILY_COLLISION` | see the message |
 | `PORT_FAMILY_OUT_OF_RANGE` | see the message |
@@ -565,6 +565,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `SURFACE_OWNERSHIP_INVALID` | see the message |
 | `SURFACE_PACKAGE_UNAVAILABLE` | see the message |
 | `SURFACE_PATH_CONFLICT` | see the message |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | see the message |
 | `SURFACE_SCRATCH_UNAVAILABLE` | see the message |
 | `SURFACE_SOURCE_UNAVAILABLE` | see the message |
 | `SURFACE_STAGE_VARIANCE` | see the message |
