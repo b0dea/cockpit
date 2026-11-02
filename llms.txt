@@ -1,6 +1,6 @@
 # cockpit
 
-> This index routes an unfamiliar agent to cockpit's setup and reference owners. cockpit runs the environment AI coding agents work in: one `cockpit.toml` declares the repositories, services and ports; `cockpit sync` renders agent surfaces and a Docker Compose stack over live checkouts; `cockpit check` fails on drift; and an independent evaluator (experimental) grades finished work. It is pre-alpha and not yet published.
+> cockpit runs the environment AI coding agents work in: one `cockpit.toml` declares a product's repositories, services and ports; `cockpit sync` renders each agent tool's instructions, skills and guards plus a Docker Compose stack over the live checkouts; `cockpit check` fails on drift; and a separate evaluator grades finished work. The package is not yet published on npm; install it from source as Getting started describes.
 
 ## Set cockpit up
 

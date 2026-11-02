@@ -2,26 +2,20 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This package README is for npm consumers installing the cockpit CLI. cockpit runs the environment
-your AI coding agents work in. Declare the product's repositories once in `cockpit.toml`;
-cockpit starts the stack against live local checkouts, renders agent instructions and skills,
-and can hand finished work to an independent evaluator (experimental). Guard and permission
-support depends on its target's measured
-[capabilities](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md).
+This package is the cockpit CLI. cockpit boots a multi-repository product on your machine from one
+`cockpit.toml`, gives Claude Code, Codex CLI and OpenCode the same instructions, skills and guard
+hooks, and fails a check when any generated file drifts. What each tool actually enforces is in the
+[capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md).
 
-The package is pre-alpha: commands and configuration may change before 1.0. Install it as an
-exact project-local dependency:
+Install it as an exact, project-local dev dependency (the package is pre-alpha, so pin the version):
 
 ```sh
 npm install --save-dev --save-exact @b0dea/cockpit
 ```
 
-The
-[installation guide](https://github.com/b0dea/cockpit/blob/main/docs/getting-started.md#install-cockpit)
-owns the project-local install and verified source-package fallback. The
-[repository README](https://github.com/b0dea/cockpit#readme) has the synthetic quickstart,
-documentation and current limits.
+Start with the [repository README](https://github.com/b0dea/cockpit#readme) and
+[Getting started](https://github.com/b0dea/cockpit/blob/main/docs/getting-started.md#install-cockpit).
 
-The CLI command is `cockpit`; it is the only public interface. The package's `exports` and type
-declarations exist for cockpit's own tooling and are not a stable API. Supported Node.js versions:
-see `engines` in this package's `package.json`.
+The `cockpit` command is the only public interface; the package's exports and type declarations
+serve cockpit's own tooling and are not a stable API. Supported Node.js versions are in `engines`
+in this package's `package.json`.
