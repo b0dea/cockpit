@@ -617,7 +617,11 @@ describe('work and browser declarations', () => {
     })
 
     it('keeps WIP and attempt controls lower-only', () => {
-        expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3, programme_wip_cap: 1 })
+        expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3, programme_wip_cap: 1,
+            verification_timeout_seconds: 1_800, evaluator_timeout_seconds: 900 })
+        for (const field of ['verification_timeout_seconds', 'evaluator_timeout_seconds']) {
+            for (const value of [0, 7_201, 1.5]) expect(Workorders.safeParse({ [field]: value }).success, `${field}=${value}`).toBe(false)
+        }
         expect(Workorders.parse({ wip_cap: 1, programme_wip_cap: 1 })).toMatchObject({ wip_cap: 1, programme_wip_cap: 1 })
         for (const value of [0, 4, 1.5]) expect(Workorders.safeParse({ wip_cap: value }).success).toBe(false)
         for (const value of [0, 2, 1.5]) expect(Workorders.safeParse({ programme_wip_cap: value }).success).toBe(false)
