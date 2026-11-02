@@ -114,6 +114,15 @@ describe('public surface publication transaction', () => {
                 sandbox_mode: 'workspace-write',
                 sandbox_workspace_write: { writable_roots: ['../../external', '../app'] },
             })
+            // The roots are the cockpit's wherever the command runs: from inside the outside sibling,
+            // check still matches what sync wrote from the cockpit root.
+            const workingDirectory = process.cwd()
+            process.chdir(fixture.siblingDirectory)
+            try {
+                expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            } finally {
+                process.chdir(workingDirectory)
+            }
             expect(codex).not.toHaveProperty('default_permissions')
             expect(codex).not.toHaveProperty('permissions')
             expect(Object.fromEntries(Object.entries(openCode.mcp).map(([name, server]) => [name, server.enabled]))).toEqual({

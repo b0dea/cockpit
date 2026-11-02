@@ -9,7 +9,7 @@ import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type Gu
 export const mechanism = {
     id: 'sibling-projection',
     module: 'packages/cockpit/src/surfaces/projection.ts',
-    exports: ['observeSiblingGuides', 'planSiblingProjection', 'shippedInstructionCapabilities'],
+    exports: ['codexWritableRoot', 'observeSiblingGuides', 'planSiblingProjection', 'shippedInstructionCapabilities'],
 } as const
 
 const GUIDE_BYTE_LIMIT = 65_536
@@ -792,11 +792,18 @@ function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, 
     }
 }
 
+// `.codex/` sits one level below the cockpit root, so a root-relative path gains one `..`. This is
+// string arithmetic on purpose: `relative('.codex', path)` resolves both against the process's
+// working directory, and a sync run from inside a sibling then wrote a root that named the wrong place.
+export function codexWritableRoot(rootRelativePath: string): string {
+    return posix.join('..', rootRelativePath)
+}
+
 // The spelling each tool resolves to the sibling: Codex reads a relative root from `.codex/`, and
 // OpenCode, which matches absolute paths only, reads the absolute directory `sync` writes locally.
 function grantSpelling(targetName: SurfaceTarget, path: string, slug: string): string {
     if (targetName === 'claudecode') return `permissions.additionalDirectories:${path}`
-    if (targetName === 'codexcli') return `sandbox_workspace_write.writable_roots:${posix.relative('.codex', path)}`
+    if (targetName === 'codexcli') return `sandbox_workspace_write.writable_roots:${codexWritableRoot(path)}`
     if (targetName === 'opencode') return `permission.external_directory:{file:.cockpit/local/opencode-grant-${slug}}/**=allow`
     if (targetName === 'cursor') return `permission.read+write:${path}/**=allow`
     return `permission.read+edit:${path}/**=allow`

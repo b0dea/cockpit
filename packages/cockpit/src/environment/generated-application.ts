@@ -62,7 +62,7 @@ import {
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
 } from '../surfaces/ownership.js'
-import { observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
+import { codexWritableRoot, observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
 import {
     renderSurfaceSet,
     surfaceModelSha256,
@@ -2025,8 +2025,6 @@ function openCodeReadDenials(
     return [...new Set(paths.flatMap(path => [path, `*/${path}`]))].sort(compareCodeUnits)
 }
 
-const CODEX_CONFIG_DIRECTORY = '.codex'
-
 /** The machine-local file `sync` writes with a sibling's absolute directory, for OpenCode to read. */
 function openCodeGrantFile(slug: string): string {
     return `${GUARD_LOCAL_PATHS.directory}/opencode-grant-${slug}`
@@ -2150,7 +2148,7 @@ function nativeGrantFragmentSet(
             // Codex resolves a relative writable root against the directory of the config file,
             // `.codex/`, not the cockpit root (measured with Codex 0.166.0 on 2026-11-02).
             const writableRoots = [...new Set(grants.filter(grant => grant.target === target)
-                .map(grant => posix.relative(CODEX_CONFIG_DIRECTORY, grant.path)))].sort(compareCodeUnits)
+                .map(grant => codexWritableRoot(grant.path)))].sort(compareCodeUnits)
             const bytes = stringifyToml({ ...base, sandbox_mode: 'workspace-write', sandbox_workspace_write: { writable_roots: writableRoots } })
             return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
         }
