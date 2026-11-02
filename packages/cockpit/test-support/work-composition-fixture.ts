@@ -16,7 +16,7 @@ const fs = require('node:fs'); const crypto = require('node:crypto')
 const argv = process.argv.slice(2); const output = argv[argv.indexOf('--output-last-message') + 1]
 if (argv.length === 1 && argv[0] === '--version') { process.stdout.write('codex-cli 0.149.0\\n'); process.exit(0) }
 if (argv.length === 2 && argv[0] === 'exec' && argv[1] === '--help') {
-  process.stdout.write('--ephemeral --ignore-user-config --sandbox --cd --json --output-schema --output-last-message\\n'); process.exit(0)
+  process.stdout.write('--ephemeral --ignore-user-config --skip-git-repo-check --sandbox --cd --json --output-schema --output-last-message\\n'); process.exit(0)
 }
 // OpenAI structured outputs reject a schema unless every object lists all its properties as required
 // and forbids others; the real CLI then exits 1 with the API's 400 as an error event, as this does.
@@ -44,8 +44,10 @@ const match = /request JSON at (.+) with SHA-256 ([a-f0-9]{64});/.exec(argv.at(-
 if (!match) process.exit(31)
 const bytes = fs.readFileSync(match[1]); if (crypto.createHash('sha256').update(bytes).digest('hex') !== match[2]) process.exit(32)
 const request = JSON.parse(bytes); const context = request.context; let response
-if (fs.existsSync('.native-expect-artifact')) {
-  const expected = fs.readFileSync('.native-expect-artifact', 'utf8')
+// Cockpit runs the evaluator outside the repository and names it in the request.
+const repository = name => require('node:path').join(request.repositoryRoot, name)
+if (fs.existsSync(repository('.native-expect-artifact'))) {
+  const expected = fs.readFileSync(repository('.native-expect-artifact'), 'utf8')
   const artifacts = request.role === 'grader' ? context.artifacts : context.subject?.artifacts
   if (!Array.isArray(artifacts) || !artifacts.some(row => row.text.includes(expected))) process.exit(35)
 }
@@ -54,8 +56,8 @@ if (request.role === 'grader') {
 } else if (Object.hasOwn(request, 'evaluator') || request.instruction.includes('You grade a work-order')
   || !request.instruction.includes('affectedVerification') || !request.instruction.includes(request.role)
   || !context.subject || !Array.isArray(context.changedPaths)) process.exit(34)
-fs.appendFileSync('.native-calls', request.role + '\\n')
-const mode = fs.existsSync('.native-mode') ? fs.readFileSync('.native-mode', 'utf8').trim() : 'complete'
+fs.appendFileSync(repository('.native-calls'), request.role + '\\n')
+const mode = fs.existsSync(repository('.native-mode')) ? fs.readFileSync(repository('.native-mode'), 'utf8').trim() : 'complete'
 if (request.role === 'grader') response = { kind: 'assessment', runId: context.runId, integrity: 'clean', criteria: context.criteria.map(row => {
   const artifact = context.artifacts[0]; const verification = context.verification.filter(item => item.criterion === row.criterion.id)
   return { criterion: row.criterion.id, criterionDigest: row.digest, outcome: 'passed with current supporting evidence',
