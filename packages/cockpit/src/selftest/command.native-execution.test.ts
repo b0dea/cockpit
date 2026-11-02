@@ -1,4 +1,4 @@
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -39,13 +39,17 @@ function fixture() {
 }
 
 describe('surface selftest command', () => {
-    it('drives candidate and broken controls through authenticated execution', async () => {
+    it('drives signed-in tools through candidate and broken controls with only the non-secret environment', async () => {
         const { root, application } = fixture()
-        const bin = await fakeHarnesses(root)
+        const bin = await fakeHarnesses(root, false, true)
+        const home = join(root, 'harness-bin', 'home')
+        await mkdir(home)
+        await writeFile(join(home, '.synthetic-sign-in'), 'signed in\n')
         const operator = await syntheticOperatorApprovals(bin)
         const steps: ExecutionStep[] = []
         const outcome = await runSurfaceSelftestCommand(
-            { application, root, specifications: specifications(application), env: { PATH: bin } },
+            { application, root, specifications: specifications(application),
+                env: { PATH: bin, HOME: home, LANG: 'C', SYNTHETIC_TOKEN: 'synthetic-token-canary' } },
             { ...operator.adapters, execute: async step => {
                 steps.push(step)
                 return operator.adapters.execute(step)
@@ -63,7 +67,8 @@ describe('surface selftest command', () => {
         expect(outcome.evidence.pending).toEqual([])
         expect(operator.requests).toHaveLength(3)
         expect(steps.length).toBeGreaterThan(0)
-        expect(steps.every(step => Object.keys(step.env).length === 0)).toBe(true)
+        expect(new Set(steps.map(step => JSON.stringify(Object.entries(step.env).sort()))))
+            .toEqual(new Set([JSON.stringify([['HOME', home], ['LANG', 'C'], ['PATH', bin]])]))
         expect(outcome.bundle.skillReviews).toEqual(expect.arrayContaining([
             expect.objectContaining({ harness: 'Claude Code', status: 'human_needed' }),
             expect.objectContaining({ harness: 'Codex', status: 'human_needed' }),

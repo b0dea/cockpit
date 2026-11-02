@@ -46,7 +46,7 @@ function probeSpecifications(
 ): readonly SelftestProbeSpecification[] {
     const expectation = surfaceSelftestExpectation(application.surfaceSelftest)
     if (!expectation) throw new Error('selftest expectation unavailable')
-    return expectation.cells.map((cell) => ({
+    return expectation.cells.flatMap((cell) => cell.harness.kind !== 'builtin' ? [] : [{
         harness: cell.harness,
         capability: cell.capability,
         invocation: ['{executable}', '--probe', cell.capability, '{control}'],
@@ -59,7 +59,7 @@ function probeSpecifications(
         sample: cell.capability === 'skill-parity'
             ? { skill: cell.skill, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] }
             : null,
-    }))
+    }])
 }
 
 async function controlledHarnesses(root: string): Promise<string> {

@@ -103,18 +103,18 @@ capabilities = [${capabilities.join(', ')}]
         await writeFile(configPath, baseDeclaration + customDeclaration)
         const outcome = await syncGeneratedEnvironment({ configPath })
         if (outcome.kind !== 'complete') throw new Error(outcome.diagnostics.map((row) => row.message).join('; '))
-        return { root, application: outcome.result.application }
+        return { root, configPath, application: outcome.result.application }
     }
 
     function specifications(application: Awaited<ReturnType<typeof issuedApplication>>['application']): readonly SelftestProbeSpecification[] {
         const expectation = surfaceSelftestExpectation(application.surfaceSelftest)
         if (!expectation) throw new Error('selftest expectation unavailable')
-        return expectation.cells.map((cell) => ({
+        return expectation.cells.flatMap((cell) => cell.harness.kind !== 'builtin' ? [] : [{
             harness: cell.harness,
             capability: cell.capability,
-            invocation: [cell.harness.kind === 'custom' ? '{node}' : '{executable}', '--probe', cell.capability, '{control}'],
-            versionCommand: [cell.harness.kind === 'custom' ? '{node}' : '{executable}', '--version'],
-            helpCommand: [cell.harness.kind === 'custom' ? '{node}' : '{executable}', '--help'],
+            invocation: ['{executable}', '--probe', cell.capability, '{control}'],
+            versionCommand: ['{executable}', '--version'],
+            helpCommand: ['{executable}', '--help'],
             candidateCode: cell.capability === 'guard-firing' ? 'GUARD_FIRED'
                 : cell.capability === 'skill-parity' ? 'SKILL_PARITY_CANARY' : 'INSTRUCTION_CANARY',
             brokenCode: 'BROKEN_CONTROL_REJECTED',
@@ -122,15 +122,20 @@ capabilities = [${capabilities.join(', ')}]
             sample: cell.capability === 'skill-parity'
                 ? { skill: cell.skill, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] }
                 : null,
-        }))
+        }])
     }
 
-    async function fakeHarnesses(root: string, sensitiveOutput: boolean | 'partial' | 'deep' = false): Promise<string> {
+    // With `signIn`, each tool behaves like a signed-in CLI: it reads its sign-in from a file under
+    // HOME and answers "Not logged in" without one, and it fails outright if the parent's
+    // SYNTHETIC_TOKEN reached it.
+    async function fakeHarnesses(root: string, sensitiveOutput: boolean | 'partial' | 'deep' = false, signIn = false): Promise<string> {
         const bin = join(root, 'harness-bin')
         await mkdir(bin)
         const script = `#!${process.execPath}
 const fs = require('node:fs')
 const args = process.argv.slice(2)
+${signIn ? `if (process.env.SYNTHETIC_TOKEN !== undefined) { process.stderr.write('SYNTHETIC_TOKEN_VISIBLE\\n'); process.exit(3) }
+if (!process.env.HOME || !fs.existsSync(require('node:path').join(process.env.HOME, '.synthetic-sign-in'))) { process.stderr.write('Not logged in\\n'); process.exit(1) }` : ''}
 if (args[0] === '--version') process.stdout.write(${JSON.stringify(sensitiveOutput === true ? 'token=version-canary\n' : 'synthetic 1.0.0\n')})
 else if (args[0] === '--help') process.stdout.write('synthetic help\\n')
 else {

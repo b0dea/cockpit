@@ -872,12 +872,17 @@ describe('generated environment process contract', () => {
                 return { status: 0, diagnostics: [], result: null }
             },
         })).toBe(0)
-        for (const conflict of [['--probe-specifications', 'other.json'], ['--interactive'], ['--json']]) {
+        for (const conflict of [['--interactive'], ['--json'], ['--probe-specifications=']]) {
             expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
                 captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
             conflict.join(' ')).toBe(2)
         }
-        expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' }])
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', '--probe-specifications', 'earlier.json'],
+            captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(0)
+        expect(selftestCalls).toEqual([
+            { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' },
+            { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json', previousProbeSpecificationsPath: 'earlier.json' },
+        ])
         const upgrade = captureIo()
         expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--json'], upgrade.io, {
             upgrade: async (input) => {
@@ -888,10 +893,11 @@ describe('generated environment process contract', () => {
         expect(upgradeCalls).toEqual([{ configPath: 'cockpit.toml' }])
     })
 
-    it('preserves only the selftest search path and its undefined own value for injected handlers', async () => {
+    it('preserves only the selftest search path, the non-secret tool variables and undefined own values for injected handlers', async () => {
         const unrelated = vi.fn(() => { throw new Error('unrelated environment value must not be read') })
         const env = Object.defineProperty({
-            PATH: undefined, Path: '/synthetic/harnesses', UNRELATED_DATA: 'synthetic-unrelated-canary',
+            PATH: undefined, Path: '/synthetic/harnesses', HOME: '/synthetic/home', UNRELATED_DATA: 'synthetic-unrelated-canary',
+            ANTHROPIC_API_KEY: 'synthetic-key-canary',
         }, 'UNRELATED_ACCESSOR', { enumerable: true, get: unrelated })
         const selftest = vi.fn(async (_input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput) => ({
             status: 0, diagnostics: [], result: { pending: ['native'] },
@@ -904,12 +910,12 @@ describe('generated environment process contract', () => {
 
         expect(selftest).toHaveBeenCalledExactlyOnceWith({
             configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json',
-            env: { PATH: undefined },
+            env: { PATH: undefined, HOME: '/synthetic/home' },
         })
         const dispatched = selftest.mock.calls[0]?.[0]
-        expect(dispatched && 'env' in dispatched ? dispatched.env : null).toStrictEqual({ PATH: undefined })
+        expect(dispatched && 'env' in dispatched ? dispatched.env : null).toStrictEqual({ PATH: undefined, HOME: '/synthetic/home' })
         expect(unrelated).not.toHaveBeenCalled()
-        expect(capture.output().stdout + capture.output().stderr).not.toContain('synthetic-unrelated-canary')
+        expect(capture.output().stdout + capture.output().stderr).not.toMatch(/synthetic-unrelated-canary|synthetic-key-canary/)
     })
 
     it('refuses a selftest PATH accessor before reading or dispatching it', async () => {

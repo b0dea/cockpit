@@ -20,13 +20,16 @@ import {
     type GeneratedApplicationProjection,
 } from './generated-application.js'
 import { redactSensitiveMessage } from './sensitive.js'
-import { snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, type ConsumedFile, type ExecutionStep } from './contract.js'
+import {
+    snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep,
+} from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import {
     draftSurfaceSelftestSpecifications,
     planSurfaceSelftest,
     unfilledSurfaceSelftestSpecifications,
+    surfaceSelftestCellLabel,
     surfaceSelftestHumanNeeded,
     surfaceSelftestReviews,
     type PlannedSelftestProbe,
@@ -52,6 +55,8 @@ export interface ConfiguredSurfaceSelftestCommandInput {
 export interface SurfaceSelftestDraftInput {
     readonly configPath: string
     readonly writeProbeSpecificationsPath: string
+    /** An earlier probe-specification file whose filled rows for unchanged cells carry into the new one. */
+    readonly previousProbeSpecificationsPath?: string
 }
 
 export interface SurfaceSelftestCommandInput {
@@ -108,8 +113,16 @@ const STREAM_BYTES = 65_536
 const PROBE_TIMEOUT_MS = 30_000
 const EVIDENCE_EXPIRY_MS = 300_000
 const BUILTIN_EXECUTABLES = Object.freeze({ claudecode: 'claude', codexcli: 'codex', opencode: 'opencode' } as const)
+// Why a custom cell has no probe row; see SelftestProbeSpecification.
+const UNPROBEABLE_REASON = 'selftest runs only built-in tools it found on PATH and you approved by digest, and a custom harness has no such executable'
+const UNPROBEABLE_ACTION = 'measure the capability by hand with a candidate and a deliberately broken control and record it in cockpit.toml'
 
-function captureSearchEnvironment(value: unknown): Readonly<Record<string, string | undefined>> | undefined {
+// A signed-in tool locates its stored sign-in through HOME, so a probe given PATH alone reports
+// every cell as not signed in. The allowlist carries no credential; every other variable, tokens
+// included, stays out of the probe.
+const PROBE_ENVIRONMENT: ReadonlySet<string> = new Set(['PATH', ...INHERITED_TOOL_ENVIRONMENT])
+
+function captureProbeEnvironment(value: unknown): Readonly<Record<string, string | undefined>> | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return undefined
         const prototype = Object.getPrototypeOf(value)
@@ -118,7 +131,7 @@ function captureSearchEnvironment(value: unknown): Readonly<Record<string, strin
         if (keys.length > 4_096) return undefined
         const env: Record<string, string | undefined> = {}
         for (const key of keys) {
-            if (key !== 'PATH') continue
+            if (typeof key !== 'string' || !PROBE_ENVIRONMENT.has(key)) continue
             const descriptor = Object.getOwnPropertyDescriptor(value, key)
             if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
                 || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
@@ -139,7 +152,7 @@ function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
             || required.some((key) => !Object.hasOwn(descriptors, key) || !Object.hasOwn(descriptors[key]!, 'value'))
             || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
         const root = descriptors.root!.value
-        const env = captureSearchEnvironment(descriptors.env!.value)
+        const env = captureProbeEnvironment(descriptors.env!.value)
         const specifications = descriptors.specifications!.value
         if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
         return Object.freeze({ application: descriptors.application!.value, root, specifications, env }) as SurfaceSelftestCommandInput
@@ -157,7 +170,7 @@ function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestComman
             || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
         const configPath = descriptors.configPath!.value
         const probeSpecificationsPath = descriptors.probeSpecificationsPath!.value
-        const env = captureSearchEnvironment(descriptors.env!.value)
+        const env = captureProbeEnvironment(descriptors.env!.value)
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
             || probeSpecificationsPath.includes('\0') || !env) return undefined
@@ -205,12 +218,14 @@ function probeSpecificationsArtifact(
     bytes: string,
     sourceSha256: string,
     generatedManifestSha256: string,
-): Readonly<{ kind: 'complete'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed' }> | Readonly<{ kind: 'stale' }> {
+): Readonly<{ kind: 'complete' | 'stale'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed' }> {
     let captured: Readonly<Record<string, unknown>> | undefined
     try { captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined } catch { return { kind: 'malformed' } }
     if (!captured || Object.keys(captured).sort().join('\0') !== ['generatedManifestSha256', 'schema', 'sourceSha256', 'specifications'].join('\0')
         || captured.schema !== PROBE_SPECIFICATIONS_SCHEMA || !Array.isArray(captured.specifications)) return { kind: 'malformed' }
-    if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) return { kind: 'stale' }
+    if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) {
+        return { kind: 'stale', specifications: captured.specifications }
+    }
     return { kind: 'complete', specifications: captured.specifications }
 }
 
@@ -283,11 +298,12 @@ function step(
     consumedFiles: readonly ConsumedFile[],
     deadline: number,
     labels: Readonly<Record<string, string>>,
+    env: Readonly<Record<string, string>>,
 ): ExecutionStep | undefined {
     const remaining = deadline - Date.now()
     if (remaining <= 0) return undefined
     return snapshotExecutionStep({
-        id, argv, argv0, cwd: root, env: {}, timeoutMs: Math.min(PROBE_TIMEOUT_MS, remaining),
+        id, argv, argv0, cwd: root, env, timeoutMs: Math.min(PROBE_TIMEOUT_MS, remaining),
         spawnNotAfter: new Date(deadline).toISOString(), stdoutLimitBytes: STREAM_BYTES, stderrLimitBytes: STREAM_BYTES,
         paths: [root], ports: [], labels, expected: [], consumedFiles, filesystemChecks: [], compensation: [],
     })
@@ -305,7 +321,7 @@ async function run(
 }
 
 function publicCommand(command: readonly string[], executable: string, control?: string): readonly [string, ...string[]] {
-    return command.map((value) => value === '{executable}' || value === '{node}' ? executable
+    return command.map((value) => value === '{executable}' ? executable
         : value === '{control}' && control !== undefined ? control : value) as [string, ...string[]]
 }
 
@@ -415,12 +431,8 @@ async function runEvidenceProbe(
     adapters: SurfaceSelftestCommandAdapters,
     approvedExecutables: OperatorExecutableIdentities,
 ): Promise<SelftestEvidenceRecord | ReturnType<typeof surfaceSelftestHumanNeeded> | undefined> {
-    const harnessName = probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id
+    const harnessName = probe.harness.name
     const observedAt = new Date().toISOString()
-    if (probe.harness.kind === 'custom') return surfaceSelftestHumanNeeded(
-        expectation, probe.cell, 'enforcement_probe_required', observedAt,
-        `Run an operator-approved exact ${harnessName} ${probe.capability} probe with candidate and broken controls; generated module checks do not authorize constructed worker commands`,
-    )
     const resolution = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env)
     if (resolution.state === 'unavailable') return surfaceSelftestHumanNeeded(
         expectation,
@@ -456,6 +468,8 @@ async function runEvidenceProbe(
     const versionCommand = publicCommand(probe.versionCommand, executable.canonicalPath)
     const helpCommand = publicCommand(probe.helpCommand, executable.canonicalPath)
     const commonFiles = Object.freeze([consumedExecutable(executable)])
+    const probeEnvironment = Object.freeze(Object.fromEntries(Object.entries(env).filter(
+        (row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0 && !row[1].includes('\0'))))
     const controlIndex = invocation.indexOf('{control}')
     if (controlIndex < 0) return undefined
     const candidateCommand = publicCommand(invocation, executable.canonicalPath, candidatePath)
@@ -466,7 +480,7 @@ async function runEvidenceProbe(
         if (control) files.push({ path: control, sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256,
             maxBytes: MAX_CONTROL_BYTES, argvIndexes: [controlIndex], executable: false })
         return step(`surface-selftest-${randomBytes(8).toString('hex')}-${role}`, root, execution, executable.invocationPath, files, deadline,
-            { harness: harnessName, capability: probe.capability, role })
+            { harness: harnessName, capability: probe.capability, role }, probeEnvironment)
     }
     const version = await run(adapters, createStep('version', versionCommand))
     const help = await run(adapters, createStep('help', helpCommand))
@@ -543,7 +557,13 @@ export async function runSurfaceSelftestApplication(
         const record = await runEvidenceProbe(
             root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables,
         )
-        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id}`)
+        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}`)
+        records.push(record)
+    }
+    for (const cell of plan.unprobeable) {
+        const record = surfaceSelftestHumanNeeded(plan.expectation, cell, 'enforcement_probe_required', new Date().toISOString(),
+            `${UNPROBEABLE_REASON}; ${UNPROBEABLE_ACTION} for ${surfaceSelftestCellLabel(cell)}`)
+        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `could not record ${surfaceSelftestCellLabel(cell)} as human_needed`)
         records.push(record)
     }
     const reviews = surfaceSelftestReviews(plan.expectation, [])
@@ -596,7 +616,11 @@ export async function runConfiguredSurfaceSelftestApplication(
         return probeSpecificationsRefusal(`probe specification file ${artifactPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
     }
     if (artifact.kind === 'stale') {
-        return probeSpecificationsRefusal(`probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`)
+        return {
+            kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
+            reason: `probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`,
+            fix: 'write a new file that keeps the rows you filled for unchanged cells with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, fill the fields it lists, then pass the new file to --probe-specifications',
+        }
     }
     const unfilled = unfilledSurfaceSelftestSpecifications(artifact.specifications)
     if (unfilled.length > 0) {
@@ -616,7 +640,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         sourceSha256: checked.result.application.sourceSha256,
         generatedManifestSha256: checked.result.application.surfaceSelftest.manifestSha256,
         commandVectors: Object.freeze(plan.probes.map((probe) => Object.freeze({
-            harness: probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id,
+            harness: probe.harness.name,
             capability: probe.capability,
             skill: probe.sample?.skill ?? null,
             invocation: Object.freeze([...probe.invocation]) as readonly [string, ...string[]],
@@ -686,12 +710,36 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
         return refused(checked.diagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`).join('; ')
             || 'generated environment check refused configured selftest source')
     }
-    const specifications = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest)
-    if (!specifications) return refused('generated selftest projection is invalid')
+    let previous: readonly unknown[] = []
+    let previousPath: string | undefined
+    if (input.previousProbeSpecificationsPath !== undefined) {
+        try { previousPath = await realpath(resolve(input.previousProbeSpecificationsPath)) } catch {
+            return refused(`earlier probe specification file ${resolve(input.previousProbeSpecificationsPath)} is missing or unreadable`)
+        }
+        const bytes = await readProbeSpecificationsArtifact(previousPath)
+        if (bytes === undefined) return refused(`earlier probe specification file ${previousPath} is unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes`)
+        // A stale file is the expected input: the digests changed, the rows may not have.
+        const earlier = probeSpecificationsArtifact(bytes, checked.result.application.sourceSha256,
+            checked.result.application.surfaceSelftest.manifestSha256)
+        if (earlier.kind === 'malformed') {
+            return refused(`earlier probe specification file ${previousPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
+        }
+        previous = earlier.specifications
+    }
+    const draft = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest, previous)
+    if (!draft) return refused('generated selftest projection is invalid')
+    const { specifications, unprobeable, carried } = draft
     const destination = resolve(input.writeProbeSpecificationsPath)
     const unfilled = unfilledSurfaceSelftestSpecifications(specifications)
     return {
-        status: 0, diagnostics: [],
+        status: 0,
+        diagnostics: unprobeable.map((cell) => ({
+            severity: 'warning' as const,
+            code: 'SELFTEST_CUSTOM_PROBE_UNSUPPORTED' satisfies typeof ENVIRONMENT_CODES.SELFTEST_CUSTOM_PROBE_UNSUPPORTED,
+            message: `no row written for ${surfaceSelftestCellLabel(cell)}: ${UNPROBEABLE_REASON}, so selftest records this cell human_needed with enforcement_probe_required`,
+            target: surfaceSelftestCellLabel(cell),
+            fix: 'measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it',
+        })),
         artifact: `${JSON.stringify({
             schema: PROBE_SPECIFICATIONS_SCHEMA,
             sourceSha256: checked.result.application.sourceSha256,
@@ -704,6 +752,9 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
             rows: specifications.length,
             fromGeneratedManifest: 'harness, capability, sample.skill and unavailableCode for every cell that needs evidence',
             fromCockpit: 'versionCommand and helpCommand, the --version and --help identity probes; review them when you approve the file',
+            ...(previousPath === undefined ? {} : {
+                carriedForward: `${carried} of ${specifications.length} row(s) kept unchanged from ${previousPath}; every other row is new or changed, or was not complete there`,
+            }),
             fromYou: 'each null: invocation (argv starting with the placeholder already in versionCommand, with exactly one {control}), candidateCode and brokenCode (the exact lines the tool prints for an accepted and a broken control), and sample.features for skill-parity rows',
             unfilled,
             then: cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([destination])}` }),
