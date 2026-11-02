@@ -283,6 +283,29 @@ describe('setup planner', () => {
         expect(observe).not.toHaveBeenCalled()
     })
 
+    it('clones a relative local remote and then accepts the origin Git recorded', async () => {
+        const siblingsRoot = root()
+        execFileSync('git', ['init', '--quiet', '--bare', join(siblingsRoot, 'api.git')])
+        const declared = sibling({ remote: 'api.git', branch: undefined })
+        const clone = await planSetup({ siblingsRoot, sibling: declared, observation: observed({ kind: 'absent' }), env })
+        expect(clone.kind).toBe('preview')
+        if (clone.kind !== 'preview') return
+        expect(await executePlan(clone.plan)).toEqual(expect.objectContaining({ kind: 'complete' }))
+        const origin = execFileSync('git', ['-C', join(siblingsRoot, 'api'), 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim()
+        const again = await planSetup({
+            siblingsRoot, sibling: declared, observation: observed({ kind: 'repository', remotes: { origin } }), env,
+        })
+        expect(again).toEqual(expect.objectContaining({ kind: 'complete', diagnostics: [] }))
+        const stored = await planSetup({
+            siblingsRoot, sibling: declared, observation: observed({ kind: 'repository', remotes: { origin: 'api.git' } }), env,
+        })
+        expect(stored.kind).toBe('complete')
+        const other = await planSetup({
+            siblingsRoot, sibling: declared, observation: observed({ kind: 'repository', remotes: { origin: 'other.git' } }), env,
+        })
+        expect(other.kind).toBe('refusal')
+    })
+
     it('keeps option-like remote and branch values as single argv elements', async () => {
         const outcome = await planSetup({
             siblingsRoot: root(), sibling: sibling({ remote: '--upload-pack=touch injected', branch: '-danger' }),

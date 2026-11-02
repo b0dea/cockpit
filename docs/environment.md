@@ -777,7 +777,9 @@ What the checks compare:
 - **Git remotes.** A declared sibling remote is compared with the remote selected by that
   checkout's branch upstream; cockpit does not rewrite Git remotes. A checkout with no upstream has
   nothing to compare, and the result says so. Once an upstream is selected, it must be available
-  and match; a missing or diverged upstream blocks the gate.
+  and match; a missing or diverged upstream blocks the gate. A `remote` that is a relative local path
+  (not a URL or `host:path`) is resolved against the siblings root, the directory `setup` clones
+  from, so `setup` accepts the absolute origin Git records for the clone.
 - **Surfaces.** Generated files must match the ownership manifest and stay within the guide line
   cap and the built-in harness skill caps. Custom outputs and plugin bundle copies are checked for
   being current, but no harness-side cap on their always-loaded size applies to them. Whether each
