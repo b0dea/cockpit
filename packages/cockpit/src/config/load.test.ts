@@ -186,7 +186,7 @@ cold_start_seconds = 300
             if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded.diagnostics))
             return { file: loaded.result.source.sha256, runtime: loaded.result.runtimeSha256 }
         }
-        const machine = (coldStart: number) => `\n[environment]\nresettable_volumes = ["data"]\n[environment.machine]\nruntime_memory_mb = 512\nruntime_cpus = 1\nfree_disk_mb = 1024\ncold_start_seconds = ${coldStart}\n`
+        const machine = (coldStart: number) => `\n[environment]\ncompose_files = ["compose.yml"]\nresettable_volumes = ["data"]\n[environment.machine]\nruntime_memory_mb = 512\nruntime_cpus = 1\nfree_disk_mb = 1024\ncold_start_seconds = ${coldStart}\n`
         const floored = await identity(`${validConfig}${machine(120)}`)
         // The floor, the cold-start budget and the reset list are held on the host, not in a
         // container, so raising them leaves a running stack alone.

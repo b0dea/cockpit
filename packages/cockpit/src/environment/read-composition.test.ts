@@ -312,7 +312,7 @@ describe('production read command composition', () => {
         controller.abort()
 
         await expect(outcome).resolves.toEqual({
-            kind: 'cancelled', status: 130, diagnostics: [], result: { json: true, records: [] },
+            kind: 'cancelled', status: 130, diagnostics: [], result: { json: true, records: [], truncated: false },
         })
         expect(stepIds).toEqual(['runtime:prepare', 'status:api', 'identity:api', 'inspect:api'])
         expect(options.every(option => option?.signal === controller.signal)).toBe(true)
@@ -327,7 +327,7 @@ describe('production read command composition', () => {
             follow: true, json: false }, { observe, execute: vi.fn(), signal: controller.signal })
 
         expect(outcome).toEqual({
-            kind: 'cancelled', status: 130, diagnostics: [], result: { json: false, records: [] },
+            kind: 'cancelled', status: 130, diagnostics: [], result: { json: false, records: [], truncated: false },
         })
         expect(observe).not.toHaveBeenCalled()
     })
