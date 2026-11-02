@@ -477,6 +477,20 @@ else process.exit(64)
             message: expect.stringContaining(`Codex has not trusted the guard hook in ${join(candidate.checkout, '.codex/hooks.json')}`) }))
     })
 
+    it('warns from doctor when PATH holds a relative entry, under which the guard asks before every command', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const doctor = async (PATH: string) => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH, HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+        const warning = expect.objectContaining({ severity: 'warning', code: 'GUARD_SEARCH_PATH_RELATIVE', target: 'PATH' })
+
+        expect((await doctor('/usr/bin:/bin')).diagnostics).not.toContainEqual(warning)
+        expect((await doctor('/usr/bin:./node_modules/.bin:/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'GUARD_SEARCH_PATH_RELATIVE',
+            message: expect.stringContaining('PATH holds the relative entry "./node_modules/.bin"') }))
+        expect((await doctor('/usr/bin::/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'GUARD_SEARCH_PATH_RELATIVE',
+            message: expect.stringContaining('an empty entry, from a stray colon, is the working directory') }))
+    })
+
     it('warns from doctor when the cockpit has work orders but the Codex CLI that grades them is not on PATH', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({

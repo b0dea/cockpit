@@ -98,7 +98,8 @@ or an empty one names whatever directory a command runs in, so a file the agent 
 run in place of a permitted command, or as the interpreter a path-spelled script such as
 `./node_modules/.bin/cockpit` starts through `#!/usr/bin/env node`. While the harness's `PATH` holds
 one, no command is allowed without a prompt, whatever profile or declared rule matches it, and the
-reason names the entry. Keep relative entries off the `PATH` an agent harness starts with.
+reason names the entry. Keep relative entries off the `PATH` an agent harness starts with; `doctor`
+reports one in the `PATH` it runs with as `GUARD_SEARCH_PATH_RELATIVE`.
 
 The Claude Code registration includes `NotebookEdit`, so notebook cell changes get the same
 protected-path checks as text edits. For a configuration in a repository subdirectory, these
