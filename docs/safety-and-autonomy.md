@@ -95,9 +95,10 @@ an edited module it loads could turn every hard denial into an allow. So these a
 
 Only absolute search path entries can be protected: a relative entry such as `.`, `./node_modules/.bin`
 or an empty one names whatever directory a command runs in, so a file the agent wrote anywhere could
-run in place of a permitted command. While the harness's `PATH` holds one, no command spelled by
-bare name is allowed without a prompt, whatever profile or declared rule matches it, and the reason
-names the entry. Keep relative entries off the `PATH` an agent harness starts with.
+run in place of a permitted command, or as the interpreter a path-spelled script such as
+`./node_modules/.bin/cockpit` starts through `#!/usr/bin/env node`. While the harness's `PATH` holds
+one, no command is allowed without a prompt, whatever profile or declared rule matches it, and the
+reason names the entry. Keep relative entries off the `PATH` an agent harness starts with.
 
 The Claude Code registration includes `NotebookEdit`, so notebook cell changes get the same
 protected-path checks as text edits. For a configuration in a repository subdirectory, these
@@ -254,9 +255,9 @@ These reads fall back to a prompt instead of being allowed:
   would read: `grep -r` reads hidden files, and ripgrep's hidden-file filter yields to an ignore file
   the agent can write. The guard walks each searched tree to find them, without following links,
   and a tree too large for its bounded walk is not searched either. The reason names the path, so
-  the agent can search a narrower one. A tree that would contain an instance that does not exist yet
-  is searched only when every other command in the call is read-only too, so nothing in the call
-  can create it first;
+  the agent can search a narrower one. The walk sees only what exists before the call runs, so a
+  recursive search is allowed only when every other command in the call is read-only too, and
+  nothing in it can write an environment file first;
 - a path that is a symlink, lies outside the configured roots, or is an undeclared `.env*` file. A
   declared environment `template` is read like any other file.
 

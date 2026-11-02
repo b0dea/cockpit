@@ -24,8 +24,9 @@ purpose = "Browser MCP declaration"
 [sibling.derives]
 mcp_sources = [{ path = "browser/mcp.json", provenance = { source = "browser/mcp.json", observed_on = "2026-11-02", kind = "declared", reason = "Playwright MCP transport for the browser runner" } }]
 
-[mcp]
-approved = ["playwright"]
+# The digest of the playwright declaration in browser/mcp.json, which sync reports when it changes.
+[mcp.approved]
+playwright = "c67c1821cee5e8811f3a4c9fe972ec7fccbd6498c6830723fc2420db7037435c"
 
 [ports.bases]
 API_HOST_PORT = 4100

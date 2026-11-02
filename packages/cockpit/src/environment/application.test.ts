@@ -800,7 +800,7 @@ describe('guard policy construction', () => {
         const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
             resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }),
             resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) }
-        const decide = async (service: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
+        const decide = async (service: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root, searchPath: '/usr/bin:/bin',
             payload: shellPayload(`${launcher} logs --config ${realpathSync(configPath)} --service ${service}`, root) }, adapters)).decision.decision
         // Docker is not a prerequisite of this suite; without it no service name can be admitted.
         const docker = await adapters.resolveDocker()

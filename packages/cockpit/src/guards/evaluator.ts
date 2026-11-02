@@ -839,16 +839,16 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (kind !== 'tree') return
             // The search cannot be told which files to skip: ripgrep's hidden-file filter yields to a
             // whitelist in an agent-writable ignore file, and grep has none. So a tree that holds an
-            // existing protected path is not safe, and one that would hold an absent one is safe only
-            // when nothing else in the call can create it first. The same holds for every `.env*` file
-            // and `.secrets` directory the inspector's walk found in it: `grep -r KEY .` once printed an
-            // undeclared sibling `.env.local` that `cat` would have stopped at.
+            // existing protected path is not safe, and neither is one holding any `.env*` file or
+            // `.secrets` directory the inspector's walk found: `grep -r KEY .` once printed an
+            // undeclared sibling `.env.local` that `cat` would have stopped at. The walk sees only what
+            // exists now, so the search is safe only when nothing else in the call can write first, as
+            // `vercel env pull .env.local && rg KEY .` would.
             const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
             const present = reached.find((target) => identityOf(target) !== null)
             const sensitive = evidence.sensitive as readonly string[] | null
             const unseen = sensitive?.find((found) => !templates.has(fold(found)))
-            const absent = chainReadOnly ? undefined : reached[0]
-            if (present === undefined && sensitive !== null && unseen === undefined && absent === undefined) return
+            if (present === undefined && sensitive !== null && unseen === undefined && chainReadOnly) return
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
             searchBlocker = ask(present !== undefined
@@ -857,7 +857,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                     ? `A recursive search of ${path} covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.`
                     : unseen !== undefined
                         ? `A recursive search of ${path} would read ${shown(unseen)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`
-                        : `A recursive search of ${path} could read ${shown(absent!)}, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.`)
+                        : `A recursive search of ${path} could read an environment file or secrets directory that another command in this call creates first. Run the search on its own.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -1007,9 +1007,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const barrier = approvalBarriers.get(invocation)
         if (barrier) return barrier
         // A relative entry resolves against whatever directory the command runs in, so no write
-        // protection covers it: a file the agent wrote as packages/web/git runs as `git` there.
-        if (resolved.searchPathRelativeEntry !== null && invocation.executable !== null && !invocation.executable.includes('/')) {
-            return ask(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable} may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
+        // protection covers it: a file the agent wrote as packages/web/git runs as `git` there, and a
+        // path-spelled launcher's `#!/usr/bin/env node` finds a planted `node` the same way.
+        if (resolved.searchPathRelativeEntry !== null && invocation.executable !== null) {
+            return ask(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable}, or a program it starts by name, may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
         }
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined

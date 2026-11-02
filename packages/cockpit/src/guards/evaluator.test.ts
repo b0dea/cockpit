@@ -638,9 +638,13 @@ describe('built-in read-only profile', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('grep -r needle ..', `${root}/src`)), present(`${root}/env/.secrets`), withGit).reason)
             .toBe('A recursive search of .. would read ../env/.secrets, a declared environment instance or secrets directory. Search a path that does not contain it.')
         expect(evaluateGuard(parseGuardInput(shellPayload('rg needle src')), present(instance), withGit).decision).toBe('allow')
-        // Another command in the same call could create the instance before the search reads it.
-        expect(decideInRepositories('npm test && rg needle')).toEqual({ decision: 'ask',
-            reason: 'A recursive search of . could read env/.secrets, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.' })
+        // Another command in the same call could write an instance or an environment file before the
+        // search reads it, as `vercel env pull .env.local && rg KEY .` would, wherever the search is rooted.
+        for (const command of ['npm test && rg needle', 'npm test && rg needle src']) {
+            expect(decideInRepositories(command), command).toEqual({ decision: 'ask',
+                reason: `A recursive search of ${command.endsWith('src') ? 'src' : '.'} could read an environment file or secrets directory that another command in this call creates first. Run the search on its own.` })
+        }
+        expect(decideInRepositories('rg needle src | head -n 5').decision).toBe('allow')
         // Any environment file or secrets directory the walk finds below the tree is unproven, wherever it sits.
         const walked = (found: string[] | null, templates: string[] = []) => (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)),
             { ...policy(), templates }, (request: { path: string; cwd: string; operation?: string }) => ({ ...withGit(request),
@@ -1120,7 +1124,7 @@ describe('installed code, search path and secret links', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('node node_modules/.bin/tsc')), configured(), inspect).decision).toBe('ask')
     })
 
-    it('admits no bare command name while the search path holds a relative entry, since a file the agent wrote can shadow it', () => {
+    it('admits no command while the search path holds a relative entry, since a file the agent wrote can shadow it or its interpreter', () => {
         // `packages/web/git` is no protected search directory, yet `.` makes it the `git` that runs there.
         const relative = (entry: string) => ({ ...configured(), searchPathRelativeEntry: entry,
             cockpitLaunchers: [candidate('cockpit', []), candidate('./node_modules/.bin/cockpit', [])] })
@@ -1132,9 +1136,10 @@ describe('installed code, search path and secret links', () => {
             expect(decideWith(command, null), command).toBe('allow')
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('ls', `${root}/packages/web`)), relative(''), inspect).reason)
-            .toBe('The command search path the agent runs with holds the relative entry "" (an empty entry is the working directory), so ls may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.')
-        // A path names its program exactly, and hard denials still come first.
-        expect(decideWith('./node_modules/.bin/cockpit check', '.')).toBe('allow')
+            .toBe('The command search path the agent runs with holds the relative entry "" (an empty entry is the working directory), so ls, or a program it starts by name, may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.')
+        // A path-spelled launcher still finds its `#!/usr/bin/env node` interpreter on that path, and hard denials come first.
+        expect(decideWith('./node_modules/.bin/cockpit check', '.')).toBe('ask')
+        expect(decideWith('./node_modules/.bin/cockpit check', null)).toBe('allow')
         expect(decideWith('cat config/active.instance', '.')).toBe('deny')
         for (const entry of ['/abs', 'a\nb']) expect(evaluateGuard(parseGuardInput(shellPayload('ls')), relative(entry), inspect).decision).toBe('unavailable')
     })
