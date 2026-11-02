@@ -138,7 +138,6 @@ function projectBrowserConfig(declaredBrowser: NonNullable<CockpitConfig['browse
             proxyPort: declaredBrowser.proxy.proxy_port,
             allowedHosts: Object.freeze([...declaredBrowser.proxy.allowed_hosts]),
             bind: declaredBrowser.proxy.bind,
-            directServerPublish: false,
         }),
         resolver: Object.freeze(declaredBrowser.resolver.map((row) => Object.freeze({ ...row }))),
         authentication: Object.freeze({

@@ -16,13 +16,13 @@ describe('browser proxy exposure', () => {
         }
     })
 
-    it('refuses non-loopback control publication and a direct server publish', () => {
+    it('refuses non-loopback control publication and never publishes the browser server', () => {
         for (const bind of ['0.0.0.0', '::'] as const) {
             const formerDecision = { serverPort: 3000, proxyPort: 3001, allowedHosts: ['browser.example.invalid:3001'], bind, widerExposure: true }
             expect(() => Reflect.apply(resolveBrowserProxy, undefined, [formerDecision]), bind).toThrow('loopback')
         }
         expect(resolveBrowserProxy({ serverPort: 3000, proxyPort: 3001, allowedHosts: ['[::1]:3001'], bind: '::1' }).proxy.bind).toBe('::1')
-        expect(() => resolveBrowserProxy({ serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'], directServerPublish: true })).toThrow('direct')
+        expect(resolveBrowserProxy({ serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] }).server).toEqual({ bind: '127.0.0.1', port: 3000, publish: false })
     })
 
     it('refuses ambiguous authorities, wildcard hosts and invalid ports', () => {

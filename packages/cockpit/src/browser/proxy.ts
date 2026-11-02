@@ -1,9 +1,16 @@
+import { isProxy } from 'node:util/types'
+
+export const mechanism = {
+    id: 'browser-proxy',
+    module: 'packages/cockpit/src/browser/proxy.ts',
+    exports: ['browserHostAllowed', 'browserProxyAuthorityMatches', 'resolveBrowserProxy'],
+} as const
+
 export interface BrowserProxyInput {
     readonly serverPort: number
     readonly proxyPort: number
     readonly allowedHosts: readonly string[]
     readonly bind?: '127.0.0.1' | '::1'
-    readonly directServerPublish?: boolean
 }
 
 function port(value: number): boolean {
@@ -29,9 +36,6 @@ export function resolveBrowserProxy(input: BrowserProxyInput) {
     if (!port(input.serverPort) || !port(input.proxyPort) || input.serverPort === input.proxyPort) {
         throw new TypeError('browser proxy needs distinct valid server and proxy ports')
     }
-    if (input.directServerPublish !== undefined && input.directServerPublish !== false) {
-        throw new TypeError('browser server direct publication is forbidden; publish the Host-checking proxy')
-    }
     const bind = input.bind ?? '127.0.0.1'
     if (bind !== '127.0.0.1' && bind !== '::1') throw new TypeError('browser proxy control publication must remain on loopback until authenticated transport is available')
     if (!Array.isArray(input.allowedHosts) || input.allowedHosts.length === 0 || input.allowedHosts.length > 64
@@ -53,10 +57,3 @@ export type BrowserProxyProjection = ReturnType<typeof resolveBrowserProxy>
 export function browserHostAllowed(policy: BrowserProxyProjection, host: unknown): boolean {
     return typeof host === 'string' && browserProxyAuthorityMatches(host, policy.proxy.port) && policy.proxy.allowedHosts.includes(host)
 }
-import { isProxy } from 'node:util/types'
-
-export const mechanism = {
-    id: 'browser-proxy',
-    module: 'packages/cockpit/src/browser/proxy.ts',
-    exports: ['browserHostAllowed', 'browserProxyAuthorityMatches', 'resolveBrowserProxy'],
-} as const
