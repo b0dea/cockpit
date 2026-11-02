@@ -5218,15 +5218,8 @@ export async function runBaselineRecord(
     let observed: BaselineObservation
     try {
         observed = await adapters.observe(Object.freeze({ configPath }))
-    } catch {
-        return Object.freeze({
-            kind: 'refusal', status: 2, result: null,
-            diagnostics: Object.freeze([applicationDiagnostic(
-                ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-                'baseline evidence observation is unavailable',
-                'environment-baseline',
-            )]),
-        })
+    } catch (error) {
+        return baselineOperatorRefusal(baselineObservationMessage(error))
     }
     const evidence = ownDataValues(observed, ['snapshot', 'evidence'], ['previous'])
     if (!evidence) {
@@ -5279,8 +5272,8 @@ export async function beginOperatorBaselineRecord(
     let observation: BaselineObservation
     try {
         observation = await adapters.observe(Object.freeze({ configPath: captured.configPath }))
-    } catch {
-        return baselineOperatorRefusal('baseline evidence observation is unavailable')
+    } catch (error) {
+        return baselineOperatorRefusal(baselineObservationMessage(error))
     }
     const observed = ownDataValues(observation, ['snapshot', 'evidence'], ['previous'])
     if (!observed) return baselineOperatorRefusal('baseline evidence observation must be readable')
@@ -5337,6 +5330,10 @@ export async function beginOperatorBaselineRecord(
             }
         },
     })
+}
+
+function baselineObservationMessage(error: unknown): string {
+    return `baseline evidence observation is unavailable: ${error instanceof Error ? error.message : String(error)}`
 }
 
 function baselineRevalidationMessage(error: unknown): string {

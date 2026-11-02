@@ -62,6 +62,9 @@ const controls = vi.hoisted(() => ({
     processIdentitySha256: undefined as string | undefined,
     contentHash: undefined as string | undefined,
     captureContainerId: undefined as string | undefined,
+    captureUnavailable: false,
+    captureBatchId: undefined as string | undefined,
+    readinessBatchIds: [] as string[],
     stateChanged: false,
     lifecycleReads: 0,
     revalidatedServices: [] as string[],
@@ -105,9 +108,13 @@ vi.mock('./lifecycle-composition.js', () => ({
         withRuntimeReadiness: vi.fn(async (_context, use, ports) => {
             if (controls.executePreparation) await execute({ id: 'runtime:prepare' })
             if (ports) controls.readinessPorts.push(ports)
+            // Like the real runtime adapter, every readiness observation mints its own batch id.
+            const batchId = (controls.readinessBatchIds.length + 1).toString(16).padStart(64, 'e')
+            controls.readinessBatchIds.push(batchId)
             return use({
             topology: {
                 ...topology,
+                batchId,
                 configSha256: source.sha256,
                 runtimeVersion: controls.runtimeVersion ?? topology.runtimeVersion,
                 services: controls.incomplete || controls.multipleServices
@@ -232,30 +239,38 @@ vi.mock('./runtime.js', async (importOriginal) => ({
     admitRuntimeServiceHealth: vi.fn(({ observation }) => ({ kind: 'complete', evidence: { containerId: observation.containerId } })),
 }))
 
-vi.mock('./evidence.js', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./evidence.js')>(),
-    createStabilityCapturePlan: vi.fn((input) => {
-        controls.captureContainerId = input.containerId
-        return { kind: 'preview', plan: { steps: [{ id: 'process' }, { id: 'content' }] } }
-    }),
-    authenticateStabilityCapture: vi.fn(() => ({ capture: true })),
-    captureRuntimeEvidence: vi.fn(() => ({
-        state: 'available', artifact: 'captured-runtime-evidence', schemaVersion: 1,
-        stackId, configSha256: controls.configSha256 ?? source.sha256, runtime: { name: 'docker', version: controls.runtimeVersion ?? '27.1.2', executableSha256: topology.executableSha256 },
-        observedAt: '2026-09-25T00:00:10.000Z', captureStartedAt: '2026-09-25T00:00:09.000Z',
-        command: { batchId: topology.batchId, containerId: controls.captureContainerId ?? containerId, stepIds: ['process', 'content'], timeoutMs: 1000, stdoutLimitBytes: 10, stderrLimitBytes: 10 },
-        observedBytes: { stdout: 1, stderr: 0 }, stability: {
-            processIdentitySha256: controls.processIdentitySha256 ?? sha('5'),
-            contentHash: controls.contentHash ?? sha('6'),
-        }, evidenceSha256: sha('7'),
-    })),
-    createEnvironmentSnapshot: vi.fn(({ stackId: selectedStackId, configSha256 }) => ({
-        artifact: 'generated-environment-snapshot', schemaVersion: 1, stackId: selectedStackId, configSha256,
-        createdAt: '2026-09-25T00:00:08.000Z', creationSource: 'resolved-config', intendedState: {}, snapshotSha256: sha('8'),
-    })),
-    environmentBaselineConfirmation: vi.fn(() => 'synthetic-confirmation'),
-    isEnvironmentBaselineAuthentic: vi.fn((value) => value !== null && typeof value === 'object' && controls.authenticBaselines.has(value)),
-}))
+vi.mock('./evidence.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./evidence.js')>()
+    return {
+        ...actual,
+        // The real planner runs, so a composition default it refuses, such as an output limit above the
+        // capture bound, fails here instead of only against a live stack.
+        createStabilityCapturePlan: vi.fn((input) => {
+            controls.captureContainerId = input.containerId
+            controls.captureBatchId = input.batchId
+            return actual.createStabilityCapturePlan(input)
+        }),
+        authenticateStabilityCapture: vi.fn(() => controls.captureUnavailable
+            ? { state: 'unavailable', code: 'EXECUTION_STEP_FAILED', reason: 'stability capture execution was refused' }
+            : { capture: true }),
+        captureRuntimeEvidence: vi.fn(() => ({
+            state: 'available', artifact: 'captured-runtime-evidence', schemaVersion: 1,
+            stackId, configSha256: controls.configSha256 ?? source.sha256, runtime: { name: 'docker', version: controls.runtimeVersion ?? '27.1.2', executableSha256: topology.executableSha256 },
+            observedAt: '2026-09-25T00:00:10.000Z', captureStartedAt: '2026-09-25T00:00:09.000Z',
+            command: { batchId: controls.captureBatchId ?? topology.batchId, containerId: controls.captureContainerId ?? containerId, stepIds: ['process', 'content'], timeoutMs: 1000, stdoutLimitBytes: 10, stderrLimitBytes: 10 },
+            observedBytes: { stdout: 1, stderr: 0 }, stability: {
+                processIdentitySha256: controls.processIdentitySha256 ?? sha('5'),
+                contentHash: controls.contentHash ?? sha('6'),
+            }, evidenceSha256: sha('7'),
+        })),
+        createEnvironmentSnapshot: vi.fn(({ stackId: selectedStackId, configSha256 }) => ({
+            artifact: 'generated-environment-snapshot', schemaVersion: 1, stackId: selectedStackId, configSha256,
+            createdAt: '2026-09-25T00:00:08.000Z', creationSource: 'resolved-config', intendedState: {}, snapshotSha256: sha('8'),
+        })),
+        environmentBaselineConfirmation: vi.fn(() => 'synthetic-confirmation'),
+        isEnvironmentBaselineAuthentic: vi.fn((value) => value !== null && typeof value === 'object' && controls.authenticBaselines.has(value)),
+    }
+})
 
 describe('production read command composition', () => {
     beforeEach(() => {
@@ -275,6 +290,9 @@ describe('production read command composition', () => {
         controls.processIdentitySha256 = undefined
         controls.contentHash = undefined
         controls.captureContainerId = undefined
+        controls.captureUnavailable = false
+        controls.captureBatchId = undefined
+        controls.readinessBatchIds.length = 0
         controls.stateChanged = false
         controls.lifecycleReads = 0
         controls.revalidatedServices.length = 0
@@ -471,7 +489,7 @@ describe('production read command composition', () => {
         expect(observation.request).toMatchObject({
             stackId,
             configSha256: source.sha256,
-            batchId: topology.batchId,
+            batchId: controls.readinessBatchIds.at(-1),
             service: 'api',
             containerId,
             services: ['api'],
@@ -600,6 +618,7 @@ describe('production read command composition', () => {
         ['previous baseline', () => { controls.predecessorChanged = true }, 'baseline previous baseline changed'],
         ['process identity', () => { controls.processIdentitySha256 = sha('8') }, 'baseline runtime stability changed'],
         ['content identity', () => { controls.contentHash = sha('9') }, 'baseline runtime stability changed'],
+        ['capture availability', () => { controls.captureUnavailable = true }, 'baseline runtime stability changed'],
     ] as const)('consumes the preview when %s changes after approval', async (_field, change, message) => {
         const adapters = createReadCommandAdapters({
             configPath: source.path,

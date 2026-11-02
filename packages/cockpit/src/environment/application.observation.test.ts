@@ -832,6 +832,24 @@ describe('observation application runners', () => {
         expect(write).not.toHaveBeenCalled()
     })
 
+    it.each([
+        ['token-confirmed', (adapters: never) => runBaselineRecord({
+            configPath: '/synthetic/cockpit.toml', confirmation: 'confirmed', recordedAt: '2026-09-26T00:00:00.000Z',
+        }, adapters)],
+        ['operator', (adapters: never) => beginOperatorBaselineRecord({ configPath: '/synthetic/cockpit.toml' }, adapters)],
+    ] as const)('names why %s baseline observation failed', async (_entry, record) => {
+        const write = vi.fn()
+        const observe = async () => { throw new TypeError('runtime evidence capture is unavailable: synthetic cause') }
+
+        await expect(record({ observe, revalidate: vi.fn(), write } as never)).resolves.toMatchObject({
+            kind: 'refusal', diagnostics: [{
+                code: 'EVIDENCE_UNAVAILABLE', target: 'environment-baseline',
+                message: 'baseline evidence observation is unavailable: runtime evidence capture is unavailable: synthetic cause',
+            }],
+        })
+        expect(write).not.toHaveBeenCalled()
+    })
+
     it('does not admit a token-confirmed baseline until the original observation is revalidated', async () => {
         const record = vi.fn()
         applicationOwners.evidence.recordEnvironmentBaseline = record as never

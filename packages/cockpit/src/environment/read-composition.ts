@@ -31,6 +31,7 @@ import {
 } from './runtime.js'
 import { resolveDockerExecutable } from './executable.js'
 import {
+    STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES,
     authenticateStabilityCapture,
     captureRuntimeEvidence,
     createEnvironmentSnapshot,
@@ -179,8 +180,8 @@ function baselineRevalidationFailure(error: unknown): TypeError {
     if (['previous baseline is unavailable', 'previous baseline is malformed'].includes(reason)) {
         return new TypeError('baseline previous baseline changed')
     }
-    if (['runtime evidence capture plan is unavailable', 'runtime evidence capture is unavailable',
-        'runtime evidence is unavailable'].includes(reason)) {
+    if (['runtime evidence capture plan is unavailable:', 'runtime evidence capture is unavailable:',
+        'runtime evidence is unavailable:'].some((prefix) => reason.startsWith(prefix))) {
         return new TypeError('baseline runtime stability changed')
     }
     return new TypeError('baseline revalidation is unavailable')
@@ -490,10 +491,11 @@ export function createReadCommandAdapters(
             runtime: Object.freeze({ name: 'docker', version: context.topology.runtimeVersion }),
             contentPaths: Object.freeze(['/proc/1/exe']),
             timeoutMs: input.timeoutMs,
-            outputLimitBytes: input.outputLimitBytes,
+            outputLimitBytes: STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES,
         })
         if (capturePlan.kind !== 'preview' || capturePlan.plan.steps.length !== 2) {
-            throw new TypeError('runtime evidence capture plan is unavailable')
+            const reason = capturePlan.diagnostics.map(({ message }) => message).join('; ')
+            throw new TypeError(`runtime evidence capture plan is unavailable: ${reason || 'the plan does not hold two capture steps'}`)
         }
         const results = []
         for (const step of capturePlan.plan.steps) results.push(await execute(step))
@@ -501,9 +503,11 @@ export function createReadCommandAdapters(
             plan: capturePlan,
             results: results as [ExecuteProbeOutcome, ExecuteProbeOutcome],
         })
-        if ('state' in authenticated) throw new TypeError('runtime evidence capture is unavailable')
+        if ('state' in authenticated) {
+            throw new TypeError(`runtime evidence capture is unavailable: ${authenticated.reason} (${authenticated.code})`)
+        }
         const evidence = captureRuntimeEvidence({ capture: authenticated })
-        if (evidence.state !== 'available') throw new TypeError('runtime evidence is unavailable')
+        if (evidence.state !== 'available') throw new TypeError(`runtime evidence is unavailable: ${evidence.reason}`)
         const after = await readState(context.namespace.paths.lifecycle(context.stackId))
         if (after.kind !== 'complete' || JSON.stringify(after.value) !== JSON.stringify(context.lifecycleRecord)) {
             throw new TypeError('lifecycle state changed during baseline observation')
@@ -546,12 +550,14 @@ export function createReadCommandAdapters(
             configSha256: context.configuration.runtimeSha256,
             snapshotSha256: snapshot.snapshotSha256,
             evidenceSha256: evidence.evidenceSha256,
+            // The fingerprint is compared across separate measurements, so it leaves out the batch id:
+            // each runtime observation mints a fresh one, and including it made every revalidation
+            // report a changed topology.
             fingerprint: Object.freeze({
                 source: JSON.stringify(context.configuration.source),
                 runtime: JSON.stringify({
                     stackId: context.topology.stackId,
                     configSha256: context.topology.configSha256,
-                    batchId: context.topology.batchId,
                     runtimeVersion: context.topology.runtimeVersion,
                     composeVersion: context.topology.composeVersion,
                     executableSha256: context.topology.executableSha256,
@@ -566,7 +572,6 @@ export function createReadCommandAdapters(
                     stackId: evidence.stackId,
                     configSha256: evidence.configSha256,
                     runtime: evidence.runtime,
-                    batchId: evidence.command.batchId,
                     containerId: evidence.command.containerId,
                     stability: evidence.stability,
                 }),

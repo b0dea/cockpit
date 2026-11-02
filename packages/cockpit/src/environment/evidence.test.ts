@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -203,7 +203,7 @@ describe('environment evidence authority', () => {
         }))
         expect(plan.plan.steps[0].argv.join(' ')).toContain('${20}')
         expect(plan.plan.steps[1].argv).toEqual([runtimePath, 'exec', '--', 'synthetic-api-1', '/bin/sh', '-eu', '-c', expect.stringContaining('sha256sum'), 'cockpit-content-hash', '/workspace/api', '/workspace/shared'])
-        expect(plan.plan.steps[1].argv[7]).toContain('find "$@"')
+        expect(plan.plan.steps[1].argv[7]).toContain('find -H "$@"')
         expect(plan.plan.steps[1].argv[7]).not.toContain(' | ')
         expect(plan.plan.steps[1].argv[7]).toContain('[ -s "$tmp.raw" ]')
     })
@@ -270,6 +270,26 @@ done
         rmSync(directory, { recursive: true, force: true })
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED' }))
+    })
+
+    it('hashes a content path that is a symlink to the file, as /proc/1/exe is', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-content-symlink-'))
+        const target = join(directory, 'init')
+        const exe = join(directory, 'exe')
+        writeFileSync(target, 'synthetic init binary')
+        symlinkSync(target, exe)
+        const contentStep = stabilityPlan(sha('symlink-control')).plan.steps[1]
+
+        const outcome = await executeProbe({
+            ...contentStep,
+            argv: ['/bin/sh', '-eu', '-c', contentStep.argv[7], 'content-control', exe],
+            env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }, consumedFiles: [], filesystemChecks: [],
+        })
+        rmSync(directory, { recursive: true, force: true })
+
+        expect(outcome).toEqual(expect.objectContaining({ kind: 'complete' }))
+        if (outcome.kind !== 'complete') return
+        expect(new TextDecoder().decode(outcome.stdout)).toMatch(/^[a-f0-9]{64} /)
     })
 
     it.each([

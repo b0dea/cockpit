@@ -23,6 +23,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/evidence.ts',
     exports: [
         'createEnvironmentSnapshot',
+        'STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES',
         'createStabilityCapturePlan',
         'authenticateStabilityCapture',
         'captureRuntimeEvidence',
@@ -39,12 +40,16 @@ const STACK_ID = /^stack:[a-f0-9]{64}$/
 const CONTAINER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
 const MAX_TIMEOUT_MS = 30_000
-const MAX_OUTPUT_BYTES = 65_536
+// Exported so a caller passes the capture's own bound: the capture prints one stat line and one
+// digest line, and a general output limit sized for logs exceeds what this planner admits.
+export const STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES = 65_536
 const UNAVAILABLE_EVIDENCE_CODES = new Set<string>([ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, ...EXECUTION_FAILURE_CODES])
 const PROCESS_STEP_PREFIX = 'evidence:process-identity:'
 const CONTENT_STEP_PREFIX = 'evidence:content-hash:'
 const PROCESS_SCRIPT = 'IFS= read -r stat < /proc/1/stat; pid=${stat%% *}; rest=${stat##*) }; set -- $rest; printf "%s %s\\n" "$pid" "${20}"'
-const CONTENT_SCRIPT = 'tmp=${TMPDIR:-/tmp}/cockpit-content-$$; cockpit_hash_failure=$tmp.failed; export cockpit_hash_failure; trap \'rm -f "$tmp.raw" "$tmp.sorted" "$tmp.failed"\' EXIT HUP INT TERM; find "$@" -type f -exec sh -c \'sha256sum -- "$@" || { : > "$cockpit_hash_failure"; exit 1; }\' sh {} + > "$tmp.raw"; [ ! -e "$tmp.failed" ] && [ -s "$tmp.raw" ]; LC_ALL=C sort "$tmp.raw" > "$tmp.sorted"; sha256sum "$tmp.sorted"'
+// -H follows a symlink named as a content path: /proc/1/exe is one, and without -H find skips it,
+// hashes nothing, and the capture fails with an empty corpus on every real container.
+const CONTENT_SCRIPT = 'tmp=${TMPDIR:-/tmp}/cockpit-content-$$; cockpit_hash_failure=$tmp.failed; export cockpit_hash_failure; trap \'rm -f "$tmp.raw" "$tmp.sorted" "$tmp.failed"\' EXIT HUP INT TERM; find -H "$@" -type f -exec sh -c \'sha256sum -- "$@" || { : > "$cockpit_hash_failure"; exit 1; }\' sh {} + > "$tmp.raw"; [ ! -e "$tmp.failed" ] && [ -s "$tmp.raw" ]; LC_ALL=C sort "$tmp.raw" > "$tmp.sorted"; sha256sum "$tmp.sorted"'
 const issuedEnvironmentBaselines = new WeakSet<object>()
 
 type JsonPrimitive = null | boolean | number | string
@@ -204,7 +209,7 @@ export function createStabilityCapturePlan(rawInput: StabilityCapturePlanInput):
         || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd || !CONTAINER_ID.test(input.containerId) || !SHA256.test(input.batchId)
         || input.runtime.name !== 'docker' || !/^\d+\.\d+\.\d+$/.test(input.runtime.version)
         || !pathsValid || !Number.isInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > MAX_TIMEOUT_MS
-        || !Number.isInteger(input.outputLimitBytes) || input.outputLimitBytes < 1 || input.outputLimitBytes > MAX_OUTPUT_BYTES) {
+        || !Number.isInteger(input.outputLimitBytes) || input.outputLimitBytes < 1 || input.outputLimitBytes > STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES) {
         return refusal('stability capture requires resolved in-container targets and bounded execution', input.containerId)
     }
     if (Object.keys(input.env).some((name) => name.startsWith('DOCKER_') || name.startsWith('COMPOSE_'))
@@ -553,8 +558,8 @@ function validAuthenticatedCapture(value: unknown): value is Omit<AuthenticatedS
         && Array.isArray(capture.command.stepIds) && capture.command.stepIds.length === 2
         && capture.command.stepIds.every((id) => typeof id === 'string')
         && Number.isSafeInteger(capture.command.timeoutMs) && capture.command.timeoutMs > 0 && capture.command.timeoutMs <= MAX_TIMEOUT_MS
-        && Number.isSafeInteger(capture.command.stdoutLimitBytes) && capture.command.stdoutLimitBytes > 0 && capture.command.stdoutLimitBytes <= MAX_OUTPUT_BYTES * 2
-        && Number.isSafeInteger(capture.command.stderrLimitBytes) && capture.command.stderrLimitBytes > 0 && capture.command.stderrLimitBytes <= MAX_OUTPUT_BYTES * 2
+        && Number.isSafeInteger(capture.command.stdoutLimitBytes) && capture.command.stdoutLimitBytes > 0 && capture.command.stdoutLimitBytes <= STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES * 2
+        && Number.isSafeInteger(capture.command.stderrLimitBytes) && capture.command.stderrLimitBytes > 0 && capture.command.stderrLimitBytes <= STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES * 2
         && capture.observedBytes !== null && typeof capture.observedBytes === 'object' && !Array.isArray(capture.observedBytes)
         && exactKeys(capture.observedBytes, ['stdout', 'stderr'])
         && Number.isSafeInteger(capture.observedBytes.stdout) && capture.observedBytes.stdout >= 0
@@ -603,8 +608,8 @@ function validEvidence(value: unknown): value is CapturedRuntimeEvidence {
         && evidence.command.stepIds[0] === `${PROCESS_STEP_PREFIX}${evidence.command.containerId}`
         && evidence.command.stepIds[1] === `${CONTENT_STEP_PREFIX}${evidence.command.containerId}`
         && Number.isSafeInteger(evidence.command.timeoutMs) && evidence.command.timeoutMs > 0 && evidence.command.timeoutMs <= MAX_TIMEOUT_MS
-        && Number.isSafeInteger(evidence.command.stdoutLimitBytes) && evidence.command.stdoutLimitBytes > 0 && evidence.command.stdoutLimitBytes <= MAX_OUTPUT_BYTES * 2
-        && Number.isSafeInteger(evidence.command.stderrLimitBytes) && evidence.command.stderrLimitBytes > 0 && evidence.command.stderrLimitBytes <= MAX_OUTPUT_BYTES * 2
+        && Number.isSafeInteger(evidence.command.stdoutLimitBytes) && evidence.command.stdoutLimitBytes > 0 && evidence.command.stdoutLimitBytes <= STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES * 2
+        && Number.isSafeInteger(evidence.command.stderrLimitBytes) && evidence.command.stderrLimitBytes > 0 && evidence.command.stderrLimitBytes <= STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES * 2
         && Number.isSafeInteger(evidence.observedBytes.stdout) && evidence.observedBytes.stdout >= 0
         && Number.isSafeInteger(evidence.observedBytes.stderr) && evidence.observedBytes.stderr >= 0
         && evidence.observedBytes.stdout <= evidence.command.stdoutLimitBytes
