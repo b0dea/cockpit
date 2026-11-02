@@ -179,7 +179,6 @@ import {
     prepareDrainOutcomePublication,
     recoverDrainReservation,
     recoverSleepDrainReservation,
-    readRootPortInventory,
     reserveDrain,
     reserveDrainAttempt,
     decodeCoordinationRecord,
@@ -3260,8 +3259,9 @@ function shellQuote(value: string): string {
 // Port leases are machine-wide, so up reads every cockpit's state. Another cockpit's namespace this
 // version cannot read is skipped there rather than refused; this cockpit's own unreadable state still
 // refuses in the command itself. The skipped ones are named in a single warning with one cleanup
-// command, and only by up (session runs it) and doctor: a warning per directory on every command
-// buried each command's own result under lines about cockpits the person was not working on.
+// command, and only by doctor: the folders belong to other cockpits, usually ones an earlier version
+// left behind, and repeating them on every up (and so every session) buried each result under lines
+// about cockpits the person was not working on. A port they still hold fails up on its own.
 function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]): EnvironmentDiagnostic | undefined {
     if (skipped.length === 0) return undefined
     const directory = dirname(skipped[0]!.path)
@@ -3274,16 +3274,6 @@ function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]): Envi
         target: directory,
         fix: `if no cockpit still uses them, stop any stack they started (docker compose ls lists them), then delete them: rm -rf ${skipped.map(({ path }) => shellQuote(path)).join(' ')}`,
     })
-}
-
-async function withSkippedStateWarnings<Result extends Readonly<{ diagnostics: readonly EnvironmentDiagnostic[] }>>(
-    namespace: StateNamespace,
-    run: () => Promise<Result>,
-): Promise<Result> {
-    const inventory = await readRootPortInventory(namespace)
-    const result = await run()
-    const warning = inventory.kind === 'complete' ? unreadableStateWarning(inventory.skipped) : undefined
-    return warning ? { ...result, diagnostics: uniqueDiagnostics([warning, ...result.diagnostics]) } : result
 }
 
 export async function runUp(
@@ -3307,7 +3297,7 @@ export async function runUp(
         )
     }
     const context = loaded.result
-    return withSkippedStateWarnings(context.namespace, () => upWithContext(context, adapters))
+    return upWithContext(context, adapters)
 }
 
 async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters): Promise<UpCommandResult> {

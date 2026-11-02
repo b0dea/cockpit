@@ -482,6 +482,8 @@ else process.exit(64)
         await mkdir(join(candidate.checkout, '.codex'))
         await writeFile(join(candidate.checkout, '.codex/hooks.json'), JSON.stringify({ hooks: { PreToolUse: [
             { matcher: 'Bash', hooks: [{ type: 'command', command: 'exit 0' }] }] } }))
+        // Codex has run as this user, so it has a home, but has recorded no trust.
+        await mkdir(join(candidate.home, '.codex'))
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
