@@ -4497,11 +4497,12 @@ export interface LogsCommandAdapters {
 export type LogsCommandResult = EnvironmentCommandOutcome<Readonly<{
     readonly json: boolean
     readonly records: readonly LogRecord[]
+    readonly truncated: boolean
 }>> | Readonly<{
     kind: 'cancelled'
     status: 130
     diagnostics: readonly EnvironmentDiagnostic[]
-    result: Readonly<{ json: boolean; records: readonly LogRecord[] }>
+    result: Readonly<{ json: boolean; records: readonly LogRecord[]; truncated: boolean }>
 }>
 
 export interface BaselineCommandInput {
@@ -5125,8 +5126,18 @@ function validPublicLogOptions(service: string, since: string, tail: number): bo
 function logsCancelled(json: boolean): Extract<LogsCommandResult, { kind: 'cancelled' }> {
     return Object.freeze({
         kind: 'cancelled', status: 130, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: Object.freeze([]) }),
+        result: Object.freeze({ json, records: Object.freeze([]), truncated: false }),
     })
+}
+
+function logsTruncated(service: string, shown: number, step: ExecutionStep): readonly EnvironmentDiagnostic[] {
+    return Object.freeze([Object.freeze({
+        severity: 'warning' as const,
+        code: 'LOGS_TRUNCATED' as const satisfies typeof ENVIRONMENT_CODES.LOGS_TRUNCATED,
+        message: `the logs of service ${service} exceeded the output limit of ${step.stdoutLimitBytes} bytes of stdout and ${step.stderrLimitBytes} of stderr, so only the newest ${shown} record${shown === 1 ? '' : 's'} are shown and older records in the requested range are not`,
+        target: 'logs',
+        fix: 'lower --tail to the number of recent records you need, or read the older records from the container runtime directly',
+    })])
 }
 
 export async function runLogs(
@@ -5194,14 +5205,11 @@ export async function runLogs(
     if (collected.kind === 'unavailable') {
         return logsRefusal(collected.code, 'authenticated log collection is unavailable')
     }
-    if (collected.kind === 'cancelled') return Object.freeze({
-        kind: 'cancelled', status: 130, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: collected.records }),
-    })
-    return Object.freeze({
-        kind: 'complete', status: 0, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: collected.records }),
-    })
+    const diagnostics = collected.truncated
+        ? logsTruncated(service, collected.records.length, plan.step) : Object.freeze([])
+    const result = Object.freeze({ json, records: collected.records, truncated: collected.truncated })
+    if (collected.kind === 'cancelled') return Object.freeze({ kind: 'cancelled', status: 130, diagnostics, result })
+    return Object.freeze({ kind: 'complete', status: 0, diagnostics, result })
 }
 
 export async function runBaselineRecord(

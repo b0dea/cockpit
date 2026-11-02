@@ -793,10 +793,13 @@ What the checks compare:
   declaration, host-floor checks do not apply.
 
 `logs` reads one declared service from the selected running stack. `--tail` accepts 1 through 10000
-records, and `--since` limits the time range. Records keep their stream and restart details. In the
-CLI, interrupting `--follow` returns exit 130 with the records collected before the process group
-stopped; programmatic callers must supply an abort signal. Collection is limited in time and output
-size; the CLI allows ten seconds for it and reports a timeout as a failure. Output is returned after
+records, and `--since` limits the time range. Records keep their stream and restart details. A read
+without `--follow` has ten seconds and reports a timeout as a failure. `--follow` collects until you
+interrupt it, the container stops, or two hours pass; interrupting it in the CLI returns exit 130
+with the records collected before the process group stopped, and programmatic callers must supply an
+abort signal. Output is limited to 1 MiB of the container's stdout and 64 KiB of its stderr. Past
+that, `logs` keeps the newest whole records that fit, sets `truncated` to `true` in the JSON result
+and warns with `LOGS_TRUNCATED`; lower `--tail` to stay under it. Output is returned after
 collection, including structured records in JSON mode, rather than streamed.
 
 `baseline-record` is experimental. It is the only command that writes an environment baseline, and
