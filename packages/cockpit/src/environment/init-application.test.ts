@@ -97,9 +97,16 @@ describe('init application', () => {
             return syncRefusal
         } })
         expect(blocked).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
-        expect(blocked.diagnostics).toBe(syncRefusal.diagnostics)
+        // cockpit.toml is written now, so the stop also says how to finish rather than leaving the
+        // agent to try --reset-answer or a bare sync.
+        const finish = initCommand({ root: f.root, target: 'codexcli', args: `--accept-preview ${digest('3')}` })
+        expect(blocked.diagnostics).toEqual([...syncRefusal.diagnostics, expect.objectContaining({ severity: 'info',
+            code: 'INIT_VERIFICATION_INCOMPLETE', fix: expect.stringContaining(`then rerun ${finish} to finish verifying it`) })])
         expect(blocked.result?.ownerOutcome).toBe(syncRefusal)
         expect(f.calls).toEqual(['prepare', 'document', 'observe', 'resume', 'validate', 'sync-blocked'])
+        expect(await runInitApplication({ ...f.input, resetAnswer: { field: 'sibling' } }, f.adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_UNAVAILABLE',
+                fix: `cockpit.toml is already written from the recorded answers: change the value in cockpit.toml itself, then rerun ${finish} to finish verifying it` }] })
 
         f.calls.length = 0
         const complete = await runInitApplication(accepted, f.adapters)
@@ -434,6 +441,14 @@ describe('init application', () => {
         const resumed = await runInitApplication({ ...accepted, accepted: false }, adapters)
         expect(resumed).toMatchObject({ kind: 'pending', result: { stage: 'draft-prepared' } })
         expect(resumed.result?.question).toBeUndefined()
+
+        // State is keyed by path: once the root is removed and recreated, nothing init published is
+        // there, and resuming used to fail at sync with GENERATED_OWNERSHIP_INVALID and no remedy.
+        f.setPublished({ kind: 'absent' })
+        expect(await runInitApplication({ ...accepted, accepted: false }, adapters)).toMatchObject({ kind: 'pending',
+            result: { stage: 'surface-previewed' }, diagnostics: [{ severity: 'info', code: 'INIT_STATE_RESTARTED' }] })
+        expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'pending',
+            result: { stage: 'surface-published', question: { field: 'sibling' } } })
     })
 
     it('refuses copied, unproven and oversized greenfield answers, then restarts a changed-source interview', async () => {

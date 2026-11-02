@@ -267,7 +267,7 @@ describe('sync --adopt', () => {
         await writeFile(path, (await readFile(path, 'utf8')).replace('npm run lint', 'npm run anything'))
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
             code: 'SURFACE_STATE_CONFLICT', target: '.claude/settings.json',
-            message: expect.stringContaining('merged from cockpit/adopted/.claude/settings.json'),
+            message: expect.stringContaining('merged from cockpit/adopted/.claude/settings.json: make the change there, then ask the person who owns the cockpit before you delete .claude/settings.json'),
         })] })
     })
 })

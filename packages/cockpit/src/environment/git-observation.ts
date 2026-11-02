@@ -400,7 +400,13 @@ export function createComparisonRemoteRefStep(input: {
             : comparisonUnavailable(`declared repository identity is unavailable for sibling ${input.sibling}`)
     }
     const expected = repositoryIdentity(input.declaredRemote)
-    if (expected.kind !== 'known') return comparisonUnavailable(`declared repository identity is unavailable for sibling ${input.sibling}`)
+    // git status and git remote -v never show why a declared remote has no identity, so the reason names it.
+    if (expected.kind !== 'known') return comparisonUnavailable(`declared repository identity is unavailable for sibling ${input.sibling}: ${{
+        credentialed: 'its remote in cockpit.toml carries credentials; declare it without them',
+        unsupported: 'its remote in cockpit.toml is a local path or a URL scheme other than https or ssh, which has no repository identity to compare; declare its https or ssh remote, or remove remote and set acquire = "none"',
+        malformed: 'its remote in cockpit.toml is not a repository URL cockpit can read; declare its https or ssh remote',
+        unbounded: 'its remote in cockpit.toml is too long to compare; declare its https or ssh remote',
+    }[expected.reason]}`)
     const git = input.git && issuedGitResults.get(input.git)
     const executable = resolvedGitExecutable(input.executable)
     if (!git || !executable || git.stackId !== input.stackId || git.checkoutId !== input.checkoutId

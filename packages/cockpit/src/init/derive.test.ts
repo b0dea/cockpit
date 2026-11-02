@@ -163,6 +163,13 @@ describe('inferred interview answers', () => {
         expect(credentialed.skipped).toContainEqual({ source: '../shop/.git/config', reason: expect.stringContaining('carries credentials') })
         expect(JSON.stringify(credentialed)).not.toContain('synthetic-secret')
 
+        // A local path has no repository identity for preflight to compare, so proposing it made every preflight refuse.
+        writeFileSync(join(parent, 'shop/.git/config'), '[remote "origin"]\n\turl = /srv/remotes/shop.git\n')
+        const local = byTarget((await proposed()).facts, 'sibling.shop')!
+        expect(local).toMatchObject({ value: { acquire: 'none' },
+            provenance: { reason: expect.stringContaining('(/srv/remotes/shop.git) is not an https or ssh repository URL') } })
+        expect(local.value).not.toHaveProperty('remote')
+
         writeFileSync(join(parent, 'shop/.git/config'), '[remote "upstream"]\n\turl = git@example.invalid:fork/shop.git\n')
         expect(byTarget((await proposed()).facts, 'sibling.shop')).toMatchObject({ value: { acquire: 'none' },
             provenance: { source: '../shop', reason: expect.stringContaining('../shop/.git/config names no origin remote') } })
