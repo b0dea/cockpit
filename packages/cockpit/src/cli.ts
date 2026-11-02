@@ -479,28 +479,22 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
     }, executeProbe)
 }
 
-// Literals, so the diagnostic inventory captures each fix beside its code.
-const UNSATISFIED_WORK_DIAGNOSTICS = Object.freeze({
-    'test-run': Object.freeze({
+// Each return is a literal, so the diagnostic inventory captures the fix beside its code.
+function unsatisfiedWorkDiagnostic(operation: 'test-run' | 'work-grade' | 'work-execute', message: string): Diagnostic {
+    if (operation === 'test-run') return { severity: 'error', message,
         code: 'TEST_GATE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.TEST_GATE_UNSATISFIED,
-        fix: 'read result.verdict and result.observations: fix the product for FAIL, restore what a DEGRADED stage names, rerun a VOID gate once the tree is unchanged, and run the complete gate without --select for PASS',
-    }),
-    'work-grade': Object.freeze({
+        fix: 'read result.verdict and result.observations: fix the product for FAIL, restore what a DEGRADED stage names, rerun a VOID gate once the tree is unchanged, and run the complete gate without --select for PASS' }
+    if (operation === 'work-grade') return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work-grade --config <your cockpit.toml> --work-order <id>',
-    }),
-    'work-execute': Object.freeze({
+        fix: 'read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work-grade --config <your cockpit.toml> --work-order <id>' }
+    return { severity: 'error', message,
         code: 'WORK_EXECUTION_PAUSED' satisfies typeof ENVIRONMENT_CODES.WORK_EXECUTION_PAUSED,
-        fix: 'read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work-execute --config <your cockpit.toml> --work-order <id> --approach <text>',
-    }),
-})
+        fix: 'read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work-execute --config <your cockpit.toml> --work-order <id> --approach <text>' }
+}
 
 function workCommandOutcome(outcome: WorkApplicationOutcome): CommandOutcome {
     if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: [] }
-    if (outcome.kind === 'unsatisfied') {
-        const { code, fix } = UNSATISFIED_WORK_DIAGNOSTICS[outcome.operation]
-        return { status: 2, result: outcome.value, diagnostics: [{ severity: 'error', code, message: outcome.reason, fix }] }
-    }
+    if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] }
     return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'Work-order acceptance requires an interactive operator continuation')
 }
 
