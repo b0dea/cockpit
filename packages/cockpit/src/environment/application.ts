@@ -44,7 +44,7 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generat
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
-import { guardInstalledDirectories, guardLauncherEvidence, guardSearchDirectories, guardSecretFiles } from '../guards/protected-locations.js'
+import { guardInstalledDirectories, guardLauncherEvidence, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow } from '../guards/protected-locations.js'
 import { cockpitLauncherPrefix } from '../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
@@ -508,7 +508,8 @@ export async function runGuardEvaluationApplication(
                 inspected.set(cursor, status)
                 chain.push(guardIdentity(status))
             }
-            return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain }
+            return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
+                ...(request.operation === 'search' ? { sensitive: exists ? guardSensitivePathsBelow(path) : [] } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
@@ -563,6 +564,7 @@ export async function runGuardEvaluationApplication(
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
+            searchPathRelativeEntry: guardSearchPathRelativeEntry(searchPath),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
         if (current.kind !== 'complete' || current.result.source.sha256 !== identity.configSha256) return unavailable('Guard configuration changed during evaluation.')
@@ -718,7 +720,7 @@ export async function prepareGuardEvaluationPolicy(
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 }))),
                 ripgrepConfigActive: false,
-                executionDirectories: Object.freeze(executionDirectories), searchDirectories: Object.freeze([]),
+                executionDirectories: Object.freeze(executionDirectories), searchDirectories: Object.freeze([]), searchPathRelativeEntry: null,
                 secretFileIdentities: secretFiles.identities && Object.freeze([...secretFiles.identities]), protectedFilesLinked,
                 cockpitInvocations: Object.freeze([]), cockpitLaunchers: Object.freeze([]), projectCommands: Object.freeze([]),
             })

@@ -412,6 +412,14 @@ describe('guard policy construction', () => {
 
     it('protects harness search path directories and hard links to secrets files through the installed guard', async () => {
         const { root, request, adapters } = await installedGuardRequest()
+        // A recursive search is proven only by walking its tree for environment files and secrets directories.
+        const search = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'grep -rn needle fixtures' } }
+        expect(await runGuardEvaluationApplication({ ...request, payload: search, searchPath: '/usr/bin:/bin' }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+        writeFileSync(join(root, 'fixtures/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
+        try {
+            expect(await runGuardEvaluationApplication({ ...request, payload: search, searchPath: '/usr/bin:/bin' }, adapters))
+                .toMatchObject({ decision: { decision: 'ask', reason: expect.stringContaining('would read fixtures/.env.local') } })
+        } finally { rmSync(join(root, 'fixtures/.env.local'), { force: true }) }
         const secret = join(root, 'env/.secrets/token')
         mkdirSync(dirname(secret), { recursive: true })
         writeFileSync(secret, 'synthetic\n')
@@ -428,6 +436,11 @@ describe('guard policy construction', () => {
             // The handler runs with a scrubbed environment, so transport carries the harness's search path to it.
             const transport = await runGuardEvaluationApplication({ ...request, payload: JSON.stringify(plant), searchPath, transport: true }, { ...adapters, execute: executeProbe })
             expect(transport, JSON.stringify(transport)).toMatchObject({ native: { decision: 'deny' } })
+            // A relative entry makes any file the agent wrote a candidate for a bare command name.
+            const listing = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'ls fixtures' } }
+            expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath: '/usr/bin:/bin' }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+            expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath }, adapters))
+                .toMatchObject({ decision: { decision: 'ask', reason: expect.stringContaining('relative entry "relative/bin"') } })
         } finally {
             rmSync(join(root, 'env'), { recursive: true, force: true })
             rmSync(join(root, 'notes.txt'), { force: true })
@@ -693,7 +706,7 @@ describe('guard policy construction', () => {
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
             ripgrepConfigActive: false,
             // The running package lives outside this checkout, so no installed directory is in reach.
-            executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
+            executionDirectories: [], searchDirectories: [], searchPathRelativeEntry: null, secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },

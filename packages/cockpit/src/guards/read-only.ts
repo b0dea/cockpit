@@ -38,6 +38,8 @@ interface OptionTable {
     readonly attachedOnly?: ReadonlySet<string>
     /** Value options whose operand must be a count, so it cannot smuggle a path or a program. */
     readonly countValues?: ReadonlySet<string>
+    /** Value options admitted only as a `!` exclusion, because any other value can widen what is read. */
+    readonly exclusionValues?: ReadonlySet<string>
     /** Short flags that may be clustered, as in `-in`. */
     readonly cluster?: RegExp
 }
@@ -61,7 +63,8 @@ function parseOptions(argv: readonly string[], table: OptionTable): Options | un
         const name = long ? (equals < 0 ? word : word.slice(0, equals)) : table.values.has(word.slice(0, 2)) ? word.slice(0, 2) : word
         if (table.values.has(name)) {
             const value = long ? (equals < 0 ? argv[++index] : word.slice(equals + 1)) : word.length > 2 ? word.slice(2) : argv[++index]
-            if (value === undefined || table.countValues?.has(name) && !/^[+-]?\d+[bkKmMgG]?$/.test(value)) return undefined
+            if (value === undefined || table.countValues?.has(name) && !/^[+-]?\d+[bkKmMgG]?$/.test(value)
+                || table.exclusionValues?.has(name) && !value.startsWith('!')) return undefined
             if (table.fileValues?.has(name)) files.push(value)
             present.add(name)
         } else if (long && table.attachedOnly?.has(name)) present.add(name)
@@ -93,6 +96,8 @@ const GREP: OptionTable = {
 }
 // Hidden, ignored, compressed and symlink-following searches widen what is read past what the
 // declared protections can see, and `--pre` and `--hostname-bin` run programs, so none is listed.
+// A glob that is not an exclusion overrides the hidden and ignore filters: `rg -g '.env*' KEY`
+// prints a hidden `.env.local`, and `rg -g '*.ts'` an ignored file.
 const RG: OptionTable = {
     flags: set('--ignore-case', '--smart-case', '--case-sensitive', '--word-regexp', '--line-regexp', '--invert-match', '--line-number',
         '--no-line-number', '--files-with-matches', '--files-without-match', '--count', '--count-matches', '--fixed-strings', '--with-filename',
@@ -102,6 +107,7 @@ const RG: OptionTable = {
         '--sort', '--sortr', '--color', '--colors'),
     fileValues: set('-f', '--file'),
     countValues: set('-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '-d', '--max-depth'),
+    exclusionValues: set('-g', '--glob', '--iglob'),
     cluster: /^-[iSswxvnNlcFHIoqp]+$/,
 }
 const FD: OptionTable = {

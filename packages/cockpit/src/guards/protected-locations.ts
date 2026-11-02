@@ -1,17 +1,17 @@
 // Owns the machine facts behind the guard protections: the directories holding the code the
 // running guard loads, the command search path directories inside the allowed roots, the identity
-// of every file in the root secrets directory, and which launcher spellings start the installed
-// cockpit. It reads the filesystem and decides
+// of every file in the root secrets directory, the environment and secrets names below a searched
+// tree, and which launcher spellings start the installed cockpit. It reads the filesystem and decides
 // nothing; the guard application filters these facts into the policy and the evaluator turns them
 // into hard denials.
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { dirname, join, posix } from 'node:path'
+import { basename, dirname, join, posix } from 'node:path'
 
 import { foldGuardSpelling, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
 
 export const mechanism = {
     id: 'guard-protected-locations', module: 'packages/cockpit/src/guards/protected-locations.ts',
-    exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSecretFiles'],
+    exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSearchPathRelativeEntry', 'guardSecretFiles', 'guardSensitivePathsBelow', 'GUARD_SEARCH_ENTRY_LIMIT'],
 } as const
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
@@ -124,6 +124,38 @@ export function guardSearchDirectories(searchPath: string, allowedRoots: readonl
     }
     if (found.size > GUARD_PROTECTED_LOCATION_LIMIT) throw new Error(`guard search path exceeds ${GUARD_PROTECTED_LOCATION_LIMIT} directories inside the allowed roots`)
     return [...found].sort()
+}
+
+/** The first entry of `searchPath` that is not absolute, an empty one included, or null when there is none. */
+export function guardSearchPathRelativeEntry(searchPath: string): string | null {
+    return searchPath.split(':').find((entry) => !entry.startsWith('/')) ?? null
+}
+
+/** Directory entries a recursive search may walk before the guard stops proving what it reads. */
+export const GUARD_SEARCH_ENTRY_LIMIT = 20_000
+
+/**
+ * Every path at or below `path` whose case-folded name starts with `.env` or is `.secrets`, of any
+ * type, without following links, as a recursive search would reach it; null once the walk passes
+ * `entryLimit` entries or finds more than the protected location bound. A missing path has none.
+ */
+export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT): readonly string[] | null {
+    const sensitive = (name: string) => { const folded = foldGuardSpelling(name); return folded.startsWith('.env') || folded === '.secrets' }
+    let status
+    try { status = lstatSync(path) } catch (error) { if (missing(error)) return []; throw error }
+    const found = sensitive(basename(path)) ? [path] : []
+    const pending = status.isDirectory() ? [path] : []
+    let seen = 0
+    while (pending.length) {
+        const directory = pending.pop()!
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+            if (++seen > entryLimit) return null
+            const child = join(directory, entry.name)
+            if (sensitive(entry.name) && found.push(child) > GUARD_PROTECTED_LOCATION_LIMIT) return null
+            if (entry.isDirectory()) pending.push(child)
+        }
+    }
+    return found.sort()
 }
 
 /**

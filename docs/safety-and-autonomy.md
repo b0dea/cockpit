@@ -91,8 +91,11 @@ an edited module it loads could turn every hard denial into an allow. So these a
   search path (`PATH`) that lies within a configured root, where a planted `ls`, `git` or `rg`
   would run in place of a permitted read-only command.
 
-Only absolute search path entries are protected: a relative entry such as `.` names whatever
-directory a command runs in, so keep relative entries off the `PATH` an agent harness starts with.
+Only absolute search path entries can be protected: a relative entry such as `.`, `./node_modules/.bin`
+or an empty one names whatever directory a command runs in, so a file the agent wrote anywhere could
+run in place of a permitted command. While the harness's `PATH` holds one, no command spelled by
+bare name is allowed without a prompt, whatever profile or declared rule matches it, and the reason
+names the entry. Keep relative entries off the `PATH` an agent harness starts with.
 
 The Claude Code registration includes `NotebookEdit`, so notebook cell changes get the same
 protected-path checks as text edits. For a configuration in a repository subdirectory, these
@@ -171,7 +174,9 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
   directory holding `HEAD`, `objects` and `refs` as a repository and honours its configuration.
   Git operands are inspected as files whose content may be printed.
 - `rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent, because an ambient ripgrep
-  configuration can inject options such as a preprocessor.
+  configuration can inject options such as a preprocessor. Its `-g`, `--glob` and `--iglob` are
+  read-only only as `!` exclusions: any other glob overrides the hidden and ignore filters, so
+  `rg -g '.env*'` would print a hidden environment file.
 - A pipeline or chain is permitted only when every segment is. Redirecting output to `/dev/null`,
   `/dev/stdout` or `/dev/stderr`, or input from `/dev/null`, touches no file and does not change the
   decision.
@@ -240,11 +245,14 @@ These reads fall back to a prompt instead of being allowed:
 
 - a recursive search, whenever a declared instance or an `env/.secrets` file has a second hard link
   anywhere;
-- a search whose tree contains an existing instance or the secrets directory, since the guard cannot
-  see which files the search would read (ripgrep's hidden-file filter yields to an ignore file the
-  agent can write). The reason names that path, so the agent can search a narrower one. A tree that
-  would contain one that does not exist yet is searched only when every other command in the call
-  is read-only too, so nothing in the call can create it first;
+- a search whose tree contains an existing instance, a `.secrets` directory at any depth, or a
+  `.env*` file that is not a declared template, since the guard cannot see which files the search
+  would read: `grep -r` reads hidden files, and ripgrep's hidden-file filter yields to an ignore file
+  the agent can write. The guard walks each searched tree to find them, without following links,
+  and a tree too large for its bounded walk is not searched either. The reason names the path, so
+  the agent can search a narrower one. A tree that would contain an instance that does not exist yet
+  is searched only when every other command in the call is read-only too, so nothing in the call
+  can create it first;
 - a path that is a symlink, lies outside the configured roots, or is an undeclared `.env*` file. A
   declared environment `template` is read like any other file.
 

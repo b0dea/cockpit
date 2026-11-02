@@ -12,7 +12,9 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 const root = '/workspace/project'
 const other = '/workspace/other'
 const instance = `${root}/config/active.instance`
-const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
+// A search's evidence also lists the `.env*` and `.secrets` names below it; synthetic trees hold none.
+const inspect = ({ path, cwd, operation }: { path: string; cwd: string; operation?: string }) => ({ status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
+    ...(operation === 'search' ? { sensitive: [] as string[] | null } : {}) })
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
 type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
 function protectedIdentities(instances: readonly { path: string }[], known: IdentityFacts = {}) {
@@ -29,6 +31,7 @@ function policy() {
         ripgrepConfigActive: false,
         executionDirectories: [] as string[],
         searchDirectories: [] as string[],
+        searchPathRelativeEntry: null as string | null,
         secretFileIdentities: [] as string[] | null,
         protectedFilesLinked: false,
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
@@ -492,9 +495,9 @@ describe('resolved guard evaluation', () => {
 })
 
 // Both checkout roots are Git repositories in these synthetic facts.
-const withGit = ({ path, cwd }: { path: string; cwd: string }) => {
-    const resolved = posix.resolve(cwd, path)
-    return { ...inspect({ path, cwd }), identity: [root, other].some((checkout) => resolved === `${checkout}/.git`) ? '9:1' : null }
+const withGit = (request: { path: string; cwd: string; operation?: string }) => {
+    const resolved = posix.resolve(request.cwd, request.path)
+    return { ...inspect(request), identity: [root, other].some((checkout) => resolved === `${checkout}/.git`) ? '9:1' : null }
 }
 const decideInRepositories = (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy(), withGit)
 
@@ -508,7 +511,7 @@ describe('built-in read-only profile', () => {
 
     it('allows exact read-only inspection commands and pipelines of them without a prompt', () => {
         for (const command of ['ls', 'ls -la src', 'pwd', 'cat README.md', 'cat -n README.md', 'head -n 20 src/a.ts', 'head -5 src/a.ts', 'tail -n5 src/a.ts',
-            'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '*.ts' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
+            'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '!*.min.js' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
             'fd name src', "find src -name '*.ts' -type f", 'git status', 'git diff --stat', 'git log --oneline -5', 'git show HEAD',
             'git branch', 'git branch --list', 'git -C ../other status', 'cockpit check', 'cockpit doctor --json', 'cockpit --help',
             'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts']) {
@@ -597,8 +600,8 @@ describe('built-in read-only profile', () => {
     it('falls back to a prompt for every shape outside the exact read-only table', () => {
         for (const command of [
             'git diff --no-index env/.secrets/token README.md',
-            // Searches that widen past ignore rules.
-            'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src',
+            // Searches that widen past ignore rules; a glob that is not an exclusion re-includes hidden and ignored files.
+            'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src', "rg -g '.env*' KEY src", "rg --glob='*.ts' needle src", "rg --iglob '*' needle src",
             // Options that run programs or write files.
             'rg --pre cat needle src', 'rg --pre=cat needle src', 'rg --hostname-bin cat needle src', 'rg -z needle src',
             'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src', 'tail -f src/a.ts',
@@ -634,6 +637,20 @@ describe('built-in read-only profile', () => {
         // Another command in the same call could create the instance before the search reads it.
         expect(decideInRepositories('npm test && rg needle')).toEqual({ decision: 'ask',
             reason: 'A recursive search of . could read env/.secrets, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.' })
+        // Any environment file or secrets directory the walk finds below the tree is unproven, wherever it sits.
+        const walked = (found: string[] | null, templates: string[] = []) => (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)),
+            { ...policy(), templates }, (request: { path: string; cwd: string; operation?: string }) => ({ ...withGit(request),
+                ...(request.operation === 'search' ? { sensitive: found && found.filter((path) => path.startsWith(posix.resolve(request.cwd, request.path))) } : {}) }))
+        const local = walked([`${other}/.env.local`, `${root}/packages/web/.secrets`])
+        expect(local('grep -rn API_KEY ..', `${root}/src`)).toEqual({ decision: 'ask',
+            reason: 'A recursive search of .. would read ../packages/web/.secrets, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.' })
+        expect(local('grep -r KEY ../other')).toEqual({ decision: 'ask',
+            reason: 'A recursive search of ../other would read ../other/.env.local, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.' })
+        expect(local('grep -r KEY ../other/.env.local').decision).toBe('ask')
+        expect(local('rg needle src').decision).toBe('allow')
+        expect(walked([`${root}/.env.example`], [`${root}/.env.example`])('grep -rn KEY .').decision).toBe('allow')
+        expect(walked(null)('rg needle src')).toEqual({ decision: 'ask',
+            reason: 'A recursive search of src covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.' })
     })
 
     it('keeps reads of declared instances and secrets a hard denial under every spelling', () => {
@@ -1099,6 +1116,25 @@ describe('installed code, search path and secret links', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('node node_modules/.bin/tsc')), configured(), inspect).decision).toBe('ask')
     })
 
+    it('admits no bare command name while the search path holds a relative entry, since a file the agent wrote can shadow it', () => {
+        // `packages/web/git` is no protected search directory, yet `.` makes it the `git` that runs there.
+        const relative = (entry: string) => ({ ...configured(), searchPathRelativeEntry: entry,
+            cockpitLaunchers: [candidate('cockpit', []), candidate('./node_modules/.bin/cockpit', [])] })
+        const decideWith = (command: string, entry: string | null, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)),
+            entry === null ? { ...relative(''), searchPathRelativeEntry: null } : relative(entry), withGit).decision
+        expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: `${root}/packages/web/git`, content: 'x' })), relative('.'), inspect).decision).toBe('allow')
+        for (const command of ['git status', 'ls', 'cat README.md', 'npm test', 'cockpit check', 'rm notes.txt']) {
+            for (const entry of ['.', '', './node_modules/.bin']) expect(decideWith(command, entry), `${entry} ${command}`).toBe('ask')
+            expect(decideWith(command, null), command).toBe('allow')
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('ls', `${root}/packages/web`)), relative(''), inspect).reason)
+            .toBe('The command search path the agent runs with holds the relative entry "" (an empty entry is the working directory), so ls may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.')
+        // A path names its program exactly, and hard denials still come first.
+        expect(decideWith('./node_modules/.bin/cockpit check', '.')).toBe('allow')
+        expect(decideWith('cat config/active.instance', '.')).toBe('deny')
+        for (const entry of ['/abs', 'a\nb']) expect(evaluateGuard(parseGuardInput(shellPayload('ls')), relative(entry), inspect).decision).toBe('unavailable')
+    })
+
     it('denies every write channel that would plant an .npmrc inside an allowed root', () => {
         // npm applies a project .npmrc to `npx --no cockpit`, so its script-shell or node-options would
         // run other code as the launcher the guard trusts, within the same compound command.
@@ -1129,9 +1165,9 @@ describe('installed code, search path and secret links', () => {
     it('denies reading, writing or linking an existing hard link to a secrets file', () => {
         const value = configured()
         value.secretFileIdentities = ['7:30']
-        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
-            const resolved = posix.resolve(cwd, path)
-            return { status: 'resolved', path: resolved, symlink: false, identity: resolved === `${root}/notes/copy` ? '7:30' : null, ancestors: [] }
+        const facts = (request: { path: string; cwd: string; operation?: string }) => {
+            const resolved = posix.resolve(request.cwd, request.path)
+            return { ...inspect(request), identity: resolved === `${root}/notes/copy` ? '7:30' : null }
         }
         for (const command of ['cat notes/copy', 'head -n 1 notes/copy', 'rg . notes/copy', 'grep -r . notes/copy', 'cp notes/copy notes/second']) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), value, facts), command)

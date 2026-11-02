@@ -65,6 +65,8 @@ export interface GuardEvaluationPolicy {
     readonly executionDirectories: readonly string[]
     /** Absolute command search path directories inside the allowed roots, where a planted file shadows a permitted command. */
     readonly searchDirectories: readonly string[]
+    /** The first command search path entry that is not absolute, where an empty one is the working directory; null when every entry is absolute. */
+    readonly searchPathRelativeEntry: string | null
     /** Identities of every file in the root secrets directory, or null when it held more than the enumeration bound. */
     readonly secretFileIdentities: readonly string[] | null
     /** Some instance or secrets file has another hard link, which a recursive search can read under an unprotected name. */
@@ -81,7 +83,8 @@ export interface GuardEvaluationPolicy {
 export interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'remove'
+    /** A `search` is a recursive read; its evidence also carries `sensitive`, every existing path at or below it named `.env*` or `.secrets`, or null past the walk's bound. */
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'remove' | 'search'
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -168,13 +171,15 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
         || !Array.isArray(p.instances) || !strings(p.templates) || p.templates.length > GUARD_PROTECTED_LOCATION_LIMIT || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
         || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.cockpitLaunchers) || !Array.isArray(p.projectCommands)
         || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
         || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
+        || p.searchPathRelativeEntry !== null && (typeof p.searchPathRelativeEntry !== 'string' || p.searchPathRelativeEntry.startsWith('/')
+            || /[\x00-\x1f\x7f]/.test(p.searchPathRelativeEntry) || Buffer.byteLength(p.searchPathRelativeEntry) > GUARD_INPUT_LIMITS.wordBytes)
         || p.secretFileIdentities !== null && (!Array.isArray(p.secretFileIdentities) || p.secretFileIdentities.length > GUARD_SECRET_FILE_LIMIT || !p.secretFileIdentities.every(identity))) return undefined
     const roots = p.allowedRoots
     const confined = (value: JsonSnapshot | undefined): value is string => canonical(value) && roots.some((root) => within(value, root))
@@ -686,17 +691,21 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             covers: (path: string) => leaf !== null && chainOf(path).includes(leaf),
         }
     }
+    // A throwing inspector is missing evidence, which every caller treats as unsafe.
     const resolvedEvidence = (request: PathInspectionRequest): JsonSnapshotObject | undefined => {
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
         catch { return undefined }
         const lexical = posix.resolve(request.cwd, request.path)
-        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors']) && evidence.status === 'resolved'
+        const search = request.operation === 'search'
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(search ? ['sensitive'] : [])]) && evidence.status === 'resolved'
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
-            && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity) ? evidence : undefined
+            && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
+            && (!search || evidence.sensitive === null || Array.isArray(evidence.sensitive) && evidence.sensitive.length <= GUARD_PROTECTED_LOCATION_LIMIT
+                && evidence.sensitive.every((path) => canonical(path) && within(path, lexical))) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
-    const inspectPath = (request: PathInspectionRequest, controlCoverage = false) => {
+    const inspectPath = (request: PathInspectionRequest, controlCoverage = false): JsonSnapshotObject | undefined => {
         if (!scalar(request.path) || Buffer.byteLength(request.path) > GUARD_INPUT_LIMITS.pathBytes || !canonical(request.cwd)) {
             hold(unavailable('Guard path or working directory is malformed.'))
             return
@@ -720,16 +729,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             hold(unavailable('Guard path escapes configured roots.'))
             return
         }
-        let evidence: JsonSnapshot | undefined
-        try { evidence = snapshotJson(inspect(Object.freeze(request))) }
-        catch { hold(unavailable('Guard path inspection failed.')); return }
-        if (!record(evidence) || !keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors']) || evidence.status !== 'resolved' || !canonical(evidence.path)
-            || evidence.path !== lexical || evidence.symlink !== false || !resolved.allowedRoots.some((root) => within(evidence.path as string, root))
-            || evidence.identity !== null && !identity(evidence.identity) || !Array.isArray(evidence.ancestors) || !evidence.ancestors.every(identity)) {
-            hold(unavailable('Guard path evidence is missing, escaped, symlinked or mismatched.'))
+        const evidence = resolvedEvidence(request)
+        if (!evidence) {
+            hold(unavailable('Guard path inspection failed, or its evidence is missing, symlinked or mismatched.'))
             return
         }
-        if (!mutating) return
+        if (!mutating) return evidence
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
         const { is, below, covers } = evidenceFacts(evidence)
@@ -737,6 +742,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (resolved.instances.some((item) => is(item.path) || (staging || removing) && covers(item.path))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
+        return evidence
     }
     // Removing a control, anything below a control directory, or a directory containing one can
     // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
@@ -752,8 +758,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         if (installedCode(fold(lexical), true)) { hold(executionDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return true
-        inspectPath({ path, cwd, operation: 'remove' })
-        const evidence = resolvedEvidence({ path, cwd, operation: 'remove' })
+        const evidence = inspectPath({ path, cwd, operation: 'remove' })
         if (!evidence) return false
         const { below, covers } = evidenceFacts(evidence)
         if (structural.some(covers)) { hold(structuralDenial); return false }
@@ -824,7 +829,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
-            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
+            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? 'search' : 'read' })
             if (!evidence) { safe = false; return }
             const { is, below, covers } = evidenceFacts(evidence)
             if (kind !== 'listing' && (is(secretRoot) || below(secretRoot) || secretFile(evidence) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
@@ -832,16 +837,24 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // The search cannot be told which files to skip: ripgrep's hidden-file filter yields to a
             // whitelist in an agent-writable ignore file, and grep has none. So a tree that holds an
             // existing protected path is not safe, and one that would hold an absent one is safe only
-            // when nothing else in the call can create it first.
+            // when nothing else in the call can create it first. The same holds for every `.env*` file
+            // and `.secrets` directory the inspector's walk found in it: `grep -r KEY .` once printed an
+            // undeclared sibling `.env.local` that `cat` would have stopped at.
             const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
             const present = reached.find((target) => identityOf(target) !== null)
-            const blocking = present ?? (chainReadOnly ? undefined : reached[0])
-            if (blocking === undefined) return
+            const sensitive = evidence.sensitive as readonly string[] | null
+            const unseen = sensitive?.find((found) => !templates.has(fold(found)))
+            const absent = chainReadOnly ? undefined : reached[0]
+            if (present === undefined && sensitive !== null && unseen === undefined && absent === undefined) return
             safe = false
-            const shown = posix.relative(access.cwd, blocking) || '.'
+            const shown = (target: string) => posix.relative(access.cwd, target) || '.'
             searchBlocker = ask(present !== undefined
-                ? `A recursive search of ${path} would read ${shown}, a declared environment instance or secrets directory. Search a path that does not contain it.`
-                : `A recursive search of ${path} could read ${shown}, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.`)
+                ? `A recursive search of ${path} would read ${shown(present)}, a declared environment instance or secrets directory. Search a path that does not contain it.`
+                : sensitive === null
+                    ? `A recursive search of ${path} covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.`
+                    : unseen !== undefined
+                        ? `A recursive search of ${path} would read ${shown(unseen)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`
+                        : `A recursive search of ${path} could read ${shown(absent!)}, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -880,11 +893,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return [invocation, { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
             words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }]
     })
-    const classifyReadOnly = (invocation: ParsedInvocation) => {
+    const accesses = new Map(invocations.map((invocation) => {
         const cockpit = provenCockpit(invocation)
-        return classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })
-    }
-    const chainReadOnly = invocations.every((invocation) => classifyReadOnly(invocation) !== undefined)
+        return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
+    }))
+    const chainReadOnly = [...accesses.values()].every((access) => access !== undefined)
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {
@@ -913,7 +926,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
         }
         const { operands } = launchedCockpit(invocation)
-        const access = classifyReadOnly(invocation)
+        const access = accesses.get(invocation)
         const writes: VisibleWrites | undefined = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
             return { paths: transfer.writes, reads: [], removes: false, uncertain: transfer.uncertain }
@@ -990,6 +1003,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     for (const invocation of invocations) {
         const barrier = approvalBarriers.get(invocation)
         if (barrier) return barrier
+        // A relative entry resolves against whatever directory the command runs in, so no write
+        // protection covers it: a file the agent wrote as packages/web/git runs as `git` there.
+        if (resolved.searchPathRelativeEntry !== null && invocation.executable !== null && !invocation.executable.includes('/')) {
+            return ask(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable} may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
+        }
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
         if (declared) { declaredReasons.push(declared.reason); continue }
