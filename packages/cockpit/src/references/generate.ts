@@ -373,7 +373,7 @@ const inlineCode = (value: string) => {
 const tableCode = (value: string) => inlineCode(value.replaceAll('|', '\\|'))
 const json = (value: unknown) => tableCode(JSON.stringify(value))
 const SCALAR_KEYWORDS = new Set(['type', 'enum', 'default', 'description', 'format', 'pattern', 'minLength', 'maxLength', 'minimum', 'maximum',
-    'exclusiveMinimum', 'minItems', 'maxItems', 'uniqueItems', 'items', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not'])
+    'exclusiveMinimum', 'minItems', 'maxItems', 'uniqueItems', 'items', 'additionalProperties', 'patternProperties', 'allOf', 'anyOf', 'oneOf', 'not'])
 const TABLE_KEYWORDS = new Set(['type', 'properties', 'required', 'additionalProperties', 'default', 'description', 'allOf', 'anyOf', 'oneOf', 'not'])
 const ROOT_KEYWORDS = new Set([...TABLE_KEYWORDS, '$schema', 'x-cockpit-runtime-checks', 'x-cockpit-editor-limitations'])
 // Long patterns that recur are listed once and cited by name; a short one reads better inline.
@@ -521,6 +521,14 @@ function renderConfigurationTables(schema: SchemaNode): string {
             const entry = value(node.additionalProperties, path, false, nested, `${where}.*`)
             type = `table of ${entry.type}`
             facts.push(`any key; each value: ${entry.facts.join(', ')}`)
+        }
+        // A record whose keys the loader constrains: draft 4 states the key rule as its one pattern property.
+        if (isNode(node.patternProperties)) {
+            const keys = Object.entries(node.patternProperties)
+            if (keys.length !== 1 || !isNode(keys[0]![1]) || node.additionalProperties !== false) throw new Error(`the configuration reference cannot render the pattern properties at ${where}`)
+            const entry = value(keys[0]![1], path, false, nested, `${where}.*`)
+            type = `table of ${entry.type}`
+            facts.push(`each key: pattern ${pattern(keys[0]![0])}; each value: ${entry.facts.join(', ')}`)
         }
         if (Array.isArray(node.allOf)) for (const branch of node.allOf as SchemaNode[]) {
             const described = value(branch, path, array, nested, where)

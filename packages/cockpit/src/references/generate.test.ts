@@ -193,6 +193,10 @@ function configurationReferenceGaps(page: string, schema: SchemaNode): string[] 
         }
         if (isNode(node.items)) facts(node.items, row, `${where}[]`)
         if (isNode(node.additionalProperties)) facts(node.additionalProperties, row, `${where}.*`)
+        if (isNode(node.patternProperties)) for (const [key, value] of Object.entries(node.patternProperties)) {
+            if (!row.includes(`\`${key}\``)) expectText(row, `[${patterns.get(key) ?? 'an inline or named pattern'}](#patterns)`, where, 'key pattern')
+            if (isNode(value)) facts(value, row, `${where}.*`)
+        }
     }
     const table = (node: SchemaNode, id: string, where: string) => {
         const body = sections.get(id)
