@@ -161,6 +161,7 @@ function projectTestingConfig(declaredTesting: NonNullable<CockpitConfig['testin
                 id: stage.id,
                 command: Object.freeze([...stage.command]) as readonly [string, ...string[]],
                 requiresStack: stage.requires_stack,
+                timeoutSeconds: stage.timeout_seconds,
             }))),
             gates: Object.freeze(declaredTesting.gates.map((gate) => Object.freeze({
                 id: gate.id,

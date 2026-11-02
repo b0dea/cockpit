@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { parseDocument } from 'yaml'
 import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
-import type { ConsumedFile, FilesystemCheck, SourceProvenance, ExecutionStep } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
@@ -493,7 +493,12 @@ async function executable(directories: readonly string[], name: string): Promise
     return Object.freeze({ state: 'unavailable', reason: unavailableReason })
 }
 
-async function executeBounded(root: string, argv: readonly string[], directories = DEFAULT_EXECUTABLE_DIRECTORIES, timeoutMs = 30_000): Promise<VerificationObservation> {
+// A product test stage is judged by its exit status: it may outlive the probe default, overflow the
+// capture limit (only the tail is kept) and needs the non-secret variables build tools resolve caches from.
+type BoundedExecutionMode = Readonly<{ kind: 'probe' }> | Readonly<{ kind: 'exit-status'; env: Readonly<Record<string, string>> }>
+
+async function executeBounded(root: string, argv: readonly string[], directories = DEFAULT_EXECUTABLE_DIRECTORIES, timeoutMs = 30_000,
+    mode: BoundedExecutionMode = { kind: 'probe' }): Promise<VerificationObservation & Readonly<{ observedBytes?: number }>> {
     if (!Array.isArray(argv) || !argv.length || argv.length > 128 || argv.some(value => typeof value !== 'string' || !value || Buffer.byteLength(value) > 4_096)) {
         return { kind: 'error', reason: 'Execution requires bounded argv' }
     }
@@ -511,18 +516,28 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const filesystemCheck: FilesystemCheck = Object.freeze({ path: root, expected: 'directory' })
     const stepArgv: readonly [string, ...string[]] = Object.freeze([resolved.path, ...argv.slice(1)])
     const step: ExecutionStep = Object.freeze({ id: `work-${randomUUID()}`, argv: stepArgv, argv0: resolved.path,
-        cwd: root, env: Object.freeze({ PATH: directories.join(delimiter) }), timeoutMs, spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
+        cwd: root, env: Object.freeze({ ...(mode.kind === 'exit-status' ? mode.env : {}), PATH: directories.join(delimiter) }), timeoutMs,
+        spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
+        ...(mode.kind === 'exit-status' ? { outputOverflow: 'retain-tail' as const } : {}),
         paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ owner: 'work-application' }), expected: Object.freeze([]),
         consumedFiles: Object.freeze([consumedFile]), filesystemChecks: Object.freeze([filesystemCheck]), compensation: Object.freeze([]) })
     const result = authenticatedExecutionOutcome(await executeProbe(step), step)
-    if (!result || result.kind !== 'complete') return { kind: 'error', reason: 'Bounded execution could not be authenticated' }
-    if (result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
-        || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes) {
-        return { kind: 'error', reason: 'Bounded execution output was truncated' }
+    if (!result) return { kind: 'error', reason: 'Bounded execution could not be authenticated' }
+    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
+        return { kind: 'error', reason: `timed out after ${timeoutMs / 1_000} seconds` }
     }
-    const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    try { return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout: decode(result.stdout), stderr: decode(result.stderr), truncated: false }) }
-    catch { return { kind: 'error', reason: 'Bounded execution returned invalid UTF-8' } }
+    const exited = result.kind === 'complete'
+        || mode.kind === 'exit-status' && result.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && result.receipt !== undefined
+    if (!exited) return { kind: 'error', reason: `Bounded execution was refused: ${result.code}` }
+    const truncated = result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
+        || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes
+    if (truncated && mode.kind === 'probe') return { kind: 'error', reason: 'Bounded execution output was truncated' }
+    // A kept tail can start inside a multi-byte character, so only an exit-status run decodes leniently.
+    const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' }).decode(bytes)
+    try {
+        return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout: decode(result.stdout), stderr: decode(result.stderr), truncated,
+            ...(mode.kind === 'exit-status' ? { observedBytes: result.execution.stdoutObservedBytes + result.execution.stderrObservedBytes } : {}) })
+    } catch { return { kind: 'error', reason: 'Bounded execution returned invalid UTF-8' } }
 }
 
 function admitRepositoryPath(root: string, identity: string, path: string, sensitivePaths: ReadonlySet<string>,
@@ -2092,8 +2107,21 @@ function captureConfiguredInput(value: unknown): Readonly<{ configPath: string; 
     } catch { return undefined }
 }
 
+// Build tools resolve their caches and locale from these; none carries a credential. Every other parent
+// variable stays out, because a product stage runs arbitrary repository code and the parent environment
+// of an agent session routinely holds tokens.
+const PRODUCT_STAGE_ENVIRONMENT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const
+
+function productStageEnvironment(environment: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(PRODUCT_STAGE_ENVIRONMENT.flatMap(name => {
+        const value = environment[name]
+        return typeof value === 'string' && value.length > 0 && !value.includes('\0') && Buffer.byteLength(value) <= 4_096 ? [[name, value]] : []
+    })))
+}
+
 function productGateDependencies(root: string, source: SourceProvenance,
-    repositories: readonly Readonly<{ identity: string; root: string; sensitivePaths: ReadonlySet<string>; forbiddenTargets: ReadonlySet<string> }>[], executableDirectories?: readonly string[]): GateDependencies {
+    repositories: readonly Readonly<{ identity: string; root: string; sensitivePaths: ReadonlySet<string>; forbiddenTargets: ReadonlySet<string> }>[],
+    stageEnvironment: Readonly<Record<string, string>>, executableDirectories?: readonly string[]): GateDependencies {
     return Object.freeze({
         subject: async () => {
             if (!exactSource(source)) throw new Error('configuration source changed during product gate')
@@ -2111,10 +2139,13 @@ function productGateDependencies(root: string, source: SourceProvenance,
         runProductTool: async (invocation: ProductGateInvocation) => {
             const argv = [...invocation.command]
             if (invocation.select) argv.push(GATE_SELECTOR_OPTION, `${invocation.select.kind}:${invocation.select.value}`)
-            const observed = await executeBounded(root, argv, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES)
-            if (observed.kind !== 'executed') return Object.freeze({ kind: 'unavailable' as const, reason: observed.reason })
-            const outputBytes = Buffer.byteLength(observed.stdout) + Buffer.byteLength(observed.stderr)
-            return Object.freeze({ kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes,
+            const observed = await executeBounded(root, argv, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
+                invocation.timeoutSeconds * 1_000, { kind: 'exit-status', env: stageEnvironment })
+            if (observed.kind !== 'executed') {
+                return Object.freeze({ kind: 'unavailable' as const, reason: observed.reason.startsWith('timed out')
+                    ? `${observed.reason}; raise testing.stages[].timeout_seconds` : observed.reason })
+            }
+            return Object.freeze({ kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
                 assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const })
         },
     })
@@ -2288,7 +2319,8 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             resolveEvaluator,
             ...(config.browser ? { resolveBrowser } : {}),
             testing: Object.freeze({ registry: authority.testing.registry,
-                dependencies: productGateDependencies(config.cockpitRoot, config.source, gateRepositories, executableDirectories), runtime: gateRuntime }),
+                dependencies: productGateDependencies(config.cockpitRoot, config.source, gateRepositories,
+                    productStageEnvironment(captured.env), executableDirectories), runtime: gateRuntime }),
         })
         return Object.freeze({ kind: 'complete', composition })
     } catch (error) {

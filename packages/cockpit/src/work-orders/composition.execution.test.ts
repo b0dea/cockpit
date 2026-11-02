@@ -50,7 +50,7 @@ describe('configured durable work application composition', () => {
             executable: true,
             executionMode: 'verified-path',
         }))
-        expect(execution).toMatchObject({ cwd: fixture.root, argv: [target, 'test', '--', 'cache-1'] })
+        expect(execution).toMatchObject({ cwd: fixture.root, argv: [target, 'test', '--', 'cache-1'], timeoutMs: 1_800_000 })
 
         // Consumers write wrappers that parse this exact argv shape to map a selection onto their
         // build tool's own flags, so the delivery form is a published contract.
@@ -523,4 +523,45 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(runWorkApplication({ operation: 'work-status', workOrderId: '../escape' } as never, fixture.composition))
             .resolves.toMatchObject({ kind: 'refusal', operation: 'invalid' })
     }, 300_000)
+})
+
+describe('product test stages', () => {
+    // Replaces the fixture's product tool and optionally extends the first declared stage, so each case
+    // drives a real stage process through test-run.
+    async function productStage(script: string, options: Readonly<{ stageFields?: string; env?: Readonly<Record<string, string | undefined>> }> = {}) {
+        const fixture = await configuredFixture()
+        await writeFile(join(fixture.root, 'tools/npm'), `#!/bin/sh\n${script}\n`)
+        await chmod(join(fixture.root, 'tools/npm'), 0o700)
+        if (options.stageFields) {
+            const source = await readFile(fixture.configPath, 'utf8')
+            await writeFile(fixture.configPath, source.replace('requires_stack = false }', `requires_stack = false, ${options.stageFields} }`))
+        }
+        const configured = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath, env: { ...fixture.environment, ...options.env } })
+        if (configured.kind !== 'complete') throw new Error(configured.reason)
+        return { fixture, run: () => runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, configured.composition) }
+    }
+
+    it('stops a stage at its declared timeout and names the field to raise', async () => {
+        const { run } = await productStage("sleep 5\nprintf 'passed\\n'", { stageFields: 'timeout_seconds = 1' })
+        const started = Date.now()
+        await expect(run()).resolves.toMatchObject({ kind: 'refusal',
+            reason: expect.stringContaining('unit: timed out after 1 seconds; raise testing.stages[].timeout_seconds') })
+        expect(Date.now() - started).toBeLessThan(4_500)
+    }, 120_000)
+
+    it('judges a stage by its exit status when its output exceeds the capture limit', async () => {
+        const passing = await productStage('/usr/bin/yes x | /usr/bin/head -c 200000\nexit 0')
+        await expect(passing.run()).resolves.toMatchObject({ kind: 'complete', value: { verdict: 'PASS',
+            observations: [expect.objectContaining({ id: 'unit', exitCode: 0, outputBytes: 200_000 })] } })
+        const failing = await productStage('/usr/bin/yes x | /usr/bin/head -c 200000\nexit 3')
+        await expect(failing.run()).resolves.toMatchObject({ kind: 'refusal', reason: expect.stringMatching(/^FAIL/) })
+    }, 120_000)
+
+    it('passes build-tool variables such as HOME to a stage and strips every other parent variable', async () => {
+        const capture = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-stage-env-'))); roots.push(capture)
+        const { run } = await productStage(`printf '%s|%s' "$HOME" "\${SYNTHETIC_API_TOKEN-unset}" > ${join(capture, 'env')}\nprintf 'passed\\n'`, {
+            env: { HOME: '/synthetic-home', SYNTHETIC_API_TOKEN: 'synthetic-secret' } })
+        await expect(run()).resolves.toMatchObject({ kind: 'complete', value: { verdict: 'PASS' } })
+        await expect(readFile(join(capture, 'env'), 'utf8')).resolves.toBe('/synthetic-home|unset')
+    }, 120_000)
 })

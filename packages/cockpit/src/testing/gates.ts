@@ -1,6 +1,7 @@
 import { compareEnvironmentSnapshot, type EnvironmentSnapshot, type RuntimeEvidence } from '../environment/evidence.js'
 import { planSiblingProjection, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
 import { GUARD_SURFACE_TARGETS } from '../surfaces/harness-registry.js'
+import { TESTING_STAGE_TIMEOUT_MAX_SECONDS } from '../schema.js'
 import { classifyRun, type RunClassification, type RunInput, type StageObservation, type StageResult } from './verdict.js'
 
 export const mechanism = {
@@ -20,6 +21,7 @@ export interface GateStage {
     readonly id: string
     readonly command: readonly [string, ...string[]]
     readonly requiresStack: boolean
+    readonly timeoutSeconds: number
 }
 export interface GateDefinition {
     readonly id: string
@@ -54,7 +56,8 @@ export function createGateRegistry(input: GateDeclarations): GateRegistry {
     const stageIds = new Set(input.stages.map(stage => stage.id))
     if (stageIds.size !== input.stages.length || new Set(input.gates.map(gate => gate.id)).size !== input.gates.length
         || input.stages.some(stage => !NAME.test(stage.id) || !Array.isArray(stage.command) || !stage.command.length
-            || stage.command.length > 128 || !stage.command.every(text) || typeof stage.requiresStack !== 'boolean')
+            || stage.command.length > 128 || !stage.command.every(text) || typeof stage.requiresStack !== 'boolean'
+            || !Number.isSafeInteger(stage.timeoutSeconds) || stage.timeoutSeconds < 1 || stage.timeoutSeconds > TESTING_STAGE_TIMEOUT_MAX_SECONDS)
         || input.gates.some(gate => !NAME.test(gate.id) || !['targeted', 'full'].includes(gate.tier) || !text(gate.changes)
             || !Array.isArray(gate.stages) || !gate.stages.length || new Set(gate.stages).size !== gate.stages.length
             || gate.stages.some((id: string) => !stageIds.has(id)))) throw new Error('gate registry contains invalid or duplicate declarations')
@@ -70,6 +73,7 @@ export interface ProductGateInvocation {
     readonly gate: string
     readonly stage: string
     readonly command: readonly [string, ...string[]]
+    readonly timeoutSeconds: number
     readonly select: GateSelector | null
 }
 export interface GateRequest {
@@ -127,7 +131,7 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
         if (stage.requiresStack && request.stack?.state !== 'available') {
             result = { kind: 'unavailable', reason: `stack unavailable: ${request.stack?.state === 'unavailable' ? request.stack.reason : 'no current stack observation'}` }
         } else {
-            try { result = await deps.runProductTool(Object.freeze({ gate: gate.id, stage: id, command: stage.command, select })) }
+            try { result = await deps.runProductTool(Object.freeze({ gate: gate.id, stage: id, command: stage.command, timeoutSeconds: stage.timeoutSeconds, select })) }
             catch (error) { result = { kind: 'unavailable', reason: `product tooling could not run: ${errorReason(error)}` } }
         }
         observations.push(Object.freeze({ ...result, id }))

@@ -47,6 +47,7 @@ export const mechanism = {
         'Workorders',
         'Browser',
         'Testing',
+        'TESTING_STAGE_TIMEOUT_MAX_SECONDS',
         'CockpitMeta',
         'SurfaceSource',
         'SurfaceOverrideReference',
@@ -951,6 +952,10 @@ export const Browser = z.object({
     }
 })
 
+// A whole product suite under a build tool runs for minutes, not seconds; the ceiling still bounds
+// a hung stage so a gate always returns a verdict.
+const TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS = 1_800
+export const TESTING_STAGE_TIMEOUT_MAX_SECONDS = 7_200
 const TestingName = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const TestingCommand = z.array(z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value))).min(1).max(128)
 export const Testing = z.object({
@@ -958,6 +963,8 @@ export const Testing = z.object({
         id: TestingName,
         command: TestingCommand,
         requires_stack: z.boolean(),
+        timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
+            .describe('Seconds the stage may run before it is stopped and the gate reports DEGRADED.'),
     }).strict()).min(1).max(128),
     gates: z.array(z.object({
         id: TestingName,

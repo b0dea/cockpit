@@ -14,8 +14,8 @@ import type { ProjectionPlannerInput } from '../surfaces/projection.js'
 
 const registry = () => createGateRegistry({
     stages: [
-        { id: 'unit', command: ['product-tool', 'unit'], requiresStack: false },
-        { id: 'browser', command: ['product-tool', 'drive'], requiresStack: true },
+        { id: 'unit', command: ['product-tool', 'unit'], requiresStack: false, timeoutSeconds: 60 },
+        { id: 'browser', command: ['product-tool', 'drive'], requiresStack: true, timeoutSeconds: 60 },
     ],
     gates: [
         { id: 'focused', tier: 'targeted', stages: ['unit'], changes: 'Isolated behavior' },
@@ -50,7 +50,7 @@ describe('product-owned gates', () => {
                     return { kind: 'executed', exitCode: 0, signal: null, outputBytes: 1, assertion: 'passed' }
                 },
             })
-            expect(calls).toEqual([{ gate: 'focused', stage: 'unit', command: ['product-tool', 'unit'], select }])
+            expect(calls).toEqual([{ gate: 'focused', stage: 'unit', command: ['product-tool', 'unit'], timeoutSeconds: 60, select }])
             expect(result.verdict).toBe('PARTIAL')
         }
     })

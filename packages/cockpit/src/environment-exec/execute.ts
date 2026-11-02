@@ -720,8 +720,21 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         const abort = (): void => stop(ENVIRONMENT_CODES.EXECUTION_ABORTED)
         signal?.addEventListener('abort', abort, { once: true })
         if (signal?.aborted) abort()
+        // A tail-retaining step keeps running past its limit and keeps only the newest bytes, because a
+        // long tool's verdict is its exit status and its final lines name the failure; memory stays bounded.
+        const retainTail = (buffers: Buffer[], chunk: Buffer, limit: number): number => {
+            buffers.push(chunk)
+            const joined = Buffer.concat(buffers)
+            const tail = joined.subarray(Math.max(0, joined.byteLength - limit))
+            buffers.splice(0, buffers.length, tail)
+            return tail.byteLength
+        }
         runningProcess.stdout?.on('data', (chunk: Buffer) => {
             stdoutBytes += chunk.length
+            if (step.outputOverflow === 'retain-tail') {
+                stdoutRetainedBytes = retainTail(stdout, chunk, step.stdoutLimitBytes)
+                return
+            }
             if (stdoutRetainedBytes < step.stdoutLimitBytes) {
                 const retained = chunk.subarray(0, step.stdoutLimitBytes - stdoutRetainedBytes)
                 stdout.push(retained)
@@ -731,6 +744,10 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         })
         runningProcess.stderr?.on('data', (chunk: Buffer) => {
             stderrBytes += chunk.length
+            if (step.outputOverflow === 'retain-tail') {
+                stderrRetainedBytes = retainTail(stderr, chunk, step.stderrLimitBytes)
+                return
+            }
             if (stderrRetainedBytes < step.stderrLimitBytes) {
                 const retained = chunk.subarray(0, step.stderrLimitBytes - stderrRetainedBytes)
                 stderr.push(retained)

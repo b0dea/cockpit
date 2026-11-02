@@ -466,6 +466,8 @@ export interface ExecutionStep {
     spawnNotAfter?: string
     stdoutLimitBytes: number
     stderrLimitBytes: number
+    // Absent: output past a limit stops the step. 'retain-tail': the step runs on and keeps the newest bytes.
+    outputOverflow?: 'retain-tail'
     paths: readonly string[]
     ports: readonly number[]
     labels: Readonly<Record<string, string>>
@@ -615,19 +617,24 @@ function expectedObservations(value: unknown): boolean {
     })
 }
 
+// Product test stages declare up to two hours; every other owner bounds its steps far lower itself.
+const MAX_STEP_TIMEOUT_MS = 7_200_000
+
 interface ExecutionTraversal { count: number; readonly ids: Set<string> }
 
 function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: ExecutionTraversal): ExecutionStep | undefined {
     if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
     const item = snapshot as unknown as ExecutionStep
     const baseKeys = ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation']
-    const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter', item.executionFence === undefined ? undefined : 'executionFence']
+    const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter', item.executionFence === undefined ? undefined : 'executionFence',
+        item.outputOverflow === undefined ? undefined : 'outputOverflow']
         .filter((key): key is string => key !== undefined)
     if (!exactKeys(snapshot, [...baseKeys, ...optionalKeys])
         || typeof item.id !== 'string' || item.id.length === 0 || item.id.includes('\0') || traversal.count >= 256
         || traversal.ids.has(item.id) || !stringTuple(item.argv) || typeof item.argv0 !== 'string' || item.argv0.length === 0 || item.argv0.includes('\0')
         || item.argv[0].length === 0 || !canonicalPaths([item.cwd]) || !stringRecord(item.env)
-        || !Number.isSafeInteger(item.timeoutMs) || item.timeoutMs <= 0 || item.timeoutMs > 300_000
+        || !Number.isSafeInteger(item.timeoutMs) || item.timeoutMs <= 0 || item.timeoutMs > MAX_STEP_TIMEOUT_MS
+        || item.outputOverflow !== undefined && item.outputOverflow !== 'retain-tail'
         || item.spawnNotAfter !== undefined && (!isCanonicalTimestamp(item.spawnNotAfter) || !Number.isFinite(Date.parse(item.spawnNotAfter)))
         || !Number.isSafeInteger(item.stdoutLimitBytes) || item.stdoutLimitBytes < 0 || item.stdoutLimitBytes > 16_777_216
         || !Number.isSafeInteger(item.stderrLimitBytes) || item.stderrLimitBytes < 0 || item.stderrLimitBytes > 16_777_216 || !canonicalPaths(item.paths)

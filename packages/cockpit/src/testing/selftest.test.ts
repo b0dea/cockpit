@@ -3,7 +3,7 @@ import { createGateRegistry, runGate } from './gates.js'
 
 it('uses the same stage aggregate for staged and complete selftest without early stopping', async () => {
     const registry = createGateRegistry({
-        stages: ['contracts', 'surfaces', 'runtime'].map(id => ({ id, command: ['product-selftest', id] as const, requiresStack: false })),
+        stages: ['contracts', 'surfaces', 'runtime'].map(id => ({ id, command: ['product-selftest', id] as const, requiresStack: false, timeoutSeconds: 60 })),
         gates: [{ id: 'selftest', tier: 'full', stages: ['contracts', 'surfaces', 'runtime'], changes: 'Harness behavior' }],
     })
     const calls: string[] = []
