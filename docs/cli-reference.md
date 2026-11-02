@@ -58,6 +58,7 @@ Does not read `cockpit.toml`.
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
+| `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -1693,6 +1694,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
+| `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -2916,6 +2918,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |

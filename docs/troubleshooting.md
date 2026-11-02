@@ -389,6 +389,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_INPUT_UNAVAILABLE` | see the message |
 | `GUARD_REFUSED` | see the message |
+| `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
 | `GUARD_TRANSPORT_INVALID` | see the message |
 | `GUIDE_CAP_EXCEEDED` | depends on what failed; see the message |
 | `HARNESS_SURFACE_UNAVAILABLE` | see the message |
