@@ -329,11 +329,20 @@ it, so you do not have to run `up` first. While another session still holds the 
 refuses with `CLAIM_CO_TENANT` and names that session's holder and process; end that
 `cockpit session`, then retry.
 
-`reset` first shows an exact preview of the generated volumes and declared generated host paths it
-would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at a
+`reset` first shows an exact preview of the declared volumes and generated host paths it would
+delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at a
 terminal outside CI; the approval stays with the process that showed the preview, which checks
 everything again before it acts. `down` and `reset` delete only from a local Docker daemon, which
 they fix once per run; see [Choose the Docker daemon](#choose-the-docker-daemon).
+
+Name each `environment.resettable_volumes` entry by its key in the Compose file: the
+`[[environment.generated.volumes]]` `id` in a generated stack, or the top-level `volumes:` key in a
+compose-first one. Docker's volume name carries a per-checkout project prefix, so it is not
+accepted. A name that no declared volume has fails configuration validation in a generated stack.
+In a compose-first stack, `sync`, `check` and every runtime command, `down` included, refuse it,
+and an `external` volume too, because cockpit cannot label it. A declared volume that does not exist yet is left out of the
+preview. A volume that an earlier `cockpit.toml` created is still this stack's data, and `reset`
+deletes it with the rest.
 
 Every destructive action is recorded durably before it starts. If cockpit itself is interrupted, a
 detached supervisor process keeps track of that exact attempt. The next `sleep`, `down` or approved

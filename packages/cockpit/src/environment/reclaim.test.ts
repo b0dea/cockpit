@@ -49,6 +49,9 @@ const labels = {
     'dev.b0dea.cockpit.config-sha256': configSha256,
     'dev.b0dea.cockpit.owner-id': owner,
 }
+// Compose labels each volume it creates with its project and the volume's key in the Compose file.
+const composeProject = 'synthetic-0123456789ab'
+const composeLabels = (key: string) => ({ 'com.docker.compose.project': composeProject, 'com.docker.compose.volume': key })
 const removalCanonicalPath = await realpath('/bin/rm')
 const removalSha256 = createHash('sha256').update(await readFile(removalCanonicalPath)).digest('hex')
 
@@ -90,7 +93,8 @@ const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: Re
     ? { ID: id, Reclaimable: !referenced, Size: bytes === null ? null : String(bytes) }
     : {
           id: kind === 'volume' ? name : id, name,
-          labels: kind === 'image' ? {} : Object.fromEntries(Object.keys(labels).map((key) => [key, itemLabels[key] ?? ''])),
+          labels: kind === 'image' ? {} : Object.fromEntries([...Object.keys(labels), ...kind === 'volume' ? Object.keys(composeLabels('')) : []]
+              .map((key) => [key, itemLabels[key] ?? ''])),
           referenced: false,
           bytes: kind === 'network' || kind === 'container' ? null : bytes,
       }
@@ -324,6 +328,7 @@ const resetInput = (root: string, overrides: Record<string, unknown> = {}) => {
         requesterHolderId: null,
         declaredCacheIds: [],
         resettableVolumes: ['session-data'],
+        composeProject,
         generatedHostPaths: [{ root, path: join(root, 'generated', 'session'), declaration: 'generated/session' }],
         discovery: snapshot([resource({
             id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation'),
@@ -338,11 +343,12 @@ const resetInput = (root: string, overrides: Record<string, unknown> = {}) => {
     })
 }
 
+// A volume without explicit labels is one Compose created for this stack under the key it is named.
 const resource = (overrides: Partial<ReclaimResource> = {}): ReclaimResource => ({
     id: 'container-1',
     name: 'synthetic-container',
     kind: 'container',
-    labels,
+    labels: overrides.kind === 'volume' ? { ...labels, ...composeLabels(overrides.name ?? 'synthetic-container') } : labels,
     referenced: false,
     bytes: 128,
     ...overrides,
@@ -756,15 +762,55 @@ describe('reset planning', () => {
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
-    it('refuses a declared volume name that an unlabelled volume holds', async () => {
+    it('refuses a declared volume whose Compose name an unlabelled volume holds', async () => {
         const root = await canonicalTemp('cockpit-reset-unowned-name-')
         try {
+            // Compose adopts an existing volume of the name it would create, labels or not.
             const observed = await authenticatedDiscovery(root, [
-                resource({ id: 'session-data', name: 'session-data', kind: 'volume', labels: {}, bytes: null }),
+                resource({ id: `${composeProject}_session-data`, name: `${composeProject}_session-data`, kind: 'volume', labels: {}, bytes: null }),
             ])
             expect(await planReset(resetInput(root, { generatedHostPaths: [], discovery: observed }))).toEqual(expect.objectContaining({
                 kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })],
             }))
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('targets a declared volume by its Compose key within the stack\'s project, not by Docker\'s volume name', async () => {
+        const root = await canonicalTemp('cockpit-reset-compose-key-')
+        try {
+            const otherProject = 'synthetic-ba9876543210'
+            const discovered = () => [
+                resource({ id: `${composeProject}_data`, name: `${composeProject}_data`, kind: 'volume', dataBearing: true,
+                    labels: { ...labels, ...composeLabels('data') }, generation: sha('volume-generation') }),
+                // The same key in another checkout's project, and a volume named exactly as declared.
+                resource({ id: `${otherProject}_data`, name: `${otherProject}_data`, kind: 'volume', dataBearing: true,
+                    labels: { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId, 'com.docker.compose.project': otherProject, 'com.docker.compose.volume': 'data' } }),
+                resource({ id: 'data', name: 'data', kind: 'volume', labels: {}, bytes: null }),
+            ]
+            const declared = { resettableVolumes: ['data'], generatedHostPaths: [] }
+            const preview = await planReset(resetInput(root, { ...declared, discovery: await authenticatedDiscovery(root, discovered()) }))
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
+            expect(preview.noop).toBe(false)
+            expect(preview.targets.map(({ kind, identity, declaration }) => ({ kind, identity, declaration }))).toEqual([
+                { kind: 'volume', identity: `${composeProject}_data`, declaration: 'data' },
+            ])
+            expect(await planReset(resetInput(root, {
+                ...declared, confirmationDigest: preview.digest, consent: preview.consent,
+                discovery: await authenticatedDiscovery(root, discovered()), coordinationAddress: await writeCoordination(root),
+            }))).toEqual(expect.objectContaining({ kind: 'complete', actionAuthority: expect.any(Object), remaining: 0 }))
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('resets a declared volume an earlier configuration of this stack created', async () => {
+        const root = await canonicalTemp('cockpit-reset-earlier-config-')
+        try {
+            // Compose keeps a data volume across cockpit.toml edits and `up` goes on using it.
+            const earlier = { ...labels, 'dev.b0dea.cockpit.config-sha256': sha('earlier'), ...composeLabels('session-data') }
+            const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: await authenticatedDiscovery(root, [
+                resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, labels: earlier, generation: sha('earlier-generation') }),
+            ]) }))
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
+            expect(preview.targets.map(({ kind, identity }) => ({ kind, identity }))).toEqual([{ kind: 'volume', identity: 'session-data' }])
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -1674,16 +1720,18 @@ describe('reset planning', () => {
 
     it.each([
         ['foreign', { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId }],
-        ['stale', { ...labels, 'dev.b0dea.cockpit.config-sha256': sha('stale') }],
         ['malformed', { ...labels, 'dev.b0dea.cockpit.owner-id': '../escape' }],
-    ] as const)('refuses a %s declared volume', async (_name, candidateLabels) => {
+    ] as const)('refuses a %s volume that carries the declared Compose key in this stack\'s project', async (_name, candidateLabels) => {
         const root = await canonicalTemp('cockpit-reset-volume-')
         try {
             const result = await planReset(resetInput(root, {
                 generatedHostPaths: [],
-                discovery: snapshot([resource({ id: 'volume-1', name: 'session-data', kind: 'volume', labels: candidateLabels, dataBearing: true })]),
+                discovery: await authenticatedDiscovery(root, [resource({
+                    id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation'),
+                    labels: { ...candidateLabels, ...composeLabels('session-data') },
+                })]),
             }))
-            expect(result).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            expect(result).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })] }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 

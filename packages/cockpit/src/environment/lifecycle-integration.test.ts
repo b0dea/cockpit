@@ -73,6 +73,8 @@ const ownershipLabels = {
     'dev.b0dea.cockpit.config-sha256': configSha256,
     'dev.b0dea.cockpit.owner-id': cockpitId,
 }
+// Reset targets a volume by its Compose key; Docker names it after the project.
+const composeProject = 'integration-0123456789ab'
 const roots: string[] = []
 
 afterEach(async () => {
@@ -332,9 +334,10 @@ async function issueTeardownProjection(root: string, record: StateRecord): Promi
 }
 
 async function issueResetProjection(root: string, record: StateRecord): Promise<ReclaimTargetProjection> {
+    const volume = (key: string) => ({ ...ownershipLabels, 'com.docker.compose.project': composeProject, 'com.docker.compose.volume': key })
     const volumes: ReclaimResource[] = [
-        { id: 'volume-1', name: 'alpha-data', kind: 'volume', labels: ownershipLabels, referenced: false, bytes: 128, dataBearing: true, generation: sha('alpha generation') },
-        { id: 'volume-2', name: 'zeta-data', kind: 'volume', labels: ownershipLabels, referenced: false, bytes: 256, dataBearing: true, generation: sha('zeta generation') },
+        { id: 'volume-1', name: `${composeProject}_alpha-data`, kind: 'volume', labels: volume('alpha-data'), referenced: false, bytes: 128, dataBearing: true, generation: sha('alpha generation') },
+        { id: 'volume-2', name: `${composeProject}_zeta-data`, kind: 'volume', labels: volume('zeta-data'), referenced: false, bytes: 256, dataBearing: true, generation: sha('zeta generation') },
     ]
     const observed = await issueReclaimDiscovery(root, volumes)
     const removalPath = await realpath('/bin/rm')
@@ -342,7 +345,7 @@ async function issueResetProjection(root: string, record: StateRecord): Promise<
     const preview = await planReset({
         stackId, cockpitId, configSha256, coordinationRecord: record,
         expectedCoordinationRevision: record.revision, requesterHolderId: holderId,
-        declaredCacheIds: [], resettableVolumes: volumes.map(({ name }) => name), generatedHostPaths: [],
+        declaredCacheIds: [], resettableVolumes: ['alpha-data', 'zeta-data'], composeProject, generatedHostPaths: [],
         discovery: observed.discovery, runtimeExecutable: observed.executable,
         selectionAuthority: observed.selection,
         pathExecutable: { canonicalPath: removalPath, invocationPath: '/bin/rm', sha256: sha(removalBytes), executionMode: 'verified-path' },
@@ -450,11 +453,11 @@ describe('lifecycle owner integration', () => {
                 ])
             }
             if (verb === 'reset') {
-                expect(result.request.targetIds).toEqual([stackId, 'volume:alpha-data', 'volume:zeta-data'])
+                expect(result.request.targetIds).toEqual([stackId, `volume:${composeProject}_alpha-data`, `volume:${composeProject}_zeta-data`])
                 expect(result.request.actions.map(({ stage, targetId }) => ({ stage, targetId }))).toEqual([
                     { stage: 'runtime-stop', targetId: stackId },
-                    { stage: 'reclaim', targetId: 'volume:alpha-data' },
-                    { stage: 'reclaim', targetId: 'volume:zeta-data' },
+                    { stage: 'reclaim', targetId: `volume:${composeProject}_alpha-data` },
+                    { stage: 'reclaim', targetId: `volume:${composeProject}_zeta-data` },
                 ])
             }
             const afterPlan = await coordinationSnapshot(namespace)

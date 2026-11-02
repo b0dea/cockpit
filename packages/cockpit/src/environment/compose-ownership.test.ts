@@ -6,6 +6,7 @@ const identity = {
     stackId: `stack:${'a'.repeat(64)}`,
     cockpitId: `cockpit:duo:${'b'.repeat(64)}`,
     configSha256: 'c'.repeat(64),
+    resettableVolumes: [],
 }
 const labels = {
     'dev.b0dea.cockpit.config-sha256': identity.configSha256,
@@ -35,7 +36,7 @@ describe('compose-first ownership override', () => {
             networks: { default: { labels } },
         })
 
-        const withVolumes = renderComposeOwnership({ ...identity, sources: [
+        const withVolumes = renderComposeOwnership({ ...identity, resettableVolumes: ['data'], sources: [
             { reference: 'compose.yml', source: 'services:\n  db:\n    image: busybox\nvolumes:\n  data:\n  cache: { driver: local }\n  shared: { external: true }\n' },
         ] })
         if (withVolumes.kind !== 'complete') throw new Error(withVolumes.reason)
@@ -62,5 +63,12 @@ describe('compose-first ownership override', () => {
             .toMatchObject({ kind: 'refusal', target: 'compose.yml', reason: expect.stringContaining('include') })
         expect(renderComposeOwnership({ ...identity, sources: [{ reference: 'compose.yml', source: 'services: [api]\n' }] }))
             .toMatchObject({ kind: 'refusal', target: 'compose.yml' })
+        // Reset matches a declared resettable volume against these keys, so one no file creates
+        // would reset nothing.
+        const volumeSources = [{ reference: 'compose.yml', source: 'services:\n  db:\n    image: busybox\nvolumes:\n  data:\n  shared: { external: true }\n' }]
+        expect(renderComposeOwnership({ ...identity, resettableVolumes: ['dta'], sources: volumeSources }))
+            .toMatchObject({ kind: 'refusal', target: 'environment.resettable_volumes', reason: expect.stringContaining('"dta" is not a top-level volume') })
+        expect(renderComposeOwnership({ ...identity, resettableVolumes: ['shared'], sources: volumeSources }))
+            .toMatchObject({ kind: 'refusal', target: 'environment.resettable_volumes', reason: expect.stringContaining('"shared" is external') })
     })
 })

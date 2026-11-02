@@ -1608,7 +1608,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             sources.push({ reference, source: read.bytes.toString('utf8') })
         }
         const ownership = renderComposeOwnership({ sources, stackId: currentStack, cockpitId: currentCockpit,
-            configSha256: loaded.result.runtimeSha256 })
+            configSha256: loaded.result.runtimeSha256, resettableVolumes: config.environment.resettable_volumes })
         if (ownership.kind !== 'complete') return refuse('GENERATED_DECLARATION_INVALID',
             `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target)
         composeOwnership = Object.freeze({ path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) })

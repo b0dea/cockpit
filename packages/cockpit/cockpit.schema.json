@@ -10661,6 +10661,10 @@
       "rule": "unique"
     },
     {
+      "path": "environment.resettable_volumes[]",
+      "rule": "declared_compose_volume_key"
+    },
+    {
       "path": "environment.generated_host_paths[]",
       "rule": "unique"
     },
