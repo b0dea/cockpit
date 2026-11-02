@@ -82,7 +82,7 @@ import {
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, errorCause, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, parseJsonText, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
 import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
@@ -1488,20 +1488,12 @@ async function projectBrowserRunner(
     if (stale.length > 0) return Object.freeze({ kind: 'refusal' as const,
         message: `the declared browser project digests differ from the files: ${stale.join('; ')}`,
         fix: 'review the browser project change, set the declared digest to the file\'s current sha256, then run npx --no cockpit up --config <your cockpit.toml>' })
-    // A JSON.parse error quotes the bytes where parsing stopped, and this refusal reaches an agent; name
-    // the file, where parsing stopped and the shape expected, never the bytes.
     const parseProjectJson = (bytes: Uint8Array, path: string, expected: string): Readonly<{ value: unknown }> | string => {
         let text: string
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
         catch (error) { if (!(error instanceof TypeError)) throw error; return `the browser project ${path} is not valid UTF-8; expected ${expected}` }
-        try { return { value: JSON.parse(text) } }
-        catch (error) {
-            if (!(error instanceof SyntaxError)) throw error
-            const position = Number(/\bposition (\d+)\b/.exec(error.message)?.[1])
-            const before = Number.isSafeInteger(position) ? text.slice(0, position) : undefined
-            const where = before === undefined ? '' : ` at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
-            return `the browser project ${path} is not valid JSON${where}; expected ${expected}`
-        }
+        const parsed = parseJsonText(text, `the browser project ${path}`, expected)
+        return 'refusal' in parsed ? parsed.refusal : parsed
     }
     const parsedManifest = parseProjectJson(manifest.bytes, manifestPath, 'an npm package.json object')
     const parsedLock = parseProjectJson(lockfile.bytes, browser.project.lockfile, 'an npm package-lock.json object')

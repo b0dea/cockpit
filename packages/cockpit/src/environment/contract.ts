@@ -17,7 +17,7 @@ export const mechanism = {
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
         'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'DOCKER_CLIENT_ENVIRONMENT', 'HOST_PROCESS_CONTROL_ENV', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
-        'isCanonicalTimestamp', 'errorCause', 'hasErrorCode', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
+        'isCanonicalTimestamp', 'errorCause', 'parseJsonText', 'hasErrorCode', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
         'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
         'snapshotLifecyclePlan', 'inStackCommand',
@@ -391,6 +391,19 @@ export function errorCause(error: unknown): string {
     }
     return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
         : error instanceof RangeError ? 'RangeError' : 'Error'
+}
+
+// A JSON.parse error quotes the bytes where parsing stopped, and a refusal reaches an agent that may
+// not read that file; name the subject, where parsing stopped and the shape expected, never the bytes.
+export function parseJsonText(text: string, subject: string, expected: string): Readonly<{ value: unknown }> | Readonly<{ refusal: string }> {
+    try { return { value: JSON.parse(text) } }
+    catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        const position = Number(/\bposition (\d+)\b/.exec(error.message)?.[1])
+        const before = Number.isSafeInteger(position) ? text.slice(0, position) : undefined
+        const where = before === undefined ? '' : ` at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
+        return { refusal: `${subject} is not valid JSON${where}; expected ${expected}` }
+    }
 }
 
 export function hasErrorCode(error: unknown, ...codes: readonly string[]): boolean {

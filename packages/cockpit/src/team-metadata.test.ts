@@ -211,14 +211,14 @@ purpose = "Synthetic local repository"
     // The parser quotes the text where it stopped, and a refusal may reach a reader who cannot open
     // the file, so the canary sits at the failure point and must never come back.
     it.each([
-        ['at a position', '{\n  "name": "CANARY_SECRET_7f3a",\n}', 'SyntaxError at line 3, column 1'],
-        ['at an unexpected token', '{\n  "name": CANARY_SECRET_7f3a }', 'SyntaxError'],
+        ['at a position', '{\n  "name": "CANARY_SECRET_7f3a",\n}', 'package.json is not valid JSON at line 3, column 1; expected an npm package.json object; repair it'],
+        ['at an unexpected token', '{\n  "name": CANARY_SECRET_7f3a }', 'package.json is not valid JSON; expected an npm package.json object; repair it'],
     ])('names an unparseable package.json without quoting it, %s', async (_case, text, cause) => {
         const root = await fixture()
         await writeFile(join(root, 'package.json'), text)
         const refusal = await validateTeamMetadata(join(root, 'cockpit.toml'))
         expect(refusal).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE', target: join(root, 'package.json'),
-            message: expect.stringContaining(`package.json could not be parsed (${cause}`) })
+            message: expect.stringContaining(cause) })
         expect(JSON.stringify(refusal)).not.toContain('CANARY_SECRET_7f3a')
     })
 

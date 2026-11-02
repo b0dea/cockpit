@@ -4,7 +4,7 @@ import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
-import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic } from './environment/contract.js'
+import { ENVIRONMENT_CODES, errorCause, parseJsonText, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
@@ -28,6 +28,7 @@ const SCRIPTS = Object.freeze({
 const START = '# cockpit:ignore:start'
 const END = '# cockpit:ignore:end'
 const OTHER_DEPENDENCY_SECTIONS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const
+const PACKAGE_JSON_SHAPE = 'an npm package.json object'
 
 export interface TeamMetadataChange {
     readonly operation: 'write'
@@ -61,14 +62,6 @@ class MetadataFailure extends Error {}
 
 function failureReason(error: unknown): string {
     return error instanceof MetadataFailure ? error.message : errorCause(error)
-}
-
-// Where JSON.parse stopped, never the input near it: the parser's own message repeats those bytes.
-function jsonFailure(error: unknown, text: string): string {
-    const position = error instanceof SyntaxError ? Number(/\bposition (\d+)\b/.exec(error.message)?.[1]) : Number.NaN
-    if (!Number.isSafeInteger(position)) return errorCause(error)
-    const before = text.slice(0, position)
-    return `SyntaxError at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
 }
 
 interface RootAuthority {
@@ -203,7 +196,11 @@ function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string):
     cause?: string
 }> {
     let parsed: unknown = {}
-    try { parsed = bytes === undefined || bytes.trim() === '' ? {} : JSON.parse(bytes) } catch (error) { return { bytes: '', valid: false, cause: jsonFailure(error, bytes!) } }
+    if (bytes !== undefined && bytes.trim() !== '') {
+        const decoded = parseJsonText(bytes, 'package.json', PACKAGE_JSON_SHAPE)
+        if ('refusal' in decoded) return { bytes: '', valid: false, cause: decoded.refusal }
+        parsed = decoded.value
+    }
     if (!object(parsed)) return { bytes: '', valid: false }
     const slots = packageDependencySlots(parsed)
     const scripts = parsed.scripts === undefined ? {} : parsed.scripts
@@ -366,7 +363,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(candidate.misplaced), packagePath)
         if (candidate.cause) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `package.json could not be parsed (${candidate.cause}); repair it, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
+            `${candidate.cause}; repair it, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
             `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         const ignorePath = join(root, '.gitignore')
@@ -414,14 +411,10 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
     try {
         const authority = await captureRoot(root)
         const current = await readOptional(authority, packagePath)
-        let parsed: unknown
-        let parseCause: string | undefined
-        try { parsed = current ? JSON.parse(current.bytes) : undefined } catch (error) {
-            parsed = undefined
-            parseCause = jsonFailure(error, current!.bytes)
-        }
-        if (parseCause) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `package.json could not be parsed (${parseCause}); repair it, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
+        const decoded = current ? parseJsonText(current.bytes, 'package.json', PACKAGE_JSON_SHAPE) : { value: undefined }
+        if ('refusal' in decoded) return refuse('TEAM_METADATA_UNAVAILABLE',
+            `${decoded.refusal}; repair it, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
+        const parsed = decoded.value
         const slots = object(parsed) ? packageDependencySlots(parsed) : undefined
         if (object(parsed) && !slots) return refuse('TEAM_METADATA_UNAVAILABLE',
             'package.json direct npm dependency sections must be objects; repair package.json, then run npx --no cockpit sync --config <your cockpit.toml> again', packagePath)
