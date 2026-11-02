@@ -213,6 +213,13 @@ it starts its own installed package:
   denied, so one cannot be planted in the same command after that check. Any other npx option, or
   npx without `--no` (which may download a package), is not the installed cockpit.
 
+Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while
+`./node_modules/.bin/cockpit <command> --config cockpit.toml` from the cockpit root still counts.
+`doctor` reports this as `COCKPIT_LAUNCHER_UNPROVEN`, using the guard's own check, and names which
+spelling it can prove. The guard does not check which `npx` the command search path finds: it
+assumes that program behaves as npm's own, as the version-manager and package-firewall shims that
+hand over to npm do.
+
 ### Reading secrets and instances
 
 Every hard denial still applies first. Reading a declared instance or anything under a `.secrets`

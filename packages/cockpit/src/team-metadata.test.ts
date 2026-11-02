@@ -152,7 +152,19 @@ purpose = "Synthetic local repository"
         expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_NOT_INSTALLED',
             target: '.cockpit/local/guard-identity', message: expect.stringContaining('/synthetic/bootstrap/') })])
         expect(await bind(join(installed, 'dist/cli.js'))).toEqual({ kind: 'complete' })
+        // Without npm's bin link neither printed spelling starts the installed cockpit.
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_LAUNCHER_UNPROVEN',
+            message: expect.stringContaining('is not npm\'s link to the installed package either') })])
+        await mkdir(join(installed, 'bin'))
+        await writeFile(join(installed, 'bin/cockpit.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 })
+        await mkdir(join(root, 'node_modules/.bin'))
+        await symlink('../@b0dea/cockpit/bin/cockpit.mjs'.replace('@b0dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))
         expect(await inspectTeamReadiness(configPath)).toEqual([])
+        // npm applies a root .npmrc to npx, so only the path spelling stays provable.
+        await writeFile(join(root, '.npmrc'), 'script-shell=/bin/sh\n')
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_LAUNCHER_UNPROVEN', target: 'npx --no cockpit',
+            message: expect.stringContaining('./node_modules/.bin/cockpit <command> --config cockpit.toml is proven by its path') })])
+        await rm(join(root, '.npmrc'))
 
         // The same acquire = "none" row is local data while app is a plain directory, and a repository once it is one.
         expect(spawnSync('git', ['-C', join(root, 'app'), 'init', '--quiet']).status).toBe(0)

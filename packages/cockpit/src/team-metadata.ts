@@ -9,6 +9,7 @@ import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
+import { guardLauncherEvidence } from './guards/protected-locations.js'
 
 export const mechanism = {
     id: 'team-metadata', module: 'packages/cockpit/src/team-metadata.ts',
@@ -466,6 +467,23 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             target: GUARD_LOCAL_PATHS.identity,
             fix: `in a terminal in ${root}, run npx --no cockpit sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
         }))
+        // The guard's own proof, run as it runs it from the cockpit root once it runs the installed copy.
+        // A root .npmrc, a bin the root package.json declares, or a link that is not npm's leaves every
+        // printed npx form asking a person.
+        const launcher = join(own, 'bin/cockpit.mjs')
+        if (!findings.length && guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, launcher, '') === undefined) {
+            const linked = guardLauncherEvidence('./node_modules/.bin/cockpit', [], root, root, launcher, '') !== undefined
+            findings.push(Object.freeze({
+                severity: 'warning' as const,
+                // A literal, so the diagnostic inventory captures the fix beside the code.
+                code: 'COCKPIT_LAUNCHER_UNPROVEN' satisfies typeof ENVIRONMENT_CODES.COCKPIT_LAUNCHER_UNPROVEN,
+                message: `the guard cannot prove that npx --no cockpit run in ${root} starts the cockpit installed there, so it asks a person before every such command and Codex and OpenCode refuse it; `
+                    + (linked ? './node_modules/.bin/cockpit <command> --config cockpit.toml is proven by its path and runs without asking'
+                        : 'node_modules/.bin/cockpit is not npm\'s link to the installed package either'),
+                target: 'npx --no cockpit',
+                fix: 'run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package',
+            }))
+        }
     }
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete') return Object.freeze(findings)
