@@ -652,6 +652,8 @@ describe('maintained prose detectors', () => {
                     '<!-- cockpit:verified version=2.2.0 -->',
                     '',
                     'Use the [Registry][registry]; `SYNTHETIC_DEFINED` names a code the source defines.',
+                    // Only the first mention links; repeating the link on every mention is noise.
+                    'The Registry is read again later, and this Registry mention needs no link.',
                     '```text',
                     'SYNTHETIC_FENCED is sample output, not a reference: `SYNTHETIC_FENCED`',
                     '```',
@@ -683,7 +685,7 @@ describe('maintained prose detectors', () => {
                 // reader to look for a diagnostic cockpit can never print.
                 { path: 'docs/codes.md', body: '# Codes\n<!-- cockpit:verified version=2.4.0 -->\n\n`SYNTHETIC_UNDEFINED` means a retired budget was exceeded; `SYNTHETIC_DEFINED` is current.\n' },
                 { path: '.changeset/README.md', body: '# Changesets\n\nHow to write a release fragment.\n' },
-                { path: 'docs/guide.md', body: '# Guide\n<!-- cockpit:verified version=2.5.0 -->\n\n[Registry](concepts.md#registry) and Registry is a list.\n\n![screenshot: terminal](terminal.png)\n\n~~~console\noutput\n~~~\n\n<!-- cockpit:capture date=2026-02-30 version=2.4.0 --> Evidence.\n\n<!-- cockpit:ref path=../outside --> The check enforces it.\n' },
+                { path: 'docs/guide.md', body: '# Guide\n<!-- cockpit:verified version=2.5.0 -->\n\nThe Registry comes first, so a later [Registry](concepts.md#registry) link is too late.\n\n![screenshot: terminal](terminal.png)\n\n~~~console\noutput\n~~~\n\n<!-- cockpit:capture date=2026-02-30 version=2.4.0 --> Evidence.\n\n<!-- cockpit:ref path=../outside --> The check enforces it.\n' },
             ],
         })
         expect(broken.diagnostics.map(row => row.code)).toEqual(expect.arrayContaining([
@@ -691,11 +693,10 @@ describe('maintained prose detectors', () => {
             'DOC065_CAPTURE_METADATA_MISSING',
             'DOC066_ENFORCEMENT_MECHANISM_MISSING',
             'DOC067_CONCEPT_UNLINKED',
-            'DOC068_CONCEPT_REDEFINED',
             'DOC063_VERIFIED_VERSION_INVALID',
         ]))
         expect(broken.diagnostics.filter(row => row.code === 'DOC071_CODE_UNDEFINED')).toMatchObject([{ path: 'docs/codes.md', line: 4, message: 'SYNTHETIC_UNDEFINED' }])
-        expect(broken.diagnostics.filter(row => row.code === 'DOC067_CONCEPT_UNLINKED')).toHaveLength(1)
+        expect(broken.diagnostics.filter(row => row.code === 'DOC067_CONCEPT_UNLINKED')).toMatchObject([{ path: 'docs/guide.md', line: 4, message: 'Registry' }])
         expect(broken.diagnostics.filter(row => row.code === 'DOC065_CAPTURE_METADATA_MISSING')).toHaveLength(3)
         expect(broken.reports).toMatchObject([
             { code: 'DOC069_VERIFIED_VERSION_MISSING', path: 'docs/concepts.md' },

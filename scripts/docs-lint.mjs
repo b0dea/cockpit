@@ -470,7 +470,17 @@ function markdownLinkSpans(path, rows) {
     return { links, definitionLines: [...definitionLines], diagnostics }
 }
 
+// A repository scan walks every page several times (each internal link walks its target again),
+// and walking dominates the scan. A walk is a frozen function of its path and body.
+const walks = new Map()
+
 export function walkMarkdownProse(path, body) {
+    const key = `${path}\0${body}`
+    if (!walks.has(key)) walks.set(key, walkUncached(path, body))
+    return walks.get(key)
+}
+
+function walkUncached(path, body) {
     const subject = normalisePath(path)
     const appliesAs = rulesEstate(subject, classifyMarkdownPath(subject))
     const lines = body.split('\n')
@@ -564,7 +574,7 @@ export function walkMarkdownProse(path, body) {
         links: Object.freeze(linkSpans.links),
         referenceDefinitionLines: Object.freeze(linkSpans.definitionLines),
         fences: Object.freeze(fences.map(row => Object.freeze(row))),
-        diagnostics: Object.freeze(diagnostics),
+        diagnostics: Object.freeze(diagnostics.map(row => Object.freeze(row))),
     })
 }
 
@@ -652,14 +662,10 @@ export function repositoryMarkdownPaths(root = ROOT) {
     return output.split('\0').filter(Boolean)
 }
 
-function markdownLinks(walked) {
-    return walked.links
-}
-
 export function inspectInternalLinks({ path, body, readTarget }) {
     const walked = walkMarkdownProse(path, body)
     const errors = walked.diagnostics.filter(row => row.code === 'DOC041_REFERENCE_UNRESOLVED')
-    for (const { line, target } of markdownLinks(walked)) {
+    for (const { line, target } of walked.links) {
         if (/^(?:https?:|mailto:)/i.test(target)) continue
         const [linkedPath, fragment] = target.split('#', 2)
         const normalized = linkedPath === '' ? path : posix.normalize(posix.join(posix.dirname(path), linkedPath))
@@ -695,7 +701,7 @@ export function validateDocumentationIndexes({ readDocument, documents = ['docs/
             continue
         }
         const sourceEstate = path.startsWith('docs/contributing/') ? 'contributor' : 'consumer'
-        for (const { line, target } of markdownLinks(walkMarkdownProse(path, body))) {
+        for (const { line, target } of walkMarkdownProse(path, body).links) {
             if (/^(?:https?:|mailto:|#)/i.test(target)) continue
             const linkedPath = target.split('#', 1)[0]
             const normalized = posix.normalize(posix.join(posix.dirname(path), linkedPath))
@@ -712,7 +718,7 @@ export function validateDocumentationIndexes({ readDocument, documents = ['docs/
 export function collectExternalLinks(documents) {
     const links = new Map()
     for (const document of documents) {
-        for (const { line, target } of markdownLinks(walkMarkdownProse(document.path, document.body))) {
+        for (const { line, target } of walkMarkdownProse(document.path, document.body).links) {
             if (!/^https?:\/\//i.test(target)) continue
             const sources = links.get(target) ?? []
             sources.push({ path: document.path, line })
@@ -812,7 +818,8 @@ export function inspectMaintainedProse({ documents, currentVersion, staleMinorTh
 
     for (const document of documents) {
         const walked = walkMarkdownProse(document.path, document.body)
-        const verified = document.body.match(/<!--\s*cockpit:verified version=([^\s]+)\s*-->/)
+        const mentioned = new Set()
+        const verified =document.body.match(/<!--\s*cockpit:verified version=([^\s]+)\s*-->/)
         if (CHANGESET_FRAGMENT.test(document.path)) {
             // Release fragments are release notes, not maintained pages.
         } else if (GENERATED_PAGE.test(document.body)) {
@@ -863,27 +870,34 @@ export function inspectMaintainedProse({ documents, currentVersion, staleMinorTh
                     diagnostics.push(diagnostic(document.path, row.line, 'DOC071_CODE_UNDEFINED', value))
                 }
             }
-            if (document.path === 'docs/concepts.md') continue
-            if (walked.referenceDefinitionLines.includes(row.line)) continue
+            if (document.path === 'docs/concepts.md' || walked.referenceDefinitionLines.includes(row.line)) continue
+            // The first mention of a glossary term on a page links to its definition; later
+            // mentions are free, because a link on every mention is noise to the reader.
             for (const concept of concepts) {
-                const escaped = concept.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                if (mentioned.has(concept.term)) continue
+                const occurrence = firstConceptMention(row, walked.links, concept.term)
+                if (occurrence === null) continue
+                mentioned.add(concept.term)
                 const expected = posix.relative(posix.dirname(document.path), 'docs/concepts.md') || 'concepts.md'
-                for (const occurrence of row.prose.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
-                    const containingLink = walked.links.find(link => link.line === row.line
-                        && occurrence.index >= link.start && occurrence.index + occurrence[0].length <= link.end)
-                    if (containingLink && occurrence.index > containingLink.start + containingLink.label.length) continue
-                    const linked = containingLink?.target === `${expected}#${concept.anchor}`
-                        && occurrence.index >= containingLink.start + 1
-                        && occurrence.index + occurrence[0].length <= containingLink.start + 1 + containingLink.label.length
-                    if (!linked) diagnostics.push(diagnostic(document.path, row.line, 'DOC067_CONCEPT_UNLINKED', concept.term))
-                }
-                if (new RegExp(`\\b${escaped}\\s+(?:is|means|refers to)\\b`, 'i').test(row.prose)) {
-                    diagnostics.push(diagnostic(document.path, row.line, 'DOC068_CONCEPT_REDEFINED', concept.term))
-                }
+                const link = occurrence.link
+                const linked = link?.target === `${expected}#${concept.anchor}`
+                    && occurrence.index + occurrence.length <= link.start + 1 + link.label.length
+                if (!linked) diagnostics.push(diagnostic(document.path, row.line, 'DOC067_CONCEPT_UNLINKED', concept.term))
             }
         }
     }
     return { diagnostics, reports }
+}
+
+// A term inside a link destination is part of a path or anchor, not a mention.
+function firstConceptMention(row, links, term) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    for (const match of row.prose.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
+        const link = links.find(link => link.line === row.line && match.index >= link.start && match.index + match[0].length <= link.end)
+        if (link && match.index > link.start + link.label.length) continue
+        return { index: match.index, length: match[0].length, link }
+    }
+    return null
 }
 
 const EVIDENCE_FENCE = /```docs-evidence\s*\n([\s\S]*?)\n```/g
@@ -1428,8 +1442,7 @@ function headingAnchors(path, body) {
     for (const row of walkMarkdownProse(path, body).lines) {
         const heading = /^#{1,6}\s+(.+)$/.exec(row.references)
         if (!heading) continue
-        const slug = heading[1].trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
-        anchors.add(slug)
+        anchors.add(headingAnchor(heading[1]))
     }
     return anchors
 }
@@ -2471,16 +2484,17 @@ async function run() {
     }
 
     let failed = false
+    const bodies = new Map()
     for (const subject of subjects) {
         let body
         try {
             body = readFileSync(subject.absolute, 'utf8')
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            console.error(`docs-lint: ${subject.path}:1 [DOC003_UNREADABLE] ${message}`)
+            console.error(`docs-lint: ${subject.path}:1 [DOC003_UNREADABLE] ${errorCause(error)}`)
             failed = true
             continue
         }
+        bodies.set(subject.path, body)
         const diagnostics =
             repositoryScan && classifyMarkdownPath(subject.path) === 'fixture' ? [] : lintMarkdown(subject.path, body)
         for (const diagnostic of diagnostics) {
@@ -2491,21 +2505,15 @@ async function run() {
         }
     }
     if (repositoryScan) {
-        const readDocument = path => readFileSync(resolve(ROOT, path), 'utf8')
+        const readDocument = path => bodies.get(path) ?? readFileSync(resolve(ROOT, path), 'utf8')
+        const governed = [...bodies].filter(([path]) => ['human', 'executable'].includes(classifyMarkdownPath(path)))
         const documentationPaths = subjects.map(subject => subject.path).filter(path => path.startsWith('docs/'))
         for (const error of validateDocumentationIndexes({ readDocument, documents: documentationPaths })) {
             console.error(`docs-lint: ${error.path}:${error.line} [${error.code}] ${error.message}`)
             failed = true
         }
-        for (const subject of subjects.filter(subject => classifyMarkdownPath(subject.path) !== 'fixture')) {
-            let body
-            try {
-                body = readFileSync(subject.absolute, 'utf8')
-            } catch {
-                // The first pass over every subject already reported this file as unreadable.
-                continue
-            }
-            for (const error of inspectInternalLinks({ path: subject.path, body, readTarget: readDocument })) {
+        for (const [path, body] of governed) {
+            for (const error of inspectInternalLinks({ path, body, readTarget: readDocument })) {
                 if (error.code === 'DOC041_REFERENCE_UNRESOLVED') continue
                 console.error(`docs-lint: ${error.path}:${error.line} [${error.code}] ${error.message}`)
                 failed = true
@@ -2523,9 +2531,7 @@ async function run() {
             mechanismExists: path => !path.startsWith('/') && !path.includes('\\')
                 && !path.split('/').some(part => part === '.' || part === '..') && trackedPaths.has(path),
             identifierExists: identifier => definedIdentifiers.has(identifier),
-            documents: subjects
-                .filter(subject => ['human', 'executable'].includes(classifyMarkdownPath(subject.path)))
-                .map(subject => ({ path: subject.path, body: readDocument(subject.path) })),
+            documents: governed.map(([path, body]) => ({ path, body })),
         })
         for (const error of maintained.diagnostics) {
             console.error(`docs-lint: ${error.path}:${error.line} [${error.code}] ${error.message}`)
