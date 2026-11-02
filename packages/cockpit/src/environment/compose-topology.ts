@@ -47,6 +47,8 @@ export interface ComposeTopologyInput {
 export interface ComposePublishedPort {
     /** The host side exactly as written, `null` when Compose picks an ephemeral host port. */
     readonly published: string | null
+    /** The host interface exactly as written, `null` when none is given, so Docker binds every interface. */
+    readonly hostIp: string | null
     readonly target: string
 }
 
@@ -155,18 +157,22 @@ function shortPort(value: string): ComposePublishedPort | undefined {
     if (!split) return undefined
     const segments = [...split.slice(0, -1), split[split.length - 1]!.replace(/\/(?:tcp|udp|sctp)$/, '')]
     if (segments.length > 3 || segments.some((segment, index) => segment === '' && index === segments.length - 1)) return undefined
-    if (segments.length === 1) return Object.freeze({ published: null, target: segments[0]! })
+    if (segments.length === 1) return Object.freeze({ published: null, hostIp: null, target: segments[0]! })
     const published = segments[segments.length - 2]!
-    return Object.freeze({ published: published === '' ? null : published, target: segments[segments.length - 1]! })
+    const hostIp = segments.length === 3 && segments[0] !== '' ? segments[0]! : null
+    return Object.freeze({ published: published === '' ? null : published, hostIp, target: segments[segments.length - 1]! })
 }
 
 function longPort(value: Record<string, unknown>): ComposePublishedPort | undefined {
     const target = value.target
     const published = value.published
+    const hostIp = value.host_ip
     if (typeof target !== 'number' && typeof target !== 'string') return undefined
-    if (published === undefined || published === null || published === '') return Object.freeze({ published: null, target: String(target) })
+    if (hostIp !== undefined && hostIp !== null && typeof hostIp !== 'string') return undefined
+    const ip = hostIp === undefined || hostIp === null || hostIp === '' ? null : hostIp
+    if (published === undefined || published === null || published === '') return Object.freeze({ published: null, hostIp: ip, target: String(target) })
     if (typeof published !== 'number' && typeof published !== 'string') return undefined
-    return Object.freeze({ published: String(published), target: String(target) })
+    return Object.freeze({ published: String(published), hostIp: ip, target: String(target) })
 }
 
 function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | undefined {
@@ -393,6 +399,13 @@ export async function assessComposeTopology(
     }
     for (const service of services) {
         for (const port of service.ports) {
+            // No host interface means Docker binds every one (0.0.0.0 and ::), exposing the service
+            // to the network. Writing an interface, even 0.0.0.0, is the declared way to mean it.
+            if (port.hostIp === null) diagnostics.push(Object.freeze({
+                severity: 'warning' as const, code: 'COMPOSE_PORT_ALL_INTERFACES', target: `compose:${service.id}:${port.target}`,
+                message: `service ${service.id} publishes container port ${port.target} with no host interface, so Docker binds every interface and the service is reachable from the network`,
+                fix: `write the host interface in front of the port, as "127.0.0.1:\${${(port.published === null ? undefined : variableName(port.published)) ?? suggestedVariable(service.id)}}:${port.target}", or write 0.0.0.0 there if you mean the wider exposure`,
+            }))
             if (port.published === null) continue
             const variable = variableName(port.published)
             if (variable !== undefined && leased.has(variable)) continue

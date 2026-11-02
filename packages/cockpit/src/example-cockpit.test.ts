@@ -420,6 +420,22 @@ describe('cockpits without a generated environment', () => {
             severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
     })
 
+    it('warns in check on a published port with no host interface and stays quiet for a loopback one', () => {
+        const root = syncedComposeFirst('compose-first-interface')
+        const path = join(root, 'compose.yml')
+        const loopback = readFileSync(path, 'utf8')
+        const quiet = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(quiet)) return
+        expect(quiet.response.diagnostics.map((row: { code: string }) => row.code)).not.toContain('COMPOSE_PORT_ALL_INTERFACES')
+        writeFileSync(path, loopback.replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '"${WEB_HOST_PORT:-4300}:3000"'))
+        const open = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(open.response.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'warning', code: 'COMPOSE_PORT_ALL_INTERFACES', target: 'compose:web:3000' }))
+        writeFileSync(path, loopback.replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '{ target: 3000, published: "${WEB_HOST_PORT:-4300}", host_ip: "127.0.0.1" }'))
+        const longForm = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(longForm.response.diagnostics.map((row: { code: string }) => row.code)).not.toContain('COMPOSE_PORT_ALL_INTERFACES')
+    })
+
     it('fails check on a mount = "always" sibling that no Compose service bind-mounts', () => {
         const root = copyPlainExample('compose-first', 'compose-first-mount')
         mkdirSync(join(root, 'worker'))

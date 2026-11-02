@@ -64,6 +64,10 @@ with `COMPOSE_TOPOLOGY_UNAVAILABLE` if Docker cannot produce it. It also checks:
 - a published host port not written as a `[ports.bases]` variable, such as `"127.0.0.1:4200:3000"`,
   fails with `COMPOSE_PORT_NOT_LEASED`, because the same number collides across worktrees and
   parallel stacks; write `"127.0.0.1:${API_HOST_PORT}:3000"` instead;
+- a published port with no host interface, such as `"${API_HOST_PORT}:3000"`, warns with
+  `COMPOSE_PORT_ALL_INTERFACES`, because Docker then binds every interface and the service is
+  reachable from the network; write `"127.0.0.1:${API_HOST_PORT}:3000"`, or name `0.0.0.0` when you
+  mean the wider exposure;
 - a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
   is then treated as ready;
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.

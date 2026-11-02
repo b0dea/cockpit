@@ -21,7 +21,7 @@ one command, put it to sleep and resume it, and remove it:
 docker pull node:22-alpine
 ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image node:22-alpine
 ./node_modules/.bin/cockpit up --config cockpit.toml
-./node_modules/.bin/cockpit session --config cockpit.toml -- sh -c 'curl -fsS localhost:4100/health'
+./node_modules/.bin/cockpit session --config cockpit.toml -- sh -c 'curl -fsS "http://127.0.0.1:$API_HOST_PORT/health"'
 ./node_modules/.bin/cockpit sleep --config cockpit.toml && ./node_modules/.bin/cockpit up --config cockpit.toml
 ./node_modules/.bin/cockpit down --config cockpit.toml
 ```
