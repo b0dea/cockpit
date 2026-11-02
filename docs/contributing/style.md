@@ -47,7 +47,8 @@ These checks run on every governed page:
 
 - An internal link reaches an existing file, and its `#fragment` an existing heading. A link to a
   page marked retired fails too.
-- The consumer index and the contributor index do not link into each other's pages.
+- No page under `docs/` links across the boundary between consumer pages and the contributor
+  pages under `docs/contributing/`.
 - An inline-code name in the shape of a diagnostic code, such as `DOC071_CODE_UNDEFINED`, is
   defined somewhere outside documentation and tests.
 - A `cockpit:ref path=` marker names a tracked file.

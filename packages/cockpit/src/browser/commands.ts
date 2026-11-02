@@ -315,8 +315,8 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         if (unavailable) return refusal(unavailable)
     }
     for (const surface of policy.surfaces) {
-        // Only the runtime's own fixed-text TypeError escapes the revalidation (its filesystem errors
-        // are already folded into that message), so the refusal names the condition instead.
+        // Only the runtime's own fixed-text TypeError escapes the revalidation (it replaces filesystem
+        // errors with that text), so the refusal names the condition instead.
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed before application driving') }
         const output = input.kind === 'screenshot' ? resolve(client.artifactRoot, `screenshot-${randomUUID()}.png`) : undefined
         if (deadline <= Date.now()) return refusal('Browser command exceeded its total 30-second deadline')
