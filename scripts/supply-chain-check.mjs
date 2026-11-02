@@ -6,6 +6,18 @@ import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { packagedDocumentationPages } from './build-cockpit.mjs'
 
+// Unlike the TypeScript helper this cannot import: system errors keep their first message line;
+// anything else gives only its class, because parse and child-process messages echo their input.
+function errorCause(error) {
+    if (!(error instanceof Error)) return 'a non-error value was thrown'
+    const message = Object.getOwnPropertyDescriptor(error, 'message')?.value
+    if (typeof error.code === 'string' && typeof error.syscall === 'string' && typeof message === 'string') {
+        return message.split(/\r?\n|\r/, 1)[0].slice(0, 240)
+    }
+    return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
+        : error instanceof RangeError ? 'RangeError' : 'Error'
+}
+
 export const mechanism = {
     id: 'supply-chain-readiness',
     module: 'scripts/supply-chain-check.mjs',
@@ -204,8 +216,8 @@ function workflowDiagnostics(root, rootManifest) {
                 throw new Error('owned directory is not one contained directory')
             }
             return canonicalBase
-        } catch {
-            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `${kind} owned directory is missing, linked, or outside the repository`)
+        } catch (error) {
+            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `${kind} owned directory is missing, linked, or outside the repository: ${errorCause(error)}`)
             return undefined
         }
     }
@@ -227,8 +239,8 @@ function workflowDiagnostics(root, rootManifest) {
                 return undefined
             }
             return canonicalCandidate
-        } catch {
-            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `${kind} local reference does not resolve to a canonical entry: ${reference}`)
+        } catch (error) {
+            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `${kind} local reference does not resolve to a canonical entry: ${reference} (${errorCause(error)})`)
             return undefined
         }
     }
@@ -242,9 +254,10 @@ function workflowDiagnostics(root, rootManifest) {
         const actionRoot = canonicalLocal(reference, resolve(root, '.github/actions'), owner, 'action')
         if (!actionRoot) return
         let actionStat
-        try { actionStat = lstatSync(actionRoot) } catch { actionStat = undefined }
+        let statCause = ''
+        try { actionStat = lstatSync(actionRoot) } catch (error) { statCause = ` (${errorCause(error)})` }
         if (!actionStat?.isDirectory() || actionStat.isSymbolicLink()) {
-            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local action is not one canonical directory: ${reference}`)
+            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local action is not one canonical directory: ${reference}${statCause}`)
             return
         }
         const manifests = ['action.yml', 'action.yaml'].filter(name => {
@@ -252,7 +265,7 @@ function workflowDiagnostics(root, rootManifest) {
                 const path = resolve(actionRoot, name)
                 const stat = lstatSync(path)
                 return stat.isFile() && !stat.isSymbolicLink()
-            } catch { return false }
+            } catch { return false } // Either manifest name may be absent; the exactly-one check below refuses otherwise.
         })
         if (manifests.length !== 1) {
             add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local action needs exactly one canonical action.yml or action.yaml: ${reference}`)
@@ -288,9 +301,10 @@ function workflowDiagnostics(root, rootManifest) {
         const workflowPath = canonicalLocal(reference, resolve(root, '.github/workflows'), owner, 'workflow')
         if (!workflowPath) return
         let stat
-        try { stat = lstatSync(workflowPath) } catch { stat = undefined }
+        let statCause = ''
+        try { stat = lstatSync(workflowPath) } catch (error) { statCause = ` (${errorCause(error)})` }
         if (!stat?.isFile() || stat.isSymbolicLink() || !/\.ya?ml$/.test(workflowPath)) {
-            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local reusable workflow is not one canonical YAML file: ${reference}`)
+            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local reusable workflow is not one canonical YAML file: ${reference}${statCause}`)
             return
         }
         inspectWorkflow(workflowPath)
@@ -372,8 +386,8 @@ function workflowDiagnostics(root, rootManifest) {
                             try {
                                 if (script.includes('..') || lstatSync(scriptPath).isSymbolicLink()) throw new Error('linked or escaping script path')
                                 body = readFileSync(scriptPath, 'utf8')
-                            } catch {
-                                add('WORKFLOW_SCRIPT_INVALID', `${path}#${jobName}`, `invoked script is missing, linked, or outside .github/scripts: ${script}`)
+                            } catch (error) {
+                                add('WORKFLOW_SCRIPT_INVALID', `${path}#${jobName}`, `invoked script is missing, linked, or outside .github/scripts: ${script} (${errorCause(error)})`)
                                 continue
                             }
                             if (PUBLICATION_COMMAND.test(body)) {
@@ -427,8 +441,8 @@ function releaseDiagnostics(root) {
             try {
                 if (script.includes('..') || lstatSync(resolve(root, script)).isSymbolicLink()) throw new Error('linked or escaping path')
                 bodies.push(readFileSync(resolve(root, script), 'utf8'))
-            } catch {
-                diagnostics.push(diagnostic('RELEASE_SCRIPT_INVALID', script, 'script named by the publish job is missing, linked, or outside .github/scripts'))
+            } catch (error) {
+                diagnostics.push(diagnostic('RELEASE_SCRIPT_INVALID', script, `script named by the publish job is missing, linked, or outside .github/scripts: ${errorCause(error)}`))
             }
         }
         if (!bodies.some(body => body.includes('cockpitSourceRevision'))) {

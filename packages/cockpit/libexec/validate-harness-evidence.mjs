@@ -4,6 +4,18 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual, types as utilTypes } from 'node:util'
 
+// Unlike the TypeScript helper this cannot import: system errors keep their first message line;
+// anything else gives only its class, because parse messages echo the evidence bytes.
+function errorCause(error) {
+    if (!(error instanceof Error)) return 'a non-error value was thrown'
+    const message = Object.getOwnPropertyDescriptor(error, 'message')?.value
+    if (typeof error.code === 'string' && typeof error.syscall === 'string' && typeof message === 'string') {
+        return message.split(/\r?\n|\r/, 1)[0].slice(0, 240)
+    }
+    return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
+        : error instanceof RangeError ? 'RangeError' : 'Error'
+}
+
 export const IMPLEMENTED_MECHANISMS = Object.freeze([
     {
         id: 'harness-evidence-validation',
@@ -498,8 +510,8 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
         let transcript
         try {
             transcript = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(transcriptBytes))
-        } catch {
-            errors.push('transcript must be structured JSON evidence')
+        } catch (error) {
+            errors.push(`transcript must be structured JSON evidence: ${errorCause(error)}`)
         }
         const expectedTranscript = {
             harness: manifest.harness,
@@ -1024,7 +1036,7 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
 
     if (transcriptBytes) {
         let transcript
-        try { transcript = JSON.parse(transcriptBytes.toString('utf8')) } catch { errors.push('transcript must be structured JSON evidence') }
+        try { transcript = JSON.parse(transcriptBytes.toString('utf8')) } catch (error) { errors.push(`transcript must be structured JSON evidence: ${errorCause(error)}`) }
         const expected = { ...record }
         delete expected.transcriptSha256
         if (transcript && !isDeepStrictEqual(transcript, expected)) errors.push('transcript does not match the complete structured evidence record')
@@ -1163,6 +1175,7 @@ export function validateSelftestEvidenceBundle(bundle, expectation, root = proce
     const triples = addressableEvidence.map(record => `${record.candidatePath}\0${record.brokenPath}\0${record.transcriptPath}`)
     if (new Set(triples).size !== triples.length) errors.push('evidence triples must be unique')
     const canonicalTriples = addressableEvidence.map(record => [record.candidatePath, record.brokenPath, record.transcriptPath].map(path => {
+        // An unresolvable path is compared as written; the missing file is refused where its evidence is read.
         try { return realpathSync(resolve(root, path)) } catch { return String(path) }
     }).join('\0'))
     if (new Set(canonicalTriples).size !== canonicalTriples.length) errors.push('canonical evidence triples must be unique')
@@ -1238,6 +1251,7 @@ export function validateEvidenceManifests(manifests, root = process.cwd(), optio
                 try {
                     return realpathSync(resolve(root, path))
                 } catch {
+                    // An unresolvable path is compared as written; the missing file is refused where its evidence is read.
                     return String(path)
                 }
             })

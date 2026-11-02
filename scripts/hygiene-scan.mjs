@@ -106,6 +106,7 @@ export function siteTerms(rootUrl = ROOT_URL) {
     try {
         body = readFileSync(new URL(SITE_NEEDLES, rootUrl), 'utf8')
     } catch {
+        // No readable needle file means "unconfigured"; every caller refuses when internal/ exists, where it must be present.
         return null
     }
     return body
@@ -335,7 +336,7 @@ export function scanGitHistory(root = ROOT) {
         if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(object)) throw new Error('hygiene-scan: history returned an invalid ref object')
         let name
         try { name = new TextDecoder('utf-8', { fatal: true }).decode(fields[0]) }
-        catch { gaps.push('a reachable ref name is invalid UTF-8'); continue }
+        catch { gaps.push('a reachable ref name is invalid UTF-8'); continue } // The decode failure is the gap named here.
         if (scanPathText('(ref)', name, site ?? []).length > 0) {
             const category = name.startsWith('refs/heads/') ? 'heads' : name.startsWith('refs/tags/') ? 'tags' : 'other'
             if (findings.length < 10_000) findings.push({ commit: object, path: `(ref:${category})`, kind: 'consumer-identifier', line: 1 })
@@ -360,6 +361,7 @@ export function scanGitHistory(root = ROOT) {
             let path
             try { path = new TextDecoder('utf-8', { fatal: true }).decode(pathname) }
             catch {
+                // The decode failure is the gap named here.
                 gaps.push(`${commit}: invalid UTF-8 pathname (sha256 ${createHash('sha256').update(pathname).digest('hex')})`)
                 continue
             }
@@ -397,6 +399,7 @@ export function scanGitHistory(root = ROOT) {
                 if (body.includes(0)) throw new Error('binary')
                 text = new TextDecoder('utf-8', { fatal: true }).decode(body)
             } catch {
+                // The binary or decode failure is the gap named here.
                 gaps.push(`${row.commit}:${JSON.stringify(row.path)} is binary or invalid UTF-8`)
                 continue
             }

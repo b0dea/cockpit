@@ -80,6 +80,7 @@ function terminate(code) {
     if (!action || terminating) return
     terminating = true
     actionCode = Number.isInteger(code) ? code : 1
+    // A stop line that cannot be written means the action is unreachable; abandon exits with the fence-lost status.
     try { action.stdin.end('STOP\n') } catch { abandon() }
 }
 

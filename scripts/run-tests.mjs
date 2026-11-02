@@ -227,6 +227,7 @@ async function stopSupervisor(child, cleanupMs) {
     try {
         child.send({ type: 'terminate', signal: 'SIGKILL' })
     } catch {
+        // The IPC channel is already closed, so signal the process directly; nothing else is left to report on cleanup.
         child.kill('SIGKILL')
         return
     }

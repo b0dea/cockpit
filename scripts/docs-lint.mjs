@@ -15,6 +15,18 @@ import {
 
 export { diagnosticInventory } from './diagnostic-inventory.mjs'
 
+// Unlike the TypeScript helper this cannot import: system errors keep their first message line;
+// anything else gives only its class, because parse and child-process messages echo their input.
+function errorCause(error) {
+    if (!(error instanceof Error)) return 'a non-error value was thrown'
+    const message = Object.getOwnPropertyDescriptor(error, 'message')?.value
+    if (typeof error.code === 'string' && typeof error.syscall === 'string' && typeof message === 'string') {
+        return message.split(/\r?\n|\r/, 1)[0].slice(0, 240)
+    }
+    return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
+        : error instanceof RangeError ? 'RangeError' : 'Error'
+}
+
 export const ROOT_URL = new URL('../', import.meta.url)
 export const ROOT = fileURLToPath(ROOT_URL)
 
@@ -665,8 +677,8 @@ export function inspectInternalLinks({ path, body, readTarget }) {
                     errors.push(diagnostic(path, line, 'DOCEV027_LINK_ANCHOR_MISSING', target))
                 }
             }
-        } catch {
-            errors.push(diagnostic(path, line, 'DOCEV026_LINK_MISSING', target))
+        } catch (error) {
+            errors.push(diagnostic(path, line, 'DOCEV026_LINK_MISSING', `${target}: ${errorCause(error)}`))
         }
     }
     return errors
@@ -678,8 +690,8 @@ export function validateDocumentationIndexes({ readDocument, documents = ['docs/
         let body
         try {
             body = readDocument(path)
-        } catch {
-            errors.push(diagnostic(path, 1, 'DOC060_ESTATE_INDEX_MISSING', 'documentation estate has no index'))
+        } catch (error) {
+            errors.push(diagnostic(path, 1, 'DOC060_ESTATE_INDEX_MISSING', `documentation estate has no index: ${errorCause(error)}`))
             continue
         }
         const sourceEstate = path.startsWith('docs/contributing/') ? 'contributor' : 'consumer'
@@ -921,6 +933,7 @@ function resolveCandidate(root, candidate) {
     try {
         return git(root, ['rev-parse', '--verify', `${candidate}^{commit}`]).trim()
     } catch {
+        // A non-zero git exit means the candidate does not resolve; the caller refuses a null.
         return null
     }
 }
@@ -930,6 +943,7 @@ function commitIsAncestor(root, ancestor, candidate) {
         execFileSync('git', ['merge-base', '--is-ancestor', ancestor, candidate], { cwd: root, stdio: 'ignore' })
         return true
     } catch {
+        // `merge-base --is-ancestor` exits non-zero to say "not an ancestor"; the caller refuses a false.
         return false
     }
 }
@@ -950,6 +964,7 @@ function validateFixedPoint(root, expectedFixedPoint, candidate) {
         try {
             execFileSync('git', ['merge-base', '--is-ancestor', fixedPoint, resolvedCandidate], { cwd: root, stdio: 'ignore' })
         } catch {
+            // A non-zero exit is git's "not an ancestor" answer, and this refusal reports it.
             errors.push(evidenceRefusal('DOCEV014_FIXED_POINT_NOT_ANCESTOR', `${expectedFixedPoint} is not an ancestor of ${candidate}`))
         }
     }
@@ -1426,6 +1441,7 @@ function validateAnchor(root, candidate, anchor) {
     try {
         return headingAnchors(path, sourceAt(root, candidate, path)).has(fragment)
     } catch {
+        // An anchor that cannot be read from the candidate is stale; the caller refuses a false.
         return false
     }
 }
@@ -1435,6 +1451,7 @@ function requirementIds(root) {
         const source = readFileSync(resolve(root, PRIVATE_STATE_DIRECTORY, 'REQUIREMENTS.md'), 'utf8')
         return new Set([...source.matchAll(/\*\*(REQ-[A-Za-z0-9.]+)\*\*/g)].map((match) => match[1]))
     } catch {
+        // No readable requirements ledger means no requirement ids to cross-check against.
         return null
     }
 }
@@ -1445,6 +1462,7 @@ function candidatePathExists(root, candidate, path) {
             execFileSync('git', ['cat-file', '-e', `${candidate}:${path}`], { cwd: root, stdio: 'ignore' })
             return true
         } catch {
+            // `cat-file -e` exits non-zero when the path is absent from the candidate; absence is the answer.
             return false
         }
     })
@@ -1741,14 +1759,15 @@ export function validateNavigationEvidence(options) {
         }
         const signed = Buffer.from(JSON.stringify({ harness: row.harness, scope: row.scope, receipt: row.receipt }))
         let authentic = false
+        let signatureCause = ''
         try {
             authentic = typeof row.signature === 'string'
                 && verifySignature(null, signed, publicKey, Buffer.from(row.signature, 'base64'))
-        } catch {
-            authentic = false
+        } catch (error) {
+            signatureCause = `: ${errorCause(error)}`
         }
         if (!authentic) {
-            errors.push(evidenceRefusal('DOCEV037_NAVIGATION_RECEIPT_INVALID', harness))
+            errors.push(evidenceRefusal('DOCEV037_NAVIGATION_RECEIPT_INVALID', `${harness}${signatureCause}`))
             continue
         }
         if (row.receipt?.candidateCommit !== loaded.inventory.candidate
@@ -1834,7 +1853,7 @@ function readStructuredJson(path, root, fenceLabel) {
             const value = JSON.parse(body)
             if (value !== null && typeof value === 'object' && !Array.isArray(value)) return { value }
         } catch {
-            // Markdown evidence is parsed below.
+            // Not a JSON document: Markdown evidence is parsed below, and refuses if no block parses.
         }
         const expression = new RegExp('```' + fenceLabel + '\\s*\\n([\\s\\S]*?)\\n```', 'g')
         const matches = [...body.matchAll(expression)]
@@ -2483,6 +2502,7 @@ async function run() {
             try {
                 body = readFileSync(subject.absolute, 'utf8')
             } catch {
+                // The first pass over every subject already reported this file as unreadable.
                 continue
             }
             for (const error of inspectInternalLinks({ path: subject.path, body, readTarget: readDocument })) {

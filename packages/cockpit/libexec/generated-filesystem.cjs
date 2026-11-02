@@ -358,7 +358,10 @@ const readBatch = () => {
             const result = readSource(entry)
             if (Buffer.byteLength(JSON.stringify({ version: 1, nonce: entry.nonce, action: entry.action, ...result }) + '\n') > limits.frameBytes) throw new Error('entry-frame')
             entries.push({ nonce: entry.nonce, action: entry.action, segments: entry.segments, name: entry.name, maxBytes: entry.maxBytes, ...result })
-        } catch { refuse({ failedNonce: entry.nonce }) }
+        } catch {
+            // The parent accepts only this exact refusal frame, so the cause has no channel; it names the failed entry instead.
+            refuse({ failedNonce: entry.nonce })
+        }
     }
     const receipt = Buffer.from(JSON.stringify({ version: 1, nonce: request.nonce, action: request.action, kind: 'complete', entries }) + '\n')
     if (receipt.length > limits.readBatchReceiptBytes) throw new Error('receipt-limit')
@@ -600,7 +603,10 @@ const prepareGroup = (group, base, created) => {
                 removeCreatedChain(chain, group.identity)
             }
             if (!same(fs.lstatSync('.'), group.identity)) throw new Error('anchor-identity')
-        } catch { return { reason: 'prepare-cleanup-failed' } }
+        } catch {
+            // The receipt carries a fixed reason code that the parent matches exactly; cleanup failing is that code.
+            return { reason: 'prepare-cleanup-failed' }
+        }
         return { reason: 'prepare-failed' }
     }
     return { receipt: { nonce: group.nonce, identity: { dev: final.dev, ino: final.ino }, chain, entries: prepared } }
@@ -719,4 +725,7 @@ try {
     else if (['validate-batch', 'publish-batch', 'verify-batch', 'commit-batch'].includes(request.action)) publicationBatch()
     else if (request.action === 'rollback') rollback()
     else throw new Error('action')
-} catch { respond({ kind: 'refusal', reason: 'operation-refused' }) }
+} catch {
+    // The parent accepts only this fixed refusal frame, so the cause has no channel.
+    respond({ kind: 'refusal', reason: 'operation-refused' })
+}

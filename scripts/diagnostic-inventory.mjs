@@ -85,6 +85,7 @@ function candidatePathExists(root, candidate, path) {
         git(root, ['cat-file', '-e', `${candidate}:${path}`])
         return true
     } catch {
+        // `cat-file -e` exits non-zero when the path is absent from the candidate; absence is the answer.
         return false
     }
 }
@@ -1100,6 +1101,7 @@ async function exactWorktreeFile(root, path, expected, identity) {
             && before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs && bytes.equals(expected)
             ? Object.freeze({ dev: before.dev, ino: before.ino, mode: before.mode }) : undefined
     } catch {
+        // A file that cannot be read back unchanged is unauthenticated; callers refuse the undefined identity.
         return undefined
     }
 }
@@ -1136,6 +1138,7 @@ async function authenticatedWorktreeBlob(root, row, objectFormat) {
             ? Object.freeze({ bytes, identity: Object.freeze({ dev: opened.dev, ino: opened.ino, mode: opened.mode }) })
             : undefined
     } catch {
+        // A blob that cannot be opened or read is unauthenticated; the caller refuses the undefined result.
         return undefined
     } finally {
         await file?.close()
@@ -1264,6 +1267,7 @@ async function revalidateCommittedInputs(snapshot, owners, deadline) {
         }
         return true
     } catch {
+        // Any input that cannot be re-read unchanged means the snapshot is stale; callers report REFERENCE_SOURCE_CHANGED.
         return false
     }
 }
@@ -1372,6 +1376,7 @@ async function readCurrentText(root, path) {
         if (!status.isFile() || status.isSymbolicLink() || status.size > 16_777_216) return undefined
         return decodeUtf8(await readFile(target), path)
     } catch {
+        // Missing and unreadable are one answer here; callers refuse with "missing or unreadable" or report the copy missing.
         return undefined
     }
 }
