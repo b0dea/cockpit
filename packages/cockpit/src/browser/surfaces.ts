@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { z } from 'zod'
-import { isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId } from '../environment/contract.js'
+import { filesystemObjectIdentity, isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock, readState, transactState, withStateScopedLock,
@@ -302,13 +302,13 @@ export function authenticateBrowserProjectClient(value: unknown, runtime: Browse
 
 function artifactDirectoryIdentity(path: string): FilesystemIdentity | undefined {
     try {
-        const directory = lstatSync(path)
+        const directory = lstatSync(path, { bigint: true })
         const parentPath = dirname(path)
-        const parent = lstatSync(parentPath)
+        const parent = lstatSync(parentPath, { bigint: true })
         if (!directory.isDirectory() || directory.isSymbolicLink() || !parent.isDirectory() || parent.isSymbolicLink()
             || realpathSync(path) !== path || realpathSync(parentPath) !== parentPath) return undefined
-        return Object.freeze({ dev: directory.dev, ino: directory.ino,
-            ancestors: Object.freeze([Object.freeze({ path: parentPath, dev: parent.dev, ino: parent.ino })]) })
+        return Object.freeze({ ...filesystemObjectIdentity(directory),
+            ancestors: Object.freeze([Object.freeze({ path: parentPath, ...filesystemObjectIdentity(parent) })]) })
     } catch { return undefined }
 }
 
@@ -341,7 +341,8 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
         '--url', operation.surface.url, '--origin', origin, '--timeout', String(remaining),
         ...(statePath ? ['--state-proof', statePath] : []),
         ...(operation.output && artifactIdentity ? ['--output', operation.output, '--output-name', basename(operation.output),
-            '--artifact-root', client.artifactRoot, '--artifact-dev', String(artifactIdentity.dev), '--artifact-ino', String(artifactIdentity.ino)] : [])] as [string, ...string[]]
+            '--artifact-root', client.artifactRoot, '--artifact-dev', String(artifactIdentity.dev), '--artifact-ino', String(artifactIdentity.ino),
+            '--artifact-birthtime-ns', artifactIdentity.birthtimeNs] : [])] as [string, ...string[]]
     const index = (value: string): number => argv.indexOf(value)
     const env: Readonly<Record<string, string>> = statePath ? { COCKPIT_BROWSER_STORAGE_STATE: statePath } : {}
     return Object.freeze({

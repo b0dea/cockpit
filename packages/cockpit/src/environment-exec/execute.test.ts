@@ -16,6 +16,10 @@ const nodeStep = (id: string, script: string, overrides: Partial<ExecutionStep> 
     paths: [], ports: [], labels: {}, expected: [], consumedFiles: [], filesystemChecks: [], compensation: [], ...overrides,
 })
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
+const objectIdentity = (path: string) => {
+    const status = lstatSync(path, { bigint: true })
+    return { dev: Number(status.dev), ino: Number(status.ino), birthtimeNs: String(status.birthtimeNs) }
+}
 
 // The fixtures that ignore SIGTERM outlive an interrupted run, when nothing is left to SIGKILL them, and have run on for
 // days. Their keep-alive also exits once this test worker is gone; while it lives, every termination assertion holds.
@@ -1487,7 +1491,7 @@ const ready = setInterval(() => {
     })
 
     it.each([
-        'target', 'ancestor', 'file', 'target-symlink', 'target-absent',
+        'target', 'target-same-inode', 'ancestor', 'file', 'target-symlink', 'target-absent',
         'ancestor-symlink', 'ancestor-absent', 'malformed-copy',
     ] as const)(
         'refuses when an identity-bound removal %s changes before execution', async (change) => {
@@ -1497,15 +1501,11 @@ const ready = setInterval(() => {
             const target = join(ancestor, 'session')
             const marker = join(root, 'spawned')
             mkdirSync(target, { recursive: true })
-            const rootStatus = lstatSync(root)
-            const ancestorStatus = lstatSync(ancestor)
-            const targetStatus = lstatSync(target)
             const identity = {
-                dev: targetStatus.dev,
-                ino: targetStatus.ino,
+                ...objectIdentity(target),
                 ancestors: [
-                    { path: root, dev: rootStatus.dev, ino: rootStatus.ino },
-                    { path: ancestor, dev: ancestorStatus.dev, ino: ancestorStatus.ino },
+                    { path: root, ...objectIdentity(root) },
+                    { path: ancestor, ...objectIdentity(ancestor) },
                 ],
             }
             let suppliedIdentity: Record<string, unknown> = identity
@@ -1519,23 +1519,22 @@ const ready = setInterval(() => {
                     if (change === 'ancestor-symlink') symlinkSync(replacementAncestor, ancestor)
                 }
             } else {
-                // ext4 hands a new directory the inode the removed one just freed, so
-                // recreating the path in place can reproduce the very identity this check is
-                // bound to. Staging the replacement while the original still exists keeps the
-                // two distinct on every filesystem; APFS only hid this by not reusing inodes.
-                const staged = join(root, 'staged-session')
-                if (change === 'target' || change === 'malformed-copy') {
-                    mkdirSync(staged)
-                    writeFileSync(join(staged, 'replacement'), 'preserved')
-                }
                 rmSync(target, { recursive: true })
-                if (change === 'target' || change === 'malformed-copy') renameSync(staged, target)
+                // ext4 commonly hands the recreated directory the inode the removal just freed, so
+                // recreating in place is the replacement a planned removal must still refuse.
+                if (change === 'target' || change === 'target-same-inode' || change === 'malformed-copy') {
+                    mkdirSync(target)
+                    writeFileSync(join(target, 'replacement'), 'preserved')
+                }
+                // Pins that reuse on every filesystem: the recorded device and inode are the
+                // replacement's own, and only the original's birth time remains to tell them apart.
+                if (change === 'target-same-inode') {
+                    const replacement = objectIdentity(target)
+                    suppliedIdentity = { ...identity, dev: replacement.dev, ino: replacement.ino }
+                }
                 if (change === 'file') writeFileSync(target, 'preserved')
                 if (change === 'target-symlink') symlinkSync(join(root, 'held-target'), target)
-                if (change === 'malformed-copy') {
-                    const replacement = lstatSync(target)
-                    suppliedIdentity = { ...identity, dev: replacement.dev, ino: replacement.ino, extra: true }
-                }
+                if (change === 'malformed-copy') suppliedIdentity = { ...objectIdentity(target), ancestors: identity.ancestors, extra: true }
             }
             const outcome = await executeProbe(nodeStep('identity-bound-removal', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`, {
                 filesystemChecks: [{ path: target, expected: 'directory', identity: suppliedIdentity as typeof identity }],
@@ -1546,7 +1545,8 @@ const ready = setInterval(() => {
             }))
             expect(outcome).not.toHaveProperty('receipt')
             expect(existsSync(marker)).toBe(false)
-            if (change === 'target' || change === 'ancestor' || change === 'ancestor-symlink' || change === 'malformed-copy') {
+            if (change === 'target' || change === 'target-same-inode' || change === 'ancestor' || change === 'ancestor-symlink'
+                || change === 'malformed-copy') {
                 expect(readFileSync(join(target, 'replacement'), 'utf8')).toBe('preserved')
             }
             if (change === 'file') expect(readFileSync(target, 'utf8')).toBe('preserved')
@@ -1560,23 +1560,19 @@ const ready = setInterval(() => {
         const ancestor = join(root, 'generated')
         const target = join(ancestor, 'session')
         mkdirSync(target, { recursive: true })
-        const rootStatus = lstatSync(root)
-        const ancestorStatus = lstatSync(ancestor)
-        const targetStatus = lstatSync(target)
+        const identity = {
+            ...objectIdentity(target),
+            ancestors: [
+                { path: root, ...objectIdentity(root) },
+                { path: ancestor, ...objectIdentity(ancestor) },
+            ],
+        }
+        // Content changes inside the bound directories are not replacements and must not refuse.
+        writeFileSync(join(target, 'entry'), 'written after planning')
+        writeFileSync(join(ancestor, 'sibling'), 'written after planning')
 
         const outcome = await executeProbe(nodeStep('identity-bound-removal-control', '', {
-            filesystemChecks: [{
-                path: target,
-                expected: 'directory',
-                identity: {
-                    dev: targetStatus.dev,
-                    ino: targetStatus.ino,
-                    ancestors: [
-                        { path: root, dev: rootStatus.dev, ino: rootStatus.ino },
-                        { path: ancestor, dev: ancestorStatus.dev, ino: ancestorStatus.ino },
-                    ],
-                },
-            }],
+            filesystemChecks: [{ path: target, expected: 'directory', identity }],
         }))
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', receipt: expect.any(Object) }))

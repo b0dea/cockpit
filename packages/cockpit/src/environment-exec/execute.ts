@@ -10,6 +10,7 @@ import { readFenceMarkerFile } from '../../libexec/fence-marker.cjs'
 import {
     ENVIRONMENT_CODES,
     EXECUTION_FAILURE_CODES,
+    sameFilesystemObject,
     snapshotExecutionPlan,
     snapshotExecutionStep,
     snapshotJson,
@@ -397,14 +398,12 @@ function filesystemIdentitiesPass(checks: readonly FilesystemCheck[]): boolean {
         return checks.every((check) => {
             if (check.identity === undefined) return true
             for (const ancestor of check.identity.ancestors) {
-                const status = lstatSync(ancestor.path)
-                if (!status.isDirectory() || status.isSymbolicLink()
-                    || status.dev !== ancestor.dev || status.ino !== ancestor.ino) return false
+                const status = lstatSync(ancestor.path, { bigint: true })
+                if (!status.isDirectory() || status.isSymbolicLink() || !sameFilesystemObject(status, ancestor)) return false
             }
-            const status = lstatSync(check.path)
+            const status = lstatSync(check.path, { bigint: true })
             const typeMatches = check.expected === 'directory' ? status.isDirectory() : status.isFile()
-            return typeMatches && !status.isSymbolicLink()
-                && status.dev === check.identity.dev && status.ino === check.identity.ino
+            return typeMatches && !status.isSymbolicLink() && sameFilesystemObject(status, check.identity)
         })
     } catch {
         return false

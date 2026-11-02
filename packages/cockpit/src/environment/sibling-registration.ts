@@ -21,7 +21,7 @@ import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type Sibli
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { CockpitConfig, deriveSiblingVariable, Mount, runtimeDeclarationSha256, Sibling } from '../schema.js'
-import { ENVIRONMENT_CODES, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
+import { ENVIRONMENT_CODES, filesystemObjectIdentity, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
 import { declaredRuntime } from './declaration.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { stackId } from './identity.js'
@@ -133,7 +133,7 @@ export async function initializeLocalGitRepository(
     const git = await resolveGitExecutable(searchEnvironment)
     if (git.state !== 'available') return refuse(git.reason)
     try {
-        const directory = await lstat(input.path)
+        const directory = await lstat(input.path, { bigint: true })
         if (!directory.isDirectory() || directory.isSymbolicLink() || await realpath(input.path) !== input.path) {
             return refuse('the dedicated cockpit directory is not a canonical plain directory')
         }
@@ -148,9 +148,9 @@ export async function initializeLocalGitRepository(
         } else {
             const ancestors: FilesystemAncestorIdentity[] = []
             for (let path = dirname(input.path);;) {
-                const status = await lstat(path)
+                const status = await lstat(path, { bigint: true })
                 if (!status.isDirectory() || status.isSymbolicLink()) return refuse('a parent directory changed before initialization')
-                ancestors.unshift({ path, dev: status.dev, ino: status.ino })
+                ancestors.unshift({ path, ...filesystemObjectIdentity(status) })
                 if (dirname(path) === path) break
                 if (ancestors.length >= 64) return refuse('the directory ancestry exceeds the verification bound')
                 path = dirname(path)
@@ -159,7 +159,7 @@ export async function initializeLocalGitRepository(
                 ...gitStep(git.value, dirname(input.path), { PATH: input.env.PATH ?? '' }, 'repository:init', ['init', input.path]),
                 paths: [input.path],
                 filesystemChecks: [
-                    { path: input.path, expected: 'directory', identity: { dev: directory.dev, ino: directory.ino, ancestors } },
+                    { path: input.path, expected: 'directory', identity: { ...filesystemObjectIdentity(directory), ancestors } },
                     { path: resolve(input.path, '.git'), expected: 'absent' },
                 ],
             })

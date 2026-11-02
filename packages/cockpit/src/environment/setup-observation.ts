@@ -9,12 +9,15 @@ import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
+    filesystemObjectIdentity,
     isCanonicalTimestamp,
+    sameFilesystemObject,
     snapshotJson,
     type CheckoutId,
     type CockpitId,
     type ExecutionStep,
     type FilesystemCheck,
+    type FilesystemObjectIdentity,
     type RefusalCode,
     type SourceProvenance,
 } from './contract.js'
@@ -49,6 +52,7 @@ const COCKPIT_NAME = /^[a-z0-9][a-z0-9-]*$/
 interface DirectoryIdentity {
     readonly dev: string
     readonly ino: string
+    readonly birthtimeNs: string
     readonly mode: string
     readonly mtimeNs: string
     readonly ctimeNs: string
@@ -80,6 +84,7 @@ function directoryIdentity(stat: BigIntStats): DirectoryIdentity {
     return Object.freeze({
         dev: stat.dev.toString(),
         ino: stat.ino.toString(),
+        birthtimeNs: stat.birthtimeNs.toString(),
         mode: stat.mode.toString(),
         mtimeNs: stat.mtimeNs.toString(),
         ctimeNs: stat.ctimeNs.toString(),
@@ -87,12 +92,12 @@ function directoryIdentity(stat: BigIntStats): DirectoryIdentity {
 }
 
 function sameDirectoryIdentity(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
-    return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
+    return sameDirectoryNode(left, right)
         && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
 }
 
 function sameDirectoryNode(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
-    return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
+    return left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs && left.mode === right.mode
 }
 
 async function resolvedDirectory(path: string): Promise<{
@@ -351,15 +356,16 @@ async function closedIdentity(path: string, identity: DirectoryIdentity): Promis
     const ancestors = []
     for (const ancestorPath of parents.reverse()) {
         try {
-            const status = await lstat(ancestorPath)
+            const status = await lstat(ancestorPath, { bigint: true })
+            const ancestor = { path: ancestorPath, ...filesystemObjectIdentity(status) }
             if (!status.isDirectory() || status.isSymbolicLink()
-                || !Number.isSafeInteger(status.dev) || !Number.isSafeInteger(status.ino)) return undefined
-            ancestors.push(Object.freeze({ path: ancestorPath, dev: status.dev, ino: status.ino }))
+                || !Number.isSafeInteger(ancestor.dev) || !Number.isSafeInteger(ancestor.ino)) return undefined
+            ancestors.push(Object.freeze(ancestor))
         } catch {
             return undefined
         }
     }
-    return Object.freeze({ dev, ino, ancestors: Object.freeze(ancestors) })
+    return Object.freeze({ dev, ino, birthtimeNs: identity.birthtimeNs, ancestors: Object.freeze(ancestors) })
 }
 
 async function directoryCheck(path: string, identity: DirectoryIdentity): Promise<FilesystemCheck | undefined> {
@@ -755,15 +761,18 @@ async function validConfigurationInventory(
     return true
 }
 
+function sameRecordedObject(observed: DirectoryIdentity, recorded: FilesystemObjectIdentity): boolean {
+    return Number(observed.dev) === recorded.dev && Number(observed.ino) === recorded.ino && observed.birthtimeNs === recorded.birthtimeNs
+}
+
 async function authorityFingerprint(checks: readonly FilesystemCheck[]): Promise<string | undefined> {
     const result: unknown[] = []
     for (const check of checks) {
         if (check.identity) {
             for (const ancestor of check.identity.ancestors) {
                 try {
-                    const status = await lstat(ancestor.path)
-                    if (!status.isDirectory() || status.isSymbolicLink()
-                        || status.dev !== ancestor.dev || status.ino !== ancestor.ino) return undefined
+                    const status = await lstat(ancestor.path, { bigint: true })
+                    if (!status.isDirectory() || status.isSymbolicLink() || !sameFilesystemObject(status, ancestor)) return undefined
                 } catch {
                     return undefined
                 }
@@ -781,15 +790,14 @@ async function authorityFingerprint(checks: readonly FilesystemCheck[]): Promise
         }
         if (check.expected === 'directory') {
             const directory = await stableDirectory(check.path)
-            if (!directory || (check.identity
-                && (Number(directory.identity.dev) !== check.identity.dev || Number(directory.identity.ino) !== check.identity.ino))) return undefined
+            if (!directory || (check.identity && !sameRecordedObject(directory.identity, check.identity))) return undefined
             result.push([check.path, 'directory', directory.identity])
             continue
         }
         const file = await stableFile(check.path)
         if (!file || (check.maxBytes !== undefined && file.byteLength > check.maxBytes)
             || (check.sha256 !== undefined && file.sha256 !== check.sha256)
-            || (check.identity && (Number(file.identity.dev) !== check.identity.dev || Number(file.identity.ino) !== check.identity.ino))) return undefined
+            || (check.identity && !sameRecordedObject(file.identity, check.identity))) return undefined
         result.push([check.path, 'file', file])
     }
     return JSON.stringify(result)

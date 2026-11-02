@@ -52,9 +52,10 @@ it('snapshots exact ordered filesystem identity without retaining caller-owned d
     const identity = {
         dev: 11,
         ino: 22,
+        birthtimeNs: '1700000000123456789',
         ancestors: [
-            { path: '/tmp/owned-root', dev: 1, ino: 2 },
-            { path: '/tmp/owned-root/generated', dev: 3, ino: 4 },
+            { path: '/tmp/owned-root', dev: 1, ino: 2, birthtimeNs: '0' },
+            { path: '/tmp/owned-root/generated', dev: 3, ino: 4, birthtimeNs: '1700000000000000001' },
         ],
     }
     const step = { ...execution, filesystemChecks: [{
@@ -70,13 +71,19 @@ it('snapshots exact ordered filesystem identity without retaining caller-owned d
     expect(snapshot?.filesystemChecks[0]?.identity?.ancestors[1]?.ino).toBe(4)
 })
 
+const root = { path: '/tmp/owned-root', dev: 1, ino: 2, birthtimeNs: '7' } as const
+const generated = { path: '/tmp/owned-root/generated', dev: 3, ino: 4, birthtimeNs: '8' } as const
 it.each([
-    { dev: 11, ino: 22, ancestors: [] },
-    { dev: 11, ino: 22, ancestors: [{ path: '/tmp/other', dev: 1, ino: 2 }] },
-    { dev: 11, ino: 22, ancestors: [{ path: '/tmp/owned-root/generated', dev: 3, ino: 4 }, { path: '/tmp/owned-root', dev: 1, ino: 2 }] },
-    { dev: -1, ino: 22, ancestors: [{ path: '/tmp/owned-root', dev: 1, ino: 2 }, { path: '/tmp/owned-root/generated', dev: 3, ino: 4 }] },
-    { dev: 11, ino: 22, ancestors: [{ path: '/tmp/owned-root', dev: 1, ino: 2, extra: true }, { path: '/tmp/owned-root/generated', dev: 3, ino: 4 }] },
-    { dev: 11, ino: 22, ancestors: [{ path: '/tmp/owned-root', dev: 1, ino: 2 }, { path: '/tmp/owned-root/generated', dev: 3, ino: 4 }], extra: true },
+    { dev: 11, ino: 22, birthtimeNs: '9', ancestors: [] },
+    { dev: 11, ino: 22, birthtimeNs: '9', ancestors: [{ path: '/tmp/other', dev: 1, ino: 2, birthtimeNs: '7' }] },
+    { dev: 11, ino: 22, birthtimeNs: '9', ancestors: [generated, root] },
+    { dev: -1, ino: 22, birthtimeNs: '9', ancestors: [root, generated] },
+    { dev: 11, ino: 22, birthtimeNs: '9', ancestors: [{ ...root, extra: true }, generated] },
+    { dev: 11, ino: 22, birthtimeNs: '9', ancestors: [root, generated], extra: true },
+    { dev: 11, ino: 22, ancestors: [root, generated] },
+    { dev: 11, ino: 22, birthtimeNs: 9, ancestors: [root, generated] },
+    { dev: 11, ino: 22, birthtimeNs: '09', ancestors: [root, generated] },
+    { dev: 11, ino: 22, birthtimeNs: '9', ancestors: [{ path: root.path, dev: 1, ino: 2 }, generated] },
 ] as const)('refuses malformed filesystem identity: %#', (identity) => {
     expect(snapshotExecutionStep({ ...execution, filesystemChecks: [{
         path: '/tmp/owned-root/generated/session', expected: 'directory', identity,
@@ -86,8 +93,8 @@ it.each([
 it('refuses a filesystem identity with a repeated root ancestor', () => {
     expect(snapshotExecutionStep({ ...execution, filesystemChecks: [{
         path: '/session', expected: 'directory', identity: {
-            dev: 11, ino: 22,
-            ancestors: [{ path: '/', dev: 1, ino: 2 }, { path: '/', dev: 1, ino: 2 }],
+            dev: 11, ino: 22, birthtimeNs: '9',
+            ancestors: [{ path: '/', dev: 1, ino: 2, birthtimeNs: '7' }, { path: '/', dev: 1, ino: 2, birthtimeNs: '7' }],
         },
     }] })).toBeUndefined()
 })

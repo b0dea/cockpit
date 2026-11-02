@@ -27,7 +27,10 @@ import {
 } from './claims.js'
 import {
     ENVIRONMENT_CODES,
+    filesystemObjectIdentity,
     isCanonicalTimestamp,
+    isFilesystemObjectIdentity,
+    sameFilesystemObject,
     snapshotExecutionStep,
     snapshotJson,
     type CockpitId,
@@ -276,6 +279,7 @@ interface PathTargetIdentity {
     readonly type: 'directory' | 'file'
     readonly dev: number
     readonly ino: number
+    readonly birthtimeNs: string
     readonly ancestors: readonly FilesystemAncestorIdentity[]
 }
 
@@ -1252,6 +1256,7 @@ interface HostPathEvidence {
     readonly type?: 'directory' | 'file'
     readonly dev?: number
     readonly ino?: number
+    readonly birthtimeNs?: string
     readonly mode?: number
     readonly size?: number
     readonly mtimeMs?: number
@@ -1505,28 +1510,28 @@ async function inspectHostPath(declaration: HostPathDeclaration): Promise<HostPa
     const relation = relative(declaration.root, declaration.path)
     if (relation === '' || relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return undefined
     try {
-        const rootStatus = await lstat(declaration.root)
+        const rootStatus = await lstat(declaration.root, { bigint: true })
         if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink() || await realpath(declaration.root) !== declaration.root) return undefined
         const ancestors: FilesystemAncestorIdentity[] = [Object.freeze({
-            path: declaration.root, dev: rootStatus.dev, ino: rootStatus.ino,
+            path: declaration.root, ...filesystemObjectIdentity(rootStatus),
         })]
         let cursor = declaration.root
         const parts = relation.split(sep)
         for (let index = 0; index < parts.length; index += 1) {
             cursor = resolve(cursor, parts[index]!)
             try {
-                const status = await lstat(cursor)
+                const status = await lstat(cursor, { bigint: true })
                 if (status.isSymbolicLink()) return undefined
                 if (index < parts.length - 1 && !status.isDirectory()) return undefined
                 if (index === parts.length - 1) {
                     if (await realpath(cursor) !== cursor) return undefined
                     return Object.freeze({
                         state: 'present', type: status.isDirectory() ? 'directory' : status.isFile() ? 'file' : undefined,
-                        dev: status.dev, ino: status.ino, mode: status.mode,
-                        size: status.size, mtimeMs: status.mtimeMs, ancestors: Object.freeze(ancestors),
+                        ...filesystemObjectIdentity(status), mode: Number(status.mode),
+                        size: Number(status.size), mtimeMs: Number(status.mtimeNs) / 1_000_000, ancestors: Object.freeze(ancestors),
                     })
                 }
-                ancestors.push(Object.freeze({ path: cursor, dev: status.dev, ino: status.ino }))
+                ancestors.push(Object.freeze({ path: cursor, ...filesystemObjectIdentity(status) }))
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
                 return Object.freeze({ state: 'absent' })
@@ -2295,7 +2300,7 @@ function snapshotCommittedTargetIdentity(value: unknown): ReclaimTargetIdentity 
     }
     if (candidate.medium === 'path') {
         const ancestors = candidate.ancestors
-        if (!exactKeys(candidate, ['medium', 'targetId', 'kind', 'declaration', 'root', 'path', 'type', 'dev', 'ino', 'ancestors'])
+        if (!exactKeys(candidate, ['medium', 'targetId', 'kind', 'declaration', 'root', 'path', 'type', 'dev', 'ino', 'birthtimeNs', 'ancestors'])
             || candidate.kind !== 'cache' && candidate.kind !== 'host-path'
             || typeof candidate.declaration !== 'string' || typeof candidate.root !== 'string' || typeof candidate.path !== 'string'
             || !isAbsolute(candidate.root) || normalize(candidate.root) !== candidate.root
@@ -2303,15 +2308,14 @@ function snapshotCommittedTargetIdentity(value: unknown): ReclaimTargetIdentity 
             || relative(candidate.root, candidate.path) === '' || relative(candidate.root, candidate.path) === '..'
             || relative(candidate.root, candidate.path).startsWith(`..${sep}`) || isAbsolute(relative(candidate.root, candidate.path))
             || candidate.type !== 'directory' && candidate.type !== 'file'
-            || !Number.isSafeInteger(candidate.dev) || !Number.isSafeInteger(candidate.ino)
+            || !isFilesystemObjectIdentity(candidate)
             || !Array.isArray(ancestors) || ancestors.length < 1 || ancestors.length > 64
             || new Set(ancestors.map((ancestor) => ancestor !== null && typeof ancestor === 'object'
                 ? (ancestor as Record<string, unknown>).path : undefined)).size !== ancestors.length
             || ancestors.some((ancestor, index) => ancestor === null || typeof ancestor !== 'object' || Array.isArray(ancestor)
-                || !exactKeys(ancestor, ['path', 'dev', 'ino'])
+                || !exactKeys(ancestor, ['path', 'dev', 'ino', 'birthtimeNs'])
                 || typeof ancestor.path !== 'string' || !isAbsolute(ancestor.path) || normalize(ancestor.path) !== ancestor.path
-                || !Number.isSafeInteger(ancestor.dev) || (ancestor.dev as number) < 0
-                || !Number.isSafeInteger(ancestor.ino) || (ancestor.ino as number) < 0
+                || !isFilesystemObjectIdentity(ancestor as Record<string, unknown>)
                 || (index === 0 ? ancestor.path !== candidate.root : dirname(ancestor.path) !== (ancestors[index - 1] as { path: string }).path))
             || dirname(candidate.path) !== (ancestors.at(-1) as { path: string }).path) return undefined
         return Object.freeze(candidate) as unknown as PathTargetIdentity
@@ -2391,9 +2395,10 @@ function pathTargetIdentity(
     evidence: HostPathEvidence,
 ): PathTargetIdentity | undefined {
     if (evidence.state !== 'present' || evidence.type === undefined || evidence.dev === undefined || evidence.ino === undefined
-        || evidence.ancestors === undefined) return undefined
+        || evidence.birthtimeNs === undefined || evidence.ancestors === undefined) return undefined
     return Object.freeze({
-        medium: 'path', targetId, kind, declaration, root, path, type: evidence.type, dev: evidence.dev, ino: evidence.ino,
+        medium: 'path', targetId, kind, declaration, root, path, type: evidence.type,
+        dev: evidence.dev, ino: evidence.ino, birthtimeNs: evidence.birthtimeNs,
         ancestors: Object.freeze(evidence.ancestors.map((ancestor) => Object.freeze({ ...ancestor }))),
     })
 }
@@ -2414,18 +2419,18 @@ async function identityBoundFilesystemCheck(expected: PathTargetIdentity): Promi
         for (const [index, path] of ancestorPaths.entries()) {
             const committed = expected.ancestors[index]
             if (committed === undefined || committed.path !== path) return undefined
-            const status = await lstat(path)
+            const status = await lstat(path, { bigint: true })
             if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== path
-                || status.dev !== committed.dev || status.ino !== committed.ino) return undefined
-            ancestors.push(Object.freeze({ path, dev: status.dev, ino: status.ino }))
+                || !sameFilesystemObject(status, committed)) return undefined
+            ancestors.push(Object.freeze({ path, ...filesystemObjectIdentity(status) }))
         }
-        const target = await lstat(expected.path)
+        const target = await lstat(expected.path, { bigint: true })
         const type = target.isDirectory() ? 'directory' : target.isFile() ? 'file' : undefined
-        if (target.isSymbolicLink() || type !== expected.type || target.dev !== expected.dev || target.ino !== expected.ino) return undefined
+        if (target.isSymbolicLink() || type !== expected.type || !sameFilesystemObject(target, expected)) return undefined
         return Object.freeze({
             path: expected.path,
             expected: expected.type,
-            identity: Object.freeze({ dev: target.dev, ino: target.ino, ancestors: Object.freeze(ancestors) }),
+            identity: Object.freeze({ ...filesystemObjectIdentity(target), ancestors: Object.freeze(ancestors) }),
         })
     } catch {
         return undefined
@@ -2653,13 +2658,12 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 function samePathTargetIdentity(expected: PathTargetIdentity): boolean {
     try {
         for (const ancestor of expected.ancestors) {
-            const current = lstatSync(ancestor.path)
-            if (!current.isDirectory() || current.isSymbolicLink()
-                || current.dev !== ancestor.dev || current.ino !== ancestor.ino) return false
+            const current = lstatSync(ancestor.path, { bigint: true })
+            if (!current.isDirectory() || current.isSymbolicLink() || !sameFilesystemObject(current, ancestor)) return false
         }
-        const current = lstatSync(expected.path)
+        const current = lstatSync(expected.path, { bigint: true })
         const type = current.isDirectory() ? 'directory' : current.isFile() ? 'file' : undefined
-        return type === expected.type && current.dev === expected.dev && current.ino === expected.ino
+        return type === expected.type && sameFilesystemObject(current, expected)
     } catch { return false }
 }
 
@@ -2883,10 +2887,12 @@ export function reconcileTeardown(
     })
     const cacheStateMatches = reconciliation.caches.every((cache) => {
         try {
-            const observed = lstatSync(cache.path, { bigint: false })
+            const observed = lstatSync(cache.path, { bigint: true })
             if (reconciliation.completed.kind === 'cache' && cache.cacheId === reconciliation.completed.id) return false
-            return cache.evidence.state === 'present' && observed.isDirectory() && !observed.isSymbolicLink()
-                && observed.dev === cache.evidence.dev && observed.ino === cache.evidence.ino
+            const { evidence } = cache
+            return evidence.state === 'present' && observed.isDirectory() && !observed.isSymbolicLink()
+                && evidence.dev !== undefined && evidence.ino !== undefined && evidence.birthtimeNs !== undefined
+                && sameFilesystemObject(observed, { dev: evidence.dev, ino: evidence.ino, birthtimeNs: evidence.birthtimeNs })
         } catch (error) {
             return reconciliation.completed.kind === 'cache' && cache.cacheId === reconciliation.completed.id
                 && (error as NodeJS.ErrnoException).code === 'ENOENT'

@@ -17,7 +17,8 @@ export const mechanism = {
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
         'REFUSAL_CODES', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT',
-        'isCanonicalTimestamp', 'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
+        'isCanonicalTimestamp', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
+        'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
         'snapshotLifecyclePlan', 'inStackCommand',
     ],
@@ -365,16 +366,47 @@ export interface FilesystemCheck {
     identity?: FilesystemIdentity
 }
 
-export interface FilesystemIdentity {
+export interface FilesystemObjectIdentity {
     dev: number
     ino: number
+    /** Creation time in nanoseconds as a decimal string; '0' where the filesystem records none. */
+    birthtimeNs: string
+}
+
+export interface FilesystemIdentity extends FilesystemObjectIdentity {
     ancestors: readonly FilesystemAncestorIdentity[]
 }
 
-export interface FilesystemAncestorIdentity {
+export interface FilesystemAncestorIdentity extends FilesystemObjectIdentity {
     path: string
-    dev: number
-    ino: number
+}
+
+interface FilesystemObjectStatus {
+    readonly dev: bigint
+    readonly ino: bigint
+    readonly birthtimeNs: bigint
+}
+
+// Device and inode alone do not name an object over time: ext4 hands the inode number a removal
+// just freed to the next object created, so a path removed and recreated between planning and
+// execution reproduces the recorded pair exactly. Birth time is fixed at creation, so it tells the
+// replacement apart while still admitting the content changes a cache or its parent legitimately
+// sees between planning and removal; change time would refuse those. A filesystem that records no
+// birth time reports 0 for both objects, and the comparison falls back to device and inode, which
+// leaves in-place recreation undetectable there.
+export function filesystemObjectIdentity(status: FilesystemObjectStatus): FilesystemObjectIdentity {
+    return { dev: Number(status.dev), ino: Number(status.ino), birthtimeNs: String(status.birthtimeNs) }
+}
+
+export function sameFilesystemObject(status: FilesystemObjectStatus, recorded: FilesystemObjectIdentity): boolean {
+    return Number(status.dev) === recorded.dev && Number(status.ino) === recorded.ino
+        && String(status.birthtimeNs) === recorded.birthtimeNs
+}
+
+export function isFilesystemObjectIdentity(value: Record<string, unknown>): boolean {
+    return Number.isSafeInteger(value.dev) && (value.dev as number) >= 0
+        && Number.isSafeInteger(value.ino) && (value.ino as number) >= 0
+        && typeof value.birthtimeNs === 'string' && /^(0|-?[1-9][0-9]{0,19})$/.test(value.birthtimeNs)
 }
 
 interface ConsumedFileBase {
@@ -527,15 +559,13 @@ function filesystemChecks(value: unknown): value is readonly FilesystemCheck[] {
         const check = candidate as Partial<FilesystemCheck>
         const identity = check.identity
         const identityIsValid = identity === undefined || identity !== null && typeof identity === 'object'
-            && exactKeys(identity, ['dev', 'ino', 'ancestors'])
-            && Number.isSafeInteger(identity.dev) && identity.dev >= 0
-            && Number.isSafeInteger(identity.ino) && identity.ino >= 0
+            && exactKeys(identity, ['dev', 'ino', 'birthtimeNs', 'ancestors'])
+            && isFilesystemObjectIdentity(identity as unknown as Record<string, unknown>)
             && Array.isArray(identity.ancestors) && identity.ancestors.length >= 1 && identity.ancestors.length <= 64
             && new Set(identity.ancestors.map((ancestor) => ancestor?.path)).size === identity.ancestors.length
             && identity.ancestors.every((ancestor, index) => ancestor !== null && typeof ancestor === 'object'
-                && exactKeys(ancestor, ['path', 'dev', 'ino']) && canonicalPaths([ancestor.path])
-                && Number.isSafeInteger(ancestor.dev) && ancestor.dev >= 0
-                && Number.isSafeInteger(ancestor.ino) && ancestor.ino >= 0
+                && exactKeys(ancestor, ['path', 'dev', 'ino', 'birthtimeNs']) && canonicalPaths([ancestor.path])
+                && isFilesystemObjectIdentity(ancestor as unknown as Record<string, unknown>)
                 && (index === 0 || dirname(ancestor.path) === identity.ancestors[index - 1]!.path))
             && typeof check.path === 'string' && dirname(check.path) === identity.ancestors.at(-1)!.path
         const keys = ['path', 'expected', ...(check.sha256 === undefined ? [] : ['sha256', 'maxBytes']), ...(identity === undefined ? [] : ['identity'])]

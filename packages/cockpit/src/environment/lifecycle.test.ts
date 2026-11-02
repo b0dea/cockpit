@@ -416,7 +416,7 @@ describe('lifecycle planning', () => {
         ])).toMatchObject({ kind: 'refusal' })
         const identityCheck = (ino: number): FilesystemCheck => ({
             path: '/workspace/config', expected: 'file',
-            identity: { dev: 1, ino, ancestors: [{ path: '/workspace', dev: 1, ino: 2 }] },
+            identity: { dev: 1, ino, birthtimeNs: '0', ancestors: [{ path: '/workspace', dev: 1, ino: 2, birthtimeNs: '0' }] },
         })
         const firstIdentity = digest([], [identityCheck(3)])
         const secondIdentity = digest([], [identityCheck(4)])

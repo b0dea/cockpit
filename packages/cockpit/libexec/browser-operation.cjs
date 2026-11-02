@@ -122,6 +122,7 @@ async function main() {
             const root = one('--artifact-root')
             const expectedDev = Number(one('--artifact-dev'))
             const expectedIno = Number(one('--artifact-ino'))
+            const expectedBirthtimeNs = one('--artifact-birthtime-ns')
             phase = 'artifact'
             if (path.dirname(output) !== root || path.basename(output) !== one('--output-name')) throw new Error('screenshot output escaped root')
             let rootDescriptor, dotDescriptor, descriptor
@@ -129,7 +130,11 @@ async function main() {
                 rootDescriptor = fs.openSync(root, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)
                 const held = fs.fstatSync(rootDescriptor)
                 const named = fs.lstatSync(root)
-                if (!held.isDirectory() || named.isSymbolicLink() || held.dev !== expectedDev || held.ino !== expectedIno || named.dev !== held.dev || named.ino !== held.ino) throw new Error('artifact root changed')
+                // ext4 reuses a freed inode for the next directory created, so a root recreated since
+                // planning can carry the planned device and inode; birth time tells the two apart.
+                if (!held.isDirectory() || named.isSymbolicLink() || held.dev !== expectedDev || held.ino !== expectedIno
+                    || String(fs.fstatSync(rootDescriptor, { bigint: true }).birthtimeNs) !== expectedBirthtimeNs
+                    || named.dev !== held.dev || named.ino !== held.ino) throw new Error('artifact root changed')
                 process.chdir(root)
                 dotDescriptor = fs.openSync('.', fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)
                 const anchored = fs.fstatSync(dotDescriptor)
