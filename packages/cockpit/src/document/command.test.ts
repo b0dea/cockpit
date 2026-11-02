@@ -447,6 +447,15 @@ describe('public estate observation', () => {
                 message: 'the sibling answer must declare exactly the repositories init observed (app (dir "app")); it declares app (dir "different-app"), which init did not observe; it omits app (dir "app")',
                 fix: 'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>' }],
         })
+        // A sibling row's generated service is planned like the baseline's, so its host operations are refused at the answer too.
+        const rowSibling = (parseToml(readFileSync(join(root, 'packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')) as {
+            sibling: { derives: { generated: { service: { image: { manifest_probe: Record<string, unknown> } } } } }[] }).sibling[0]!
+        const { service: _probeService, ...rowProbe } = rowSibling.derives.generated.service.image.manifest_probe
+        rowSibling.derives.generated.service.image.manifest_probe = { ...rowProbe, location: 'host', argv: ['docker', 'image', 'inspect', 'worker'] }
+        expect(await documentObservedCommand({ root: canonical, configuration: { ...configuration, answers: [...configuration.answers,
+            answerQuestion(pending.question!, [...generatedConfig.sibling, rowSibling])] } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'sibling',
+                message: expect.stringMatching(/^sibling\.1\.derives\.generated\.service\.image\.manifest_probe runs "docker" on the host/) }] })
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await documentObservedCommand({ root: canonical, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'estate.runnable' } })

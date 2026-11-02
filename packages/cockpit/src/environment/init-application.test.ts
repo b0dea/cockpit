@@ -265,6 +265,10 @@ describe('init application', () => {
             expect(outcome, `${attempt}: ${JSON.stringify(outcome.diagnostics)}`).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
             expect(outcome.diagnostics.map(row => row.code), attempt).not.toContain('INIT_ANSWER_UNUSED')
         }
+        // The remedies init prints rerun it against the cockpit root with no placement; the accepted
+        // placement is restored from the recorded command, for a dedicated root as for an in-repo one.
+        expect(await runInitApplication({ ...f.input, root, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') },
+            adapters)).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
         // An applied answer stays in force, so the file cannot quietly change it after the fact.
         expect(await run({ ...answers, sibling: [{ slug: 'checkout' }] })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'INIT_ANSWER_CONFLICT', message: expect.stringContaining('sibling') }] })
@@ -677,6 +681,12 @@ describe('init application', () => {
         expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
             field: reset.field, acceptedPreviewSha256: reset.previewSha256,
         } }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
+
+        // Once the published files are gone the recorded answers are about to be discarded, so a
+        // reset of one of them is refused instead of rewriting the discarded record.
+        f.setPublished({ kind: 'absent' })
+        expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: { field: 'sibling' } }, adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_UNAVAILABLE', fix: expect.stringContaining('without --reset-answer') }] })
     })
 
     it.each([

@@ -525,8 +525,12 @@ async function runInitStages(
     let restarted: Diagnostic | undefined
     let discarded: BootstrapStateRecord | undefined
     if (current !== null && current.value.stage !== 'surface-previewed' && await publicationGone(input.root, current, adapters)) {
+        // A reset would rewrite answers that the restart is about to discard.
+        if (input.resetAnswer !== undefined) return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+            diagnostics: [{ ...diagnostic('INIT_ANSWER_RESET_UNAVAILABLE', `none of the files init published into ${input.root}, nor cockpit.toml, exist any more, so its recorded answers no longer apply`, address.path),
+                fix: `run ${initCommand({ root: input.root, target: input.target, args: '--json' })} without --reset-answer: init starts again from the preview` }] }
         restarted = { severity: 'info', code: 'INIT_STATE_RESTARTED', target: address.path,
-            message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated), so init starts again from the preview and the answers recorded there are discarded` }
+            message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated, or they were deleted), so init starts again from the preview and the answers recorded there are discarded` }
         discarded = current
         current = null
     }
@@ -547,10 +551,15 @@ async function initStagesFrom(
     let rootQuestion: CockpitRootQuestion | undefined
     let boundInput = input
     if (current !== null && input.cockpitRoot === undefined && input.registry === undefined) {
-        const inRepoInput: InitApplicationInput = { ...input, cockpitRoot: { kind: 'in-repo' } }
         // The command driver starts each invocation before it has rediscovered placement. The
-        // accepted command digest restores in-repo context without reclassifying a genesis root.
-        if (current.value.commandSha256 === commandDigest(inRepoInput)) boundInput = inRepoInput
+        // accepted command digest restores the placement without reclassifying a genesis root; a
+        // dedicated root is named after its product repository, so the remedies that rerun init
+        // against the cockpit root resume it too.
+        const placements: NonNullable<InitApplicationInput['cockpitRoot']>[] = [{ kind: 'in-repo' },
+            ...basename(input.root).endsWith('-cockpit') ? [{ kind: 'dedicated' as const,
+                firstSibling: resolve(dirname(input.root), basename(input.root).slice(0, -'-cockpit'.length)) }] : []]
+        const accepted = current.value.commandSha256
+        boundInput = placements.map(cockpitRoot => ({ ...input, cockpitRoot })).find(candidate => commandDigest(candidate) === accepted) ?? input
     }
     if (current === null && input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>

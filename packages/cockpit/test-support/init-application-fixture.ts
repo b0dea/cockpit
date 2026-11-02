@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import type { InitApplicationAdapters, InitApplicationInput } from '../src/environment/init-application.js'
 import type { SurfaceTarget } from '../src/surfaces/contract.js'
 
@@ -68,7 +68,12 @@ export function fixture() {
         },
         observeDestination: async ({ path }) => {
             // A dedicated cockpit writes its cockpit.toml beside the product, not into this root.
-            if (basename(path) !== 'cockpit.toml') return publishedState
+            if (basename(path) !== 'cockpit.toml') {
+                // As in the CLI, a path under a missing directory is refused rather than reported absent;
+                // only the topmost missing directory reads as absent.
+                if (publishedState.kind === 'absent' && relative(root, path).includes(sep)) return { kind: 'refusal', diagnostics: [] }
+                return publishedState
+            }
             calls.push('observe')
             return destinationState
         },
