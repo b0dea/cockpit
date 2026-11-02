@@ -41,7 +41,9 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. It 
   "workorders": {
     "attempt_cap": 2,
     "wip_cap": 3,
-    "programme_wip_cap": 1
+    "programme_wip_cap": 1,
+    "verification_timeout_seconds": 1800,
+    "evaluator_timeout_seconds": 900
   },
   "environment": {
     "resettable_volumes": [],
@@ -78,7 +80,7 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `fa732f98941ee18e52fbef8df72204b8f6c9bafff8114600e6a91fc99157af59`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `5ff841a05bf5cd5216e3f6b775ea3ad117019f36291bba8601f3e5c49f912e97`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
 
@@ -2848,6 +2850,20 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
           "type": "integer",
           "minimum": 1,
           "maximum": 1
+        },
+        "verification_timeout_seconds": {
+          "default": 1800,
+          "description": "Seconds one declared work-order verification command may run before it is stopped and reported as not run.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
+        },
+        "evaluator_timeout_seconds": {
+          "default": 900,
+          "description": "Seconds one independent review or grading run of the evaluator may take before it is stopped.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
         }
       },
       "additionalProperties": false
@@ -3453,6 +3469,53 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 7200
+              },
+              "select": {
+                "description": "Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value.",
+                "type": "object",
+                "properties": {
+                  "spec": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "file": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "test": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "route": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "required": [

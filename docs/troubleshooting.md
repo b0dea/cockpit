@@ -308,6 +308,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | see the message |
 | `ENV_SCHEMA_TOOL_MISSING` | see the message |
 | `ENV_SCHEMA_UNHEALTHY` | see the message |
+| `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `EVIDENCE_BASELINE_MISSING` | see the message |
 | `EVIDENCE_UNAVAILABLE` | see the message |
 | `EXECUTION_ABORTED` | see the message |
@@ -580,6 +581,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `TEMPLATE_NOT_TRACKED` | see the message |
 | `TEMPLATE_PATH_OUTSIDE_ROOT` | see the message |
 | `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `TEST_GATE_UNSATISFIED` | see the message |
 | `UPGRADE_AUTH_FAILED` | see the message |
 | `UPGRADE_DISCOVERY_INVALID` | see the message |
 | `UPGRADE_NETWORK_FAILED` | see the message |
@@ -587,6 +589,8 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `UPGRADE_SOURCE_INVALID` | see the message |
 | `UPGRADE_VERSION_AMBIGUOUS` | see the message |
 | `WORK_APPLICATION_REFUSED` | see the message |
+| `WORK_EXECUTION_PAUSED` | see the message |
+| `WORK_GRADE_UNSATISFIED` | see the message |
 | `WORK_OPERATOR_REQUIRED` | see the message |
 | `WO_ACCEPTANCE_DECLINED` | see the message |
 | `WO_ACCEPTANCE_INVALID` | see the message |
