@@ -85,6 +85,7 @@ Does not read `cockpit.toml`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -142,6 +143,7 @@ Does not read `cockpit.toml`.
 | `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` |
 | `CLAIM_STATE_UNHEALTHY` |
+| `COCKPIT_NOT_INSTALLED` |
 | `COCKPIT_VERSION_MISMATCH` |
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
@@ -297,6 +299,7 @@ Does not read `cockpit.toml`.
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
 | `SIBLING_MISSING` |
+| `SIBLING_REMOTE_UNRECORDED` |
 | `SKILL_BUDGET_UNAVAILABLE` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
@@ -648,6 +651,7 @@ Reads `cockpit.toml` from `--config`.
 | `PORT_LOCAL_VALUE_CORRECTED` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_LOCKED` |
@@ -814,6 +818,7 @@ Reads `cockpit.toml` from `--config`.
 | `PORT_LOCAL_VALUE_CORRECTED` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_LOCKED` |
@@ -986,6 +991,7 @@ Reads `cockpit.toml` from `--config`.
 | `PORT_LOCAL_VALUE_CORRECTED` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_LOCKED` |
@@ -1153,6 +1159,7 @@ Reads `cockpit.toml` from `--config`.
 | `PORT_LOCAL_VALUE_CORRECTED` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_LOCKED` |
@@ -1553,6 +1560,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
@@ -1961,6 +1969,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESET_CO_TENANT` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -2159,6 +2168,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESET_CO_TENANT` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -2509,6 +2519,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2562,6 +2573,7 @@ Reads `cockpit.toml` from `--config`.
 | --- |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` |
 | `CLAIM_STATE_UNHEALTHY` |
+| `COCKPIT_NOT_INSTALLED` |
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
@@ -2655,6 +2667,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
 | `SIBLING_MISSING` |
+| `SIBLING_REMOTE_UNRECORDED` |
 | `SKILL_BUDGET_UNAVAILABLE` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
@@ -2727,6 +2740,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2781,6 +2795,7 @@ Reads `cockpit.toml` from `--config`.
 | --- |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` |
 | `CLAIM_STATE_UNHEALTHY` |
+| `COCKPIT_NOT_INSTALLED` |
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
@@ -2874,6 +2889,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
 | `SIBLING_MISSING` |
+| `SIBLING_REMOTE_UNRECORDED` |
 | `SKILL_BUDGET_UNAVAILABLE` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
@@ -3074,6 +3090,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -3269,6 +3286,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -3469,6 +3487,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -3710,6 +3729,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -3952,6 +3972,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -4195,6 +4216,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -4436,6 +4458,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -4678,6 +4701,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -4920,6 +4944,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -5162,6 +5187,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -5403,6 +5429,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -5644,6 +5671,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -5885,6 +5913,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -6128,6 +6157,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -6368,6 +6398,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -6609,6 +6640,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -6850,6 +6882,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -7091,6 +7124,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -7332,6 +7366,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -7573,6 +7608,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
@@ -7814,6 +7850,7 @@ Reads `cockpit.toml` from `--config`.
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
 | `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
