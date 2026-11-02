@@ -1,9 +1,18 @@
 import type ts from '@typescript/typescript6'
 
+/**
+ * What the index can say about a code's fix: the one fix every emission states, that emissions
+ * state different fixes (or some state none), or that none states a literal fix.
+ */
+export type DiagnosticRemedy =
+    | Readonly<{ kind: 'fixed'; fix: string }>
+    | Readonly<{ kind: 'varies' }>
+    | Readonly<{ kind: 'none' }>
+
 export interface DiagnosticInventory {
     items: string[]
     owners: Map<string, Set<string>>
-    remedies: Map<string, Set<string>>
+    remedies: Map<string, DiagnosticRemedy>
     /** Codes each command handler can emit, keyed by the command table's handler identifier. */
     commandDiagnostics: Map<string, Set<string>>
 }
