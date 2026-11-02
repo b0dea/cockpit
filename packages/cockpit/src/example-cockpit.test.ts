@@ -197,7 +197,9 @@ describe('the public synthetic cockpit', () => {
         const missingResult = run(missing, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
         expect(missingResult.status).toBe(2)
         const missingCodes = missingResult.response.diagnostics.map((row: { code: string }) => row.code)
-        expect(missingCodes, JSON.stringify(missingCodes)).toContain('EXECUTION_STEP_FAILED')
+        expect(missingCodes, JSON.stringify(missingCodes)).toContain('SETUP_CLONE_FAILED')
+        const cloneFailure = missingResult.response.diagnostics.find((row: { code: string }) => row.code === 'SETUP_CLONE_FAILED')
+        expect(cloneFailure.message).toContain('synthetic-web.git')
 
         const stale = copyExample('stale')
         expect(run(stale, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
