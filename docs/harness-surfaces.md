@@ -69,17 +69,15 @@ per harness:
 
 - `enforced`: the harness has a mechanism that can refuse the forbidden operation, and a dated
   test with a deliberately broken control has confirmed it.
-- `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the
-  harness obeys it.
+- `instructed`: cockpit writes guidance or a harness setting, but nothing makes the agent follow
+  it.
 - `generated`: cockpit writes the file for a harness that has no guard adapter or loading test,
   so nobody has verified that the tool even loads it.
 - `unavailable`: cockpit writes nothing for this feature and records why the harness cannot
   provide it.
 
-A cell that is not yet confirmed also says what would confirm it: `pending_evidence` needs a paired
-test of the real tool, `human_needed` needs a person's review. Native spellings differ per harness,
-and generating a file never upgrades a state: a feature moves to `enforced` only after a test of
-the real tool says so.
+Native spellings differ per harness, and generating a file never upgrades a state: a feature moves
+to `enforced` only after a dated run of the real tool says so.
 
 The shared guard is generated only for harnesses with a checked-in guard adapter: Claude Code,
 Codex and OpenCode. The guard scripts deny, and fail closed, whenever a harness runs them. Whether a
@@ -88,8 +86,7 @@ its date and version in the [capability matrix](capability-matrix.md):
 
 - OpenCode is `enforced`: its plugin refused `git push` to a protected branch and a native read of
   a secrets file, while a read of an unprotected file stayed allowed.
-- Codex is `enforced` only after a person trusts the hook on that machine (evidence
-  `human_needed`). Codex silently skips a project hook nobody has trusted, so the same push ran
+- Codex is `enforced` only after a person trusts the hook on that machine. Codex silently skips a project hook nobody has trusted, so the same push ran
   until the hook was trusted. See [Trust the Codex hook](#trust-the-codex-hook).
 - Claude Code is `enforced`: its generated hook refused `git push` to a protected branch while
   `git status` stayed allowed, and in an identical copy without the hook the same push ran.
@@ -151,19 +148,17 @@ it. These limits restrict ordinary file writes; they are not a sandbox against m
 ### Guard adapters
 
 The [capability matrix](capability-matrix.md) is the one record of each built-in harness's state,
-generated from the shipped sources, including when each harness was last probed and at which
-version. Those versions say nothing about the version you have installed. The checked-in guard
+generated from the shipped sources, with the date and tool version of every measurement. Those versions say nothing about the version you have installed. The checked-in guard
 adapters (the [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),
 [Codex](../packages/cockpit/surfaces/guards/codex.adapter.json) and
 [OpenCode](../packages/cockpit/surfaces/guards/opencode.adapter.json) adapters) record how the
 guard talks to each harness, as tested on an older version.
 
 [Restriction expansion](../packages/cockpit/src/surfaces/restrictions.ts) checks the adapter's
-recorded details but still emits `instructed` with `pending_evidence`, including for native
-read-only settings; the matrix shows a dated run of the real tool, recorded in
-[the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts), instead. A harness
-without an adapter gets no control and is recorded as `unavailable` with `not_applicable`
-evidence. Codex and OpenCode have no prompt tier, so "ask" decisions become denials; see
+recorded details but still emits `instructed`, including for native read-only settings; only a
+dated run of the real tool, recorded in
+[the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts), changes a matrix
+state. A harness without an adapter gets no control and is recorded as `unavailable`. Codex and OpenCode have no prompt tier, so "ask" decisions become denials; see
 [Native adapter behavior](safety-and-autonomy.md#native-adapter-behavior).
 [Rendering](../packages/cockpit/src/surfaces/render.ts) keeps those states, and
 [selftest planning](../packages/cockpit/src/surfaces/selftest.ts) works out which
@@ -200,8 +195,8 @@ grant, or would replace a link cockpit does not own.
 Codex sibling grants are `sandbox_workspace_write.writable_roots` entries under
 `sandbox_mode = "workspace-write"`. Cockpit keeps them relative to the checkout so clones do not
 drift, and emits no competing permission profile, because Codex ignores one when the
-workspace-write settings are present. This is generated configuration with `pending_evidence`, not
-a claim that Codex enforces it; run the [selftest procedure](#skills-and-selftest-evidence) before
+workspace-write settings are present. This is generated configuration, not a measured claim that
+Codex enforces it; run the [selftest procedure](#skills-and-selftest-evidence) before
 promoting that matrix cell.
 
 The `[cockpit].guide_cap` limit applies to always-loaded guidance. Cockpit reports the line cost per
