@@ -38,6 +38,7 @@ export const mechanism = {
         'Provenance',
         'GeneratedService',
         'GeneratedEnvironment',
+        'DECISIONS_PATH',
         'decisionSubjects',
         'DataMode',
         'VendorPosture',

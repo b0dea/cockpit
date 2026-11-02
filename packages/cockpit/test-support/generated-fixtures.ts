@@ -116,7 +116,6 @@ export function createGeneratedCommandFixture() {
         return `
     [[surfaces.harnesses]]
     name = "synthetic-harness"
-    features = ${JSON.stringify(surfaceFeatures)}
     capabilities = [${capabilities.join(', ')}]
     `
     }
@@ -128,7 +127,6 @@ export function createGeneratedCommandFixture() {
         return `
     [[surfaces.harnesses]]
     name = "synthetic-harness"
-    features = ${JSON.stringify(surfaceFeatures)}
     capabilities = [${capabilities.join(', ')}]
     `
     }
@@ -139,7 +137,6 @@ export function createGeneratedCommandFixture() {
         return `
     [[surfaces.harnesses]]
     name = "synthetic-harness"
-    features = ${JSON.stringify(surfaceFeatures)}
     capabilities = [${capabilities.join(', ')}]
     `
     }
