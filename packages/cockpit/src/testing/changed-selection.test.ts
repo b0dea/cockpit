@@ -295,6 +295,7 @@ describe('changed adjacent-owner test runner', () => {
     const withOwners = (files: Record<string, string>) => repository({
         ...Object.fromEntries(DOCS_TESTS.map(path => [path, 'docs\n'])),
         'packages/cockpit/src/packaging.slow.test.ts': 'packaging\n',
+        'packages/cockpit/src/example-cockpit.slow.test.ts': 'examples end to end\n',
         'packages/cockpit/src/supply-chain.test.ts': 'supply\n',
         'packages/cockpit/src/test-protection.test.ts': 'protection\n',
         ...OTHER, ...files,
@@ -316,6 +317,7 @@ describe('changed adjacent-owner test runner', () => {
 
         expect(result.status, result.stderr).toBe(0)
         expect(fixture.dispatched()).toEqual(DOCS_TESTS)
+        expect(result.stderr).toContain('npm test -- packages/cockpit/src/example-cockpit.slow.test.ts\n')
     })
 
     it('selects only the prose owner beside source owners for a release fragment', () => {
@@ -495,6 +497,9 @@ describe('changed adjacent-owner test runner', () => {
             'packages/cockpit/src/cli.test.ts': "import { runCli } from './cli.js'\n",
             'packages/cockpit/src/commands.test.ts': "import { runCli } from './cli.js'\n",
             'packages/cockpit/src/guards/helper-user.test.ts': "import { helper } from './helper.js'\n",
+            'packages/cockpit/src/guards/repair.ts': "import { helper } from './helper.js'\n",
+            'packages/cockpit/src/guards/repair.slow.test.ts': "import { repair } from './repair.js'\n",
+            'packages/cockpit/src/guards/repair-user.test.ts': "import { repair } from './repair.js'\n",
         })
         edit(fixture.root, 'packages/cockpit/src/guards/helper.ts')
 
@@ -502,13 +507,17 @@ describe('changed adjacent-owner test runner', () => {
         const result = fixture.run()
 
         expect(result.status, result.stderr).toBe(0)
+        // repair.ts has only a slow adjacent test, so the walk goes on to its fast importer.
         expect(fixture.dispatched()).toEqual([
             ARCHITECTURE, 'packages/cockpit/src/guards/evaluator.test.ts', 'packages/cockpit/src/guards/helper-user.test.ts',
+            'packages/cockpit/src/guards/repair-user.test.ts',
         ])
+        expect(result.stderr).toContain('npm test -- packages/cockpit/src/guards/repair.slow.test.ts\n')
         expect(wide.status, wide.stderr).toBe(0)
         expect(JSON.parse(wide.stdout)).toEqual([
             ARCHITECTURE, 'packages/cockpit/src/cli.test.ts', 'packages/cockpit/src/commands.test.ts',
             'packages/cockpit/src/guards/evaluator.test.ts', 'packages/cockpit/src/guards/helper-user.test.ts',
+            'packages/cockpit/src/guards/repair-user.test.ts', 'packages/cockpit/src/guards/repair.slow.test.ts',
         ])
     })
 

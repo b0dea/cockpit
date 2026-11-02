@@ -33,7 +33,7 @@ const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g
 const TEST_DIRECTORY = 'packages/cockpit/src'
 // General Markdown can affect lint contracts, fact ownership, and runnable examples.
-const DOCUMENTATION_TESTS = [/^docs-lint(?:\..+)?\.test\.ts$/, /^docs-ownership\.test\.ts$/, /^example-cockpit\.test\.ts$/]
+const DOCUMENTATION_TESTS = [/^docs-lint(?:\..+)?\.test\.ts$/, /^docs-ownership\.test\.ts$/, /^example-cockpit(?:\.slow)?\.test\.ts$/]
 // Release fragments cannot change linter mechanisms or runnable examples; lint:docs validates
 // their bytes while the prose owner pins their estate.
 const CHANGESET_FRAGMENT_TEST = 'docs-lint.prose.test.ts'
@@ -195,9 +195,11 @@ function testsImporting(root, imports, source) {
                 tests.add(path)
                 continue
             }
+            // An importer whose adjacent tests are all slow does not stop the walk: stopping there
+            // would leave the change with no fast owner above it.
             const adjacent = imports.wide ? [] : adjacentTests(root, path)
-            if (adjacent.length) for (const test of adjacent) tests.add(test)
-            else pending.push(path)
+            for (const test of adjacent) tests.add(test)
+            if (!adjacent.some(test => !SLOW_TEST_PATH.test(test))) pending.push(path)
         }
     }
     return [...tests]
