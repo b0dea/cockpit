@@ -150,6 +150,20 @@ describe('closed ordinary invocation metadata', () => {
         expect(humanStderr(result.stderr)).toBe('')
         const help = run(['--help'])
         expect(help.stdout).not.toContain('guard-evaluate')
+        // Each row declares its options twice, once for parseArgs and once for the guard: an option the
+        // guard admits must be one the CLI parses with the same arity, or the admitted run is refused.
+        for (const row of commands) {
+            if (row.ordinary.availability !== 'available') continue
+            const { options, forbidden } = row.ordinary
+            for (const [name, option] of Object.entries(options)) {
+                const parsed = row.options[name]
+                expect(parsed && { type: parsed.type, multiple: parsed.multiple === true }, `${row.name} --${name}`)
+                    .toEqual({ type: option.kind === 'flag' ? 'boolean' : 'string', multiple: false })
+            }
+            for (const name of [...forbidden.presence, ...forbidden.values.map(({ option }) => option)]) {
+                expect(Object.keys(row.options), `${row.name} forbidden --${name}`).toContain(name)
+            }
+        }
     })
 
     it('admits exactly the public ordinary profiles with bounded roles', () => {
