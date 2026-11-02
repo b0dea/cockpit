@@ -2346,6 +2346,10 @@ describe('work command routing', () => {
         expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
         begin.mockClear(); decide.mockClear(); confirm.mockClear()
         expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(2)
+        // Without a terminal on both standard input and standard output, nobody is there to read the contract.
+        const piped = { stdin: Readable.from([`accept ${digest}\n`]), stdout: { write: () => true }, stderr: { write: () => true } } as unknown as CliIo
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], piped, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(2)
         expect(begin).not.toHaveBeenCalled(); expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
     })
 

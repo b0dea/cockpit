@@ -18,7 +18,7 @@ export const WORK_ORDER_INTAKE_LIMITS = Object.freeze({ inventory: 1_024, skills
 export const WORK_ORDER_INTAKE_CODES = Object.freeze([
     'WO_POLICY_INVALID', 'WO_ROUTE_REQUIRED', 'WO_WIP_INVALID', 'WO_WIP_CAP',
     'WO_CONTRACT_INVALID', 'WO_ID_EXISTS', 'WO_AUDIT_INVALID', 'WO_SKILLS_INVALID',
-    'WO_SOURCE_GAPS', 'WO_OPERATOR_REQUIRED', 'WO_ACCEPTANCE_INVALID',
+    'WO_SOURCE_GAPS', 'WO_ACCEPTANCE_INVALID',
     'WO_ACCEPTANCE_REPLAY', 'WO_ACCEPTANCE_STALE', 'WO_ACCEPTANCE_DECLINED', 'WO_RENEWAL_DECISION_REQUIRED',
 ] as const)
 export type WorkOrderIntakeCode = typeof WORK_ORDER_INTAKE_CODES[number]
@@ -80,13 +80,6 @@ export interface WorkOrderIntakeInput {
     readonly sourceAudit: WorkOrderSourceAudit
     readonly installedSkills: readonly InstalledThinkingSkill[]
 }
-export interface WorkOrderOperatorAdmission {
-    readonly interactive: boolean
-    readonly json: boolean
-    readonly ci: boolean
-    readonly stdinIsTTY: boolean
-    readonly stdoutIsTTY: boolean
-}
 export interface WorkOrderActivationProvenance {
     readonly from: 'draft'
     readonly to: 'active'
@@ -99,7 +92,6 @@ export interface WorkOrderAcceptanceContinuation { readonly digest: string; read
 export interface WorkOrderAcceptanceRequest {
     readonly kind: 'human_needed'
     readonly digest: string
-    readonly prompt: string
     readonly continuation: WorkOrderAcceptanceContinuation
 }
 export interface AcceptedWorkOrder {
@@ -144,7 +136,6 @@ export interface ActivatedWorkOrder {
     readonly accepted: AcceptedWorkOrder
 }
 export interface WorkOrderAcceptanceResponse {
-    readonly admission: WorkOrderOperatorAdmission
     readonly now: number
     readonly actor: string
     readonly answer: string
@@ -277,15 +268,11 @@ export function intakeWorkOrder(input: WorkOrderIntakeInput): WorkOrderDraft | W
     return draft
 }
 
-function humanTerminal(admission: WorkOrderOperatorAdmission): boolean {
-    return admission.interactive === true && admission.json === false && admission.ci === false
-        && admission.stdinIsTTY === true && admission.stdoutIsTTY === true
-}
 function validTime(now: number): boolean {
     return Number.isSafeInteger(now) && now >= 0 && now <= 8_640_000_000_000_000 - WORK_ORDER_ACCEPTANCE_TTL_MS
 }
-function draftRefusal(draft: WorkOrderDraft, admission: WorkOrderOperatorAdmission, now: number): WorkOrderIntakeRefusal | undefined {
-    if (!humanTerminal(admission)) return refuse('WO_OPERATOR_REQUIRED', 'Acceptance requires an interactive human terminal outside CI and JSON modes')
+// The CLI admits acceptance only from an interactive terminal outside CI and JSON modes, before any of this runs.
+function draftRefusal(draft: WorkOrderDraft, now: number): WorkOrderIntakeRefusal | undefined {
     if (!issuedDrafts.has(draft) || !validTime(now)) return refuse('WO_ACCEPTANCE_INVALID', 'Acceptance requires an issued current draft and valid time')
     if (draft.gaps.length) return refuse('WO_SOURCE_GAPS', 'Named source omissions, contradictions or questions keep this order in draft')
     const date = new Date(now).toISOString().slice(0, 10)
@@ -297,13 +284,11 @@ function requestAcceptance(draft: WorkOrderDraft, now: number, previous?: Accept
     const continuation = Object.freeze({ digest: draft.contract.digest, expiresAt: now + WORK_ORDER_ACCEPTANCE_TTL_MS })
     sessions.set(continuation, { draft, issuedAt: now, previous, decision })
     currentPrompts.set(draft, continuation)
-    return Object.freeze({ kind: 'human_needed', digest: draft.contract.digest,
-        prompt: `Review Authority, sources and binary criteria, then type accept ${draft.contract.digest}`,
-        continuation })
+    return Object.freeze({ kind: 'human_needed', digest: draft.contract.digest, continuation })
 }
 
-export function beginWorkOrderAcceptance(draft: WorkOrderDraft, admission: WorkOrderOperatorAdmission, now: number): WorkOrderAcceptanceRequest | WorkOrderIntakeRefusal {
-    return draftRefusal(draft, admission, now) ?? requestAcceptance(draft, now)
+export function beginWorkOrderAcceptance(draft: WorkOrderDraft, now: number): WorkOrderAcceptanceRequest | WorkOrderIntakeRefusal {
+    return draftRefusal(draft, now) ?? requestAcceptance(draft, now)
 }
 
 export function isCurrentWorkOrderAcceptance(accepted: AcceptedWorkOrder, contract: ParsedWorkOrder): boolean {
@@ -311,8 +296,8 @@ export function isCurrentWorkOrderAcceptance(accepted: AcceptedWorkOrder, contra
         && accepted.binding.digest === contract.digest
 }
 
-export function beginWorkOrderRenewal(previous: AcceptedWorkOrder, draft: WorkOrderDraft, admission: WorkOrderOperatorAdmission, now: number, decision: WorkOrderDecision): WorkOrderAcceptanceRequest | WorkOrderIntakeRefusal {
-    const refusal = draftRefusal(draft, admission, now)
+export function beginWorkOrderRenewal(previous: AcceptedWorkOrder, draft: WorkOrderDraft, now: number, decision: WorkOrderDecision): WorkOrderAcceptanceRequest | WorkOrderIntakeRefusal {
+    const refusal = draftRefusal(draft, now)
     if (refusal) return refusal
     if (!isCurrentWorkOrderAcceptance(previous, previous.contract) || previous.contract.frontmatter.id !== draft.contract.frontmatter.id
         || previous.contract.digest === draft.contract.digest) return refuse('WO_ACCEPTANCE_STALE', 'Renewal requires the current accepted order and a changed contract with the same identity')
@@ -328,7 +313,7 @@ export function acceptWorkOrder(continuation: WorkOrderAcceptanceContinuation, c
     const session = sessions.get(continuation)
     if (!session) return refuse('WO_ACCEPTANCE_REPLAY', 'Acceptance continuation is unknown or already consumed')
     sessions.delete(continuation)
-    const refusal = draftRefusal(current, response.admission, response.now)
+    const refusal = draftRefusal(current, response.now)
     if (refusal) return refusal
     if (currentPrompts.get(session.draft) !== continuation || response.now < session.issuedAt || response.now > continuation.expiresAt
         || current.contract.digest !== continuation.digest || current !== session.draft

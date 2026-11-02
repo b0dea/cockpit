@@ -22,6 +22,7 @@ describe('configured durable work application composition', () => {
         const contract = (await readFile(contractPath, 'utf8'))
             .replace('Return current values after a cache refresh.', `Return current values after a cache refresh.\n${objectiveCheckbox}`)
             .replace('Changing the storage provider.', `Changing the storage provider.\n${nonGoalCheckbox}`)
+            .replace('Then: Reading the cache returns the refreshed value.', 'Then: Reading the cache returns the \u202eeulav dehserfer.')
         await writeFile(contractPath, contract.replace('## Evidence\n- none\n## Decisions', '## Evidence\u00a0\n\uFEFF\n- none\u00a0\n## Decisions'))
         const audit = await readFile(auditPath, 'utf8'); const decodedAudit = JSON.parse(audit) as Record<string, unknown>
         const changedAudit = JSON.stringify({ ...decodedAudit, gaps: [{ kind: 'question', reference: 'S1', detail: 'Confirm the current cache boundary.' }] })
@@ -50,6 +51,13 @@ describe('configured durable work application composition', () => {
 
         const accepted = await runWorkApplication({ operation: 'work-accept', workOrderId: 'WO-001' }, fixture.composition)
         if (accepted.kind !== 'human-needed') throw new Error('current acceptance continuation unavailable')
+        // The person accepts what the prompt shows, so it shows what the digest binds, and agent-written
+        // text in it can neither drive their terminal nor display in another order than the one recorded.
+        for (const line of ['  - src/cache.ts', '  AC2: ["npm","test","--","cache-2"]', '    When: Refresh 3 completes.',
+            '    Then: Reading the cache returns the \uFFFDeulav dehserfer.', `type accept ${accepted.continuation.digest}`]) {
+            expect(accepted.continuation.prompt).toContain(line)
+        }
+        expect(accepted.continuation.prompt).not.toContain('\u202e')
         await expect(accepted.continuation.decide(`accept ${accepted.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete' })
         await writeFile(join(fixture.root, 'intents/gap.json'), JSON.stringify({ kind: 'gap', id: 'cache-owner', step: 1,
             question: 'Which owner confirms the cache boundary?' }))
@@ -211,6 +219,11 @@ describe('configured durable work application composition', () => {
         expect(renewalAttempt).toMatchObject({ kind: 'refusal', operation: 'work-renew', reason: expect.stringContaining('outstanding execution reservation') })
         expect(renewalResult).toMatchObject({ kind: 'refusal', operation: 'work-renew', reason: expect.stringContaining('outstanding execution reservation') })
         expect(executionResult).toMatchObject({ kind: 'complete', operation: 'work-execute' })
+        const renewal = await runWorkApplication({ operation: 'work-renew', workOrderId: 'WO-401' }, fixture.composition)
+        if (renewal.kind !== 'human-needed') throw new Error(`renewal continuation unavailable: ${JSON.stringify(renewal)}`)
+        expect(renewal.continuation.prompt).toContain('    When: Refresh 1 and reservation safety complete.')
+        expect(renewal.continuation.prompt).toContain('Decision this renewal confirms:\n'
+            + `  date: ${decisionDate}\n  decision: Preserve the active reservation during renewal\n  disposition: accepted`)
     }, 120_000)
 
 })

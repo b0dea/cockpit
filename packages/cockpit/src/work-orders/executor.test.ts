@@ -19,12 +19,11 @@ function harness(attemptCap = 2) {
         route: routeWorkOrder({ certification: true }, { policy: policy.policy, orders: [] }),
         sourceAudit: { sources: parsed.value.sources, gaps: [] }, installedSkills: [] })
     assert(draft.kind === 'draft')
-    const admission = { interactive: true, json: false, ci: false, stdinIsTTY: true, stdoutIsTTY: true }
     const now = Date.parse('2026-01-03T00:00:00.000Z')
-    const request = beginWorkOrderAcceptance(draft, admission, now)
+    const request = beginWorkOrderAcceptance(draft, now)
     assert(request.kind === 'human_needed')
     const acceptedDraft = acceptWorkOrder(request.continuation, draft, {
-        admission, now, actor: 'fixture-operator', answer: `accept ${request.digest}`,
+        now, actor: 'fixture-operator', answer: `accept ${request.digest}`,
     })
     assert(acceptedDraft.kind === 'accepted')
     expect(isCurrentWorkOrderAcceptance(acceptedDraft, parsed.value)).toBe(true)

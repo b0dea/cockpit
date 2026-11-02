@@ -15,11 +15,10 @@ function harness() {
     const draft = intakeWorkOrder({ contract: parsed.value, route: routeWorkOrder({ certification: true }, { policy: policy.policy, orders: [] }),
         sourceAudit: { sources: parsed.value.sources, gaps: [] }, installedSkills: [] })
     if (draft.kind !== 'draft') throw new Error(draft.message)
-    const admission = { interactive: true, json: false, ci: false, stdinIsTTY: true, stdoutIsTTY: true }
     const now = Date.parse('2026-01-03T00:00:00Z')
-    const request = beginWorkOrderAcceptance(draft, admission, now)
+    const request = beginWorkOrderAcceptance(draft, now)
     if (request.kind !== 'human_needed') throw new Error(request.message)
-    const accepted = acceptWorkOrder(request.continuation, draft, { admission, now, actor: 'fixture-operator', answer: `accept ${request.digest}` })
+    const accepted = acceptWorkOrder(request.continuation, draft, { now, actor: 'fixture-operator', answer: `accept ${request.digest}` })
     if (accepted.kind !== 'accepted') throw new Error(accepted.message)
     const input = { accepted, author: 'fixture-engineer', grader: 'fixture-grader' }
     const artifacts = new Map(parsed.value.authority.map(path => [path, "export function refresh() { return 'fresh' }\n// refresh is called here\n"]))

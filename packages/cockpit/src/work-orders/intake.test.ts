@@ -10,7 +10,6 @@ import {
 
 const now = Date.parse('2026-01-03T12:00:00Z')
 const storeDigest = 'c'.repeat(64)
-const admission = { interactive: true, json: false, ci: false, stdinIsTTY: true, stdoutIsTTY: true }
 const parse = (text = workOrderFixture()): ParsedWorkOrder => {
     const parsed = parseWorkOrder(Buffer.from(text))
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.findings))
@@ -32,9 +31,9 @@ const draft = (text = workOrderFixture()) => {
     return result
 }
 const accept = (candidate = draft()) => {
-    const request = beginWorkOrderAcceptance(candidate, admission, now)
+    const request = beginWorkOrderAcceptance(candidate, now)
     if (request.kind !== 'human_needed') throw new Error('operator continuation unavailable')
-    const result = acceptWorkOrder(request.continuation, candidate, { admission, now: now + 1, actor: 'operator', answer: `accept ${candidate.contract.digest}` })
+    const result = acceptWorkOrder(request.continuation, candidate, { now: now + 1, actor: 'operator', answer: `accept ${candidate.contract.digest}` })
     if (result.kind !== 'accepted') throw new Error('operator acceptance refused')
     return result
 }
@@ -122,7 +121,7 @@ describe('work-order intake', () => {
         expect(result.kind).toBe('draft')
         if (result.kind !== 'draft') throw new Error('draft refused')
         expect(result.gaps).toEqual([...gaps, { kind: 'omission', reference: 'S1', detail: 'Contract source is absent or differs from the current source audit' }])
-        expect(beginWorkOrderAcceptance(result, admission, now)).toMatchObject({ kind: 'refusal', code: 'WO_SOURCE_GAPS' })
+        expect(beginWorkOrderAcceptance(result, now)).toMatchObject({ kind: 'refusal', code: 'WO_SOURCE_GAPS' })
     })
 
     it('detects audited material sources omitted from the compiled draft', () => {
@@ -138,7 +137,7 @@ describe('work-order intake', () => {
 describe('operator contract acceptance', () => {
     it('returns human_needed and freezes the exact current digest, Authority and criteria only on explicit acceptance', () => {
         const candidate = draft()
-        const request = beginWorkOrderAcceptance(candidate, admission, now)
+        const request = beginWorkOrderAcceptance(candidate, now)
         expect(request).toMatchObject({ kind: 'human_needed', digest: candidate.contract.digest })
         const accepted = accept(candidate)
         expect(accepted.binding).toMatchObject({ digest: candidate.contract.digest, acceptedBy: 'operator', authority: candidate.contract.authority, criteria: candidate.contract.criteria })
@@ -197,60 +196,52 @@ describe('operator contract acceptance', () => {
         expect(Buffer.from(activated.bytes).toString()).toBe(source.replace('status: draft', 'status: active'))
     })
 
-    it.each([
-        { ...admission, json: true }, { ...admission, interactive: false },
-        { ...admission, ci: true }, { ...admission, stdinIsTTY: false }, { ...admission, stdoutIsTTY: false },
-    ])('refuses an admission outside the human terminal: %j', (mode) => {
-        expect(beginWorkOrderAcceptance(draft(), mode, now)).toMatchObject({ kind: 'refusal', code: 'WO_OPERATOR_REQUIRED' })
-    })
-
     it('consumes a continuation once including after a declined or forged response', () => {
         const candidate = draft()
-        const request = beginWorkOrderAcceptance(candidate, admission, now)
+        const request = beginWorkOrderAcceptance(candidate, now)
         if (request.kind !== 'human_needed') throw new Error('request refused')
-        const response = { admission, now: now + 1, actor: 'operator', answer: 'yes' }
+        const response = { now: now + 1, actor: 'operator', answer: 'yes' }
         expect(acceptWorkOrder({ ...request.continuation }, candidate, response)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_REPLAY' })
         expect(acceptWorkOrder(request.continuation, candidate, response)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_DECLINED' })
         expect(acceptWorkOrder(request.continuation, candidate, { ...response, answer: `accept ${candidate.contract.digest}` })).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_REPLAY' })
     })
 
-    it('refuses stale bytes, expired time and an admission that changed after the prompt', () => {
-        for (const mode of ['bytes', 'expired', 'json'] as const) {
+    it('refuses stale bytes and expired time after the prompt', () => {
+        for (const mode of ['bytes', 'expired'] as const) {
             const candidate = draft()
-            const request = beginWorkOrderAcceptance(candidate, admission, now)
+            const request = beginWorkOrderAcceptance(candidate, now)
             if (request.kind !== 'human_needed') throw new Error('request refused')
             const current = mode === 'bytes' ? draft(workOrderFixture().replace('Refresh 1 completes.', 'Refresh 1 and invalidation complete.')) : candidate
             expect(acceptWorkOrder(request.continuation, current, {
-                admission: mode === 'json' ? { ...admission, json: true } : admission,
                 now: mode === 'expired' ? now + WORK_ORDER_ACCEPTANCE_TTL_MS + 1 : now + 1,
                 actor: 'operator', answer: `accept ${current.contract.digest}`,
-            })).toMatchObject({ kind: 'refusal', code: mode === 'json' ? 'WO_OPERATOR_REQUIRED' : 'WO_ACCEPTANCE_STALE' })
+            })).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_STALE' })
         }
     })
 
     it('invalidates an earlier prompt when another is issued for the same draft', () => {
         const candidate = draft()
-        const first = beginWorkOrderAcceptance(candidate, admission, now)
-        const second = beginWorkOrderAcceptance(candidate, admission, now + 1)
+        const first = beginWorkOrderAcceptance(candidate, now)
+        const second = beginWorkOrderAcceptance(candidate, now + 1)
         if (first.kind !== 'human_needed' || second.kind !== 'human_needed') throw new Error('request refused')
-        const response = { admission, now: now + 2, actor: 'operator', answer: `accept ${candidate.contract.digest}` }
+        const response = { now: now + 2, actor: 'operator', answer: `accept ${candidate.contract.digest}` }
         expect(acceptWorkOrder(first.continuation, candidate, response)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_STALE' })
         expect(acceptWorkOrder(second.continuation, candidate, response).kind).toBe('accepted')
-        expect(beginWorkOrderAcceptance(candidate, admission, now + 3)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_REPLAY' })
+        expect(beginWorkOrderAcceptance(candidate, now + 3)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_REPLAY' })
     })
 
     it('invalidates material edits and requires a new dated accepted decision with reason and impact for renewal', () => {
         const previous = accept()
         const edited = draft(workOrderFixture().replace('Refresh 1 completes.', 'Refresh 1 and invalidation complete.'))
         expect(isCurrentWorkOrderAcceptance(previous, edited.contract)).toBe(false)
-        expect(beginWorkOrderRenewal(previous, edited, admission, now + 2, edited.contract.decisions[0]))
+        expect(beginWorkOrderRenewal(previous, edited, now + 2, edited.contract.decisions[0]))
             .toMatchObject({ kind: 'refusal', code: 'WO_RENEWAL_DECISION_REQUIRED' })
         const updated = draft(workOrderFixture().replace('Refresh 1 completes.', 'Refresh 1 and invalidation complete.')
             + '- 2026-01-03 | Add invalidation to refresh | accepted | Reader can race the cache | Verify invalidation too.\n')
-        const request = beginWorkOrderRenewal(previous, updated, admission, now + 2, updated.contract.decisions[1])
+        const request = beginWorkOrderRenewal(previous, updated, now + 2, updated.contract.decisions[1])
         expect(request.kind).toBe('human_needed')
         if (request.kind !== 'human_needed') throw new Error('renewal refused')
-        const renewed = acceptWorkOrder(request.continuation, updated, { admission, now: now + 3, actor: 'operator', answer: `accept ${updated.contract.digest}` })
+        const renewed = acceptWorkOrder(request.continuation, updated, { now: now + 3, actor: 'operator', answer: `accept ${updated.contract.digest}` })
         expect(renewed.kind).toBe('accepted')
         if (renewed.kind !== 'accepted') throw new Error('renewal failed')
         expect(renewed.binding.previousDigest).toBe(previous.contract.digest)
@@ -308,10 +299,10 @@ describe('operator contract acceptance', () => {
             readCurrentAcceptance: () => { throw new Error('not contained') },
         })).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_INVALID' })
         const otherCandidate = draft(source)
-        const otherRequest = beginWorkOrderAcceptance(otherCandidate, admission, now + 10)
+        const otherRequest = beginWorkOrderAcceptance(otherCandidate, now + 10)
         if (otherRequest.kind !== 'human_needed') throw new Error('request refused')
         const other = acceptWorkOrder(otherRequest.continuation, otherCandidate, {
-            admission, now: now + 11, actor: 'other-operator', answer: `accept ${otherCandidate.contract.digest}`,
+            now: now + 11, actor: 'other-operator', answer: `accept ${otherCandidate.contract.digest}`,
         })
         if (other.kind !== 'accepted') throw new Error('acceptance refused')
         const changedRecord = createWorkOrderAcceptanceRecord(other)
@@ -359,17 +350,16 @@ describe('operator contract acceptance', () => {
         } })).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_INVALID' })
     })
 
-    it('does not create a durable record from an expired or noninteractive prompt', () => {
+    it('does not create a durable record from an expired prompt', () => {
         const candidate = draft()
-        const request = beginWorkOrderAcceptance(candidate, admission, now)
+        const request = beginWorkOrderAcceptance(candidate, now)
         if (request.kind !== 'human_needed') throw new Error('request refused')
         const expired = acceptWorkOrder(request.continuation, candidate, {
-            admission, now: now + WORK_ORDER_ACCEPTANCE_TTL_MS + 1,
+            now: now + WORK_ORDER_ACCEPTANCE_TTL_MS + 1,
             actor: 'operator', answer: `accept ${candidate.contract.digest}`,
         })
         expect(expired).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_STALE' })
         expect(createWorkOrderAcceptanceRecord(expired as never)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_INVALID' })
-        expect(beginWorkOrderAcceptance(draft(), { ...admission, json: true }, now)).toMatchObject({ kind: 'refusal', code: 'WO_OPERATOR_REQUIRED' })
     })
 
     it('binds renewal records to a monotonic generation and exact predecessor', () => {
@@ -380,9 +370,9 @@ describe('operator contract acceptance', () => {
         const updatedText = originalText.replace('Refresh 1 completes.', 'Refresh 1 and invalidation complete.')
             + '- 2026-01-03 | Add invalidation to refresh | accepted | Reader can race the cache | Verify invalidation too.\n'
         const updated = draft(updatedText)
-        const request = beginWorkOrderRenewal(previous, updated, admission, now + 2, updated.contract.decisions[1])
+        const request = beginWorkOrderRenewal(previous, updated, now + 2, updated.contract.decisions[1])
         if (request.kind !== 'human_needed') throw new Error('renewal refused')
-        const renewed = acceptWorkOrder(request.continuation, updated, { admission, now: now + 3, actor: 'operator', answer: `accept ${updated.contract.digest}` })
+        const renewed = acceptWorkOrder(request.continuation, updated, { now: now + 3, actor: 'operator', answer: `accept ${updated.contract.digest}` })
         if (renewed.kind !== 'accepted') throw new Error('renewal failed')
         expect(createWorkOrderAcceptanceRecord(renewed)).toMatchObject({ kind: 'refusal', code: 'WO_ACCEPTANCE_STALE' })
         const inaccessible = { ...predecessor }
@@ -413,10 +403,10 @@ describe('operator contract acceptance', () => {
         const nextText = updatedText.replace('Refresh 2 completes.', 'Refresh 2 completes after invalidation.')
             + '- 2026-01-03 | Clarify refresh ordering | accepted | Ordering remained implicit | Verify ordered invalidation.\n'
         const next = draft(nextText)
-        const nextRequest = beginWorkOrderRenewal(activated.accepted, next, admission, now + 4, next.contract.decisions[2])
+        const nextRequest = beginWorkOrderRenewal(activated.accepted, next, now + 4, next.contract.decisions[2])
         if (nextRequest.kind !== 'human_needed') throw new Error('second renewal refused')
         const nextRenewed = acceptWorkOrder(nextRequest.continuation, next, {
-            admission, now: now + 5, actor: 'operator', answer: `accept ${next.contract.digest}`,
+            now: now + 5, actor: 'operator', answer: `accept ${next.contract.digest}`,
         })
         if (nextRenewed.kind !== 'accepted') throw new Error('second renewal failed')
         const nextActivated = activateAcceptedWorkOrder(nextRenewed, Buffer.from(nextText), current)

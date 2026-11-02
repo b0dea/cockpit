@@ -21,10 +21,9 @@ async function harness() {
         route: routeWorkOrder({ certification: true }, { policy: policy.policy, orders: [] }),
         sourceAudit: { sources: parsed.value.sources, gaps: [] }, installedSkills: [] })
     assert(draft.kind === 'draft')
-    const admission = { interactive: true, json: false, ci: false, stdinIsTTY: true, stdoutIsTTY: true }
-    const request = beginWorkOrderAcceptance(draft, admission, Date.parse('2026-01-03T00:00:00Z'))
+    const request = beginWorkOrderAcceptance(draft, Date.parse('2026-01-03T00:00:00Z'))
     assert(request.kind === 'human_needed')
-    const accepted = acceptWorkOrder(request.continuation, draft, { admission, now: Date.parse('2026-01-03T00:00:00Z'),
+    const accepted = acceptWorkOrder(request.continuation, draft, { now: Date.parse('2026-01-03T00:00:00Z'),
         actor: 'fixture-operator', answer: `accept ${request.digest}` })
     assert(accepted.kind === 'accepted')
     let current = parsed.value

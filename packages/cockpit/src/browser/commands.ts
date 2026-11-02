@@ -14,7 +14,7 @@ import { authenticateBrowserProjectClient, executeBrowserProjectOperation, withB
 export const mechanism = {
     id: 'browser-command',
     module: 'packages/cockpit/src/browser/commands.ts',
-    exports: ['executeBrowserCommand', 'isIssuedBrowserCommandReceipt', 'issueBrowserRoutePolicy'],
+    exports: ['executeBrowserCommand', 'isIssuedBrowserCommandReceipt', 'issueBrowserRoutePolicy', 'ownDataRecord'],
 } as const
 
 export type BrowserCommandKind = 'drive' | 'accessibility' | 'screenshot'
@@ -129,7 +129,8 @@ function networkExposureCovers(exposure: string, origin: URL): boolean {
     })
 }
 
-function ownDataRecord(value: unknown, required: readonly string[], optional: readonly string[]): Record<string, unknown> | undefined {
+/** Copies a plain object's own enumerable data properties, refusing proxies, accessors and keys outside the named set, without running caller code. */
+export function ownDataRecord(value: unknown, required: readonly string[], optional: readonly string[]): Record<string, unknown> | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)
             || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return undefined

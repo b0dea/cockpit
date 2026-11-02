@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
-import { isProxy } from 'node:util/types'
-import { executeBrowserCommand } from '../browser/commands.js'
+import { executeBrowserCommand, ownDataRecord } from '../browser/commands.js'
 import { evaluateUiGate } from '../browser/ui-gate.js'
 import { completeWorkOrder } from '../grading/completion.js'
 import { runGate } from '../testing/gates.js'
 import { executeWorkOrderStep } from './executor.js'
+import type { ParsedWorkOrder, WorkOrderDecision } from './contract.js'
 import { acceptWorkOrder, beginWorkOrderAcceptance, beginWorkOrderRenewal, intakeWorkOrder, routeWorkOrder } from './intake.js'
 import { collectWorkOrderMetrics, renderWorkOrderMetrics } from './metrics.js'
 import { assessWorkOrderSize, assessWorkPressure, applyWorkOrderSweep, planWorkOrderSweep, reverseWorkOrderSweep } from './pressure.js'
@@ -57,14 +57,7 @@ const operationKeys: Readonly<Record<WorkApplicationRequest['operation'], Operat
     'browser-accessibility': { required: ['operation'], optional: ['role'] }, 'browser-screenshot': { required: ['operation'], optional: ['role'] },
     'browser-debugger': { required: ['operation'], optional: ['role'] }, 'test-run': { required: ['operation', 'gate', 'mode'], optional: ['select'] },
 })
-function ownData(value: unknown): Record<string, unknown> | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string') || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) return undefined
-        return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    } catch { return undefined }
-}
+const requestKeys = [...new Set(Object.values(operationKeys).flatMap(shape => [...shape.required, ...(shape.optional ?? [])]))]
 function printable(value: string): boolean {
     for (let index = 0; index < value.length; index += 1) { const code = value.charCodeAt(index); if (code < 32 || code >= 127 && code <= 159) return false }
     return true
@@ -75,7 +68,7 @@ function bounded(value: unknown, pattern: RegExp, maximum: number): value is str
 const relativeSelector = (value: unknown): value is string => bounded(value, /^[A-Za-z0-9._/-]+$/, 4_096)
     && !value.startsWith('/') && value.split('/').every(part => part !== '' && part !== '.' && part !== '..')
 export function captureWorkApplicationRequest(value: unknown): WorkApplicationRequest | undefined {
-    const row = ownData(value)
+    const row = ownDataRecord(value, [], requestKeys)
     if (!row || typeof row.operation !== 'string' || !Object.hasOwn(operationKeys, row.operation)) return undefined
     const operation = row.operation as WorkApplicationRequest['operation']; const shape = operationKeys[operation]
     const allowed = [...shape.required, ...(shape.optional ?? [])]; const keys = Object.keys(row)
@@ -98,8 +91,8 @@ export function captureWorkApplicationRequest(value: unknown): WorkApplicationRe
     if ('role' in row && row.role !== undefined && !bounded(row.role, /^[a-z0-9][a-z0-9_-]{0,63}$/, 64)) return undefined
     if ('mode' in row && !['canonical', 'full', 'staged'].includes(row.mode as string)) return undefined
     if ('select' in row && row.select !== undefined) {
-        const select = ownData(row.select)
-        if (!select || Object.keys(select).sort().join(',') !== 'kind,value' || !['spec', 'file', 'test', 'route'].includes(select.kind as string) || !bounded(select.value, /^.+$/, 4_096)) return undefined
+        const select = ownDataRecord(row.select, ['kind', 'value'], [])
+        if (!select || !['spec', 'file', 'test', 'route'].includes(select.kind as string) || !bounded(select.value, /^.+$/, 4_096)) return undefined
         row.select = Object.freeze({ kind: select.kind, value: select.value })
     }
     return Object.freeze(row) as unknown as WorkApplicationRequest
@@ -121,6 +114,20 @@ function answerPrompt(workOrderId: string, prepared: PreparedAnswer, digest: str
             ? [`Decision to record on ${workOrderId}:`, ...(['date', 'decision', 'disposition', 'reason', 'impact'] as const).map(field => `  ${field}: ${shown(String(event.decision[field]))}`)]
             : []
     return [...lines, `This is recorded as ${shown(prepared.writer.actor)}'s answer. To record it, type answer ${digest}`].join('\n')
+}
+// The digest alone would let an agent edit the order after the person read it in an editor and have the
+// edited digest accepted, so the prompt shows the contract the digest binds.
+function acceptancePrompt(contract: ParsedWorkOrder, decision: WorkOrderDecision | undefined): string {
+    return [
+        `${decision ? 'Renew' : 'Accept'} ${shown(contract.frontmatter.id)}: ${shown(contract.frontmatter.title)}`,
+        'Authority:', ...contract.authority.map(path => `  - ${shown(path)}`),
+        'Sources:', ...contract.sources.map(source => `  ${shown(source.id)} (${source.provenance}) ${shown(source.reference)}: ${shown(source.reason)}`),
+        'Acceptance criteria:', ...contract.criteria.flatMap(criterion => [`  ${shown(criterion.id)} (source ${shown(criterion.source)})`,
+            `    Given: ${shown(criterion.given)}`, `    When: ${shown(criterion.when)}`, `    Then: ${shown(criterion.then)}`]),
+        'Verification:', ...contract.verification.map(row => `  ${shown(row.criterion)}: ${shown(JSON.stringify(row.argv))}`),
+        ...decision ? ['Decision this renewal confirms:', ...(['date', 'decision', 'disposition', 'reason', 'impact'] as const).map(field => `  ${field}: ${shown(decision[field])}`)] : [],
+        `To accept exactly this contract, type accept ${contract.digest}`,
+    ].join('\n')
 }
 
 export async function runWorkApplication(request: WorkApplicationRequest, composition: WorkApplicationComposition): Promise<WorkApplicationOutcome> {
@@ -157,18 +164,17 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
             const compiled = intakeWorkOrder({ route, contract: prepared.intake.contract, sourceAudit: prepared.intake.sourceAudit, installedSkills: prepared.intake.installedSkills })
             if (compiled.kind === 'refusal') return refusal(operation, compiled.message)
             const draft = compiled
-            const admission = { interactive: true, json: false, ci: false, stdinIsTTY: true, stdoutIsTTY: true } as const
-            const started = operation === 'work-renew' ? prepared.previous && prepared.decision ? beginWorkOrderRenewal(prepared.previous, draft, admission, Date.now(), prepared.decision) : undefined : beginWorkOrderAcceptance(draft, admission, Date.now())
+            const decision = operation === 'work-renew' ? prepared.decision : undefined
+            const started = operation === 'work-renew' ? prepared.previous && decision ? beginWorkOrderRenewal(prepared.previous, draft, Date.now(), decision) : undefined : beginWorkOrderAcceptance(draft, Date.now())
             if (!started) return refusal(operation, 'Renewal requires a current accepted contract and decision')
             if (started.kind === 'refusal') return refusal(operation, started.message)
-            const stableDraft = draft
             const decide = async (answer: string): Promise<WorkApplicationOutcome> => {
-                const accepted = acceptWorkOrder(started.continuation, stableDraft, { admission, now: Date.now(), actor: composition.operator, answer })
+                const accepted = acceptWorkOrder(started.continuation, draft, { now: Date.now(), actor: composition.operator, answer })
                 if (accepted.kind === 'refusal') return refusal(operation, accepted.message)
                 try { await composition.persistAcceptance(prepared, accepted); return complete(operation, { id: captured.workOrderId, digest: accepted.binding.digest }) }
                 catch (error) { return refusal(operation, error instanceof Error ? error.message : String(error)) }
             }
-            return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest: started.digest, prompt: started.prompt, decide }) })
+            return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest: started.digest, prompt: acceptancePrompt(draft.contract, decision), decide }) })
         }
         if (operation === 'work-execute') {
             const prepared = await composition.execution(captured.workOrderId, captured.approach); const result = await executeWorkOrderStep(prepared.input, prepared.dependencies)
