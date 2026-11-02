@@ -50,6 +50,7 @@ Does not read `cockpit.toml`.
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -290,6 +291,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -541,6 +543,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -594,6 +597,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -647,6 +651,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -704,6 +709,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -758,6 +764,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -901,6 +908,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -954,6 +962,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
@@ -1011,6 +1020,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |

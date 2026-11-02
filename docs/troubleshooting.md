@@ -488,6 +488,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `SELFTEST_EXECUTION_INVALID` | see the message |
 | `SELFTEST_SOURCE_INVALID` | see the message |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SETUP_CONFIG_REQUIRED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_INSTRUCTION_POINTER_OFFERED` | see the message |
