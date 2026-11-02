@@ -636,7 +636,6 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `WO_METRICS_HISTORY` | see the message |
 | `WO_METRICS_INVENTORY` | see the message |
 | `WO_METRICS_PROCESS` | see the message |
-| `WO_OPERATOR_REQUIRED` | see the message |
 | `WO_PLAN_INVALID` | see the message |
 | `WO_POLICY_INVALID` | see the message |
 | `WO_PRESSURE_INVALID` | see the message |
