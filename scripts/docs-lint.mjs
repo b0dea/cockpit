@@ -956,8 +956,20 @@ function validateFixedPoint(root, expectedFixedPoint, candidate) {
     return { errors, fixedPoint, candidate: resolvedCandidate }
 }
 
+// A resolved commit's blobs never change, and one validation reads the same paths many times
+// (the evidence detectors read each anchor target once per row). Every read was a git process,
+// which made validation spawn-bound; the memo is keyed by repository, commit and path. A read
+// that throws is not memoised, so it fails again on the next call.
+const committedReads = new Map()
+
+function committedRead(root, candidate, path, read) {
+    const key = `${root}\0${candidate}\0${path}`
+    if (!committedReads.has(key)) committedReads.set(key, read())
+    return committedReads.get(key)
+}
+
 function sourceAt(root, candidate, path) {
-    return git(root, ['show', `${candidate}:${path}`])
+    return committedRead(root, candidate, path, () => git(root, ['show', `${candidate}:${path}`]))
 }
 
 function runtimeUnavailableCodes(root, candidate) {
@@ -1428,12 +1440,14 @@ function requirementIds(root) {
 }
 
 function candidatePathExists(root, candidate, path) {
-    try {
-        execFileSync('git', ['cat-file', '-e', `${candidate}:${path}`], { cwd: root, stdio: 'ignore' })
-        return true
-    } catch {
-        return false
-    }
+    return committedRead(root, candidate, `exists:${path}`, () => {
+        try {
+            execFileSync('git', ['cat-file', '-e', `${candidate}:${path}`], { cwd: root, stdio: 'ignore' })
+            return true
+        } catch {
+            return false
+        }
+    })
 }
 
 
