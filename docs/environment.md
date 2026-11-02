@@ -285,19 +285,22 @@ identity, and a second `cockpit session` wrapper is refused. Once cleanup comple
 exits with the command's own status, or 128 plus the signal number (and names the signal) when a
 signal ended it. It exits 2 when cleanup fails and 130 when you cancel it.
 
-A session records its wrapper's process ID and start time with its hold. A wrapper that dies
-without its closing `sleep`, from SIGKILL, a crash or a closed terminal, leaves that hold behind;
-the next `up`, `sleep`, `down` or `reset` from the checkout sees that the process is gone and
-releases it. When it was the last hold, the command's own hold takes the running stack over, so
-`sleep` stops it and `down` removes it. A hold whose process is still running, or whose start time
-`ps` could not confirm, is kept: the `CLAIM_CO_TENANT` refusal names each such holder and its
-process ID, so you can end that command, for example with `kill <pid>`, and retry.
+A session records its wrapper's process ID and start identity with its hold: on Linux the start in
+clock ticks since boot from `/proc`, which a wall-clock step (NTP, a resumed VM) does not move, and
+elsewhere the start time `ps` reports. A wrapper that dies without its closing `sleep`, from
+SIGKILL, a crash or a closed terminal, leaves that hold behind; the next `up`, `sleep`, `down` or
+`reset` from the checkout sees that the process is gone, or that its process ID now belongs to a
+process with another start, and releases it. When it was the last hold, the command's own hold
+takes the running stack over, so `sleep` stops it and `down` removes it. A hold whose process is
+still running is kept, and so is one whose start could not be read while its process ID is in use:
+the `CLAIM_CO_TENANT` refusal names each such holder and its process ID, so you can end that
+command, for example with `kill <pid>`, and retry.
 
-The wrapper passes its process ID and start time to its command in `COCKPIT_SESSION_PROCESS`, so a
-hold that a `sleep` and then an `up` inside the session drop and re-add is still tied to the
+The wrapper passes its process ID and start identity to its command in `COCKPIT_SESSION_PROCESS`, so
+a hold that a `sleep` and then an `up` inside the session drop and re-add is still tied to the
 wrapper, and is released the same way once the wrapper is gone. `up` reads that process's start
-time again before recording it, and refuses with `CLI_USAGE_INVALID` when the wrapper has ended or
-the value is malformed.
+again before recording it, and refuses with `CLI_USAGE_INVALID` when the wrapper has ended or the
+value is malformed.
 
 The command `session` runs gets the stack's addresses in its environment, so an agent started under
 it can reach the stack without rerunning `up --json`:

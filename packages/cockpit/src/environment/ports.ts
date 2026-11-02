@@ -1043,7 +1043,7 @@ export async function leasePortFamily(supplied: {
         const listenerTimeoutMs = supplied.listenerTimeoutMs
         const holderProcess = supplied.holderProcess === undefined ? undefined : Object.freeze({
             ...(supplied.holderProcess.pid === undefined ? {} : { pid: supplied.holderProcess.pid }),
-            ...(supplied.holderProcess.processStartedAt === undefined ? {} : { processStartedAt: supplied.holderProcess.processStartedAt }),
+            ...(supplied.holderProcess.processStart === undefined ? {} : { processStart: supplied.holderProcess.processStart }),
         })
         if (typeof config === 'string') {
             return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, config, String(stackId ?? ''))

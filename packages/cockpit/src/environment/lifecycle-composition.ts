@@ -41,10 +41,9 @@ import {
     type SleepCommandAdapters,
     type UpCommandAdapters,
 } from './application.js'
-import { observeProcessStart, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
+import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
     ENVIRONMENT_CODES,
-    isCanonicalTimestamp,
     snapshotExecutionPlan,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
@@ -312,7 +311,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
                 || activeProfiles.some((profile) => typeof profile !== 'string' || !/^[a-z0-9][a-z0-9_.-]*$/.test(profile)))
             || holderProcess !== undefined && (!holderProcess || typeof holderProcess !== 'object'
                 || !Number.isSafeInteger(holderProcess.pid) || holderProcess.pid! < 1
-                || holderProcess.processStartedAt !== undefined && !isCanonicalTimestamp(holderProcess.processStartedAt))
+                || holderProcess.processStart !== undefined && !isProcessStart(holderProcess.processStart))
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
         const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
@@ -324,7 +323,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
             ...(activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...activeProfiles].sort()) }),
             ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
             ...(holderProcess === undefined ? {} : { holderProcess: Object.freeze({ pid: holderProcess.pid,
-                ...(holderProcess.processStartedAt === undefined ? {} : { processStartedAt: holderProcess.processStartedAt }) }) }) })
+                ...(holderProcess.processStart === undefined ? {} : { processStart: holderProcess.processStart }) }) }) })
     } catch {
         return undefined
     }
@@ -1211,7 +1210,7 @@ export function createLifecycleCommandAdapters(
         const reaped = await releaseDeadSessionHolders({
             namespace: context.namespace, stackId: context.stackId,
             successor: { holderId: context.holderId, checkoutId: context.checkoutId, ...holderProcess },
-            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, execute),
+            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
         })
         if (reaped.kind === 'refusal') return refuse?.(reaped.diagnostics)
         const now = new Date().toISOString()

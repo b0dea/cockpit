@@ -50,7 +50,7 @@ import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './env
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness } from './environment/readiness-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
-import { observeProcessStart, type HolderProcess } from './environment/claims.js'
+import { isProcessStart, observeProcessStart, processHost, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
@@ -520,9 +520,9 @@ function inheritedSessionId(env: Readonly<Record<string, string | undefined>>): 
 
 const SESSION_PROCESS = /^([1-9][0-9]{0,9})@(\S+)$/
 
-// A `cockpit session` wrapper exports its own pid and start time so that an `up` run inside it,
+// A `cockpit session` wrapper exports its own pid and start identity so that an `up` run inside it,
 // after a `sleep` there dropped the session's hold, ties the hold it re-adds to the wrapper and
-// not to itself. The variable only names a process: the child reads that process's start time
+// not to itself. The variable only names a process: the child reads that process's start identity
 // again and records the hold only when it matches, so a stale or invented value cannot tie a hold
 // to a process the wrapper is not. A hold carries only its own holder's process, and dead-holder
 // release removes only the holder whose recorded process is gone, so the most a forged value can
@@ -537,16 +537,16 @@ async function sessionChildHolderProcess(
         'COCKPIT_SESSION_PROCESS is set without COCKPIT_SESSION_ID; only a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
     const match = SESSION_PROCESS.exec(value)
     const pid = Number(match?.[1])
-    if (!match || pid > 2_147_483_647 || !isCanonicalTimestamp(match[2])) return { refusal: usageOutcome('CLI_USAGE_INVALID',
-        'COCKPIT_SESSION_PROCESS must be <pid>@<start time> as a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
-    const observed = await observeProcessStart(pid, executeProbe)
-    // As for the wrapper's own hold, a start time ps cannot confirm leaves a pid-only hold, which
-    // is kept rather than ever read as dead.
+    if (!match || pid > 2_147_483_647 || !isProcessStart(match[2])) return { refusal: usageOutcome('CLI_USAGE_INVALID',
+        'COCKPIT_SESSION_PROCESS must be <pid>@<start identity> as a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
+    const observed = await observeProcessStart(pid, processHost(executeProbe))
+    // As for the wrapper's own hold, a start that cannot be confirmed leaves a pid-only hold, which
+    // is released only once that pid is gone.
     if (observed.state === 'unknown') return { holderProcess: { pid } }
-    if (observed.state === 'absent' || observed.startedAt !== match[2]) return { refusal: usageOutcome('CLI_USAGE_INVALID',
+    if (observed.state === 'absent' || observed.start !== match[2]) return { refusal: usageOutcome('CLI_USAGE_INVALID',
         `the cockpit session that set COCKPIT_SESSION_ID has ended (its process ${pid} is gone); start a new cockpit session or run this outside it`,
         'COCKPIT_SESSION_PROCESS') }
-    return { holderProcess: { pid, processStartedAt: match[2] } }
+    return { holderProcess: { pid, processStart: match[2] } }
 }
 
 function concreteEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
@@ -658,18 +658,18 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
             const configPath = resolve(input.configPath)
             const sessionId = input.sessionId
-            // Without its start time the hold is never released for a dead process, because the
-            // pid alone may since name another one; the session still runs, with that weaker hold.
-            const started = await observeProcessStart(process.pid, executeProbe)
+            // Without its start identity the hold is released only once the pid is gone: while the
+            // pid runs it may since name another process, so the session runs with that weaker hold.
+            const started = await observeProcessStart(process.pid, processHost(executeProbe))
             const sessionEnvironment = Object.freeze({ ...env, COCKPIT_SESSION_ID: sessionId,
-                COCKPIT_SESSION_PROCESS: started.state === 'present' ? `${process.pid}@${started.startedAt}` : undefined })
+                COCKPIT_SESSION_PROCESS: started.state === 'present' ? `${process.pid}@${started.start}` : undefined })
             const childEnv = concreteEnvironment(sessionEnvironment)
             const adapters = createLifecycleCommandAdapters({
                 configPath,
                 env: sessionEnvironment,
                 sessionId,
                 timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
-                holderProcess: { pid: process.pid, ...(started.state === 'present' ? { processStartedAt: started.startedAt } : {}) },
+                holderProcess: { pid: process.pid, ...(started.state === 'present' ? { processStart: started.start } : {}) },
             }, executeProbe)
             return runSessionApplication({ ...input, configPath, cwd: process.cwd(), env: childEnv }, {
                 up: (request) => runUpApplication(request, adapters),

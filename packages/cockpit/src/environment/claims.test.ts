@@ -34,6 +34,7 @@ import {
     decodeCoordinationRecord,
     observeHolderCheckouts,
     observeProcessStart,
+    processHost,
     prepareDrainOutcomePublication,
     releaseDeadSessionHolders,
     removeExactCoordinationHolder,
@@ -52,6 +53,7 @@ import {
     readActiveStackInventory,
     readRootPortInventory,
     type ClaimHolder,
+    type ProcessHost,
     type DrainReservationRequest,
     type DrainReservation,
     type DrainAttemptResult,
@@ -187,7 +189,7 @@ function claimRecord(holders: readonly {
     checkoutId: CheckoutId
     claimedAt: string
     pid?: number
-    processStartedAt?: string
+    processStart?: string
 }[]): StateRecord {
     return {
         format: 'cockpit-state/v1',
@@ -1478,9 +1480,9 @@ describe('dead session holders', () => {
         return child.pid!
     }
     const ownStart = async () => {
-        const observed = await observeProcessStart(process.pid, executeProbe)
+        const observed = await observeProcessStart(process.pid, processHost(executeProbe))
         if (observed.state !== 'present') throw new Error(JSON.stringify(observed))
-        return observed.startedAt
+        return observed.start
     }
     const holders = async (state: StateNamespace) => {
         const stored = await readState(state.paths.coordination(stackId))
@@ -1491,28 +1493,69 @@ describe('dead session holders', () => {
     it('releases a session whose process is gone and hands a stack it held alone to the requester', async () => {
         const state = await namespace()
         const pid = await exitedProcess()
-        await seedCoordination(state, [{ holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid, processStartedAt: '2026-09-07T11:58:59.000Z' }])
+        await seedCoordination(state, [{ holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid, processStart: 'lstart:2026-09-07T11:58:59.000Z' }])
 
         const result = await releaseDeadSessionHolders({ namespace: state, stackId, successor: { holderId: holderA, checkoutId: checkoutA },
-            now: '2026-09-07T12:00:00.000Z', observe: (candidate) => observeProcessStart(candidate, executeProbe) })
+            now: '2026-09-07T12:00:00.000Z', observe: (candidate) => observeProcessStart(candidate, processHost(executeProbe)) })
 
         expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderB, pid }] })
         expect(await holders(state)).toMatchObject({ holders: [{ holderId: holderA, checkoutId: checkoutA }], lastReleasedHolder: holderB, lease: { released: false } })
     })
 
-    it('keeps a running session and a pid with no recorded start, and releases a stranger reusing a pid', async () => {
+    // A hold recorded without a start identity (ps or /proc unreadable) was never released, even
+    // after its process was killed; a gone pid proves the session gone either way.
+    it('keeps a running session, releases a stranger reusing its pid, and releases any hold whose pid is gone', async () => {
         const state = await namespace()
+        const holderD = `holder:${'3'.repeat(64)}:session` as HolderId
+        const own = await ownStart()
+        // Another process's start, read the same way this machine reads one.
+        const stranger = own.startsWith('proc:') ? own.replace(/:[0-9]+$/, ':1') : 'lstart:2000-01-01T00:00:00.000Z'
         await seedCoordination(state, [
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid, processStartedAt: await ownStart() },
-            { holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid, processStartedAt: '2000-01-01T00:00:00.000Z' },
+            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid, processStart: own },
+            { holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid, processStart: stranger },
             { holderId: holderC, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: await exitedProcess() },
+            { holderId: holderD, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid },
         ])
 
         const result = await releaseDeadSessionHolders({ namespace: state, stackId, successor: { holderId: `holder:${'2'.repeat(64)}:session` as HolderId, checkoutId: checkoutA },
-            now: '2026-09-07T12:00:00.000Z', observe: (candidate) => observeProcessStart(candidate, executeProbe) })
+            now: '2026-09-07T12:00:00.000Z', observe: (candidate) => observeProcessStart(candidate, processHost(executeProbe)) })
 
-        expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderB }] })
-        expect((await holders(state)).holders.map(({ holderId }) => holderId)).toEqual([holderC, holderA])
+        expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderC }, { holderId: holderB }] })
+        expect((await holders(state)).holders.map(({ holderId }) => holderId)).toEqual([holderD, holderA])
+    })
+
+    // procps derives a wall-clock start from the boot time, which moves when the wall clock is
+    // stepped (NTP, a resumed VM): a running session read that way looked like a stranger, lost its
+    // hold, and another session's down stopped its stack.
+    it('identifies a Linux process by its start ticks and boot, so a wall-clock step keeps a running session', async () => {
+        const state = await namespace()
+        const bootId = '0f0e0d0c-0b0a-4908-8706-050403020100'
+        const processes = new Map<number, number>([[4242, 98_765]])
+        let wallClock = 'Mon Sep  7 11:58:59 2026'
+        const host: ProcessHost = {
+            platform: 'linux',
+            presence: async (pid) => processes.has(pid) ? 'live' : 'absent',
+            psStart: async () => ({ kind: 'complete', text: wallClock }),
+            readFile: async (path) => {
+                if (path === '/proc/sys/kernel/random/boot_id') return `${bootId}\n`
+                const ticks = processes.get(Number(/^\/proc\/(\d+)\/stat$/.exec(path)?.[1]))
+                if (ticks === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+                // A command name may hold spaces and parentheses; the fields are read after the last `)`.
+                return `4242 (agent (x) y) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 ${ticks} 1000 10 18446744073709551615\n`
+            },
+        }
+        const recorded = await observeProcessStart(4242, host)
+        expect(recorded).toEqual({ state: 'present', start: `proc:${bootId}:98765` })
+        await seedCoordination(state, [{ holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 4242,
+            processStart: (recorded as { start: string }).start }])
+        const release = () => releaseDeadSessionHolders({ namespace: state, stackId, successor: { holderId: holderA, checkoutId: checkoutA },
+            now: '2026-09-07T12:00:00.000Z', observe: (pid) => observeProcessStart(pid, host) })
+
+        wallClock = 'Mon Sep  7 11:59:41 2026'
+        expect(await release()).toEqual({ kind: 'complete', released: [] })
+
+        processes.set(4242, 123_456)
+        expect(await release()).toMatchObject({ kind: 'complete', released: [{ holderId: holderB, pid: 4242 }] })
     })
 })
 

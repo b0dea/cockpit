@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { lstatSync } from 'node:fs'
-import { lstat, opendir } from 'node:fs/promises'
+import { lstat, opendir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
 import { platform } from 'node:os'
@@ -58,7 +58,7 @@ export const mechanism = {
     exports: [
         'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
-        'observeProcessStart', 'releaseDeadSessionHolders', 'describeHolder', 'liveHolderMessage',
+        'observeProcessStart', 'processHost', 'isProcessStart', 'releaseDeadSessionHolders', 'describeHolder', 'liveHolderMessage',
         'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
@@ -116,8 +116,8 @@ const ClaimHolderSchema = z.object({
     checkoutId: z.string().regex(checkoutIdentity),
     claimedAt: z.string().refine(isCanonicalTimestamp),
     pid: z.number().int().positive().max(2_147_483_647).optional(),
-    processStartedAt: z.string().refine(isCanonicalTimestamp).optional(),
-}).strict().refine((holder) => holder.processStartedAt === undefined || holder.pid !== undefined)
+    processStart: z.string().refine(isProcessStart).optional(),
+}).strict().refine((holder) => holder.processStart === undefined || holder.pid !== undefined)
 
 const PortLeaseRecordSchema = z.object({
     offset: z.number().int().nonnegative().safe(),
@@ -334,9 +334,9 @@ export interface ClaimHolder {
     readonly checkoutId: CheckoutId
     readonly claimedAt: string
     readonly pid?: number
-    // When the holding process started, read with `ps`. Present only for a `cockpit session`
-    // wrapper, whose hold ends with its process; the plain CLI's hold outlives every command.
-    readonly processStartedAt?: string
+    // The holding process's start identity (see `observeProcessStart`). Present only for a `cockpit
+    // session` wrapper, whose hold ends with its process; the plain CLI's hold outlives every command.
+    readonly processStart?: string
 }
 
 export interface PortLeaseRecord {
@@ -695,46 +695,109 @@ const issuedHolderProbePlans = new WeakMap<object, {
 
 export interface HolderProcess {
     readonly pid?: number
-    readonly processStartedAt?: string
+    readonly processStart?: string
 }
 
 export type ProcessStartObservation =
     | { readonly state: 'absent' }
-    | { readonly state: 'present'; readonly startedAt: string }
+    | { readonly state: 'present'; readonly start: string }
     | { readonly state: 'unknown'; readonly reason: string }
+
+/** What observing a process reads from this machine; production binds it with `processHost`. */
+export interface ProcessHost {
+    readonly platform: NodeJS.Platform
+    /** Whether the pid exists, by signal 0; anything short of proof of absence is `live` or `unavailable`. */
+    readonly presence: (pid: number) => Promise<'live' | 'absent' | 'unavailable'>
+    /** `ps -o lstart=` for the pid under a fixed locale and zone. */
+    readonly psStart: (pid: number) => Promise<{ readonly kind: 'complete'; readonly text: string } | { readonly kind: 'failed'; readonly reason: string }>
+    /** A file's UTF-8 text; rejects with the read's errno error. */
+    readonly readFile: (path: string) => Promise<string>
+}
 
 const PS_START = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const BOOT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const LSTART_START = /^lstart:(.+)$/
+const PROC_START = /^proc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9]{1,20}$/
+
+/** A start identity as `observeProcessStart` reports it: `lstart:<timestamp>` or `proc:<boot id>:<ticks>`. */
+export function isProcessStart(value: unknown): value is string {
+    return typeof value === 'string' && (PROC_START.test(value) || isCanonicalTimestamp(LSTART_START.exec(value)?.[1]))
+}
+
+const startKind = (start: string): string => start.slice(0, start.indexOf(':'))
 
 // A pid alone does not name a holder: the pid of a killed session is reused, and a reused pid read
-// as the session would wedge its stack for as long as the stranger runs. So a session records when
-// its process started, and a holder is dead only when its pid is gone or now belongs to a process
-// that started at another time. `ps` prints that start to the second under a fixed locale and zone
-// on both macOS and Linux; anything it cannot confirm reads as unknown, and unknown is never dead.
-export async function observeProcessStart(
-    pid: number,
-    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-): Promise<ProcessStartObservation> {
+// as the session would wedge its stack for as long as the stranger runs. So a session records its
+// process's start identity, and a holder is dead when its pid is gone or now belongs to a process
+// with another identity. On Linux the identity is the start in clock ticks since boot (field 22 of
+// /proc/<pid>/stat) with the boot's ID: ps derives a wall-clock start from the boot time, which moves
+// whenever the wall clock is stepped (NTP, a resumed VM), so a running session would read as a
+// stranger and lose its hold. macOS records the wall-clock start once, and ps prints it to the
+// second under a fixed locale and zone. Each identity names how it was read; anything that cannot
+// be confirmed reads as unknown, and unknown is never dead.
+export async function observeProcessStart(pid: number, host: ProcessHost): Promise<ProcessStartObservation> {
     if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2_147_483_647) return { state: 'unknown', reason: `process id ${pid} is invalid` }
-    const node = await resolveExecutablePath(process.execPath)
-    if (node.state !== 'available') return { state: 'unknown', reason: node.reason }
-    const presence = await runBoundedProbe(node.value, `holder:process-presence:${pid}`, ['-e', HOLDER_PROCESS_PROBE, String(pid)], {}, execute)
+    const presence = await host.presence(pid)
     if (presence === 'absent') return { state: 'absent' }
     if (presence !== 'live') return { state: 'unknown', reason: `the presence of process ${pid} could not be confirmed` }
-    let ps: ResolvedExecutable | undefined
-    for (const candidate of ['/bin/ps', '/usr/bin/ps']) {
-        const resolved = await resolveExecutablePath(candidate)
-        if (resolved.state === 'available') { ps = resolved.value; break }
+    return host.platform === 'linux' ? observeProcStart(pid, host) : observeLstart(pid, host)
+}
+
+async function observeProcStart(pid: number, host: ProcessHost): Promise<ProcessStartObservation> {
+    let stat: string
+    try { stat = await host.readFile(`/proc/${pid}/stat`) } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        // Signal 0 just found it, so a missing entry means it has exited since.
+        if (code === 'ENOENT') return { state: 'absent' }
+        return { state: 'unknown', reason: `/proc/${pid}/stat could not be read (${code ?? String(error)})` }
     }
-    if (!ps) return { state: 'unknown', reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
-    const started = await runBoundedProbe(ps, `holder:process-start:${pid}`, ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC0' }, execute)
-    if (started === undefined) return { state: 'unknown', reason: `ps did not report when process ${pid} started` }
-    const match = PS_START.exec(started.trim())
+    let bootId: string
+    try { bootId = (await host.readFile('/proc/sys/kernel/random/boot_id')).trim() } catch (error) {
+        return { state: 'unknown', reason: `the boot ID could not be read (${(error as NodeJS.ErrnoException).code ?? String(error)})` }
+    }
+    // The command name in parentheses may itself hold spaces and parentheses; the fields after the
+    // last `)` start at field 3, so field 22 is the twentieth.
+    const ticks = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
+    if (stat.lastIndexOf(')') === -1 || ticks === undefined || !/^[0-9]{1,20}$/.test(ticks) || !BOOT_ID.test(bootId)) {
+        return { state: 'unknown', reason: `/proc reported an unrecognised start for process ${pid}` }
+    }
+    return { state: 'present', start: `proc:${bootId}:${ticks}` }
+}
+
+async function observeLstart(pid: number, host: ProcessHost): Promise<ProcessStartObservation> {
+    const started = await host.psStart(pid)
+    if (started.kind === 'failed') return { state: 'unknown', reason: started.reason }
+    const match = PS_START.exec(started.text.trim())
     if (!match) return { state: 'unknown', reason: `ps reported an unrecognised start time for process ${pid}` }
     const [, month, day, hours, minutes, seconds, year] = match
     const startedAt = new Date(Date.UTC(Number(year), MONTHS.indexOf(month!), Number(day), Number(hours), Number(minutes), Number(seconds)))
     return Number.isNaN(startedAt.getTime()) ? { state: 'unknown', reason: `ps reported an invalid start time for process ${pid}` }
-        : { state: 'present', startedAt: startedAt.toISOString() }
+        : { state: 'present', start: `lstart:${startedAt.toISOString()}` }
+}
+
+/** The production `ProcessHost`: signal 0 and ps cross the executor, and /proc is read directly. */
+export function processHost(execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): ProcessHost {
+    return Object.freeze({
+        platform: process.platform,
+        presence: async (pid: number) => {
+            const node = await resolveExecutablePath(process.execPath)
+            if (node.state !== 'available') return 'unavailable' as const
+            const answer = await runBoundedProbe(node.value, `process:presence:${pid}`, ['-e', PROCESS_PRESENCE_PROBE, String(pid)], {}, execute)
+            return answer === 'live' || answer === 'absent' ? answer : 'unavailable' as const
+        },
+        psStart: async (pid: number) => {
+            let ps: ResolvedExecutable | undefined
+            for (const candidate of ['/bin/ps', '/usr/bin/ps']) {
+                const resolved = await resolveExecutablePath(candidate)
+                if (resolved.state === 'available') { ps = resolved.value; break }
+            }
+            if (!ps) return { kind: 'failed' as const, reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
+            const text = await runBoundedProbe(ps, `process:start:${pid}`, ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC0' }, execute)
+            return text === undefined ? { kind: 'failed' as const, reason: `ps did not report when process ${pid} started` } : { kind: 'complete' as const, text }
+        },
+        readFile: (path: string) => readFile(path, 'utf8'),
+    })
 }
 
 // One short read-only step through the executor; its stdout when it exits 0, otherwise undefined.
@@ -797,9 +860,12 @@ export async function releaseDeadSessionHolders(input: {
     if (isDrainActive(value) || isRestoreActive(value)) return { kind: 'complete', released: [] }
     const dead: ClaimHolder[] = []
     for (const holder of value.holders) {
-        if (holder.holderId === input.successor.holderId || holder.pid === undefined || holder.processStartedAt === undefined) continue
+        if (holder.holderId === input.successor.holderId || holder.pid === undefined) continue
         const observed = await input.observe(holder.pid)
-        if (observed.state === 'absent' || observed.state === 'present' && observed.startedAt !== holder.processStartedAt) dead.push(holder)
+        // A gone pid proves the session gone whether or not its start was recorded: reuse can only
+        // make a dead holder look alive. A start identity decides only against one read the same way.
+        if (observed.state === 'absent' || observed.state === 'present' && holder.processStart !== undefined
+            && startKind(observed.start) === startKind(holder.processStart) && observed.start !== holder.processStart) dead.push(holder)
     }
     if (dead.length === 0) return { kind: 'complete', released: [] }
     let committed: readonly ClaimHolder[] = []
@@ -813,7 +879,7 @@ export async function releaseDeadSessionHolders(input: {
         // since is someone else's to judge.
         const released = dead.filter((holder) => latest.holders.some((candidate) => candidate.holderId === holder.holderId
             && candidate.claimedAt === holder.claimedAt && candidate.pid === holder.pid
-            && candidate.processStartedAt === holder.processStartedAt))
+            && candidate.processStart === holder.processStart))
         if (released.length === 0) return abortStateTransaction({ kind: 'complete', released: [] })
         committed = released
         const remaining = latest.holders.filter((holder) => !released.some(({ holderId }) => holderId === holder.holderId))
@@ -828,7 +894,8 @@ export async function releaseDeadSessionHolders(input: {
     return { kind: 'complete', released: Object.freeze(committed) }
 }
 
-const HOLDER_PROCESS_PROBE = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
+// Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
+const PROCESS_PRESENCE_PROBE = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
 
 export async function createHolderProcessProbePlan(input: {
     readonly namespace: StateNamespace
@@ -856,7 +923,7 @@ export async function createHolderProcessProbePlan(input: {
     }
     const steps = value.holders.map(({ holderId, pid }): ExecutionStep => Object.freeze({
         id: `holder:probe:${holderId.slice(7, 19)}`,
-        argv: Object.freeze([executable.canonicalPath, '-e', HOLDER_PROCESS_PROBE, String(pid)] as const),
+        argv: Object.freeze([executable.canonicalPath, '-e', PROCESS_PRESENCE_PROBE, String(pid)] as const),
         argv0: executable.invocationPath, cwd: dirname(executable.canonicalPath), env: Object.freeze({}), timeoutMs: input.timeoutMs,
         stdoutLimitBytes: 1_024, stderrLimitBytes: 1_024, paths: Object.freeze([]), ports: Object.freeze([]),
         labels: Object.freeze({ holderId }), expected: Object.freeze([]),
@@ -1318,7 +1385,7 @@ export function decodeCoordinationRecord(record: StateRecord | null, stackId: St
                 checkoutId: holder.checkoutId as CheckoutId,
                 claimedAt: holder.claimedAt,
                 ...(holder.pid === undefined ? {} : { pid: holder.pid }),
-                ...(holder.processStartedAt === undefined ? {} : { processStartedAt: holder.processStartedAt }),
+                ...(holder.processStart === undefined ? {} : { processStart: holder.processStart }),
             }))
             .sort((left, right) => left.holderId < right.holderId ? -1 : left.holderId > right.holderId ? 1 : 0),
         lease: parsed.data.lease === null ? null : {

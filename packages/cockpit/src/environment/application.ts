@@ -182,6 +182,7 @@ import {
     reserveDrainAttempt,
     decodeCoordinationRecord,
     observeProcessStart,
+    processHost,
     releaseDeadSessionHolders,
     type DrainOutcomeAuthority,
     type DrainReservationRequest,
@@ -3520,7 +3521,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
         const reaped = await releaseDeadSessionHolders({
             namespace: context.namespace, stackId: context.stackId,
             successor: { holderId: context.holderId, checkoutId: context.checkoutId },
-            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, adapters.execute),
+            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(adapters.execute)),
         })
         if (reaped.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: reaped.diagnostics }
     }

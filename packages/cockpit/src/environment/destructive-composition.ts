@@ -15,7 +15,7 @@ import {
     type ResetCommandAdapters,
 } from './application.js'
 import { ENVIRONMENT_CODES, type Diagnostic, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
-import { decodeCoordinationRecord, liveHolderMessage, observeProcessStart, readActiveStackInventory, releaseDeadSessionHolders } from './claims.js'
+import { decodeCoordinationRecord, liveHolderMessage, observeProcessStart, processHost, readActiveStackInventory, releaseDeadSessionHolders } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolvePathRemovalExecutable } from './executable.js'
 import { composeProjectName } from './identity.js'
@@ -437,7 +437,7 @@ export function createDestructiveCommandAdapters(
             const reaped = await releaseDeadSessionHolders({
                 namespace: context.namespace, stackId: context.stackId,
                 successor: { holderId: context.holderId, checkoutId: context.checkoutId },
-                now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, execute),
+                now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
             })
             if (reaped.kind === 'refusal') return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics })
             let inventory = await readActiveStackInventory(context.namespace)
