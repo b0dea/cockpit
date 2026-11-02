@@ -522,6 +522,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `SIBLING_DIRECTORY_MISSING` | see the message |
 | `SIBLING_DIR_DUPLICATE` | see the message |
 | `SIBLING_GIT_FAILED` | see the message |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SIBLING_MISSING` | see the message |
 | `SIBLING_NOT_FOUND` | see the message |
 | `SIBLING_PATH_NOT_EMPTY` | see the message |

@@ -88,6 +88,7 @@ Does not read `cockpit.toml`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -544,6 +545,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -701,6 +703,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -870,6 +873,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `SELFTEST_EXECUTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications; [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1036,6 +1040,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1207,6 +1212,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1411,6 +1417,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1605,6 +1612,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1812,6 +1820,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2008,6 +2017,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2207,6 +2217,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2485,6 +2496,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2701,6 +2713,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2920,6 +2933,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3113,6 +3127,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3308,6 +3323,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3547,6 +3563,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3787,6 +3804,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4028,6 +4046,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4267,6 +4286,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4507,6 +4527,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4747,6 +4768,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4987,6 +5009,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5226,6 +5249,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5465,6 +5489,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5704,6 +5729,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5945,6 +5971,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6183,6 +6210,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6422,6 +6450,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6661,6 +6690,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6900,6 +6930,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -7139,6 +7170,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -7378,6 +7410,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -7617,6 +7650,7 @@ Reads `cockpit.toml` from `--config`.
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |

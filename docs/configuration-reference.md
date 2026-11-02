@@ -10,7 +10,6 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. It 
 {
   "cockpit": {
     "siblings_root": "..",
-    "guide": "AGENTS.md",
     "guide_cap": 200
   },
   "sibling": {
@@ -41,7 +40,6 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. It 
   "workorders": {
     "attempt_cap": 2,
     "wip_cap": 3,
-    "programme_wip_cap": 1,
     "verification_timeout_seconds": 1800,
     "evaluator_timeout_seconds": 900
   },
@@ -80,7 +78,7 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `7c1752777eb11c2e2634afc597a8b100d994f78f14753e7ffe8e944d91ddf5d9`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `99b8fc8cb936fc76b80fc51f094d93e91691753992f1140abecf855a2c5f5fe0`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
 
@@ -123,10 +121,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
         },
         "siblings_root": {
           "default": "..",
-          "type": "string"
-        },
-        "guide": {
-          "default": "AGENTS.md",
           "type": "string"
         },
         "guide_cap": {
@@ -280,12 +274,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                         "enum": [
                           "service",
                           "one-shot"
-                        ]
-                      },
-                      "one_shot_failure": {
-                        "type": "string",
-                        "enum": [
-                          "park"
                         ]
                       },
                       "resources": {
@@ -1653,35 +1641,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                           }
                         ]
                       }
-                    ],
-                    "oneOf": [
-                      {
-                        "properties": {
-                          "role": {
-                            "enum": [
-                              "one-shot"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "role",
-                          "one_shot_failure"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "role": {
-                            "enum": [
-                              "service"
-                            ]
-                          }
-                        },
-                        "not": {
-                          "required": [
-                            "one_shot_failure"
-                          ]
-                        }
-                      }
                     ]
                   },
                   "checkout_mount": {
@@ -2845,12 +2804,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
           "minimum": 1,
           "maximum": 3
         },
-        "programme_wip_cap": {
-          "default": 1,
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1
-        },
         "verification_timeout_seconds": {
           "default": 1800,
           "description": "Seconds one declared work-order verification command may run before it is stopped and reported as not run.",
@@ -2932,7 +2885,8 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                 },
                 "driver_version": {
                   "type": "string",
-                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  "maxLength": 128,
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$"
                 },
                 "architectures": {
                   "minItems": 1,
@@ -2962,7 +2916,8 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                 },
                 "driver_version": {
                   "type": "string",
-                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  "maxLength": 128,
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$"
                 }
               },
               "required": [
@@ -3153,7 +3108,8 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
             },
             "driver_version": {
               "type": "string",
-              "pattern": "^\\d+\\.\\d+\\.\\d+$"
+              "maxLength": 128,
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$"
             }
           },
           "required": [
@@ -3937,12 +3893,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                     "enum": [
                       "service",
                       "one-shot"
-                    ]
-                  },
-                  "one_shot_failure": {
-                    "type": "string",
-                    "enum": [
-                      "park"
                     ]
                   },
                   "profiles": {
@@ -5425,35 +5375,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       }
                     ]
                   }
-                ],
-                "oneOf": [
-                  {
-                    "properties": {
-                      "role": {
-                        "enum": [
-                          "one-shot"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "role",
-                      "one_shot_failure"
-                    ]
-                  },
-                  {
-                    "properties": {
-                      "role": {
-                        "enum": [
-                          "service"
-                        ]
-                      }
-                    },
-                    "not": {
-                      "required": [
-                        "one_shot_failure"
-                      ]
-                    }
-                  }
                 ]
               }
             },
@@ -6253,12 +6174,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                           ]
                         }
                       },
-                      "constraints_and_indexes": {
-                        "type": "boolean",
-                        "enum": [
-                          true
-                        ]
-                      },
                       "provenance": {
                         "type": "object",
                         "properties": {
@@ -6343,7 +6258,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       "mode",
                       "operations",
                       "probes",
-                      "constraints_and_indexes",
                       "provenance"
                     ],
                     "additionalProperties": false
@@ -6352,39 +6266,9 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                 "fixtures": {
                   "type": "object",
                   "properties": {
-                    "writer": {
-                      "type": "string",
-                      "enum": [
-                        "product-models"
-                      ]
-                    },
-                    "stable_key": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 4096,
-                      "pattern": "\\S"
-                    },
-                    "random_seed": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 256
-                    },
-                    "sweep_scope": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 4096,
-                      "pattern": "\\S"
-                    },
                     "persona_source": {
                       "type": "string",
                       "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
-                    },
-                    "identity_owner": {
-                      "type": "string",
-                      "enum": [
-                        "product",
-                        "identity-provider"
-                      ]
                     },
                     "persona_outputs": {
                       "maxItems": 64,
@@ -6422,12 +6306,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       "type": "string",
                       "maxLength": 128,
                       "pattern": "^[a-z0-9][a-z0-9-]*$"
-                    },
-                    "default_small": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
                     },
                     "pagination_warning": {
                       "type": "string",
@@ -6850,14 +6728,9 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                     }
                   },
                   "required": [
-                    "writer",
-                    "stable_key",
-                    "sweep_scope",
                     "persona_source",
-                    "identity_owner",
                     "persona_outputs",
                     "volume_tag",
-                    "default_small",
                     "pagination_warning",
                     "provenance",
                     "volume_operations",
@@ -7845,12 +7718,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       }
                     ]
                   },
-                  "normalize_empty": {
-                    "type": "boolean",
-                    "enum": [
-                      true
-                    ]
-                  },
                   "placeholder": {
                     "type": "string",
                     "maxLength": 256,
@@ -8255,11 +8122,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                   "callback": {
                     "type": "object",
                     "properties": {
-                      "feature_flag": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[A-Z][A-Z0-9_]*$"
-                      },
                       "enable": {
                         "type": "object",
                         "properties": {
@@ -8599,18 +8461,11 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                           "sha256": {
                             "type": "string",
                             "pattern": "^[a-f0-9]{64}$"
-                          },
-                          "immutable_raw_bytes": {
-                            "type": "boolean",
-                            "enum": [
-                              true
-                            ]
                           }
                         },
                         "required": [
                           "path",
-                          "sha256",
-                          "immutable_raw_bytes"
+                          "sha256"
                         ],
                         "additionalProperties": false
                       },
@@ -8938,42 +8793,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                           }
                         ]
                       },
-                      "order": {
-                        "type": "array",
-                        "items": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              "enable"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "timestamp"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "sign"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "dispatch"
-                            ]
-                          }
-                        ],
-                        "additionalItems": false,
-                        "minItems": 4,
-                        "maxItems": 4
-                      },
-                      "verifier_source": {
-                        "type": "string",
-                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
-                      },
                       "tamper_probe": {
                         "type": "object",
                         "properties": {
@@ -9138,15 +8957,12 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       }
                     },
                     "required": [
-                      "feature_flag",
                       "enable",
                       "timestamp_source",
                       "fresh_window_seconds",
                       "fixture",
                       "sign",
                       "dispatch",
-                      "order",
-                      "verifier_source",
                       "tamper_probe"
                     ],
                     "additionalProperties": false
@@ -9639,19 +9455,12 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                             ]
                           }
                         ]
-                      },
-                      "verification": {
-                        "type": "string",
-                        "enum": [
-                          "required"
-                        ]
                       }
                     },
                     "required": [
                       "generate_at_start",
                       "append_trust_probe",
-                      "hostname_probe",
-                      "verification"
+                      "hostname_probe"
                     ],
                     "additionalProperties": false
                   },
@@ -10011,7 +9820,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                   "loader_probe",
                   "route_probe",
                   "egress_probe",
-                  "normalize_empty",
                   "placeholder",
                   "callback_reachability"
                 ],
@@ -10069,13 +9877,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                   "type": "string",
                   "enum": [
                     "docs/cockpit/environment-decisions.md"
-                  ]
-                },
-                "ownership": {
-                  "default": "whole-file",
-                  "type": "string",
-                  "enum": [
-                    "whole-file"
                   ]
                 },
                 "entries": {
@@ -10852,6 +10653,10 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
       "rule": "matches_environment_addressing_authentication_and_client_cap"
     },
     {
+      "path": "browser.images",
+      "rule": "runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor"
+    },
+    {
       "path": "testing.gates[].stages[]",
       "rule": "references_declared_testing_stage"
     },
@@ -11025,6 +10830,10 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
     {
       "path": "browser",
       "rule": "matches_environment_addressing_authentication_and_client_cap"
+    },
+    {
+      "path": "browser.images",
+      "rule": "runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor"
     },
     {
       "path": "testing.gates[].stages[]",
