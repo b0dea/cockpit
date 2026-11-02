@@ -1,3 +1,6 @@
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { runCli, type CliIo } from './cli.js'
 
@@ -47,25 +50,25 @@ describe('health CLI boundary', () => {
         expect(baselineRecord).not.toHaveBeenCalled()
     })
 
-    it.each([
-        ['preflight', 2],
-        ['doctor', 0],
-    ] as const)('binds %s to the production observation composition', async (verb, expectedStatus) => {
-        const capture = captureIo()
-        const status = await runCli(
-            [verb, '--config', '/synthetic/missing-cockpit.toml', '--json'],
-            capture.io,
-            {},
-            { env: {} },
-        )
+    it.each(['preflight', 'doctor'] as const)('binds %s to the production observation composition and fails on an unreadable config', async (verb) => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-health-config-')))
+        try {
+            const unparseable = join(directory, 'package.json')
+            writeFileSync(unparseable, '{"name": "synthetic"}\n')
+            for (const [configPath, code] of [[join(directory, 'missing-cockpit.toml'), 'CONFIG_NOT_FOUND'], [unparseable, 'CONFIG_PARSE_INVALID']]) {
+                const capture = captureIo()
+                const status = await runCli([verb, '--config', configPath, '--json'], capture.io, {}, { env: {} })
 
-        expect(status).toBe(expectedStatus)
-        // The owner's config refusal is forwarded rather than replaced by a generic evidence code.
-        expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            diagnostics: [{ code: 'CONFIG_NOT_FOUND' }],
-            result: { verdict: 'unavailable' },
-        })
-        expect(capture.output().stderr).toBe('')
+                // A report on no configuration is a failure, so `doctor && ...` cannot proceed past it.
+                expect(status).toBe(2)
+                // The owner's config refusal is forwarded rather than replaced by a generic evidence code.
+                expect(JSON.parse(capture.output().stdout)).toMatchObject({
+                    diagnostics: [{ code }],
+                    result: { verdict: 'unavailable' },
+                })
+                expect(capture.output().stderr).toBe('')
+            }
+        } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
     it.each(['preflight', 'doctor'] as const)('dispatches %s as a read-only config request', async (verb) => {

@@ -14,6 +14,9 @@ export const mechanism = {
 } as const
 
 const FORMAT_VERSION = '1'
+// The release workflow stamps the exact commit; every source build, including a tarball packed
+// from a checkout, carries this value instead, as the package manifest in the repository does.
+const UNSTAMPED_REVISION = 'development'
 const ADOPTION_LAYERS = ['registry', 'environment', 'surfaces', 'guards', 'grading'] as const
 const packageManifest = fileURLToPath(new URL('../../package.json', import.meta.url))
 
@@ -119,13 +122,15 @@ function encodingRefusal(kind: 'registry' | 'adoption'): RefusedRegistryResolveO
     return refusal(kind === 'registry' ? 'REGISTRY_ENCODING_INVALID' : 'ADOPTION_ENCODING_INVALID', `the ${kind} file is not valid UTF-8`)
 }
 
+const ADOPTION_FIX = 'write exactly five lines in this order: registry=, environment=, surfaces=, guards=, grading=, each set to migrated or documented-only, with migrated layers first'
+
 function parseAdoption(source: string): { value: { layer: AdoptionLayer; state: AdoptionState }[] } | { refusal: RefusedRegistryResolveOutcome } {
     if (source.trim() === '') {
-        return { refusal: refusal('ADOPTION_EMPTY', 'the adoption record is empty') }
+        return { refusal: refusal('ADOPTION_EMPTY', 'the adoption record is empty', undefined, ADOPTION_FIX) }
     }
     const lines = source.endsWith('\n') ? source.slice(0, -1).split('\n') : source.split('\n')
     if (lines.length !== ADOPTION_LAYERS.length) {
-        return { refusal: refusal('ADOPTION_ORDER_INVALID', 'the adoption record must contain all five layers exactly once in order') }
+        return { refusal: refusal('ADOPTION_ORDER_INVALID', 'the adoption record must contain all five layers exactly once in order', undefined, ADOPTION_FIX) }
     }
 
     const adoption: { layer: AdoptionLayer; state: AdoptionState }[] = []
@@ -140,6 +145,7 @@ function parseAdoption(source: string): { value: { layer: AdoptionLayer; state: 
                         : 'ADOPTION_RECORD_INVALID',
                     'each adoption row must be a fixed layer=migrated or layer=documented-only assignment',
                     `adoption line ${index + 1}`,
+                    ADOPTION_FIX,
                 ),
             }
         }
@@ -150,6 +156,7 @@ function parseAdoption(source: string): { value: { layer: AdoptionLayer; state: 
                     'ADOPTION_ORDER_INVALID',
                     'the adoption layers must appear exactly once in registry, environment, surfaces, guards, grading order',
                     `adoption line ${index + 1}`,
+                    ADOPTION_FIX,
                 ),
             }
         }
@@ -163,6 +170,8 @@ function parseAdoption(source: string): { value: { layer: AdoptionLayer; state: 
             refusal: refusal(
                 'ADOPTION_ORDER_INVALID',
                 'migration must start at registry and remain a contiguous prefix; documented-only layers may follow',
+                undefined,
+                ADOPTION_FIX,
             ),
         }
     }
@@ -242,6 +251,30 @@ function resolveRegistry(
             'registry field dir',
         )
     }
+    const stamp = context.cockpitSourceRevision
+    if (stamp !== UNSTAMPED_REVISION && !/^[a-f0-9]{40}$/.test(stamp)) {
+        return {
+            kind: 'refusal',
+            artifact: null,
+            destination: null,
+            diagnostics: [{
+                severity: 'error',
+                code: 'COCKPIT_REVISION_INVALID',
+                message: `the installed package records cockpitSourceRevision ${JSON.stringify(stamp.slice(0, 64))}, which is neither a 40-hex commit nor "development"`,
+                target: 'cockpitSourceRevision',
+                fix: 'reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry',
+            }],
+            result: null,
+            status: 2,
+        }
+    }
+    const diagnostics: Diagnostic[] = stamp === UNSTAMPED_REVISION ? [{
+        severity: 'warning',
+        code: 'COCKPIT_REVISION_UNSTAMPED',
+        message: 'this cockpit was built from source and records no release commit, so COCKPIT_SOURCE_REVISION is "development"',
+        target: 'cockpitSourceRevision',
+        fix: 'install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit',
+    }] : []
     const variables = parsed.siblings.map((sibling, index) => ({
         name: sibling.var,
         defaultPath: resolvedDirectories[index],
@@ -269,7 +302,7 @@ function resolveRegistry(
             variables,
             adoption: context.adoption,
         })
-        return { kind: 'complete', artifact, destination: null, diagnostics: [], result: { registry: result }, status: 0 }
+        return { kind: 'complete', artifact, destination: null, diagnostics, result: { registry: result }, status: 0 }
     } catch (error) {
         const code = error instanceof Error && /^([A-Z0-9_]+):/.exec(error.message)?.[1]
         return refusal(
@@ -280,15 +313,6 @@ function resolveRegistry(
 }
 
 export async function registryResolveCommand(input: RegistryResolveCommandInput): Promise<RegistryResolveOutcome> {
-    const revision = await sourceRevision(input.cockpitSourceRevision)
-    if (!revision || !/^[a-f0-9]{40}$/.test(revision)) {
-        return refusal(
-            'COCKPIT_REVISION_INVALID',
-            'the installed package does not carry an exact 40-hex cockpit source revision',
-            'cockpitSourceRevision',
-        )
-    }
-
     const registryRead = await readInput(input.registry, 'registry')
     if (!Buffer.isBuffer(registryRead)) return registryRead
     let registrySource: string
@@ -312,6 +336,15 @@ export async function registryResolveCommand(input: RegistryResolveCommandInput)
     const adoptionResult = parseAdoption(adoptionSource)
     if ('refusal' in adoptionResult) return adoptionResult.refusal
 
+    const revision = await sourceRevision(input.cockpitSourceRevision)
+    if (revision === undefined) {
+        return refusal(
+            'COCKPIT_REVISION_INVALID',
+            'the installed package manifest could not be read or records no cockpitSourceRevision',
+            packageManifest,
+            'reinstall @b0dea/cockpit, then retry',
+        )
+    }
     const registrySha256 = createHash('sha256').update(registryRead).digest('hex')
     return resolveRegistry(parseRegistry(registrySource), {
         adoption: adoptionResult.value,

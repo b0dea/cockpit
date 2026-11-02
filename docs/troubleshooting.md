@@ -159,8 +159,12 @@ file is not a repair.
 ### Selftest and upgrade
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
-digest, generated-manifest digest or specification size failed its check. Produce a fresh
-probe-specification file for the current generated manifest; do not edit the stored digests.
+digest, generated-manifest digest or specification size failed its check, or the file still has a
+`null` where a probe belongs. For a missing or stale file, write a fresh one with
+`npx --no cockpit selftest --config <path> --write-probe-specifications <new file>` and fill in its
+`null` fields; do not edit the stored digests. For a `null`, fill in the rows the message lists.
+[Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes each
+field.
 
 `SELFTEST_EXECUTION_INVALID` has two causes:
 
@@ -247,7 +251,8 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `CLI_PLATFORM_UNSUPPORTED` | see the message |
 | `CLI_UNKNOWN_COMMAND` | see the message |
 | `CLI_USAGE_INVALID` | see the message |
-| `COCKPIT_REVISION_INVALID` | see the message |
+| `COCKPIT_REVISION_INVALID` | reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry |
+| `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_BIND_UNDECLARED` | see the message |
@@ -362,7 +367,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `GENERATED_SIBLING_ROOT_INVALID` | see the message |
 | `GENERATED_SOURCE_CHANGED` | see the message |
 | `GENERATED_STALE_APPROVAL_INVALID` | see the message |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | see the message |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended |
 | `GENERATED_STALE_ARTIFACT` | see the message |
 | `GENERATED_STALE_ARTIFACT_DRIFT` | see the message |
 | `GENERATED_TEMPLATE_INVALID` | see the message |
@@ -423,10 +428,10 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `INSTANCE_NOT_IGNORED` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `MACHINE_COLD_START_EXCEEDED` | see the message |
-| `MACHINE_CPU_BELOW_FLOOR` | see the message |
-| `MACHINE_DISK_BELOW_FLOOR` | see the message |
-| `MACHINE_MEMORY_BELOW_FLOOR` | see the message |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | see the message |
 | `MCP_COMMAND_CONFLICT` | see the message |
 | `MCP_DECLARATION_INVALID` | see the message |
@@ -487,14 +492,16 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `RESTRICTION_TEMPLATE_INVALID` | see the message |
 | `RUNNING_CHECKOUT_MISMATCH` | see the message |
 | `RUNTIME_COMPOSE_REMOTE` | see the message |
+| `RUNTIME_IMAGE_UNAVAILABLE` | see the message |
 | `RUNTIME_LAUNCHER_UNAVAILABLE` | see the message |
 | `RUNTIME_PROBE_TIMEOUT` | see the message |
 | `RUNTIME_UNAVAILABLE` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SELFTEST_EXECUTION_INVALID` | see the message |
-| `SELFTEST_SOURCE_INVALID` | see the message |
+| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SETUP_CLONE_FAILED` | see the message |
 | `SETUP_CONFIG_REQUIRED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_INSTRUCTION_POINTER_OFFERED` | see the message |

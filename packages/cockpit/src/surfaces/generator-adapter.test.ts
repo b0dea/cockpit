@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { realpath, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -433,6 +433,27 @@ it('runs the two estate passes concurrently and settles both readers before clea
         second: ['second'],
     })
     expect(authorityFault.cleanupActiveTargetPipelines).toEqual([0])
+})
+
+// macOS reaches /tmp through a symlink to /private/tmp, and TMPDIR is unset under launchd, cron and
+// `env -i`; staging must still complete and leave nothing behind.
+it('completes and removes its staging when the temporary root is a symbolic link', async () => {
+    const real = await realpath(mkdtempSync(join(tmpdir(), 'cockpit-linked-tmp-')))
+    const linked = `${real}-link`
+    symlinkSync(real, linked)
+    const previous = process.env.TMPDIR
+    process.env.TMPDIR = linked
+    try {
+        const outcome = await generateSurfaceBatch(completeBatch())
+
+        expect(outcome.kind, JSON.stringify(outcome.diagnostics)).toBe('complete')
+        expect(readdirSync(real)).toEqual([])
+    } finally {
+        if (previous === undefined) delete process.env.TMPDIR
+        else process.env.TMPDIR = previous
+        rmSync(linked)
+        rmSync(real, { recursive: true, force: true })
+    }
 })
 
 it('renders an authenticated Claude plugin component inventory from the same neutral sources', async () => {

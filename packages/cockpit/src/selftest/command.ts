@@ -4,6 +4,7 @@ import {
     runSelftestOperatorCommand as operatorCommand,
     type SurfaceSelftestHandlerInput,
     type SurfaceSelftestDispatchOutcome,
+    type SurfaceSelftestDraftInput,
     type SelftestOperatorOptions,
     type SelftestOperatorIo,
     runSurfaceSelftestApplication,
@@ -18,7 +19,9 @@ export type {
     SurfaceSelftestCommandAdapters,
     SurfaceSelftestCommandInput,
     SurfaceSelftestCommandOutcome,
+    SurfaceSelftestDraftInput,
     SurfaceSelftestExecutableCandidate,
+    SurfaceSelftestHandlerInput,
     SurfaceSelftestProbeSpecificationsCandidate,
 } from '../environment/selftest-application.js'
 
@@ -42,7 +45,9 @@ export function runConfiguredSurfaceSelftestCommand(
     return runConfiguredSurfaceSelftestApplication(input, adapters)
 }
 
-export function runConfiguredSurfaceSelftestOutcome(input: SurfaceSelftestHandlerInput): Promise<SurfaceSelftestDispatchOutcome> {
+export function runConfiguredSurfaceSelftestOutcome(
+    input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput,
+): Promise<SurfaceSelftestDispatchOutcome> {
     return configuredOutcome(input)
 }
 

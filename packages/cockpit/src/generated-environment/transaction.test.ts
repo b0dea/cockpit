@@ -957,8 +957,11 @@ describe('generated publication transaction', () => {
         const admitted = await admitPublicationPlan(input, { execute: executeProbe })
         if (admitted.kind !== 'complete') throw new Error('expected publication plan')
         const authorizeStaleRemoval = vi.fn(async () => undefined)
+        // The refusal names the one command that can approve and the digest it will ask for.
         expect(await authorizePublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'GENERATED_STALE_APPROVAL_REQUIRED' }],
+            kind: 'refusal', diagnostics: [{ code: 'GENERATED_STALE_APPROVAL_REQUIRED',
+                message: expect.stringContaining(`stale-removal digest ${admitted.plan.staleRemoval!.digest}`),
+                fix: expect.stringContaining('npx --no cockpit sync --config <your cockpit.toml> --interactive') }],
         })
         expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval: approve, revalidate: async () => true }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }] })

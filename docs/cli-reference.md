@@ -6,6 +6,16 @@ This generated reference is for users looking up an exact command, flag, exit co
 
 Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
 
+Each command lists the codes its code path can produce, derived from the source, so a list can name a code that needs a failure your setup never meets.
+
+Every command can produce these codes, so they are listed once, here, and not under each command:
+
+| Diagnostic |
+| --- |
+| `CLI_INTERNAL_ERROR` |
+| `CLI_PLATFORM_UNSUPPORTED` |
+| `CLI_USAGE_INVALID` |
+
 ## cockpit init
 
 Preview, then accept, a first cockpit setup for one agent tool.
@@ -33,44 +43,104 @@ Does not read `cockpit.toml`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 
 | Other diagnostics |
 | --- |
-| `CLI_INTERNAL_ERROR` |
-| `CLI_USAGE_INVALID` |
+| `BOOTSTRAP_ANSWER_RESET_FIELD_INVALID` |
+| `BOOTSTRAP_ANSWER_RESET_INDETERMINATE` |
+| `BOOTSTRAP_ANSWER_RESET_STALE` |
+| `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` |
+| `CHECKOUT_ADJACENCY_UNHEALTHY` |
+| `CLAIM_STATE_UNHEALTHY` |
 | `COCKPIT_VERSION_MISMATCH` |
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
@@ -82,7 +152,14 @@ Does not read `cockpit.toml`.
 | `CONFIG_NOT_FOUND` |
 | `CONFIG_PARSE_INVALID` |
 | `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
 | `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DIRECTORY_GRANTS_UNAVAILABLE` |
 | `DOCUMENT_ANSWER_UNCONFIRMED` |
 | `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` |
 | `DOCUMENT_CONFIGURATION_ANSWER_INVALID` |
@@ -101,27 +178,44 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` |
 | `DOCUMENT_SOURCE_REQUIRED` |
 | `DOCUMENT_STDOUT_TARGET` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENVIRONMENT_FILE_MALFORMED` |
+| `ENVIRONMENT_FILE_NOT_FOUND` |
+| `ENVIRONMENT_FILE_TOO_LARGE` |
+| `ENVIRONMENT_FILE_UNREADABLE` |
+| `ENVIRONMENT_KEYS_STALE` |
 | `ENV_SCHEMA_TOOL_MISSING` |
+| `ENV_SCHEMA_UNHEALTHY` |
 | `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
-| `EXECUTION_COMPENSATION_TIMEOUT` |
 | `EXECUTION_PRECONDITION_CHANGED` |
 | `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ARTIFACT_MISSING` |
 | `GENERATED_COMPENSATION_FAILED` |
+| `GENERATED_COMPOSE_INVALID` |
 | `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
 | `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
 | `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
 | `GENERATED_PATH_UNSAFE` |
 | `GENERATED_PERSONA_INVALID` |
 | `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
@@ -133,46 +227,82 @@ Does not read `cockpit.toml`.
 | `GENERATED_SOURCE_CHANGED` |
 | `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GENERATED_TEMPLATE_INVALID` |
 | `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `GIT_STATE_UNHEALTHY` |
 | `GREENFIELD_ANSWER_INVALID` |
+| `GREENFIELD_ANSWER_REQUIRED` |
 | `GREENFIELD_ANSWER_UNEXPECTED` |
 | `GREENFIELD_DISCOVERY_UNAVAILABLE` |
 | `GREENFIELD_OBSERVATION_CHANGED` |
 | `GREENFIELD_OBSERVATION_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
+| `HARNESS_SURFACE_UNAVAILABLE` |
+| `INIT_ANSWER_AMBIGUOUS` |
+| `INIT_ANSWER_CONFLICT` |
+| `INIT_ANSWER_FIELD_UNKNOWN` |
+| `INIT_ANSWER_INVALID` |
 | `INIT_ANSWER_RESET_CONFLICT` |
+| `INIT_ANSWER_UNUSED` |
+| `INIT_ARTIFACT_WRITE_FAILED` |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` |
+| `INIT_COCKPIT_ROOT_CREATE_FAILED` |
 | `INIT_COCKPIT_ROOT_REQUIRED` |
+| `INIT_COCKPIT_ROOT_UNAVAILABLE` |
+| `INIT_DEFAULTS_NOT_ACCEPTED` |
+| `INIT_DESTINATION_UNAVAILABLE` |
 | `INIT_DRAFT_CHANGED` |
 | `INIT_DRAFT_INVALID` |
 | `INIT_DRAFT_SOURCE_CHANGED` |
+| `INIT_INTERVIEW_LIMIT_EXCEEDED` |
 | `INIT_INTERVIEW_PREVIEW_UNAVAILABLE` |
 | `INIT_PREVIEW_CHANGED` |
+| `INIT_PREVIEW_NOT_ACCEPTED` |
 | `INIT_ROOT_INVALID` |
 | `INIT_ROOT_OBSERVATION_FAILED` |
 | `INIT_STATE_DURABILITY_INDETERMINATE` |
 | `INIT_STATE_STALE` |
 | `INIT_STATE_UNAUTHENTICATED` |
 | `INIT_TARGET_CHANGED` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `INIT_TERMINAL_REQUIRED` |
+| `INIT_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `MOUNT_MATERIALIZATION_UNAVAILABLE` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `OUTPUT_WRITE_FAILED` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AMBIGUOUS` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
 | `REGISTRY_EMPTY` |
 | `REGISTRY_ENCODING_INVALID` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `REGISTRY_NOT_FOUND` |
 | `REGISTRY_TOO_LARGE` |
 | `REGISTRY_UNREADABLE` |
-| `RESET_CONFIRMATION_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `RUNNING_CHECKOUT_MISMATCH` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
+| `SIBLING_MISSING` |
+| `SKILL_BUDGET_UNAVAILABLE` |
+| `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
+| `STATE_UNSEEDED` |
 | `TEAM_METADATA_UNAVAILABLE` |
+| `TEMPLATE_PATH_OUTSIDE_ROOT` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit document
 
@@ -197,6 +327,7 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
+| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 
 | Other diagnostics |
@@ -211,14 +342,18 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` |
 | `DOCUMENT_ESTATE_GAPS_INVALID` |
 | `DOCUMENT_ESTATE_INCOMPLETE` |
-| `DOCUMENT_ESTATE_OBSERVATION_CHANGED` |
-| `DOCUMENT_ESTATE_OBSERVATION_INVALID` |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
 | `DOCUMENT_INFERRED` |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` |
+| `DOCUMENT_OPTION_DUPLICATE` |
+| `DOCUMENT_OUTPUT_JSON_UNSUPPORTED` |
+| `DOCUMENT_ROOT_COUNT` |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_SOURCE_CONFLICT` |
 | `DOCUMENT_SOURCE_REQUIRED` |
 | `DOCUMENT_STDOUT_TARGET` |
+| `OUTPUT_WRITE_FAILED` |
+| `REGISTRY_AMBIGUOUS` |
 | `REGISTRY_EMPTY` |
 | `REGISTRY_ENCODING_INVALID` |
 | `REGISTRY_NOT_FOUND` |
@@ -246,6 +381,8 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `COCKPIT_REVISION_INVALID` | reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry |
+| `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 
 | Other diagnostics |
@@ -258,13 +395,19 @@ Does not read `cockpit.toml`.
 | `ADOPTION_STATE_INVALID` |
 | `ADOPTION_TOO_LARGE` |
 | `ADOPTION_UNREADABLE` |
-| `COCKPIT_REVISION_INVALID` |
+| `REGISTRY_ADOPTION_REQUIRED` |
+| `REGISTRY_AMBIGUOUS` |
 | `REGISTRY_ARTIFACT_UNSAFE` |
 | `REGISTRY_DIR_DUPLICATE` |
 | `REGISTRY_DIR_OUTSIDE_SIBLINGS_ROOT` |
 | `REGISTRY_EMPTY` |
 | `REGISTRY_ENCODING_INVALID` |
 | `REGISTRY_NOT_FOUND` |
+| `REGISTRY_OPTION_DUPLICATE` |
+| `REGISTRY_OUTPUT_UNSUPPORTED` |
+| `REGISTRY_POSITIONAL_UNSUPPORTED` |
+| `REGISTRY_SIBLINGS_ROOT_REQUIRED` |
+| `REGISTRY_SOURCE_REQUIRED` |
 | `REGISTRY_TOO_LARGE` |
 | `REGISTRY_UNREADABLE` |
 | `REGISTRY_VARIABLE_INVALID` |
@@ -289,41 +432,62 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `SETUP_MANUAL_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SETUP_REMOTE_MISMATCH` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
-| `EVIDENCE_UNAVAILABLE` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `ENVIRONMENT_SEED_FAILED` |
+| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` |
 | `EXECUTION_ABORTED` |
 | `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_COMPENSATION_TIMEOUT` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `EXECUTION_TIMEOUT` |
+| `INSTALL_POLICY_AMBIGUOUS` |
+| `INSTALL_POLICY_MISSING` |
+| `INSTALL_POLICY_OBSERVATION_INVALID` |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
-| `LIFECYCLE_EVIDENCE_INVALID` |
-| `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `INSTANCE_NOT_IGNORED` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `SETUP_CLONE_FAILED` |
+| `SETUP_CONFIG_REQUIRED` |
 | `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_INSTRUCTION_POINTER_OFFERED` |
+| `SETUP_NONE_ABSENT` |
+| `SETUP_NONE_DIRECTORY` |
+| `SETUP_NONE_REPOSITORY` |
+| `SETUP_OPTION_DUPLICATE` |
+| `SETUP_PARENT_MISSING` |
+| `SETUP_PATH_OUTSIDE_ROOT` |
+| `SETUP_PATH_SYMLINK` |
 | `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSITIONAL_UNSUPPORTED` |
 | `SETUP_POSTCHECK_FAILED` |
-| `STACK_NOT_RUNNING` |
-| `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `TEMPLATE_IGNORED` |
+| `TEMPLATE_NOT_FOUND` |
+| `TEMPLATE_NOT_TRACKED` |
+| `TEMPLATE_PATH_OUTSIDE_ROOT` |
 
 ## cockpit sync
 
@@ -347,56 +511,140 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 
 | Other diagnostics |
 | --- |
-| `CLI_INTERNAL_ERROR` |
-| `CLI_USAGE_INVALID` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
 | `CONFIG_PARSE_INVALID` |
 | `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
 | `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
 | `GENERATED_ARTIFACT_MISSING` |
-| `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_COMPENSATION_FAILED` |
+| `GENERATED_COMPOSE_INVALID` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
 | `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
 | `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
 | `GENERATED_PATH_UNSAFE` |
 | `GENERATED_PERSONA_INVALID` |
 | `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
 | `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
 | `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
-| `GUIDE_CAP_EXCEEDED` |
-| `RESET_CONFIRMATION_MISMATCH` |
+| `GENERATED_TEMPLATE_INVALID` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
+| `STATE_UNSEEDED` |
 | `TEAM_METADATA_UNAVAILABLE` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit check
 
@@ -417,61 +665,147 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 
 | Other diagnostics |
 | --- |
-| `CLI_INTERNAL_ERROR` |
-| `CLI_USAGE_INVALID` |
 | `COCKPIT_VERSION_MISMATCH` |
+| `COMPOSE_BIND_UNDECLARED` |
+| `COMPOSE_HEALTHCHECK_MISSING` |
+| `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_NOT_LEASED` |
+| `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
 | `CONFIG_PARSE_INVALID` |
 | `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
 | `CONFIG_UNREADABLE` |
 | `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
 | `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_COMPOSE_INVALID` |
 | `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
 | `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
 | `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
 | `GENERATED_PATH_UNSAFE` |
 | `GENERATED_PERSONA_INVALID` |
 | `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
 | `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
 | `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
-| `GUIDE_CAP_EXCEEDED` |
-| `RESET_CONFIRMATION_MISMATCH` |
+| `GENERATED_TEMPLATE_INVALID` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SKILL_PROJECTION_INVALID` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
+| `STATE_UNSEEDED` |
 | `TEAM_METADATA_UNAVAILABLE` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit selftest
 
@@ -483,6 +817,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--probe-specifications` | string | unset |
+| `--write-probe-specifications` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
@@ -494,12 +829,148 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `SELFTEST_EXECUTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SELFTEST_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications; [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 
 | Other diagnostics |
 | --- |
+| `COMPOSE_BIND_UNDECLARED` |
+| `COMPOSE_HEALTHCHECK_MISSING` |
+| `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_NOT_LEASED` |
+| `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
 | `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_COMPOSE_INVALID` |
+| `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GENERATED_TEMPLATE_INVALID` |
+| `OUTPUT_WRITE_FAILED` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SKILL_PROJECTION_INVALID` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit upgrade
 
@@ -524,12 +995,146 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `UPGRADE_AUTH_FAILED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `UPGRADE_DISCOVERY_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `UPGRADE_NETWORK_FAILED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `UPGRADE_REPAIR_UNVERIFIED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `UPGRADE_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `UPGRADE_VERSION_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_COMPENSATION_FAILED` |
+| `GENERATED_COMPOSE_INVALID` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GENERATED_TEMPLATE_INVALID` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SKILL_PROJECTION_INVALID` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
+| `TEAM_METADATA_UNAVAILABLE` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit up
 
@@ -551,40 +1156,82 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
+| `CHECKOUT_ADJACENCY_UNHEALTHY` |
+| `CLAIM_STATE_UNHEALTHY` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
-| `EVIDENCE_UNAVAILABLE` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DIRECTORY_GRANTS_UNAVAILABLE` |
+| `ENVIRONMENT_FILE_NOT_FOUND` |
+| `ENVIRONMENT_KEYS_STALE` |
+| `ENV_SCHEMA_UNHEALTHY` |
 | `EXECUTION_ABORTED` |
 | `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `GIT_STATE_UNHEALTHY` |
+| `GUIDE_CAP_EXCEEDED` |
+| `HARNESS_SURFACE_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `MOUNT_MATERIALIZATION_UNAVAILABLE` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNNING_CHECKOUT_MISMATCH` |
+| `RUNTIME_COMPOSE_REMOTE` |
+| `RUNTIME_LAUNCHER_UNAVAILABLE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
-| `STACK_NOT_RUNNING` |
+| `SIBLING_MISSING` |
+| `SKILL_BUDGET_UNAVAILABLE` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit sleep
 
@@ -606,40 +1253,67 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
+| `CLAIM_LIVENESS_UNKNOWN` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
-| `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
 | `STACK_NOT_RUNNING` |
-| `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit session
 
@@ -660,45 +1334,86 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
+| `CHECKOUT_ADJACENCY_UNHEALTHY` |
+| `CLAIM_LIVENESS_UNKNOWN` |
+| `CLAIM_STATE_UNHEALTHY` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
 | `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DIRECTORY_GRANTS_UNAVAILABLE` |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
-| `EVIDENCE_UNAVAILABLE` |
+| `ENVIRONMENT_FILE_NOT_FOUND` |
+| `ENVIRONMENT_KEYS_STALE` |
+| `ENV_SCHEMA_UNHEALTHY` |
 | `EXECUTION_ABORTED` |
 | `EXECUTION_COMPENSATION_STEP_FAILED` |
-| `EXECUTION_COMPENSATION_TIMEOUT` |
 | `EXECUTION_PRECONDITION_CHANGED` |
 | `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `GIT_STATE_UNHEALTHY` |
+| `GUIDE_CAP_EXCEEDED` |
+| `HARNESS_SURFACE_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNNING_CHECKOUT_MISMATCH` |
+| `RUNTIME_COMPOSE_REMOTE` |
+| `RUNTIME_LAUNCHER_UNAVAILABLE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
+| `SIBLING_MISSING` |
+| `SKILL_BUDGET_UNAVAILABLE` |
 | `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit down
 
@@ -720,40 +1435,70 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DOWN_RESOURCES_KEPT` |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
-| `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
 | `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RESET_CONFIRMATION_MISMATCH` |
+| `RESET_CO_TENANT` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
-| `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit reset
 
@@ -776,40 +1521,70 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DOWN_RESOURCES_KEPT` |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
-| `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
 | `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RESET_CONFIRMATION_MISMATCH` |
+| `RESET_CO_TENANT` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
-| `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit runtime
 
@@ -831,19 +1606,94 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 
 | Other diagnostics |
 | --- |
-| `CLI_USAGE_INVALID` |
+| `CHECKOUT_ADJACENCY_UNHEALTHY` |
+| `CLAIM_LIVENESS_UNKNOWN` |
+| `CLAIM_STATE_UNHEALTHY` |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DIRECTORY_GRANTS_UNAVAILABLE` |
+| `DOWN_RESOURCES_KEPT` |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENVIRONMENT_FILE_NOT_FOUND` |
+| `ENVIRONMENT_KEYS_STALE` |
+| `ENV_SCHEMA_UNHEALTHY` |
+| `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
 | `EXECUTION_COMPENSATION_STEP_FAILED` |
-| `EXECUTION_COMPENSATION_TIMEOUT` |
 | `EXECUTION_PRECONDITION_CHANGED` |
 | `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_STATE_UNHEALTHY` |
+| `GUIDE_CAP_EXCEEDED` |
+| `HARNESS_SURFACE_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `MOUNT_MATERIALIZATION_UNAVAILABLE` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RESET_CONFIRMATION_MISMATCH` |
+| `RESET_CO_TENANT` |
+| `RUNNING_CHECKOUT_MISMATCH` |
+| `RUNTIME_COMPOSE_REMOTE` |
+| `RUNTIME_IMAGE_UNAVAILABLE` |
+| `RUNTIME_LAUNCHER_UNAVAILABLE` |
+| `RUNTIME_PROBE_TIMEOUT` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SIBLING_MISSING` |
+| `SKILL_BUDGET_UNAVAILABLE` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit sibling
 
@@ -875,20 +1725,27 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 
 | Other diagnostics |
 | --- |
-| `CLI_USAGE_INVALID` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
 | `CONFIG_PARSE_INVALID` |
 | `CONFIG_SCHEMA_INVALID` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `CONFIG_UNREADABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
-| `EXECUTION_COMPENSATION_TIMEOUT` |
 | `EXECUTION_PRECONDITION_CHANGED` |
 | `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `SETUP_PATH_TYPE_INVALID` |
 | `SIBLING_DIRECTORY_MISSING` |
 | `SIBLING_DIR_DUPLICATE` |
 | `SIBLING_GIT_FAILED` |
@@ -921,40 +1778,189 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 
 | Other diagnostics |
 | --- |
+| `CHECKOUT_ADJACENCY_UNHEALTHY` |
+| `CLAIM_STATE_UNHEALTHY` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DIRECTORY_GRANTS_UNAVAILABLE` |
+| `ENVIRONMENT_FILE_MALFORMED` |
+| `ENVIRONMENT_FILE_NOT_FOUND` |
+| `ENVIRONMENT_FILE_TOO_LARGE` |
+| `ENVIRONMENT_FILE_UNREADABLE` |
+| `ENVIRONMENT_KEYS_STALE` |
 | `ENV_SCHEMA_TOOL_MISSING` |
+| `ENV_SCHEMA_UNHEALTHY` |
 | `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_COMPENSATION_FAILED` |
+| `GENERATED_COMPOSE_INVALID` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GENERATED_TEMPLATE_INVALID` |
 | `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `GIT_STATE_UNHEALTHY` |
+| `GUIDE_CAP_EXCEEDED` |
+| `HARNESS_SURFACE_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `MOUNT_MATERIALIZATION_UNAVAILABLE` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNNING_CHECKOUT_MISMATCH` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
+| `SIBLING_MISSING` |
+| `SKILL_BUDGET_UNAVAILABLE` |
+| `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
+| `TEAM_METADATA_UNAVAILABLE` |
+| `TEMPLATE_PATH_OUTSIDE_ROOT` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit doctor
 
@@ -976,40 +1982,192 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
+| `CHECKOUT_ADJACENCY_UNHEALTHY` |
+| `CLAIM_STATE_UNHEALTHY` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_STALE` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `DIRECTORY_GRANTS_UNAVAILABLE` |
+| `ENVIRONMENT_FILE_MALFORMED` |
+| `ENVIRONMENT_FILE_NOT_FOUND` |
+| `ENVIRONMENT_FILE_TOO_LARGE` |
+| `ENVIRONMENT_FILE_UNREADABLE` |
+| `ENVIRONMENT_KEYS_STALE` |
 | `ENV_SCHEMA_TOOL_MISSING` |
+| `ENV_SCHEMA_UNHEALTHY` |
 | `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_COMPENSATION_FAILED` |
+| `GENERATED_COMPOSE_INVALID` |
+| `GENERATED_DECISION_COVERAGE` |
+| `GENERATED_DECISION_DUPLICATE` |
+| `GENERATED_DECISION_FUTURE` |
+| `GENERATED_DECISION_SENSITIVE` |
+| `GENERATED_DECISION_STALE` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_INSPECTION_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNOWNED` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GENERATED_TEMPLATE_INVALID` |
 | `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `GIT_STATE_UNHEALTHY` |
+| `GUIDE_CAP_EXCEEDED` |
+| `HARNESS_SURFACE_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `MOUNT_MATERIALIZATION_UNAVAILABLE` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNNING_CHECKOUT_MISMATCH` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
+| `SIBLING_MISSING` |
+| `SKILL_BUDGET_UNAVAILABLE` |
+| `SKILL_PROJECTION_INVALID` |
 | `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
+| `TEAM_METADATA_UNAVAILABLE` |
+| `TEMPLATE_PATH_OUTSIDE_ROOT` |
+| `WO_POLICY_INVALID` |
 
 ## cockpit logs
 
@@ -1035,40 +2193,65 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
+| `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
-| `ENV_SCHEMA_TOOL_MISSING` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
 | `EVIDENCE_UNAVAILABLE` |
 | `EXECUTION_ABORTED` |
-| `EXECUTION_COMPENSATION_STEP_FAILED` |
 | `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
 | `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
-| `GIT_COMPARISON_REMOTE_MISMATCH` |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `LIFECYCLE_PROGRESS_INVALID` |
-| `RECLAIM_ACCOUNTING_MISMATCH` |
-| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNTIME_COMPOSE_REMOTE` |
 | `SETUP_PATH_TYPE_INVALID` |
-| `SETUP_POSTCHECK_FAILED` |
-| `STACK_NOT_RUNNING` |
-| `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit baseline-record
 
@@ -1090,7 +2273,68 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic | What to do |
+| --- | --- |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `DATA_MODE_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_INCOMPATIBLE` |
+| `DEPENDENCY_RUNTIME_STALE` |
+| `DEPENDENCY_RUNTIME_UNAVAILABLE` |
+| `DEPENDENCY_RUNTIME_UNMOUNTED` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STAGING_CLEANUP_FAILED` |
+| `EXECUTION_STAGING_FAILED` |
+| `EXECUTION_STDERR_LIMIT` |
+| `EXECUTION_STDOUT_LIMIT` |
+| `EXECUTION_STEP_FAILED` |
+| `EXECUTION_TIMEOUT` |
+| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `INSTALL_LOCKFILE_CHANGED` |
+| `INSTALL_LOCK_HELD` |
+| `INSTALL_LOCK_INVALID` |
+| `INSTALL_STALE_PATH` |
+| `INSTALL_STATE_UNHEALTHY` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `PORT_EXTERNAL_REGISTRATION_GAP` |
+| `PORT_FAMILY_OUT_OF_RANGE` |
+| `PORT_LISTENER_EVIDENCE_INVALID` |
+| `PORT_LOCAL_VALUE_CORRECTED` |
+| `REGISTRY_AUTH_UNAVAILABLE` |
+| `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `RUNTIME_COMPOSE_REMOTE` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `STATE_UNSEEDED` |
 
 ## cockpit work-intake
 
@@ -1114,7 +2358,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-status
 
@@ -1136,7 +2382,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-accept
 
@@ -1159,7 +2407,10 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
+| `WORK_OPERATOR_REQUIRED` |
 
 ## cockpit work-renew
 
@@ -1182,7 +2433,10 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
+| `WORK_OPERATOR_REQUIRED` |
 
 ## cockpit work-resume
 
@@ -1203,7 +2457,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-recover
 
@@ -1226,7 +2482,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-execute
 
@@ -1249,7 +2507,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-record
 
@@ -1272,7 +2532,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-review
 
@@ -1294,7 +2556,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-sweep
 
@@ -1316,7 +2580,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-reverse
 
@@ -1338,7 +2604,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-programme-mint
 
@@ -1362,7 +2630,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-metrics
 
@@ -1383,7 +2653,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit work-grade
 
@@ -1405,7 +2677,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit browser-drive
 
@@ -1427,7 +2701,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit browser-accessibility
 
@@ -1449,7 +2725,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit browser-screenshot
 
@@ -1471,7 +2749,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit browser-debugger
 
@@ -1493,7 +2773,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |
 
 ## cockpit test-run
 
@@ -1515,4 +2797,6 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-No diagnostic codes are listed for this command; its messages name what failed and how to fix it.
+| Diagnostic |
+| --- |
+| `WORK_APPLICATION_REFUSED` |

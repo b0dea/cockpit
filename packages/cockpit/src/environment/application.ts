@@ -1488,6 +1488,34 @@ function exactSeedOutcome(
         : undefined
 }
 
+// A failed clone is the step a person most often has to fix by hand, and the executor's generic
+// step failure named neither the remote nor git's reason, nor that earlier clones had succeeded.
+function cloneFailureDiagnostics(
+    failed: Extract<ExecutePlanOutcome, { kind: 'refusal' }>,
+    sibling: Sibling,
+    siblingsRoot: string,
+    completedStepIds: readonly string[],
+): readonly EnvironmentDiagnostic[] {
+    const { id, started, stderr } = failed.execution.failedStep
+    // Only a git that ran and exited non-zero failed to clone; a timeout, an abort or an unconfirmed
+    // termination keeps the executor's own code, because cloning by hand could race a live git.
+    const own = failed.diagnostics.find(diagnostic => diagnostic.target === id)
+    if (id !== `setup:${sibling.slug}:clone` || !started || own?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return failed.diagnostics
+    const cloned = completedStepIds.flatMap(step => /^setup:(.+):clone$/.exec(step)?.[1] ?? [])
+    const target = resolve(siblingsRoot, sibling.dir)
+    return [
+        {
+            severity: 'error',
+            code: ENVIRONMENT_CODES.SETUP_CLONE_FAILED,
+            message: `git could not clone ${sibling.remote?.replace(/(\w+:\/\/)[^/@\s]+@/, '$1[redacted]@')} into ${target}: ${stderr ?? 'git reported no error text'}`
+                + (cloned.length === 0 ? '' : `; already cloned and left in place: ${cloned.join(', ')}`),
+            target,
+            fix: 'check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again',
+        },
+        ...failed.diagnostics.filter(diagnostic => diagnostic.target !== id),
+    ]
+}
+
 function configChangedDiagnostic(source: SourceProvenance): EnvironmentDiagnostic {
     return {
         severity: 'error',
@@ -1515,7 +1543,7 @@ function executionEvidence(
                   || failed.execution.failedStep.started
                   || completedStepIds.length > 0,
               completedStepIds,
-              failedStep: failed.execution.failedStep,
+              failedStep: { id: failed.execution.failedStep.id, started: failed.execution.failedStep.started },
               compensation: failed.execution.compensation,
           }
         : {
@@ -1769,7 +1797,7 @@ export async function runSetup(
                 return sequenceRefusal(
                     context,
                     adapters,
-                    [...diagnostics, ...execution.diagnostics],
+                    [...diagnostics, ...cloneFailureDiagnostics(execution, sibling, context.siblingsRoot, completedStepIds)],
                     executionEvidence(
                         [...completedStepIds, ...execution.execution.completedStepIds],
                         mutationMayHaveOccurred,
@@ -2128,6 +2156,33 @@ export async function runSetup(
                 : {}),
         },
     }
+}
+
+function seconds(millis: number): string {
+    return String(millis / 1_000)
+}
+
+// A floor refusal is acted on by changing the machine or the declared field, so it states both
+// numbers in the unit that field is written in.
+function machineFloorRefusal(failed: EnvironmentObservation): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
+    const observed = failed.observed.state === 'available' ? Number(failed.observed.value) : Number.NaN
+    const floor = failed.expectation.kind === 'minimum' ? failed.expectation.value : Number.NaN
+    const mb = (bytes: number) => `${Math.floor(bytes / 1_048_576)} MB`
+    const cpu = failed.code === ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR
+    const disk = failed.code === ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR
+    const [measured, field, declared] = cpu ? [`${observed / 1_000} CPUs`, 'runtime_cpus', `${floor / 1_000} CPUs`]
+        : disk ? [`${mb(observed)} of free disk`, 'free_disk_mb', mb(floor)]
+            : [`${mb(observed)} of memory`, 'runtime_memory_mb', mb(floor)]
+    return { kind: 'refusal', status: 2, result: null, diagnostics: [{
+        severity: 'error',
+        // Literals, so the diagnostic inventory captures the fix beside each code.
+        code: cpu ? 'MACHINE_CPU_BELOW_FLOOR' satisfies typeof ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR
+            : disk ? 'MACHINE_DISK_BELOW_FLOOR' satisfies typeof ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR
+                : 'MACHINE_MEMORY_BELOW_FLOOR' satisfies typeof ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR,
+        message: `the container runtime has ${measured}, below the ${declared} that environment.machine.${field} declares`,
+        target: failed.source,
+        fix: 'give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry',
+    }] }
 }
 
 function lifecycleRefusal(
@@ -3024,11 +3079,14 @@ async function executeUpRound(
             ) }
         }
         if (!observationSatisfiesExpectation(coldStartObservation)) {
-            return { kind: 'complete' as const, result: lifecycleRefusal(
-                coldStartObservation.code,
-                'runtime cold start exceeded the declared budget',
-                coldStartObservation.source,
-            ) }
+            return { kind: 'complete' as const, result: { kind: 'refusal', status: 2, result: null, diagnostics: [{
+                severity: 'error',
+                code: 'MACHINE_COLD_START_EXCEEDED' satisfies typeof ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED,
+                message: `the runtime took ${seconds(coldStartObservation.observed.value)} s to start its services, over the `
+                    + `${seconds(coldStartObservation.expectation.value)} s that environment.machine.cold_start_seconds allows`,
+                target: coldStartObservation.source,
+                fix: 'make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml>',
+            }] } }
         }
         const coldStart = Object.freeze({
             measuredMillis: coldStartObservation.observed.value,
@@ -3077,7 +3135,7 @@ async function executeUpRound(
                     || observation.freshness.state !== 'current' || !isCanonicalTimestamp(observation.observed.observedAt)
                     || Date.parse(observation.observed.observedAt) < earliest || Date.parse(observation.observed.observedAt) > now)) return undefined
             const failed = observations.find((observation) => !observationSatisfiesExpectation(observation))
-            return failed ? lifecycleRefusal(failed.code, 'host capacity is below the declared floor', failed.source) : true
+            return failed ? machineFloorRefusal(failed) : true
         }, forwardedRefusal)
         if (floor !== true) return floor ? { kind: 'complete', result: floor } : unavailable()
         return await adapters.withLifecycleStage(context, async (stage) => await adapters.withAcquiredPorts(context, async (ports) => {
@@ -4345,7 +4403,13 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
 }
 
 interface DoctorFreshness {
-    readonly local: GeneratedEnvironmentCurrentness['outcome']
+    // Only whether the generated files are current. The full check result, with every owned path's
+    // authority, is what `check --json` prints; embedding it made doctor's report hundreds of KB.
+    readonly local: Readonly<{
+        kind: GeneratedEnvironmentCurrentness['outcome']['kind']
+        status: number
+        diagnostics: GeneratedEnvironmentCurrentness['outcome']['diagnostics']
+    }>
     readonly changes: GeneratedEnvironmentCurrentness['changes']
     readonly storedProducer: GeneratedEnvironmentCurrentness['storedProducer']
     readonly installedProducer: GeneratedEnvironmentCurrentness['currentProducer']
@@ -4458,6 +4522,11 @@ async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>
 export type DoctorCommandResult = Readonly<{
     kind: 'complete'
     status: 0
+    diagnostics: readonly EnvironmentDiagnostic[]
+    result: ApplicationDoctorEvaluation
+}> | Readonly<{
+    kind: 'refusal'
+    status: 2
     diagnostics: readonly EnvironmentDiagnostic[]
     result: ApplicationDoctorEvaluation
 }>
@@ -4994,8 +5063,17 @@ export async function runDoctor(
         adapters.inspectEvaluator?.() ?? Object.freeze([])])
     const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
     const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...unreadableState ? [unreadableState] : []]
-    return warnings.length === 0 ? outcome
+    const reported = warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
+    // Doctor reports on a configuration; without one there is nothing to report on, and a zero
+    // exit would let `doctor && ...` proceed past a missing or unparseable cockpit.toml.
+    const loaded = await config
+    if (loaded.kind === 'complete') return reported
+    const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
+    return Object.freeze({
+        ...reported, kind: 'refusal', status: 2,
+        diagnostics: Object.freeze([...loaded.diagnostics.filter(({ code, target }) => !forwarded.has(`${code}\0${target}`)), ...reported.diagnostics]),
+    })
 }
 
 async function doctorHealth(
@@ -5009,7 +5087,8 @@ async function doctorHealth(
         prepareGeneratedEnvironmentCurrentness(input),
         adapters.discoverReleaseFreshness?.() ?? Promise.resolve(Object.freeze({ kind: 'unknown' as const, reason: 'release discovery is not bound' })),
     ]).then(([currentness, release]): DoctorFreshness => Object.freeze({
-        local: currentness.outcome, changes: currentness.changes, storedProducer: currentness.storedProducer,
+        local: Object.freeze({ kind: currentness.outcome.kind, status: currentness.outcome.status, diagnostics: currentness.outcome.diagnostics }),
+        changes: currentness.changes, storedProducer: currentness.storedProducer,
         installedProducer: currentness.currentProducer, release, repair: proposeGeneratedEnvironmentRepair(currentness),
     }))
     let health: HealthEvaluation

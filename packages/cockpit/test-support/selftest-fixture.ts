@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
-import { snapshotGeneratedJson } from '../src/environment/contract.js'
 import { executeProbe } from '../src/environment-exec/execute.js'
 import { surfaceSelftestExpectation, type SelftestProbeSpecification } from '../src/surfaces/selftest.js'
 
@@ -17,12 +16,6 @@ async function syntheticSkillSources(names: readonly string[]): Promise<string> 
         { path: `skills/${name}/SKILL.md`, bytes: entry.replace('name: cockpit-setup', `name: ${name}`) },
         { path: `skills/${name}/procedures/onboarding.md`, bytes: procedure },
     ]).map(({ path, bytes }) => `{ path = ${JSON.stringify(path)}, bytes = ${JSON.stringify(bytes)} }`).join(',\n  ')
-}
-
-export function specificationsDigest(value: readonly SelftestProbeSpecification[]): string {
-    const captured = snapshotGeneratedJson(value)
-    if (!captured) throw new Error('probe specifications could not be captured')
-    return createHash('sha256').update(JSON.stringify(captured)).digest('hex')
 }
 
 export function createSelftestFixture(roots: string[]) {

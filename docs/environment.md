@@ -22,8 +22,8 @@ the limit defined in [`config/load.ts`](../packages/cockpit/src/config/load.ts).
 be read, is not a regular file, is too large, or changes while cockpit reads it is refused with a
 diagnostic. Make the file smaller; raising an output or subprocess limit does not change this one.
 
-`document` can print a visibly incomplete draft when a registry fact is missing; in its JSON result
-that gap is `null`. A skipped registry row produces nothing, because cockpit may no longer know
+`document` can print a visibly incomplete draft when a registry fact is missing. With `--json`, the
+same draft is in `result.document` and each missing fact is a `DOCUMENT_GAP` diagnostic. A skipped registry row produces nothing, because cockpit may no longer know
 which repository it applies to. `registry-resolve` prints shell data you can `source` only when its
 input passed validation.
 
@@ -752,6 +752,11 @@ generated surfaces to list overrides. They never run `sync`, install dependencie
 data, contact vendors to repair anything, or advance lifecycle progress. Only bring-up runs those
 steps, as [Bring-up order](#bring-up-order) describes. Generated, dependency, data and vendor
 checks each return their own results.
+
+`doctor` exits 0 with a report whenever it can read `cockpit.toml`, whatever the verdict, and exits
+2 when the configuration is missing or invalid. Its human output is one line per area followed by
+the diagnostics; `--json` carries the checks, declarations, override inspection and whether the
+generated files are current. `check --json` shows the generated-file detail.
 
 What the checks compare:
 

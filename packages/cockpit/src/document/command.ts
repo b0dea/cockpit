@@ -77,7 +77,7 @@ export interface CompleteDocumentOutcome extends OutcomeBase {
 export interface GapDraftOutcome extends OutcomeBase {
     kind: 'gap-draft'
     artifact: string
-    result: null
+    result: { document: string }
 }
 
 export interface SkippedScopeOutcome extends OutcomeBase {
@@ -873,9 +873,10 @@ function pendingConfiguration(
     configuration?: CockpitConfig,
 ): GapDraftOutcome {
     const unresolved = [questionGap(question)]
+    const artifact = renderIncompleteDocument({ ...model, gaps: unresolved }, SCHEMA_DIRECTIVE, configuration)
     return {
-        kind: 'gap-draft', artifact: renderIncompleteDocument({ ...model, gaps: unresolved }, SCHEMA_DIRECTIVE, configuration),
-        destination, diagnostics: diagnosticsFor(model.attributions, unresolved), result: null, status: 2, question,
+        kind: 'gap-draft', artifact, destination, diagnostics: diagnosticsFor(model.attributions, unresolved),
+        result: { document: artifact }, status: 2, question,
     }
 }
 
@@ -1415,7 +1416,7 @@ async function documentCommandOwned(
         artifact,
         destination,
         diagnostics,
-        result: null,
+        result: { document: artifact },
         status: 2,
     }
 }

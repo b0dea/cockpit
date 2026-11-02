@@ -76,6 +76,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
 interface HumanReviewOutcome {
     readonly status: number
     readonly result: unknown
+    readonly diagnostics?: readonly Diagnostic[]
 }
 
 interface HumanReviewContext {
@@ -202,6 +203,64 @@ function lifecycleSummary(command: string, result: Readonly<Record<string, unkno
     return `${escapeForTerminal(`${headline} (${result.stackId})${timing}.`)}\n${entrypoints.join('')}`
 }
 
+function plural(count: number, one: string, many = `${one}s`): string {
+    return `${count} ${count === 1 ? one : many}`
+}
+
+// Doctor's full result is a structured report for scripts; printed whole it buried the findings
+// under thousands of lines. A person gets one line per area and the commands that show the detail.
+function doctorSummary(
+    result: Readonly<Record<string, unknown>>,
+    diagnostics: readonly Diagnostic[],
+    fixContext?: FixContext,
+): string {
+    if (typeof result.verdict !== 'string' || !Array.isArray(result.checks)) return renderHumanValue(result)
+    const lines: string[] = []
+    const errors = diagnostics.filter(({ severity }) => severity === 'error').length
+    const warnings = diagnostics.filter(({ severity }) => severity === 'warning').length
+    const findings = [errors > 0 ? plural(errors, 'error') : '', warnings > 0 ? plural(warnings, 'warning') : ''].filter(Boolean)
+    lines.push(`Doctor: ${result.verdict}. ${findings.length === 0 ? 'No findings.' : `Findings: ${findings.join(' and ')}, listed below.`}`)
+    const tally = new Map<string, number>()
+    for (const check of result.checks as readonly { verdict?: unknown }[]) {
+        const verdict = String(check?.verdict).replaceAll('-', ' ')
+        tally.set(verdict, (tally.get(verdict) ?? 0) + 1)
+    }
+    lines.push(`Checks: ${[...tally].map(([verdict, count]) => `${count} ${verdict}`).join(', ') || 'none ran'}.`)
+    if (Array.isArray(result.comparisons) && result.comparisons.length > 0) lines.push(`Remote comparisons: ${result.comparisons.length}.`)
+    const freshness = result.freshness as Readonly<{
+        local?: { kind?: unknown; diagnostics?: unknown }; changes?: unknown; release?: Readonly<Record<string, unknown>>
+    }> | undefined
+    if (freshness?.local) {
+        const changes = Array.isArray(freshness.changes) ? freshness.changes.length : 0
+        const refused = freshness.local.kind !== 'complete' && Array.isArray(freshness.local.diagnostics)
+            ? (freshness.local.diagnostics as readonly { code?: unknown }[]).map(({ code }) => String(code)) : []
+        lines.push(`Generated files: ${refused.length > 0 ? `check refused (${refused.join(', ')})`
+            : changes === 0 ? 'current' : `${plural(changes, 'change')} pending`}.`)
+    }
+    const overrides = result.surfaceOverrides as Readonly<{ kind?: unknown; activeOverrides?: unknown; changedOverrideOriginals?: unknown; code?: unknown }> | undefined
+    if (overrides?.kind === 'complete' && Array.isArray(overrides.activeOverrides) && Array.isArray(overrides.changedOverrideOriginals)) {
+        const active = (overrides.activeOverrides as readonly { name?: unknown }[]).map(({ name }) => String(name))
+        const changed = (overrides.changedOverrideOriginals as readonly { name?: unknown }[]).map(({ name }) => String(name))
+        lines.push(`Surface overrides: ${active.length === 0 ? 'none' : `${active.length} active (${active.join(', ')})`}`
+            + `${changed.length === 0 ? '' : `; ${changed.length} changed upstream (${changed.join(', ')})`}.`)
+    } else if (overrides) lines.push(`Surface overrides: not inspected (${String(overrides.code)}).`)
+    if (Array.isArray(result.declarations) && result.declarations.length > 0) {
+        const rows = result.declarations as readonly { subject?: unknown; state?: unknown }[]
+        const named = (state: string) => rows.filter(row => row.state === state).map(row => String(row.subject).replaceAll('-', ' '))
+        const declared = named('declared')
+        const absent = named('not-declared')
+        lines.push(`Declared: ${declared.join(', ') || 'nothing'}${absent.length === 0 ? '' : `; not declared: ${absent.join(', ')}`}.`)
+    }
+    const release = freshness?.release
+    if (release?.kind === 'known') {
+        lines.push(`Release: ${release.currency === 'same-version' ? `${String(release.installedVersion)} is the latest`
+            : `${String(release.latestVersion)} is published; ${String(release.installedVersion)} is installed`}.`)
+    } else if (release?.kind === 'unknown') lines.push(`Release: unknown (${String(release.reason)}).`)
+    lines.push(`Full report: ${bindConfigPath(cockpitCommand('doctor', { args: '--json' }), fixContext)}`)
+    lines.push(`Generated file detail: ${bindConfigPath(cockpitCommand('check'), fixContext)}`)
+    return `${lines.map(escapeForTerminal).join('\n')}\n`
+}
+
 export function renderHumanDiagnostics(
     diagnostics: readonly Diagnostic[],
     review?: HumanReviewContext,
@@ -220,15 +279,22 @@ export function renderHumanDiagnostics(
             const changes = outcome.result.changes as readonly { operation: unknown; path: unknown }[]
             if (!changes.every((change) => change && (change.operation === 'write' || change.operation === 'remove')
                 && typeof change.path === 'string')) return ''
-            return changes.length === 0 ? 'No generated changes.\n'
-                : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
+            const stale = 'staleRemoval' in outcome.result ? outcome.result.staleRemoval as { digest?: unknown } | undefined : undefined
+            const approval = typeof stale?.digest === 'string' && /^[a-f0-9]{64}$/.test(stale.digest)
+                ? `${escapeForTerminal(`Stale-removal digest ${stale.digest}: to approve these removals, a person runs `
+                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and types it.`)}\n` : ''
+            return (changes.length === 0 ? 'No generated changes.\n'
+                : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`) + approval
         }
         if (command === 'logs' && 'records' in outcome.result && Array.isArray(outcome.result.records)) {
             const records = outcome.result.records as readonly { timestamp: unknown; stream: unknown; message: unknown }[]
             return records.length === 0 ? 'No log records.\n'
                 : `${records.map(record => escapeForTerminal(`${String(record.timestamp)} ${String(record.stream)} ${String(record.message)}`)).join('\n')}\n`
         }
-        if (command === 'selftest' || command === 'upgrade' || command === 'doctor' || command === 'init') {
+        if (command === 'doctor') {
+            return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
+        }
+        if (command === 'selftest' || command === 'upgrade' || command === 'init') {
             return renderHumanValue(outcome.result)
         }
         return command === undefined ? '' : lifecycleSummary(command, outcome.result as Readonly<Record<string, unknown>>)

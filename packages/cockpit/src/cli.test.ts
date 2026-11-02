@@ -14,7 +14,7 @@ import { renderHumanDiagnostics } from './diagnostics.js'
 import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './registry-resolve/command.js'
 import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
-import type { ConfiguredSurfaceSelftestCommandInput } from './selftest/command.js'
+import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './selftest/command.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -185,6 +185,7 @@ describe('closed ordinary invocation metadata', () => {
             ['document', '../escape'], ['document', '--registry', '/outside/registry'],
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
             ['sync', '--interactive'], ['sync', '--interactive=false'], ['sync', '--adopt', '.claude/settings.json'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
+            ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['upgrade', '--release-evidence', 'release'], ['upgrade', '--release-evidence-sha256', 'a'.repeat(64)],
             ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'A'.repeat(64)],
             ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'a'.repeat(63)],
@@ -628,20 +629,38 @@ describe('generated environment process contract', () => {
         expect(createReleaseMetadataTransport).toHaveBeenCalledTimes(1)
         expect(transport).toHaveBeenCalledTimes(1)
     })
-    it('prints the doctor override inspection in human mode', async () => {
+    it('prints doctor as a short report with its findings and the commands that show the detail', async () => {
         const capture = captureIo()
         const surfaceOverrides = {
             kind: 'complete',
             activeOverrides: [{ name: 'review', feature: 'skills', originalSha256: 'a'.repeat(64), recordedSha256: 'a'.repeat(64), overlaySource: 'surfaces/review.json' }],
             changedOverrideOriginals: [],
         }
+        const owned = Array.from({ length: 500 }, (_, index) => ({ path: `.claude/skills/s${index}/SKILL.md`, authority: 'generated' }))
+        const freshness = {
+            local: { kind: 'complete', status: 0, diagnostics: [], result: { paths: owned } },
+            changes: [{ operation: 'write', path: 'compose.generated.yml' }],
+            release: { kind: 'known', package: '@b0dea/cockpit', installedVersion: '1.0.0', latestVersion: '1.2.3', currency: 'different-version' },
+        }
         expect(await runCli(['doctor', '--config', 'cockpit.toml'], capture.io, {
-            doctor: async () => ({ status: 0, diagnostics: [], result: { verdict: 'pass', checks: [], comparisons: [], surfaceOverrides } }),
+            doctor: async () => ({ status: 0,
+                diagnostics: [{ severity: 'warning', code: 'GUARD_HOSTS_UNDECLARED', target: 'guards', message: 'synthetic warning' }],
+                result: { verdict: 'pass', checks: [{ verdict: 'pass' }, { verdict: 'pass' }, { verdict: 'not-applicable' }], comparisons: [], surfaceOverrides, freshness,
+                    declarations: [{ subject: 'runtime', state: 'declared' }, { subject: 'data-modes', state: 'not-declared' }] } }),
         })).toBe(0)
-        expect(capture.output().stdout).toContain('surfaceOverrides:')
-        expect(capture.output().stdout).toContain('activeOverrides:')
-        expect(capture.output().stdout).toContain('name: review')
-        expect(capture.output().stdout).not.toContain('{')
+        const config = resolve('cockpit.toml')
+        expect(capture.output().stdout).toBe([
+            'Doctor: pass. Findings: 1 warning, listed below.',
+            'Checks: 2 pass, 1 not applicable.',
+            'Generated files: 1 change pending.',
+            'Surface overrides: 1 active (review).',
+            'Declared: runtime; not declared: data modes.',
+            'Release: 1.2.3 is published; 1.0.0 is installed.',
+            `Full report: npx --no cockpit doctor --config ${config} --json`,
+            `Generated file detail: npx --no cockpit check --config ${config}`,
+            '',
+        ].join('\n'))
+        expect(capture.output().stderr).toContain('WARNING GUARD_HOSTS_UNDECLARED')
     })
 
     it.each(['sync', 'check'] as const)('routes %s in JSON and human modes', async (command) => {
@@ -700,6 +719,16 @@ describe('generated environment process contract', () => {
         expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true }])
         expect(JSON.parse(capture.output().stdout).result.changes).toEqual([{ operation: 'write', path: 'compose.generated.yml' }])
         expect(await runCli(['check', '--config', 'cockpit.toml', '--dry-run'], captureIo().io)).toBe(2)
+
+        // A stale removal is approved only by typing its digest, so the human preview must show it.
+        const human = captureIo()
+        const digest = 'c'.repeat(64)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--dry-run'], human.io, {
+            sync: async () => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: true,
+                changes: [{ operation: 'remove', path: 'compose.generated.yml' }], staleRemoval: { digest } } }),
+        })).toBe(0)
+        expect(human.output().stdout).toBe('remove "compose.generated.yml"\n'
+            + `Stale-removal digest ${digest}: to approve these removals, a person runs npx --no cockpit sync --config ${resolve('cockpit.toml')} --interactive in a terminal and types it.\n`)
     })
 
     it('previews interactive sync and applies only after the exact stale-removal digest is typed', async () => {
@@ -833,7 +862,22 @@ describe('generated environment process contract', () => {
             },
         }, { env: { PATH: '/synthetic/bin' } })).toBe(0)
         expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json', env: { PATH: '/synthetic/bin' } }])
-        expect(await runCli(['selftest', '--config', 'cockpit.toml'], captureIo().io)).toBe(2)
+        const missing = captureIo()
+        expect(await runCli(['selftest', '--config', 'cockpit.toml'], missing.io)).toBe(2)
+        expect(missing.output().stderr).toContain('write one with --write-probe-specifications <new file> first')
+        selftestCalls.length = 0
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json'], captureIo().io, {
+            selftest: async (input) => {
+                selftestCalls.push(input)
+                return { status: 0, diagnostics: [], result: null }
+            },
+        })).toBe(0)
+        for (const conflict of [['--probe-specifications', 'other.json'], ['--interactive'], ['--json']]) {
+            expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
+                captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
+            conflict.join(' ')).toBe(2)
+        }
+        expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' }])
         const upgrade = captureIo()
         expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--json'], upgrade.io, {
             upgrade: async (input) => {
@@ -849,7 +893,7 @@ describe('generated environment process contract', () => {
         const env = Object.defineProperty({
             PATH: undefined, Path: '/synthetic/harnesses', UNRELATED_DATA: 'synthetic-unrelated-canary',
         }, 'UNRELATED_ACCESSOR', { enumerable: true, get: unrelated })
-        const selftest = vi.fn(async (_input: ConfiguredSurfaceSelftestCommandInput) => ({
+        const selftest = vi.fn(async (_input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput) => ({
             status: 0, diagnostics: [], result: { pending: ['native'] },
         }))
         const capture = captureIo()
@@ -862,7 +906,8 @@ describe('generated environment process contract', () => {
             configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json',
             env: { PATH: undefined },
         })
-        expect(selftest.mock.calls[0]?.[0].env).toStrictEqual({ PATH: undefined })
+        const dispatched = selftest.mock.calls[0]?.[0]
+        expect(dispatched && 'env' in dispatched ? dispatched.env : null).toStrictEqual({ PATH: undefined })
         expect(unrelated).not.toHaveBeenCalled()
         expect(capture.output().stdout + capture.output().stderr).not.toContain('synthetic-unrelated-canary')
     })
@@ -982,7 +1027,6 @@ describe('generated environment process contract', () => {
             sha256: 'b'.repeat(64),
             sourceSha256: 'c'.repeat(64),
             generatedManifestSha256: 'd'.repeat(64),
-            specificationsSha256: 'e'.repeat(64),
             commandVectors: [{
                 harness: 'Codex', capability: 'instruction-loading', skill: null,
                 invocation: ['{executable}', '--probe', '{control}'] as const,
@@ -1002,6 +1046,7 @@ describe('generated environment process contract', () => {
             'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--interactive',
         ], capture.io, {
             selftest: async (input) => {
+                if ('writeProbeSpecificationsPath' in input) throw new Error('an interactive run must not reach the file writer')
                 expect(await input.requestProbeSpecificationsApproval?.(specificationCandidate)).toBe(specificationCandidate.sha256)
                 expect(await input.requestExecutableApproval?.(candidate)).toBe(candidate.sha256)
                 return { status: 0, diagnostics: [], result: { pending: [] } }
@@ -1993,18 +2038,19 @@ describe('document process contract', () => {
         expect(result.stderr).not.toContain('an explicit registry cannot establish the cockpit name')
     })
 
-    it('emits exactly one JSON value with a null result and no draft or stderr prose', () => {
+    it('emits exactly one JSON value carrying the incomplete draft and no stderr prose', () => {
         const { cockpitRoot } = makeCockpit()
         const result = run(['document', cockpitRoot, '--json'])
         const response = JSON.parse(result.stdout) as {
-            result: unknown
+            result: { document: string } | null
             diagnostics: { code: string }[]
         }
 
         expect(result.status).not.toBe(0)
-        expect(response.result).toBeNull()
+        expect(response.result?.document).toBe(run(['document', cockpitRoot]).stdout)
+        expect(response.result?.document).toContain('INCOMPLETE DRAFT')
         expect(response.diagnostics.some((diagnostic) => diagnostic.code === 'DOCUMENT_GAP')).toBe(true)
-        expect(result.stdout).not.toContain('INCOMPLETE DRAFT')
+        expect(result.stdout.trimEnd().split('\n')).toHaveLength(1)
         expect(result.stderr).toBe('')
     })
 

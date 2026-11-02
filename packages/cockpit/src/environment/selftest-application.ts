@@ -22,8 +22,11 @@ import {
 import { redactSensitiveMessage } from './sensitive.js'
 import { snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, type ConsumedFile, type ExecutionStep } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
+import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import {
+    draftSurfaceSelftestSpecifications,
     planSurfaceSelftest,
+    unfilledSurfaceSelftestSpecifications,
     surfaceSelftestHumanNeeded,
     surfaceSelftestReviews,
     type PlannedSelftestProbe,
@@ -36,7 +39,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/selftest-application.ts',
     exports: [
         'runSurfaceSelftestApplication', 'runConfiguredSurfaceSelftestApplication',
-        'runConfiguredSurfaceSelftestOutcome', 'runSelftestOperatorCommand',
+        'runConfiguredSurfaceSelftestOutcome', 'runSelftestOperatorCommand', 'writeConfiguredSurfaceSelftestSpecifications',
     ],
 } as const
 
@@ -44,6 +47,11 @@ export interface ConfiguredSurfaceSelftestCommandInput {
     readonly configPath: string
     readonly probeSpecificationsPath: string
     readonly env: Readonly<Record<string, string | undefined>>
+}
+
+export interface SurfaceSelftestDraftInput {
+    readonly configPath: string
+    readonly writeProbeSpecificationsPath: string
 }
 
 export interface SurfaceSelftestCommandInput {
@@ -64,7 +72,6 @@ export interface SurfaceSelftestProbeSpecificationsCandidate {
     readonly sha256: string
     readonly sourceSha256: string
     readonly generatedManifestSha256: string
-    readonly specificationsSha256: string
     readonly commandVectors: readonly Readonly<{
         harness: string
         capability: string
@@ -91,7 +98,7 @@ export type SurfaceSelftestCommandOutcome =
         bundle: SelftestEvidenceBundle
         evidence: ReturnType<typeof validateSelftestEvidenceBundle>
     }>
-    | Readonly<{ kind: 'refusal'; status: 2; code: 'SELFTEST_SOURCE_INVALID' | 'SELFTEST_EXECUTION_INVALID'; reason: string }>
+    | Readonly<{ kind: 'refusal'; status: 2; code: 'SELFTEST_SOURCE_INVALID' | 'SELFTEST_EXECUTION_INVALID'; reason: string; fix?: string }>
 
 const defaultAdapters: SurfaceSelftestCommandAdapters = Object.freeze({ execute: executeProbe })
 const MAX_EXECUTABLE_BYTES = 536_870_912
@@ -190,23 +197,29 @@ async function readProbeSpecificationsArtifact(path: string): Promise<string | u
     } catch { return undefined } finally { await handle?.close() }
 }
 
+const PROBE_SPECIFICATIONS_SCHEMA = 'cockpit-selftest-probe-specifications/v1'
+
+// The file carries no digest of its own rows: a person edits them, and a digest anyone can
+// recompute would prove nothing. What binds the rows is the approval of the whole file's SHA-256.
 function probeSpecificationsArtifact(
     bytes: string,
     sourceSha256: string,
     generatedManifestSha256: string,
-): readonly SelftestProbeSpecification[] | undefined {
-    try {
-        const captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined
-        if (!captured || Object.keys(captured).sort().join('\0') !== [
-            'generatedManifestSha256', 'schema', 'sourceSha256', 'specifications', 'specificationsSha256',
-        ].sort().join('\0') || captured.schema !== 'cockpit-selftest-probe-specifications/v1'
-            || captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256
-            || typeof captured.specificationsSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(captured.specificationsSha256)
-            || !Array.isArray(captured.specifications)) return undefined
-        const specifications = snapshotGeneratedJson(captured.specifications) as unknown as readonly SelftestProbeSpecification[] | undefined
-        if (!specifications || sha256(JSON.stringify(specifications)) !== captured.specificationsSha256) return undefined
-        return specifications
-    } catch { return undefined }
+): Readonly<{ kind: 'complete'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed' }> | Readonly<{ kind: 'stale' }> {
+    let captured: Readonly<Record<string, unknown>> | undefined
+    try { captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined } catch { return { kind: 'malformed' } }
+    if (!captured || Object.keys(captured).sort().join('\0') !== ['generatedManifestSha256', 'schema', 'sourceSha256', 'specifications'].join('\0')
+        || captured.schema !== PROBE_SPECIFICATIONS_SCHEMA || !Array.isArray(captured.specifications)) return { kind: 'malformed' }
+    if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) return { kind: 'stale' }
+    return { kind: 'complete', specifications: captured.specifications }
+}
+
+// Every refusal about the file itself names the command that writes a fresh one.
+function probeSpecificationsRefusal(reason: string): SurfaceSelftestCommandOutcome {
+    return {
+        kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID', reason,
+        fix: 'write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications',
+    }
 }
 
 type BuiltinHarnessName = 'Claude Code' | 'Codex' | 'OpenCode'
@@ -570,16 +583,30 @@ export async function runConfiguredSurfaceSelftestApplication(
     }
     let artifactPath: string
     try { artifactPath = await realpath(requestedArtifactPath) } catch {
-        return refusal('SELFTEST_SOURCE_INVALID', 'probe specification artifact is missing or unreadable')
+        return probeSpecificationsRefusal(`probe specification file ${requestedArtifactPath} is missing or unreadable`)
     }
     const bytes = await readProbeSpecificationsArtifact(artifactPath)
-    if (bytes === undefined) return refusal('SELFTEST_SOURCE_INVALID', 'probe specification artifact is missing or unreadable')
-    const specifications = probeSpecificationsArtifact(
+    if (bytes === undefined) return probeSpecificationsRefusal(`probe specification file ${artifactPath} is missing, unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes`)
+    const artifact = probeSpecificationsArtifact(
         bytes,
         checked.result.application.sourceSha256,
         checked.result.application.surfaceSelftest.manifestSha256,
     )
-    if (!specifications) return refusal('SELFTEST_SOURCE_INVALID', 'probe specification artifact content or provenance is invalid')
+    if (artifact.kind === 'malformed') {
+        return probeSpecificationsRefusal(`probe specification file ${artifactPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
+    }
+    if (artifact.kind === 'stale') {
+        return probeSpecificationsRefusal(`probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`)
+    }
+    const unfilled = unfilledSurfaceSelftestSpecifications(artifact.specifications)
+    if (unfilled.length > 0) {
+        return {
+            kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
+            reason: `probe specification file ${artifactPath} still has ${unfilled.length} row(s) with fields only a person can supply: ${unfilled.slice(0, 5).join('; ')}${unfilled.length > 5 ? `; and ${unfilled.length - 5} more` : ''}`,
+            fix: 'replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file',
+        }
+    }
+    const specifications = artifact.specifications as readonly SelftestProbeSpecification[]
     const plan = planSurfaceSelftest(checked.result.application.surfaceSelftest, specifications)
     if (plan.kind === 'refusal') return refusal(plan.code, plan.reason)
     const artifactSha256 = sha256(bytes)
@@ -588,7 +615,6 @@ export async function runConfiguredSurfaceSelftestApplication(
         sha256: artifactSha256,
         sourceSha256: checked.result.application.sourceSha256,
         generatedManifestSha256: checked.result.application.surfaceSelftest.manifestSha256,
-        specificationsSha256: sha256(JSON.stringify(specifications)),
         commandVectors: Object.freeze(plan.probes.map((probe) => Object.freeze({
             harness: probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id,
             capability: probe.capability,
@@ -600,9 +626,11 @@ export async function runConfiguredSurfaceSelftestApplication(
     })
     const confirmation = await adapters.requestProbeSpecificationsApproval?.(candidate)
     if (confirmation !== artifactSha256) {
+        // No `fix` field: the diagnostic index would print it as the remedy for every
+        // SELFTEST_EXECUTION_INVALID, including probes that ran and failed.
         return refusal(
             'SELFTEST_EXECUTION_INVALID',
-            'probe specification artifact requires independent approval of its exact digest and command vectors',
+            'probe specification artifact requires independent approval of its exact digest and command vectors; run selftest with --interactive at a terminal outside CI and type the file SHA-256 it displays',
         )
     }
     return runSurfaceSelftestApplication({
@@ -639,9 +667,54 @@ export interface SelftestOperatorOptions {
     readonly ci: string | undefined
 }
 
-export async function runConfiguredSurfaceSelftestOutcome(
-    input: SurfaceSelftestHandlerInput,
+/**
+ * Writes the probe-specification file for the current cockpit.toml and generated manifest. The CLI
+ * creates `destination` and refuses an existing path, so a filled-in file is never overwritten.
+ */
+export async function writeConfiguredSurfaceSelftestSpecifications(
+    input: SurfaceSelftestDraftInput,
 ): Promise<SurfaceSelftestDispatchOutcome> {
+    const refused = (message: string): SurfaceSelftestDispatchOutcome => ({
+        status: 2, diagnostics: [{ severity: 'error', code: 'SELFTEST_SOURCE_INVALID', message }], result: null,
+    })
+    let configPath: string
+    try { configPath = await realpath(resolve(input.configPath)) } catch {
+        return refused('configured selftest source could not be resolved')
+    }
+    const checked = await checkGeneratedEnvironment({ configPath })
+    if (checked.kind !== 'complete') {
+        return refused(checked.diagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`).join('; ')
+            || 'generated environment check refused configured selftest source')
+    }
+    const specifications = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest)
+    if (!specifications) return refused('generated selftest projection is invalid')
+    const destination = resolve(input.writeProbeSpecificationsPath)
+    const unfilled = unfilledSurfaceSelftestSpecifications(specifications)
+    return {
+        status: 0, diagnostics: [],
+        artifact: `${JSON.stringify({
+            schema: PROBE_SPECIFICATIONS_SCHEMA,
+            sourceSha256: checked.result.application.sourceSha256,
+            generatedManifestSha256: checked.result.application.surfaceSelftest.manifestSha256,
+            specifications,
+        }, null, 2)}\n`,
+        destination,
+        result: {
+            probeSpecifications: destination,
+            rows: specifications.length,
+            fromGeneratedManifest: 'harness, capability, sample.skill and unavailableCode for every cell that needs evidence',
+            fromCockpit: 'versionCommand and helpCommand, the --version and --help identity probes; review them when you approve the file',
+            fromYou: 'each null: invocation (argv starting with the placeholder already in versionCommand, with exactly one {control}), candidateCode and brokenCode (the exact lines the tool prints for an accepted and a broken control), and sample.features for skill-parity rows',
+            unfilled,
+            then: cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([destination])}` }),
+        },
+    }
+}
+
+export async function runConfiguredSurfaceSelftestOutcome(
+    input: SurfaceSelftestHandlerInput | SurfaceSelftestDraftInput,
+): Promise<SurfaceSelftestDispatchOutcome> {
+    if ('writeProbeSpecificationsPath' in input) return writeConfiguredSurfaceSelftestSpecifications(input)
     const { requestExecutableApproval, requestProbeSpecificationsApproval, ...commandInput } = input
     const outcome = await runConfiguredSurfaceSelftestApplication(commandInput, {
         execute: executeProbe,
@@ -650,7 +723,8 @@ export async function runConfiguredSurfaceSelftestOutcome(
     })
     return outcome.kind === 'complete'
         ? { status: 0, diagnostics: [], result: { bundle: outcome.bundle, evidence: outcome.evidence } }
-        : { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason }], result: null }
+        : { status: 2, diagnostics: [{ severity: 'error', code: outcome.code, message: outcome.reason,
+            ...(outcome.fix ? { fix: outcome.fix } : {}) }], result: null }
 }
 
 function selftestOperatorRefusal(message: string): SurfaceSelftestDispatchOutcome {

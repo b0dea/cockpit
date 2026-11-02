@@ -361,12 +361,24 @@ function refusal(code: RefusalCode, message: string, target: string, fix?: strin
 // A `.cockpit/` directory beside the missing file means it was deleted from a cockpit checkout
 // rather than mistyped, and every cockpit command and guarded agent call is stranded until it
 // comes back; the committed copy is the fastest way back.
-async function deletedFromCockpit(path: string): Promise<boolean> {
-    try { return (await lstat(join(dirname(path), '.cockpit'))).isDirectory() }
-    catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+// sync records the configuration it read in the ownership manifest, and only that file is known to
+// be committed. A mistyped --config beside it was never tracked, so restoring it from git fails.
+// The manifest only chooses which remedy to print: one that cannot be read gives the plain refusal,
+// and sync and check report the manifest itself.
+async function syncedConfigName(directory: string): Promise<string | undefined> {
+    let manifest: unknown
+    try {
+        const read = await readBoundedInput(join(directory, '.cockpit', 'generated-environment-ownership.json'))
+        if (read.kind !== 'complete') return undefined
+        manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(read.bytes))
+    } catch (error) {
+        // Absent, unreadable, changing under a concurrent sync, or not JSON: no remedy can be chosen.
+        if (error instanceof Error) return undefined
         throw error
     }
+    const record = manifest as { format?: unknown; source?: { path?: unknown } } | null
+    const name = record?.format === 'cockpit-generated-ownership/v3' ? record.source?.path : undefined
+    return typeof name === 'string' && name !== '' && basename(name) === name ? name : undefined
 }
 
 export async function loadCockpitConfig(
@@ -374,10 +386,17 @@ export async function loadCockpitConfig(
 ): Promise<EnvironmentCommandOutcome<LoadedCockpitConfig>> {
     const observed = await readConfigSource(inputPath)
     if (observed.kind === 'unavailable') {
-        if (observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND && await deletedFromCockpit(observed.source.path)) {
+        const synced = observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND
+            ? await syncedConfigName(dirname(observed.source.path)) : undefined
+        if (synced === basename(observed.source.path)) {
             return refusal(observed.source.code,
                 `${basename(observed.source.path)} is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it`,
                 observed.source.path, `${formatShellCommand(['git', '-C', dirname(observed.source.path), 'restore', '--', basename(observed.source.path)])} (it is committed), then retry`)
+        }
+        if (synced !== undefined) {
+            return refusal(observed.source.code,
+                `${basename(observed.source.path)} does not exist; this cockpit checkout was synced from ${join(dirname(observed.source.path), synced)}`,
+                observed.source.path, 'check the --config path, then retry')
         }
         return refusal(
             observed.source.code,

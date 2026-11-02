@@ -3,9 +3,9 @@ import type ts from '@typescript/typescript6'
 export interface DiagnosticInventory {
     items: string[]
     owners: Map<string, Set<string>>
-    emissions: Map<string, Set<string>>
     remedies: Map<string, Set<string>>
-    commandOwners: Map<string, Set<string>>
+    /** Codes each command handler can emit, keyed by the command table's handler identifier. */
+    commandDiagnostics: Map<string, Set<string>>
 }
 
 export interface ReferenceDiagnostic {

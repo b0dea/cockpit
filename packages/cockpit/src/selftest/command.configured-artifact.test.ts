@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { createSelftestFixture, specificationsDigest } from '../../test-support/selftest-fixture.js'
+import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
+import { runCli } from '../cli.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
     runConfiguredSurfaceSelftestCommand,
@@ -74,18 +75,39 @@ describe('surface selftest command', () => {
         expect(executions).toBe(0)
     }, 180_000)
 
-    it('checks configured output then admits an authenticated probe specification artifact', async () => {
+    it('writes a probe specification file that selftest admits once a person fills its probe fields', async () => {
         const { root, configPath, application, bin } = fixture()
-        const probeSpecifications = specifications(application)
         const artifactPath = join(root, 'probe-specifications.json')
-        const specificationsSha256 = specificationsDigest(probeSpecifications)
-        const artifactBytes = JSON.stringify({
+        const output: string[] = []
+        const io = { stdout: { write: (chunk: string) => output.push(chunk) > 0 }, stderr: { write: (chunk: string) => output.push(chunk) > 0 } }
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', artifactPath], io), output.join('')).toBe(0)
+        const draft = JSON.parse(await readFile(artifactPath, 'utf8')) as { specifications: Record<string, unknown>[] }
+        expect(draft).toMatchObject({
             schema: 'cockpit-selftest-probe-specifications/v1',
             sourceSha256: application.sourceSha256,
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
-            specificationsSha256,
-            specifications: probeSpecifications,
         })
+
+        const unfilled = await runConfiguredSurfaceSelftestCommand({
+            configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
+        }, { execute: async () => { throw new Error('an unfilled file must not run a probe') } })
+        expect(unfilled).toMatchObject({
+            kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
+            reason: expect.stringContaining('Claude Code guard-firing: invocation, candidateCode, brokenCode'),
+        })
+
+        // The person's part: the probe arguments and the lines the tool prints. Everything else is
+        // what cockpit wrote.
+        const supplied = specifications(application)
+        const filled = draft.specifications.map((row, index) => ({
+            ...row,
+            invocation: supplied[index]!.invocation,
+            candidateCode: supplied[index]!.candidateCode,
+            brokenCode: supplied[index]!.brokenCode,
+            sample: supplied[index]!.sample,
+        }))
+        expect(filled).toEqual(supplied)
+        const artifactBytes = JSON.stringify({ ...draft, specifications: filled })
         await writeFile(artifactPath, artifactBytes)
 
         let approvalCandidate: SurfaceSelftestProbeSpecificationsCandidate | undefined
@@ -105,7 +127,6 @@ describe('surface selftest command', () => {
             sha256: createHash('sha256').update(artifactBytes).digest('hex'),
             sourceSha256: application.sourceSha256,
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
-            specificationsSha256,
             commandVectors: expect.arrayContaining([
                 expect.objectContaining({
                     harness: 'Codex',
@@ -130,7 +151,6 @@ describe('surface selftest command', () => {
             schema: 'cockpit-selftest-probe-specifications/v1',
             sourceSha256: application.sourceSha256,
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
-            specificationsSha256: specificationsDigest(forgedSpecifications),
             specifications: forgedSpecifications,
         }))
         let executions = 0
@@ -159,7 +179,6 @@ describe('surface selftest command', () => {
             schema: 'cockpit-selftest-probe-specifications/v1',
             sourceSha256: application.sourceSha256,
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
-            specificationsSha256: specificationsDigest(probeSpecifications),
             specifications: probeSpecifications,
         })
         await writeFile(artifactPath, artifactBytes)
@@ -199,7 +218,10 @@ describe('surface selftest command', () => {
         const missing = await runConfiguredSurfaceSelftestCommand({
             configPath, probeSpecificationsPath: join(root, 'missing.json'), env: { PATH: bin },
         }, { execute })
-        expect(missing).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
+        const producer = 'npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>'
+        expect(missing).toEqual(expect.objectContaining({
+            kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', fix: expect.stringContaining(producer),
+        }))
 
         const artifactPath = join(root, 'probe-specifications.json')
         await writeFile(artifactPath, '{')
@@ -213,13 +235,15 @@ describe('surface selftest command', () => {
             schema: 'cockpit-selftest-probe-specifications/v1',
             sourceSha256: '0'.repeat(64),
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
-            specificationsSha256: specificationsDigest(probeSpecifications),
             specifications: probeSpecifications,
         }))
         const mismatched = await runConfiguredSurfaceSelftestCommand({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, { execute })
-        expect(mismatched).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
+        expect(mismatched).toEqual(expect.objectContaining({
+            kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
+            reason: expect.stringContaining('written for a different cockpit.toml'), fix: expect.stringContaining(producer),
+        }))
         expect(executions).toBe(0)
     }, 180_000)
 })

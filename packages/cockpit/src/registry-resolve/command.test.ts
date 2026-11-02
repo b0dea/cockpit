@@ -266,7 +266,7 @@ describe('registry resolver command', () => {
         ['out-of-order migration', 'registry=migrated\nenvironment=documented-only\nsurfaces=migrated\nguards=documented-only\ngrading=documented-only\n', 'ADOPTION_ORDER_INVALID'],
         ['gap before migration', 'registry=documented-only\nenvironment=migrated\nsurfaces=documented-only\nguards=documented-only\ngrading=documented-only\n', 'ADOPTION_ORDER_INVALID'],
         ['partial record', 'registry=migrated\nenvironment=documented-only\n', 'ADOPTION_ORDER_INVALID'],
-    ])('refuses %s before emitting bytes', async (_label, adoption, code) => {
+    ])('refuses %s before emitting bytes and states the record format', async (_label, adoption, code) => {
         const paths = fixture(registryBytes, Buffer.from(adoption))
         const outcome = await registryResolveCommand({
             registry: paths.registryPath,
@@ -276,11 +276,27 @@ describe('registry resolver command', () => {
         })
 
         expect(outcome).toEqual(expect.objectContaining({ artifact: null, result: null, status: 2 }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code })])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({
+            code, fix: expect.stringContaining('registry=, environment=, surfaces=, guards=, grading='),
+        })])
     })
 
-    it.each(['development', '0123456789abcdef0123456789abcdef0123456g', 'abc']) (
-        'requires an exact installed source revision, refusing %s',
+    it('resolves an unreleased source build as development and says where the value came from', async () => {
+        const paths = fixture()
+        const outcome = await registryResolveCommand({
+            registry: paths.registryPath,
+            siblingsRoot: join(paths.directory, 'siblings'),
+            adoption: paths.adoptionPath,
+            cockpitSourceRevision: 'development',
+        })
+
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0, result: { registry: { cockpitSourceRevision: 'development' } } })
+        expect(outcome.artifact).toContain("COCKPIT_SOURCE_REVISION='development'\n")
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'warning', code: 'COCKPIT_REVISION_UNSTAMPED' })])
+    })
+
+    it.each(['0123456789abcdef0123456789abcdef0123456g', 'abc'])(
+        'refuses the malformed installed source revision %s after validating its input',
         async (cockpitSourceRevision) => {
             const paths = fixture()
             const outcome = await registryResolveCommand({
@@ -291,7 +307,18 @@ describe('registry resolver command', () => {
             })
 
             expect(outcome).toEqual(expect.objectContaining({ artifact: null, result: null, status: 2 }))
-            expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'COCKPIT_REVISION_INVALID' })])
+            expect(outcome.diagnostics).toEqual([expect.objectContaining({
+                code: 'COCKPIT_REVISION_INVALID', fix: expect.stringContaining('reinstall @b0dea/cockpit'),
+            })])
+
+            const malformed = fixture(Buffer.from('SYNTHETIC_SIBLINGS=(\n  "api|api-service"\n)\n'))
+            const first = await registryResolveCommand({
+                registry: malformed.registryPath,
+                siblingsRoot: join(malformed.directory, 'siblings'),
+                adoption: malformed.adoptionPath,
+                cockpitSourceRevision,
+            })
+            expect(first.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('COCKPIT_REVISION_INVALID')
         },
     )
 

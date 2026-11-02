@@ -157,6 +157,7 @@ export const ENVIRONMENT_CODES = Object.freeze({
     SETUP_PARENT_MISSING: 'SETUP_PARENT_MISSING',
     SETUP_REMOTE_MISMATCH: 'SETUP_REMOTE_MISMATCH',
     SETUP_MANUAL_MISSING: 'SETUP_MANUAL_MISSING',
+    SETUP_CLONE_FAILED: 'SETUP_CLONE_FAILED',
     SETUP_NONE_ABSENT: 'SETUP_NONE_ABSENT',
     SETUP_NONE_DIRECTORY: 'SETUP_NONE_DIRECTORY',
     SETUP_NONE_REPOSITORY: 'SETUP_NONE_REPOSITORY',
@@ -209,6 +210,7 @@ export const ENVIRONMENT_CODES = Object.freeze({
     ENVIRONMENT_SEED_PRECONDITION_CHANGED: 'ENVIRONMENT_SEED_PRECONDITION_CHANGED',
     ENVIRONMENT_SEED_FAILED: 'ENVIRONMENT_SEED_FAILED',
     RUNTIME_UNAVAILABLE: 'RUNTIME_UNAVAILABLE',
+    RUNTIME_IMAGE_UNAVAILABLE: 'RUNTIME_IMAGE_UNAVAILABLE',
     RUNTIME_UNMEASURED: 'RUNTIME_UNMEASURED',
     RUNTIME_COMPOSE_REMOTE: 'RUNTIME_COMPOSE_REMOTE',
     RUNTIME_LAUNCHER_UNAVAILABLE: 'RUNTIME_LAUNCHER_UNAVAILABLE',
@@ -296,6 +298,7 @@ export const REFUSAL_CODES = Object.freeze([
     ENVIRONMENT_CODES.SETUP_PARENT_MISSING,
     ENVIRONMENT_CODES.SETUP_REMOTE_MISMATCH,
     ENVIRONMENT_CODES.SETUP_MANUAL_MISSING,
+    ENVIRONMENT_CODES.SETUP_CLONE_FAILED,
     ENVIRONMENT_CODES.SETUP_POSTCHECK_FAILED,
     ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_INVALID,
     ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
@@ -333,6 +336,7 @@ export const REFUSAL_CODES = Object.freeze([
     ENVIRONMENT_CODES.ENVIRONMENT_SEED_PRECONDITION_CHANGED,
     ENVIRONMENT_CODES.ENVIRONMENT_SEED_FAILED,
     ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+    ENVIRONMENT_CODES.RUNTIME_IMAGE_UNAVAILABLE,
     ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
     ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE,
     ENVIRONMENT_CODES.RUNTIME_LAUNCHER_UNAVAILABLE,
@@ -477,6 +481,9 @@ export interface ExecutionStep {
     stderrLimitBytes: number
     // Absent: output past a limit stops the step. 'retain-tail': the step runs on and keeps the newest bytes.
     outputOverflow?: 'retain-tail'
+    // Absent: a failed step's output never leaves the executor. 'stderr-tail': the refusal carries a
+    // bounded, redacted tail of stderr, for tools whose own error is the only statement of the cause.
+    failureOutput?: 'stderr-tail'
     paths: readonly string[]
     ports: readonly number[]
     labels: Readonly<Record<string, string>>
@@ -636,7 +643,7 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
     const item = snapshot as unknown as ExecutionStep
     const baseKeys = ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation']
     const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter', item.executionFence === undefined ? undefined : 'executionFence',
-        item.outputOverflow === undefined ? undefined : 'outputOverflow']
+        item.outputOverflow === undefined ? undefined : 'outputOverflow', item.failureOutput === undefined ? undefined : 'failureOutput']
         .filter((key): key is string => key !== undefined)
     if (!exactKeys(snapshot, [...baseKeys, ...optionalKeys])
         || typeof item.id !== 'string' || item.id.length === 0 || item.id.includes('\0') || traversal.count >= 256
@@ -644,6 +651,7 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
         || item.argv[0].length === 0 || !canonicalPaths([item.cwd]) || !stringRecord(item.env)
         || !Number.isSafeInteger(item.timeoutMs) || item.timeoutMs <= 0 || item.timeoutMs > MAX_STEP_TIMEOUT_MS
         || item.outputOverflow !== undefined && item.outputOverflow !== 'retain-tail'
+        || item.failureOutput !== undefined && item.failureOutput !== 'stderr-tail'
         || item.spawnNotAfter !== undefined && (!isCanonicalTimestamp(item.spawnNotAfter) || !Number.isFinite(Date.parse(item.spawnNotAfter)))
         || !Number.isSafeInteger(item.stdoutLimitBytes) || item.stdoutLimitBytes < 0 || item.stdoutLimitBytes > 16_777_216
         || !Number.isSafeInteger(item.stderrLimitBytes) || item.stderrLimitBytes < 0 || item.stderrLimitBytes > 16_777_216 || !canonicalPaths(item.paths)

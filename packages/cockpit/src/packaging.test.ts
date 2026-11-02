@@ -451,23 +451,23 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(execFileSync(process.execPath, [launcher, '--version'], options)).toBe(
             `${metadata.name} ${metadata.version} (Node ${metadata.engines.node}; source ${metadata.cockpitSourceRevision})\n`,
         )
-        const resolver = spawnSync(
+        // A packed source build is the install route before a release, so the resolver must work
+        // on it and report the unstamped revision instead of refusing every input.
+        const adoption = join(packScratch, 'adoption.state')
+        writeFileSync(adoption, 'registry=migrated\nenvironment=documented-only\nsurfaces=documented-only\nguards=documented-only\ngrading=documented-only\n')
+        const runResolver = (registry: string) => spawnSync(
             process.execPath,
-            [
-                launcher,
-                'registry-resolve',
-                '--registry',
-                join(packScratch, 'missing-registry'),
-                '--siblings-root',
-                join(packScratch, 'siblings'),
-                '--adoption',
-                join(packScratch, 'missing-adoption'),
-            ],
+            [launcher, 'registry-resolve', '--registry', registry, '--siblings-root', join(packScratch, 'siblings'), '--adoption', adoption],
             { ...options, encoding: 'utf8' },
         )
-        expect(resolver.status).toBe(2)
-        expect(resolver.stdout).toBe('')
-        expect(resolver.stderr).toContain('COCKPIT_REVISION_INVALID')
+        const resolver = runResolver(join(repoRoot, 'fixtures/registries/tier-dialect.sh'))
+        expect(resolver.status, resolver.stderr).toBe(0)
+        expect(resolver.stdout).toContain(`COCKPIT_SOURCE_REVISION='${metadata.cockpitSourceRevision}'`)
+        expect(resolver.stderr).toContain('COCKPIT_REVISION_UNSTAMPED')
+        const malformed = runResolver(join(repoRoot, 'fixtures/registries/malformed.sh'))
+        expect(malformed.status).toBe(2)
+        expect(malformed.stdout).toBe('')
+        expect(malformed.stderr).toContain('REGISTRY_ROW_SKIPPED')
 
         for (const command of ['sync', 'check', 'selftest', 'upgrade', 'work-intake', 'work-status', 'work-accept', 'work-renew', 'work-resume', 'work-execute', 'work-record', 'work-review', 'work-sweep', 'work-reverse', 'work-programme-mint', 'work-metrics', 'work-grade', 'browser-drive', 'browser-accessibility', 'browser-screenshot', 'browser-debugger', 'test-run']) {
             const invalid = spawnSync(process.execPath, [launcher, command, '--json'], options)

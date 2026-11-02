@@ -139,9 +139,14 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     const image = await readDocker(dependencies.execute, dockerStep(docker.value, cwd, runtimeEnv, 'runtime:measure:image',
         ['image', 'inspect', input.image, '--format', '{{.Id}}']))
     if (image.kind !== 'complete' || !IMAGE_ID.test(image.text)) {
-        return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            `--image ${JSON.stringify(input.image)} is not a local image (${image.kind === 'complete' ? 'unexpected image ID' : image.detail}); `
-            + 'pull or build it first, the probe never pulls', '--image')
+        // The runtime answered, so the remedy is the image, not the runtime.
+        return Object.freeze({ status: 2, result: null, artifact: null, destination: null, diagnostics: Object.freeze([Object.freeze({
+            severity: 'error' as const,
+            code: ENVIRONMENT_CODES.RUNTIME_IMAGE_UNAVAILABLE,
+            message: `--image ${JSON.stringify(input.image)} is not a local image (${image.kind === 'complete' ? 'unexpected image ID' : image.detail}); the probe never pulls`,
+            target: '--image',
+            fix: 'pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again',
+        })]) })
     }
 
     // The floor is the numeric core; a vendor suffix such as `-desktop.1` is evidence, not a floor.
