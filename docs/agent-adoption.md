@@ -453,7 +453,7 @@ them, do not run them.
 
 ## Measure the runtime
 
-Done when `runtime measure` exits 0 and names `.cockpit/local/runtime-measurements.json`.
+Done when `runtime measure` exits 0 and names `machine/runtime-measurements.json` under the per-user state root.
 
 Before the first `up`, measure the local container runtime on this machine:
 
@@ -466,8 +466,8 @@ Before the first `up`, measure the local container runtime on this machine:
 - Name an image already on the machine; the probe never pulls.
 - The probe runs only from an installed `@b0dea/cockpit` package, not a linked source checkout.
 - It can run for minutes with no progress output; wait for it to exit.
-- It records the result for this machine only, in a directory Git ignores, and leaves
-  `cockpit.toml` unchanged. `cockpit check` still passes and the guard does not hold later tool
+- It records the result for this machine only, under the per-user state root, so every checkout and
+  worktree shares it, and leaves `cockpit.toml` unchanged. `cockpit check` still passes and the guard does not hold later tool
   calls, so go straight on to `up`.
 - Measure again after the container engine is upgraded: `up` refuses with `RUNTIME_UNMEASURED` and
   names the engine versions.

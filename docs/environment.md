@@ -452,12 +452,17 @@ The command runs a probe in a throwaway directory: a candidate stack that exerci
 mounts in both directions, labels, health, logs, recovery and teardown, next to a deliberately
 broken Compose file that the runtime must reject. It uses only the local image you name and never
 pulls. Its Compose project is `<cockpit.name>-probe-<id>`, so anything it leaves on a shared daemon
-names the cockpit that ran it, and the probe removes it before returning. The probe runs only from
+names the cockpit that ran it, and the probe removes it before returning. If a measure was killed
+before it could, the next `runtime measure` first removes that cockpit's own probe containers,
+network and volume and the stale `cockpit-runtime-measure-*` temporary directory, and lists what it
+removed. It leaves alone anything that may belong to a measure still running, and refuses to probe
+when a leftover cannot be removed, naming it. The probe runs only from
 an installed `@b0dea/cockpit` package and only against a daemon that passes the
 [local endpoint rules](#choose-the-docker-daemon).
 
 If the candidate passes and the broken file is rejected, the command records the measurement in
-`.cockpit/local/runtime-measurements.json` beside `cockpit.toml`, a directory Git ignores. The
+`machine/runtime-measurements.json` under cockpit's per-user state root (the same root the stack
+state lives in), so every checkout and git worktree on this machine reads it and measures once. The
 record is keyed by the runtime identity and the daemon name `docker info` reports, and holds the
 engine version and the Compose version the probe saw, which becomes the Compose floor. Measuring
 again replaces the row for the same runtime and daemon and keeps the others, so switching between

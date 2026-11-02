@@ -971,7 +971,7 @@ export function createLifecycleCommandAdapters(
             : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
                 ?? Object.freeze({ kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' })
         if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId))
-        const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(currentBinding.checkoutRoot))
+        const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(context.namespace.root))
         const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
         if (measured.kind !== 'admitted' && !certifiedProbe) return refuse?.(ownerDiagnostics(measured.code, measured.reason, context.stackId))
         const measurementObservation = measured.kind === 'admitted'

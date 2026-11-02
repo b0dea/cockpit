@@ -98,7 +98,7 @@ describe('destructive command composition', () => {
         roots.push(root, stateHome)
         await run('git', ['init', '--quiet', root])
         const configPath = join(root, 'cockpit.toml')
-        await recordSyntheticMeasurement(root)
+        await recordSyntheticMeasurement(stateHome)
         await writeFile(configPath, [
             '[cockpit]',
             'name = "synthetic-cockpit"',
