@@ -306,6 +306,8 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(preview.result.changes).toEqual(expect.arrayContaining([
                 { operation: 'write', path: manifest },
                 { operation: 'write', path: skill },
+                // The skill tells the agent to read this reference, so the bundle carries it.
+                { operation: 'write', path: `${bundleRoot}/skills/cockpit-setup/references/test-data-and-personas.md` },
             ]))
             await expect(lstat(join(fixture.root, manifest))).rejects.toMatchObject({ code: 'ENOENT' })
 
@@ -455,6 +457,9 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 .slice(0, active.indexOf('[[surfaces.harnesses]]'))
                 .replace('guides = ["AGENTS.md"]', 'guides = []')
             await writeFile(first.configPath, withoutSurfaces)
+            // Plain sync refuses a stale removal, so check names the command that can approve it.
+            expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'refusal',
+                diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', fix: expect.stringContaining('sync --config <your cockpit.toml> --interactive') })] })
             const staleCustom = await readFile(join(first.root, 'custom/rules.md'))
             const staleClaudeLocal = await readFile(join(first.root, 'CLAUDE.local.md'))
             let staleApprovalRequest: GeneratedStaleRemovalApprovalRequest | undefined

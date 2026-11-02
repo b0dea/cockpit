@@ -13,3 +13,5 @@ Generated agent surfaces are portable across clones and tolerate the product tea
 - A rules overlay with Rulesync frontmatter (`root: false`, `globs: ["**/*"]`) no longer fails every sync; a rule that narrows itself with `globs` is refused as `SURFACE_RULE_SCOPE_UNSUPPORTED`, because cockpit writes rules overlays into the always-loaded instruction file. A generator failure now leads with the generator's own error.
 - Going over `cockpit.guide_cap` reports `GUIDE_CAP_EXCEEDED` with the measured lines, the harness and the cap, from `sync`, `check` and `preflight`, including when a linked sibling guide grows past it.
 - `preflight` names why it could not read a running stack (for example `GENERATED_ENVIRONMENT_UNAVAILABLE` for a `cockpit.toml` edit that was not synced) instead of a bare `LIFECYCLE_EVIDENCE_INVALID`.
+- `check` tells you to run `sync --interactive` in a terminal for a formerly generated path, since plain `sync` refuses to remove it without a person's approval.
+- The Claude plugin bundle carries the references its `cockpit-setup` skill tells the agent to read.

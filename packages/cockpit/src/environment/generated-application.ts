@@ -2727,9 +2727,16 @@ async function prepareSurfaces(
         const bundle = estate?.kind === 'complete' ? estate.bundle : undefined
         if (!bundle) return refuse('SURFACE_GENERATION_FAILED', 'Claude plugin bundle generation was refused', 'claudecode-plugin')
         const manifest = claudePluginManifest()
+        // A bundled skill must carry the references its SKILL.md tells the agent to read.
+        const references = bundle.files.some(file => file.path === `skills/${SHIPPED_SETUP_SKILL}/SKILL.md`)
+            ? REFERENCE_ASSETS.map(path => {
+                const bytes = stripDevelopmentMarkers(asset(path).bytes)
+                return { path: `skills/${SHIPPED_SETUP_SKILL}/${path}`, bytes, sha256: sha256(bytes) }
+            }) : []
         const files = [
             { path: '.claude-plugin/plugin.json', ...manifest },
             ...bundle.files,
+            ...references,
         ]
         for (const file of files) bundleEntries.push(Object.freeze({
             kind: 'file' as const,
@@ -3803,7 +3810,7 @@ async function checkCanonicalGeneratedEnvironment(
     const staleEnvironment = ownership.manifest.entries.filter(row => !('harnesses' in row) && !surfacePaths.has(row.path)
         && !prepared.owned.some(file => file.path === row.path))
     if (staleEnvironment.length > 0) return refuse('GENERATED_STALE_ARTIFACT', 'a formerly owned generated artifact remains in durable ownership metadata', staleEnvironment[0]!.path,
-        'run npx --no cockpit sync --config <your cockpit.toml>')
+        'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
     const generatedCandidates: Array<{ path: string; bytes: string }> = []
     const required = generatedPathFacts(prepared, 'required-after-sync')
     if (required.kind !== 'complete') return refuse(required.diagnostic.code, required.diagnostic.message, required.diagnostic.target)
@@ -3852,6 +3859,11 @@ async function checkCanonicalGeneratedEnvironment(
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
     if (comparison.kind !== 'complete') return surfacePlanRefusal(prepared, comparison.diagnostic)
     const drift = comparison.actions.map(action => action.path)
+    // Removing a formerly owned path needs a person's approval of its exact digest, which plain
+    // sync refuses to give itself; send the reader to the one command that can.
+    const stale = comparison.actions.find(action => action.kind === 'remove')
+    if (stale) return refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
+        'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
     if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run npx --no cockpit sync --config <your cockpit.toml>')
     if (ownership.bytes !== encodeOwnershipManifest(prepared).bytes) return refuse(
         'GENERATED_OWNERSHIP_DRIFT', 'generated ownership metadata differs from the current canonical manifest', OWNERSHIP_PATH,
