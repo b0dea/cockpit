@@ -6196,3 +6196,86 @@ describe('init application boundary', () => {
         }
     })
 })
+
+// An empty catch hides what failed. Each one left in production code is named here with why its
+// silence is correct; a new one carries the cause, narrows to the error it expects, or earns an entry.
+// The site is the module and the enclosing function, so the list survives edits that move lines.
+const CLOSE_AFTER_DECISION = 'closing a descriptor after the read or write whose result is already decided'
+const CLEANUP_AFTER_REPORTED_FAILURE = 'removing a temporary file after a failure that is already returned'
+const SIGNAL_RACES_EXIT = 'signalling a process that may already have exited; the caller authenticates that it is gone'
+const PARSE_REFUSED_NEXT = 'a parse failure leaves the value unset, and the next statement refuses it'
+const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[] = [
+    ['packages/cockpit/libexec/fence-marker.cjs#readFenceMarkerFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLEANUP_AFTER_REPORTED_FAILURE],
+    ['packages/cockpit/libexec/fenced-supervisor.cjs#removeSocket', 'an absent socket is the goal, and repair checks absence itself'],
+    ['packages/cockpit/libexec/install-filesystem.cjs#acquire', 'lock residue is left on purpose for explicit recovery, and the primary refusal is returned'],
+    ['packages/cockpit/libexec/install-filesystem.cjs#atomicFile', CLEANUP_AFTER_REPORTED_FAILURE],
+    ['packages/cockpit/src/environment-exec/execute.ts#checkFilesystem', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment-exec/execute.ts#consumedFileMatches', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', 'the prepared marker is either the linked winner or absent'],
+    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', SIGNAL_RACES_EXIT],
+    ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
+    ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
+    ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
+    ['packages/cockpit/src/environment/claims.ts#prepareDrainOutcomePublication', PARSE_REFUSED_NEXT],
+    ['packages/cockpit/src/environment/executable.ts#digestRegularFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment/installs.ts#stableFileSnapshot', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment/lifecycle-composition.ts#composeArtifact', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment/posture-observation.ts#currentConfigurationRevision', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment/read-composition.ts#composeArtifact', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment/setup-observation.ts#stableFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/environment/state.ts#acquireLock', 'a partly created lock is authority evidence that must survive for recovery; the acquisition error is rethrown'],
+    ['packages/cockpit/src/generated-environment/transaction.ts#admitPlan', PARSE_REFUSED_NEXT],
+    ['packages/cockpit/src/generated-environment/transaction.ts#admitReferencePlan', PARSE_REFUSED_NEXT],
+    ['packages/cockpit/src/generated-environment/transaction.ts#digestFile', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', CLOSE_AFTER_DECISION],
+    ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', 'the recovery record was synced before its directory handle is closed'],
+    ['packages/cockpit/src/surfaces/projection.ts#readGuide', 'a guide that vanishes or turns unreadable mid-read is recorded as an identity change'],
+    ['scripts/docs-lint.mjs#readStructuredJson', 'non-JSON evidence falls through to the Markdown parse, which refuses when nothing parses'],
+]
+
+// Shipped helper processes run outside the TypeScript graph; the rulesync bundle is generated
+// third-party code, rebuilt rather than edited.
+function emptyCatchCorpus(): Map<string, string> {
+    const sources = productionSources()
+    const helpers = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', 'packages/cockpit/libexec'],
+        { cwd: ROOT, encoding: 'utf8' }).split('\0')
+        .filter((path) => /\.(?:c|m)?js$/.test(path) && path !== 'packages/cockpit/libexec/rulesync-generator.cjs')
+    for (const path of helpers) sources.set(path, readFileSync(resolve(ROOT, path), 'utf8'))
+    return sources
+}
+
+function emptyCatchSites(sources: Sources): string[] {
+    const sites: string[] = []
+    for (const [path, source] of sources) {
+        const enclosing: string[] = ['<module>']
+        const visit = (node: ts.Node): void => {
+            const name = (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name
+                ? node.name.getText()
+                : (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && ts.isVariableDeclaration(node.parent)
+                    ? node.parent.name.getText() : undefined
+            if (name) enclosing.push(name)
+            if (ts.isCatchClause(node) && node.block.statements.length === 0) sites.push(`${path}#${enclosing.at(-1)}`)
+            ts.forEachChild(node, visit)
+            if (name) enclosing.pop()
+        }
+        visit(parseModule(source))
+    }
+    return sites.sort()
+}
+
+describe('error surfacing controls', () => {
+    it('names why each remaining empty catch in production code is correct', () => {
+        expect(emptyCatchSites(emptyCatchCorpus())).toEqual(JUSTIFIED_EMPTY_CATCHES.map(([site]) => site).sort())
+        expect(JUSTIFIED_EMPTY_CATCHES.every(([, why]) => why.length > 0)).toBe(true)
+    })
+
+    it('reports a planted empty catch by module and enclosing function', () => {
+        const sources = new Map([['packages/cockpit/src/planted.ts', 'export function load() { try { read() } catch { /* ignored */ } }']])
+        expect(emptyCatchSites(sources)).toEqual(['packages/cockpit/src/planted.ts#load'])
+    })
+})
