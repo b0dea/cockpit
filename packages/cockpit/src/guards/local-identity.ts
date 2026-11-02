@@ -54,7 +54,11 @@ export function parseGuardLocalIdentity(bytes: string): GuardHandlerIdentity | u
     const lines = bytes.split('\n')
     if (lines.length !== 5 || lines[0] !== FORMAT || lines[4] !== '') return undefined
     let value: unknown
-    try { value = JSON.parse(lines[3]!) } catch { return undefined }
+    try { value = JSON.parse(lines[3]!) }
+    catch (error) {
+        if (error instanceof SyntaxError) return undefined // not the current format
+        throw error
+    }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
     const record = value as Record<string, unknown>
     if (Object.keys(record).length !== KEYS.length || !KEYS.every(key => typeof record[key] === 'string')) return undefined

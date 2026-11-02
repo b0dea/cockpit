@@ -107,6 +107,9 @@ export function completeGuardTransport(plan: unknown, response: unknown): Native
     }
     let reply: unknown
     try { reply = JSON.parse(value.stdout) }
-    catch { return adaptGuardDecision(issued.target, { decision: 'unavailable', reason: 'Guard handler returned invalid JSON.' }) }
+    catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        return adaptGuardDecision(issued.target, { decision: 'unavailable', reason: 'Guard handler returned invalid JSON.' })
+    }
     return adaptGuardDecision(issued.target, reply)
 }

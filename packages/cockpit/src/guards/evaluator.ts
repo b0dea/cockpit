@@ -1,5 +1,5 @@
 import { posix } from 'node:path'
-import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { GUARD_INPUT_LIMITS, isParsedGuardInput, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv } from '../schema.js'
@@ -701,11 +701,14 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             covers: (path: string) => leaf !== null && chainOf(path).includes(leaf),
         }
     }
-    // A throwing inspector is missing evidence, which every caller treats as unsafe.
+    // A throwing inspector is missing evidence, which every caller treats as unsafe; the cause is
+    // kept so the refusal can name it.
+    let inspectionFailure: string | undefined
     const resolvedEvidence = (request: PathInspectionRequest): JsonSnapshotObject | undefined => {
         let evidence: JsonSnapshot | undefined
+        inspectionFailure = undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
-        catch { return undefined }
+        catch (error) { inspectionFailure = errorCause(error); return undefined }
         const lexical = posix.resolve(request.cwd, request.path)
         const listed = request.operation === 'search' || request.operation === 'unignored-search' ? 'sensitive' : request.operation === 'repository' ? 'tracked' : undefined
         const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
@@ -742,7 +745,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         const evidence = resolvedEvidence(request)
         if (!evidence) {
-            hold(unavailable('Guard path inspection failed, or its evidence is missing, symlinked or mismatched.'))
+            hold(unavailable(`Guard path inspection failed, or its evidence is missing, symlinked or mismatched${inspectionFailure === undefined ? '' : ` (${inspectionFailure})`}.`))
             return
         }
         if (!mutating) return evidence

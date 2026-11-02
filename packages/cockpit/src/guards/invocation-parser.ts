@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { isProxy, isUint8Array } from 'node:util/types'
-import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { hasErrorCode, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'guard-invocation-parser', module: 'packages/cockpit/src/guards/invocation-parser.ts',
@@ -341,12 +341,18 @@ export function parseGuardInput(input: unknown): GuardParseResult {
         if (isUint8Array(input)) {
             const bytes = captureBytes(input)
             try { decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
-            catch { refuse('Guard input is not valid UTF-8.') }
+            catch (error) {
+                if (!hasErrorCode(error, 'ERR_ENCODING_INVALID_ENCODED_DATA')) throw error
+                refuse('Guard input is not valid UTF-8.')
+            }
         }
         if (typeof decoded === 'string') {
             if (/[\uD800-\uDFFF]/u.test(decoded) || Buffer.byteLength(decoded) > GUARD_INPUT_LIMITS.inputBytes) refuse('Invalid or oversized guard input.')
             try { decoded = JSON.parse(decoded) }
-            catch { refuse('Guard input is not valid JSON.') }
+            catch (error) {
+                if (!(error instanceof SyntaxError)) throw error
+                refuse('Guard input is not valid JSON.')
+            }
         }
         const captured = snapshotJson(decoded)
         if (!record(captured) || Buffer.byteLength(JSON.stringify(captured)) > GUARD_INPUT_LIMITS.inputBytes) refuse('Guard input must be bounded own data.')

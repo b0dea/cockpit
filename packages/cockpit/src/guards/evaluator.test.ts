@@ -430,6 +430,8 @@ describe('resolved guard evaluation', () => {
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('npm test; printf db.example.test')), policy(), () => undefined).decision).toBe('deny')
         expect(evaluateGuard(input, policy(), () => { throw new Error('inspection failed') }).decision).toBe('unavailable')
+        const unreadable = Object.assign(new Error('EACCES: permission denied, lstat'), { code: 'EACCES', syscall: 'lstat' })
+        expect(evaluateGuard(input, policy(), () => { throw unreadable })).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('(EACCES: permission denied, lstat)') })
     })
 
     it('requires a complete own-data policy and refuses family grants', () => {
