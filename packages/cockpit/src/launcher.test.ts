@@ -60,7 +60,7 @@ describe('the installed launcher runtime floor', () => {
         expect(result.status).toBe(2)
         expect(JSON.parse(result.stdout)).toMatchObject({
             result: null,
-            diagnostics: [{ code: 'RUNTIME_UNMEASURED' }],
+            diagnostics: [{ code: 'CONFIG_NOT_FOUND' }],
         })
     })
 })
