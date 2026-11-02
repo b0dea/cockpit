@@ -91,7 +91,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         images: { runner: image('runner'), mcp: image('mcp') }, project: { lockfile: 'package-lock.json', sha256: 'b'.repeat(64), driverVersion: '1.2.3' },
         endpoint: 'ws://localhost:3001/', maxClients: 1,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [],
-        authentication: { policy: 'serialized', states: [{ worker: 'shared', path: `${artifacts.auth}/output.json`, source: 'seeded' }] },
+        authentication: { policy: 'serialized', states: [{ worker: 'shared', path: `${artifacts.auth}/output.json` }] },
         data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: false, headed: false, artifacts,
     })
     expect(runtime.generatedHostPaths).toEqual(declarations)

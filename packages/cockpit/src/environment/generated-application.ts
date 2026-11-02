@@ -2574,7 +2574,7 @@ async function prepareSurfaces(
         if (playwright.length !== 1) {
             return refuse('MCP_DECLARATION_INVALID',
                 `[browser] requires exactly one MCP server named playwright, and the declared MCP sources hold ${playwright.length}`, 'playwright',
-                'declare one playwright server in an mcp-json file listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
+                'declare one playwright server in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
         }
         if (!config.mcp.approved.includes('playwright')) {
             return refuse('MCP_DECLARATION_INVALID', '[browser] requires the playwright MCP server to be approved', 'playwright',
@@ -2625,7 +2625,7 @@ async function prepareSurfaces(
                 : playwright[0]!
             if (!browserMcp) return refuse('MCP_DECLARATION_INVALID',
                 `the playwright MCP server must pass browser.endpoint (${browserConfiguration.endpoint}) as exactly one argument, so cockpit can bind it to the leased proxy port`,
-                'playwright', 'pass browser.endpoint verbatim as one argument of the playwright server in its mcp-json file, then run npx --no cockpit sync --config <your cockpit.toml>')
+                'playwright', 'pass browser.endpoint verbatim as one argument of the playwright server in its MCP source file, then run npx --no cockpit sync --config <your cockpit.toml>')
             const browserSkill = asset('skills/cockpit-browser.skill.md')
             browser = renderBrowserSurfaces({
                 runtime,

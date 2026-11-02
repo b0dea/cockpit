@@ -173,7 +173,7 @@ export function createGeneratedCommandFixture() {
         if (options.mcp) {
             declaration += `
     [sibling.derives]
-    mcp_sources = [{ path = ".mcp.json", format = "mcp-json", provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }]
+    mcp_sources = [{ path = ".mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }]
 
     [mcp]
     approved = ["approved-server"]

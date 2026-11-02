@@ -85,8 +85,8 @@ async function fixture(authentication: 'real' | 'bypassed', mutateState: false |
         project: { lockfile: 'package-lock.json', sha256: digest(lock), driverVersion: '1.2.3' }, endpoint: 'ws://localhost:3001/', maxClients: policy === 'per-worker' ? 2 : 1,
         proxy: { serverPort: webPort, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [],
         authentication: authentication === 'real' ? { policy, states: policy === 'serialized'
-            ? [{ worker: 'operator', path: '.browser/auth/operator.json', source: 'seeded' }]
-            : [{ worker: 'operator', path: '.browser/auth/operator.json', source: 'seeded' }, { worker: 'auditor', path: '.browser/auth/auditor.json', source: 'seeded' }] } : { policy: 'none', states: [] },
+            ? [{ worker: 'operator', path: '.browser/auth/operator.json' }]
+            : [{ worker: 'operator', path: '.browser/auth/operator.json' }, { worker: 'auditor', path: '.browser/auth/auditor.json' }] } : { policy: 'none', states: [] },
         data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: true, headed: false,
         artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },
     }, authentication === 'real' ? selected.value : undefined)

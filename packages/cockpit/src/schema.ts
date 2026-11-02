@@ -365,21 +365,21 @@ const VendorDeclaration = z.object({
         tamper_probe: OverlayOperation,
     }).strict().optional(),
     tls: z.object({ generate_at_start: OverlayOperation, append_trust_probe: OverlayOperation, hostname_probe: OverlayOperation }).strict().optional(),
-    stub: z.object({ validates: z.array(DeclarationReason).min(1).max(256), rejection_probe: OverlayOperation, outage_probe: OverlayOperation }).strict().optional(),
+    stub: z.object({ rejection_probe: OverlayOperation, outage_probe: OverlayOperation }).strict().optional(),
 }).strict()
 
 const GeneratedVolumes = z.array(z.object({
     id: DeclarationId, purpose: z.enum(['dependencies', 'product-data']),
-    install_policy: ResettableVolumeId.optional(), target: ContainerPath, provenance: Provenance,
+    install_policy: ResettableVolumeId.optional(), provenance: Provenance,
 }).strict()).max(256)
 
-const DECISIONS_PATH = 'docs/cockpit/environment-decisions.md'
+export const DECISIONS_PATH = 'docs/cockpit/environment-decisions.md'
 const DECISION_SUBJECTS = ['service', 'volume', 'data-default', 'data-mode', 'restore', 'mount', 'port', 'vendor'] as const
 const DecisionEntries = z.array(z.object({
     id: DeclarationId, subject: z.enum(DECISION_SUBJECTS),
     subject_id: z.string().min(1).max(4096),
     decided_on: z.string().date(), decision: DeclarationReason, rejected: z.array(DeclarationReason).min(1).max(64),
-    reason: DeclarationReason, reviewer: z.literal('consumer-maintainer'), provenance: Provenance,
+    reason: DeclarationReason, provenance: Provenance,
 }).strict()).max(512)
 
 export const GeneratedEnvironment = z.object({
@@ -408,7 +408,6 @@ export const GeneratedEnvironment = z.object({
     // A structural subject without an entry is rendered as undecided rather than refused, so a
     // small stack does not have to invent a decision record to load.
     decisions: z.object({
-        path: z.literal(DECISIONS_PATH).default(DECISIONS_PATH),
         entries: DecisionEntries.default([]),
     }).strict().prefault({}),
 }).strict().superRefine((declaration, ctx) => {
@@ -467,7 +466,7 @@ export const GeneratedEnvironment = z.object({
         if (volume.purpose === 'dependencies') {
             if (volume.install_policy !== volume.id) ctx.addIssue({ code: 'custom', path: ['volumes', index, 'install_policy'], message: 'dependency volume and install policy identities must match' })
             const mounts = declaration.services.flatMap((service) => service.mounts).filter((mount) => mount.kind === 'volume' && mount.source === volume.id)
-            if (mounts.length === 0 || mounts.some((mount) => mount.target !== volume.target)) ctx.addIssue({ code: 'custom', path: ['volumes', index, 'target'], message: 'dependency volume requires a matching service mount target' })
+            if (mounts.length === 0 || mounts.some((mount) => mount.target !== mounts[0]!.target)) ctx.addIssue({ code: 'custom', path: ['volumes', index], message: 'dependency volume requires service mounts that share one target' })
         }
     }
     const data = declaration.data
@@ -584,9 +583,9 @@ export const Environment = z
 
 const SiblingGeneratedDerivation = z.object({
     service: GeneratedService.omit({ id: true, sibling: true, mounts: true, profiles: true }),
+    // The checkout is the sibling directory itself, bind-mounted as a directory at this target.
     checkout_mount: z.object({
         target: ContainerPath,
-        source_type: z.literal('directory'),
     }).strict(),
     additional_mounts: GeneratedService.shape.mounts.optional().default([]),
     port_defaults: z.record(EnvironmentName, z.number().int().min(1).max(65535)).refine(
@@ -616,8 +615,8 @@ const SiblingGeneratedDerivation = z.object({
 })
 
 const McpSourceReference = z.object({
+    // A JSON file with a top-level `mcpServers` object, the shape agent tools read from `.mcp.json`.
     path: SafeRelativePath.max(4096),
-    format: z.literal('mcp-json'),
     provenance: Provenance,
 }).strict()
 
@@ -927,9 +926,12 @@ export const Browser = z.object({
         states: z.array(z.object({
             worker: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
             path: GeneratedHostPath,
-            source: z.literal('seeded'),
         }).strict()).max(64).default([]),
     }).strict(),
+    // `isolated` and `reaches_production` are the person's statement about the data the browser
+    // touches; cockpit cannot observe either. They are required rather than defaulted so that
+    // request_preapproval, which lets browser tools run without prompts, is never granted on a
+    // posture nobody wrote down.
     data: z.object({
         mode: DataMode,
         isolated: z.boolean(),
@@ -1164,13 +1166,11 @@ export const CustomHarnessCapability = z.discriminatedUnion('state', [
 
 export const CustomHarness = z.object({
     name: SurfaceName.regex(new RegExp(`^(?!(?:${SURFACE_TARGETS.join('|')})$)`), 'custom harness names cannot replace shipped targets'),
-    features: z.array(z.enum(SURFACE_FEATURES)).length(SURFACE_FEATURES.length),
     capabilities: z.array(CustomHarnessCapability).length(SURFACE_FEATURES.length),
 }).strict().superRefine((harness, ctx) => {
     const features = harness.capabilities.map((capability) => capability.feature)
-    if (hasDuplicate(harness.features) || hasDuplicate(features)
-        || SURFACE_FEATURES.some((feature) => !harness.features.includes(feature) || !features.includes(feature))) {
-        ctx.addIssue({ code: 'custom', path: ['features'], message: 'features must exactly match unique capability rows' })
+    if (hasDuplicate(features) || SURFACE_FEATURES.some((feature) => !features.includes(feature))) {
+        ctx.addIssue({ code: 'custom', path: ['capabilities'], message: 'capabilities must hold exactly one row for each surface feature' })
     }
     const spellings = harness.capabilities.flatMap((capability) => capability.state === 'unavailable' ? [] : [capability.spelling])
     if (hasDuplicate(spellings)) {

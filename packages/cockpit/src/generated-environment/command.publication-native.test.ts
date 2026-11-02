@@ -258,7 +258,7 @@ var = "BROWSER_SOURCE_DIR"
 purpose = "Synthetic browser declaration"
 
 [sibling.derives]
-mcp_sources = [{ path = "browser.mcp.json", format = "mcp-json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
+mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
 
 [mcp]
 approved = ["playwright"]
@@ -273,7 +273,7 @@ endpoint = "ws://localhost:3001/"
 max_clients = 4
 proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
 resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
-authentication = ${variant.serialized ? '{ policy = "serialized", states = [{ worker = "shared", path = ".browser/auth/shared.json", source = "seeded" }] }' : '{ policy = "none", states = [] }'}
+authentication = ${variant.serialized ? '{ policy = "serialized", states = [{ worker = "shared", path = ".browser/auth/shared.json" }] }' : '{ policy = "none", states = [] }'}
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
 headed = true

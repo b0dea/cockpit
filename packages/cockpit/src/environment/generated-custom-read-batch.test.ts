@@ -50,7 +50,6 @@ async function customConsumer(name: string, count: number, extraPath?: string): 
     ) + `
 [[surfaces.harnesses]]
 name = "synthetic-harness"
-features = ${JSON.stringify(features)}
 capabilities = [${capabilities.join(', ')}]
 `
     await writeFile(configPath, declaration)
@@ -260,7 +259,7 @@ describe('custom surface output authentication batching', () => {
         await writeFile(join(root, 'app/.mcp.json'), '{"mcpServers":{"synthetic-server":{"command":"/usr/bin/true"}}}\n')
         await writeFile(configPath, `${await readFile(configPath, 'utf8')}
 [sibling.derives]
-mcp_sources = [{ path = ".mcp.json", format = "mcp-json", provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }]
+mcp_sources = [{ path = ".mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }]
 `)
         const modulePath = join(root, 'adapters/synthetic.mjs')
         const original = await readFile(modulePath, 'utf8')

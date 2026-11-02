@@ -38,40 +38,74 @@ const UNREAD_BY_DESIGN: Readonly<Record<string, string>> = {
     'environment.generated.vendors.[].expiry.reason': 'a stated reason for the person reviewing cockpit.toml; the expiry probe is the check',
     'surfaces.harnesses.[].capabilities.[].reason': 'why a capability is unavailable, recorded for the reader of the support matrix',
     'surfaces.harnesses.[].capabilities.[].control': 'the broken control the measurement ran beside, recorded as evidence',
-    'environment.generated.vendors.[].stub.validates': 'unconsumed: what the stub is said to validate; rejection_probe and outage_probe are the checks',
-    'environment.generated.volumes.[].target': 'unconsumed: restates the service mount target, cross-checked only for dependency volumes',
-    'surfaces.harnesses.[].features': 'unconsumed: must list every surface feature, so it repeats capabilities[].feature',
 }
 
-type Leaves = ReadonlyMap<string, ReadonlySet<ts.Node>>
+// Leaves whose one legal value is a person's explicit statement, each with its reason. A stale entry fails the test.
+const SINGLE_VALUE_BY_DESIGN: Readonly<Record<string, string>> = {}
 
-function schemaLeaves(): string[] {
-    const leaves = new Set<string>()
-    const objectLike = (node: Record<string, unknown>) => Boolean(node.properties || node.anyOf || node.oneOf || node.allOf
-        || (node.items && !Array.isArray(node.items) && (node.items as Record<string, unknown>).properties))
-    const walk = (node: Record<string, unknown>, path: readonly string[]) => {
+type Leaves = ReadonlyMap<string, ReadonlySet<ts.Node>>
+type JsonSchema = Record<string, unknown>
+// Each place a leaf path appears in the published schema: its declaration and, in a union or a
+// conditional branch, each narrowing of it. `required` is false where that occurrence may be omitted.
+type LeafOccurrences = ReadonlyMap<string, readonly Readonly<{ node: JsonSchema; required: boolean }>[]>
+
+function schemaOccurrences(): LeafOccurrences {
+    const occurrences = new Map<string, { node: JsonSchema; required: boolean }[]>()
+    const objectLike = (node: JsonSchema) => Boolean(node.properties || node.anyOf || node.oneOf || node.allOf
+        || (node.items && !Array.isArray(node.items) && (node.items as JsonSchema).properties))
+    const walk = (node: JsonSchema, path: readonly string[], required: boolean) => {
         let descended = false
-        for (const [key, value] of Object.entries((node.properties ?? {}) as Record<string, Record<string, unknown>>)) {
+        const requiredKeys = (node.required ?? []) as readonly string[]
+        for (const [key, value] of Object.entries((node.properties ?? {}) as Record<string, JsonSchema>)) {
             descended = true
-            walk(value, [...path, key])
+            walk(value, [...path, key], requiredKeys.includes(key))
         }
-        const items = node.items as Record<string, unknown> | undefined
+        const items = node.items as JsonSchema | undefined
         if (items && !Array.isArray(items) && objectLike(items)) {
             descended = true
-            walk(items, [...path, '[]'])
+            walk(items, [...path, '[]'], true)
         }
         for (const key of ['anyOf', 'oneOf', 'allOf']) {
-            for (const branch of (node[key] ?? []) as Record<string, unknown>[]) {
+            for (const branch of (node[key] ?? []) as JsonSchema[]) {
                 if (objectLike(branch)) {
                     descended = true
-                    walk(branch, path)
+                    walk(branch, path, required)
                 }
             }
         }
-        if (!descended && path.length > 0) leaves.add(path.join('.'))
+        if (!descended && path.length > 0) {
+            const leaf = path.join('.')
+            occurrences.set(leaf, [...occurrences.get(leaf) ?? [], { node, required }])
+        }
     }
-    walk(JSON.parse(readFileSync(SCHEMA_JSON, 'utf8')) as Record<string, unknown>, [])
-    return [...leaves].sort()
+    walk(JSON.parse(readFileSync(SCHEMA_JSON, 'utf8')) as JsonSchema, [], true)
+    return occurrences
+}
+
+function schemaLeaves(): string[] {
+    return [...schemaOccurrences().keys()].sort()
+}
+
+// The values a leaf schema admits when they are finitely many, or undefined when they are open.
+function finiteValues(node: JsonSchema): readonly unknown[] | undefined {
+    if (Object.hasOwn(node, 'const')) return [node.const]
+    if (Array.isArray(node.enum)) return node.enum
+    if ((node.type === 'integer' || node.type === 'number') && node.minimum !== undefined && node.minimum === node.maximum) return [node.minimum]
+    const branches = [...(node.anyOf ?? []) as JsonSchema[], ...(node.oneOf ?? []) as JsonSchema[]]
+    if (branches.length === 0) return undefined
+    const values = branches.map(finiteValues)
+    return values.every((branch) => branch !== undefined) ? values.flat() : undefined
+}
+
+// A leaf that must be written and can only be written one way, or whose omission means that same
+// value, is ceremony: a person types it and nothing changes.
+function singleValueLeaves(occurrences: LeafOccurrences): string[] {
+    return [...occurrences].filter(([, found]) => {
+        if (found.some(({ node, required }) => !required && !Object.hasOwn(node, 'default'))) return false
+        const values = found.map(({ node }) => finiteValues(node))
+        if (values.some((value) => value === undefined)) return false
+        return new Set(values.flat().map((value) => JSON.stringify(value))).size === 1
+    }).map(([leaf]) => leaf).sort()
 }
 
 function productionSources(directory: string): string[] {
@@ -190,4 +224,10 @@ describe('schema consumers', () => {
         expect(unread.filter(leaf => !Object.hasOwn(UNREAD_BY_DESIGN, effectiveLeaf(leaf))), 'a leaf nobody reads parses and does nothing').toEqual([])
         expect(Object.keys(UNREAD_BY_DESIGN).filter(leaf => !unread.includes(leaf)), 'an allowlisted leaf is now read or gone').toEqual([])
     }, 120_000)
+
+    it('admits more than one value at every published leaf, or names why not', () => {
+        const single = singleValueLeaves(schemaOccurrences())
+        expect(single.filter(leaf => !Object.hasOwn(SINGLE_VALUE_BY_DESIGN, leaf)), 'a leaf with one legal value is typed for no effect').toEqual([])
+        expect(Object.keys(SINGLE_VALUE_BY_DESIGN).filter(leaf => !single.includes(leaf)), 'an allowlisted leaf now admits other values or is gone').toEqual([])
+    })
 })

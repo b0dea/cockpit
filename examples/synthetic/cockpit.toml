@@ -177,7 +177,6 @@ reason = "Synthetic declaration"
 id = "dependencies"
 purpose = "dependencies"
 install_policy = "dependencies"
-target = "/workspace/node_modules"
 
 [environment.generated.volumes.provenance]
 source = "cockpit.overlay.toml"
@@ -188,7 +187,6 @@ reason = "Synthetic declaration"
 [[environment.generated.volumes]]
 id = "product-data"
 purpose = "product-data"
-target = "/workspace/data"
 
 [environment.generated.volumes.provenance]
 source = "cockpit.overlay.toml"
@@ -640,9 +638,6 @@ observed_on = "2026-09-26"
 kind = "declared"
 reason = "Synthetic declaration"
 
-[environment.generated.vendors.stub]
-validates = [ "request envelope and rejection semantics" ]
-
 [environment.generated.vendors.stub.rejection_probe]
 location = "in-stack"
 service = "app"
@@ -669,9 +664,6 @@ observed_on = "2026-09-26"
 kind = "declared"
 reason = "Synthetic declaration"
 
-[environment.generated.decisions]
-path = "docs/cockpit/environment-decisions.md"
-
 [[environment.generated.decisions.entries]]
 id = "service-app"
 subject = "service"
@@ -680,7 +672,6 @@ decided_on = "2026-09-26"
 decision = "Use declared service"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -696,7 +687,6 @@ decided_on = "2026-09-26"
 decision = "Use declared volume"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -712,7 +702,6 @@ decided_on = "2026-09-26"
 decision = "Use declared volume"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -728,7 +717,6 @@ decided_on = "2026-09-26"
 decision = "Use declared data-default"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -744,7 +732,6 @@ decided_on = "2026-09-26"
 decision = "Use declared data-mode"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -760,7 +747,6 @@ decided_on = "2026-09-26"
 decision = "Use declared data-mode"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -776,7 +762,6 @@ decided_on = "2026-09-26"
 decision = "Use declared data-mode"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -792,7 +777,6 @@ decided_on = "2026-09-26"
 decision = "Use declared restore"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -808,7 +792,6 @@ decided_on = "2026-09-26"
 decision = "Use declared mount"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -824,7 +807,6 @@ decided_on = "2026-09-26"
 decision = "Use declared mount"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -840,7 +822,6 @@ decided_on = "2026-09-26"
 decision = "Use declared mount"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -856,7 +837,6 @@ decided_on = "2026-09-26"
 decision = "Use declared mount"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -872,7 +852,6 @@ decided_on = "2026-09-26"
 decision = "Use declared port"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"
@@ -888,7 +867,6 @@ decided_on = "2026-09-26"
 decision = "Use declared vendor"
 rejected = [ "Implicit environment behavior" ]
 reason = "Keep the synthetic environment reproducible"
-reviewer = "consumer-maintainer"
 
 [environment.generated.decisions.entries.provenance]
 source = "cockpit.overlay.toml"

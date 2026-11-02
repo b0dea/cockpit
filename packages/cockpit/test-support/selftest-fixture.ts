@@ -96,7 +96,6 @@ sources = [{ path = "rules/synthetic.md", bytes = "Read the synthetic sibling gu
 
 [[surfaces.harnesses]]
 name = "synthetic-harness"
-features = ["rules", "mcp", "subagents", "skills", "hooks", "permissions"]
 capabilities = [${capabilities.join(', ')}]
 `
         const configPath = join(root, 'cockpit.toml')

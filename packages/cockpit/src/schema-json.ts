@@ -136,7 +136,7 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
         { path: 'surfaces.harnesses[].name', rule: 'unique' },
-        { path: 'surfaces.harnesses[].features', rule: 'exact_capability_feature_set' },
+        { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
         { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
         { path: 'surfaces.adopted[].path', rule: 'unique' },
         { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
@@ -163,7 +163,7 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
         { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
         { path: 'surfaces.harnesses[].name', rule: 'unique' },
-        { path: 'surfaces.harnesses[].features', rule: 'exact_capability_feature_set' },
+        { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
         { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
         { path: 'surfaces.adopted[].path', rule: 'unique' },
         { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
@@ -219,7 +219,7 @@ export function renderCockpitSchema(): string {
                 { anyOf: [{ properties: { posture: { not: { enum: ['stubbed'] } } } }, { required: ['stub'] }] },
             ]
         }
-        if (fields?.purpose && fields.install_policy && fields.target) {
+        if (fields?.purpose && fields.install_policy) {
             node.oneOf = [
                 { properties: { purpose: { enum: ['dependencies'] } }, required: ['install_policy'] },
                 { properties: { purpose: { enum: ['product-data'] } }, not: { required: ['install_policy'] } },

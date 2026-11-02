@@ -15,7 +15,6 @@ export interface RegistryMcpSource {
     readonly slug: string
     readonly siblingDir: string
     readonly path: string
-    readonly format: 'mcp-json'
     readonly provenance: Provenance
 }
 
@@ -102,7 +101,7 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
         sibling: sibling.slug,
         profiles: sibling.mount === 'always' ? [] : [sibling.mount.slice('profile:'.length)],
         mounts: [
-            { kind: 'bind' as const, source: '.', ...generated.checkout_mount },
+            { kind: 'bind' as const, source: '.', target: generated.checkout_mount.target, source_type: 'directory' as const },
             ...generated.additional_mounts,
         ],
     }))
@@ -146,7 +145,6 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
         slug: sibling.slug,
         siblingDir: sibling.dir,
         path: source.path,
-        format: source.format,
         provenance: source.provenance,
     })))
     const secretPaths = parsed.data.sibling.flatMap((sibling) => (sibling.environment_files ?? []).map((file) => ({

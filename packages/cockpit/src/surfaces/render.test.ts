@@ -251,7 +251,7 @@ describe('surface rendering', () => {
             feature, state: 'unavailable', measured_on: '2026-09-26', reason: `No ${feature} mechanism is available`,
         }))
         value.customHarnesses.push({
-            name: 'review-shell', features: ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'],
+            name: 'review-shell',
             capabilities: [{ feature: 'rules', state: 'instructed', measured_on: '2026-09-26', spelling: 'review.txt', control: 'controls/review.json', mechanism: { module: 'adapters/review.mjs', export: 'renderRules' } }, ...unavailable],
         } as never)
         const files = [{ path: 'review.txt', bytes: 'review\n', sha256: digest('review\n'), scope: 'scoped' }]

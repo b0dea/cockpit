@@ -283,7 +283,7 @@ var = "BROWSER_SOURCE_DIR"
 purpose = "Synthetic browser declaration"
 
 [sibling.derives]
-mcp_sources = [{ path = "browser.mcp.json", format = "mcp-json", provenance = { source = "synthetic declaration", observed_on = "2026-10-24", kind = "declared", reason = "Synthetic browser transport" } }]
+mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-24", kind = "declared", reason = "Synthetic browser transport" } }]
 
 [mcp]
 approved = ["playwright"]
@@ -302,7 +302,7 @@ project = { lockfile = "app/package-lock.json", sha256 = "${createHash('sha256')
 max_clients = 2
 proxy = { server_port = 4099, proxy_port = 4100, allowed_hosts = ["localhost:4100"] }
 resolver = [{ hostname = "app.sample.localhost", address = "127.0.0.1" }]
-authentication = { policy = "per-worker", states = [{ worker = "first", path = ".browser/auth/first.json", source = "seeded" }, { worker = "second", path = ".browser/auth/second.json", source = "seeded" }] }
+authentication = { policy = "per-worker", states = [{ worker = "first", path = ".browser/auth/first.json" }, { worker = "second", path = ".browser/auth/second.json" }] }
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
 headed = false

@@ -52,7 +52,7 @@ function overlappingCustomGuards(duplicate = true): GeneratedSurfaceSelftestProj
     const payload: Omit<GeneratedSurfaceSelftestProjection, 'manifestSha256'> = {
         schema: source.schema,
         configuredHarnesses: [...source.configuredHarnesses, 'synthetic'],
-        declarations: [{ name: 'synthetic', features: [...features], capabilities }],
+        declarations: [{ name: 'synthetic', capabilities }],
         entries: source.entries,
         custom: (duplicate ? ['hooks', 'permissions'] : ['hooks']).map((feature) => ({
             harness: 'synthetic', feature: feature as 'hooks' | 'permissions', state: 'instructed' as const,

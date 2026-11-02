@@ -7,7 +7,7 @@ import { parse as parseYaml } from 'yaml'
 
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
-import { decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
+import { DECISIONS_PATH, decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
 import { ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
@@ -232,16 +232,16 @@ function decisionInspection(declaration: GeneratedEnvironmentDeclaration, bytes:
     const headings = [...bytes.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1]!)
     // Undecided subjects are rendered too, so the log covers every subject, decided or not.
     const expected = decisionSubjects(declaration).map(({ subject, subjectId }) => `${subject}:${subjectId}`).sort()
-    if (new Set(headings).size !== headings.length) return { kind: 'refusal', code: 'GENERATED_DECISION_DUPLICATE', target: declaration.decisions.path, reason: 'decision log contains a duplicate entry' }
-    if (headings.length !== expected.length || headings.sort().some((heading, index) => heading !== expected[index])) return { kind: 'refusal', code: 'GENERATED_DECISION_COVERAGE', target: declaration.decisions.path, reason: 'decision log does not cover the declaration exactly' }
+    if (new Set(headings).size !== headings.length) return { kind: 'refusal', code: 'GENERATED_DECISION_DUPLICATE', target: DECISIONS_PATH, reason: 'decision log contains a duplicate entry' }
+    if (headings.length !== expected.length || headings.sort().some((heading, index) => heading !== expected[index])) return { kind: 'refusal', code: 'GENERATED_DECISION_COVERAGE', target: DECISIONS_PATH, reason: 'decision log does not cover the declaration exactly' }
     const today = Date.parse(`${now}T00:00:00.000Z`)
-    if (!Number.isFinite(today)) return { kind: 'refusal', code: 'GENERATED_INSPECTION_INVALID', target: declaration.decisions.path, reason: 'inspection date is invalid' }
+    if (!Number.isFinite(today)) return { kind: 'refusal', code: 'GENERATED_INSPECTION_INVALID', target: DECISIONS_PATH, reason: 'inspection date is invalid' }
     for (const entry of declaration.decisions.entries) {
         const decided = Date.parse(`${entry.decided_on}T00:00:00.000Z`)
         if (decided > today) return { kind: 'refusal', code: 'GENERATED_DECISION_FUTURE', target: entry.id, reason: 'decision date is in the future' }
         if ((today - decided) / 86_400_000 > DECISION_MAX_AGE_DAYS) return { kind: 'refusal', code: 'GENERATED_DECISION_STALE', target: entry.id, reason: 'decision entry requires review' }
     }
-    if (sensitiveDecisionSource(declaration) || SENSITIVE_TEXT.test(bytes) || redactSensitiveText(bytes) !== bytes) return { kind: 'refusal', code: 'GENERATED_DECISION_SENSITIVE', target: declaration.decisions.path, reason: 'decision log contains a machine-local path or secret material' }
+    if (sensitiveDecisionSource(declaration) || SENSITIVE_TEXT.test(bytes) || redactSensitiveText(bytes) !== bytes) return { kind: 'refusal', code: 'GENERATED_DECISION_SENSITIVE', target: DECISIONS_PATH, reason: 'decision log contains a machine-local path or secret material' }
     return undefined
 }
 
@@ -251,7 +251,7 @@ export function undecidedGeneratedDecisions(rendered: GeneratedEnvironmentResult
     if (!declaration) return undefined
     const decided = new Set(declaration.decisions.entries.map((entry) => `${entry.subject}:${entry.subject_id}`))
     const subjects = Object.freeze(decisionSubjects(declaration).map(({ subject, subjectId }) => `${subject}:${subjectId}`).filter((key) => !decided.has(key)))
-    return Object.freeze({ path: declaration.decisions.path, undecided: subjects.length, subjects })
+    return Object.freeze({ path: DECISIONS_PATH, undecided: subjects.length, subjects })
 }
 
 export function inspectGeneratedEnvironment(input: {
@@ -281,7 +281,7 @@ export function inspectGeneratedEnvironment(input: {
     for (const file of rendered.manifest) {
         const bytes = candidates.get(file.path)
         if (bytes === undefined) return { kind: 'refusal', code: 'GENERATED_ARTIFACT_MISSING', target: file.path, reason: 'owned generated artifact is missing' }
-        if (file.path === declaration.decisions.path) {
+        if (file.path === DECISIONS_PATH) {
             const decision = decisionInspection(declaration, bytes, outer.now)
             if (decision) return decision
         }

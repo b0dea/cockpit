@@ -67,19 +67,19 @@ function derivedRegistrySource(): string {
     const decision = (id: string, subject: string, subject_id: string) => ({
         id, subject, subject_id, decided_on: '2026-09-26', decision: `Synthetic ${subject}`,
         rejected: ['Undeclared structure'], reason: 'Reproducible environment',
-        reviewer: 'consumer-maintainer', provenance,
+        provenance,
     })
     config.sibling.push({
         slug: 'worker', dir: 'worker', mount: 'profile:worker', acquire: 'none', var: 'WORKER_DIR',
         toolchain: 'node', purpose: 'Synthetic profile worker',
         derives: { generated: {
             service: derivedService,
-            checkout_mount: { target: '/workspace/worker', source_type: 'directory' },
+            checkout_mount: { target: '/workspace/worker' },
             additional_mounts: [{ kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' }],
             // 4200 would be stack 1's APP_HOST_PORT under the default step of 100.
             port_defaults: { WORKER_HOST_PORT: 4250 },
             entrypoints: [{ name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/' }],
-            volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', target: '/workspace/node_modules', provenance }],
+            volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', provenance }],
             install_policies: [{ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' }],
             decisions: [
                 decision('service-worker', 'service', 'worker'),

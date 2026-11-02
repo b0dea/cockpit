@@ -39,7 +39,6 @@ function derivedConfig(): Record<string, unknown> {
         decision: `Synthetic ${subject}`,
         rejected: ['Undeclared structure'],
         reason: 'Reproducible environment',
-        reviewer: 'consumer-maintainer',
         provenance,
     })
 
@@ -55,12 +54,12 @@ function derivedConfig(): Record<string, unknown> {
         derives: {
             generated: {
                 service: derivedService,
-                checkout_mount: { target: '/workspace/worker', source_type: 'directory' },
+                checkout_mount: { target: '/workspace/worker' },
                 additional_mounts: [{ kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' }],
                 port_defaults: { WORKER_HOST_PORT: 4250 },
                 entrypoints: [{ name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/',
                     hostname: 'worker.sample.localhost', scheme: 'https' }],
-                volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', target: '/workspace/node_modules', provenance }],
+                volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', provenance }],
                 install_policies: [{ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' }],
                 decisions: [
                     decision('service-worker', 'service', 'worker'),
@@ -71,7 +70,7 @@ function derivedConfig(): Record<string, unknown> {
                 ],
                 provenance,
             },
-            mcp_sources: [{ path: '.mcp.json', format: 'mcp-json', provenance }],
+            mcp_sources: [{ path: '.mcp.json', provenance }],
         },
     } as never)
     return config as unknown as Record<string, unknown>
@@ -101,7 +100,7 @@ describe('registry derivation', () => {
             hostname: 'worker.sample.localhost', scheme: 'https',
         })
         expect(result.result.mcpSources).toEqual([{
-            slug: 'worker', siblingDir: 'worker', path: '.mcp.json', format: 'mcp-json',
+            slug: 'worker', siblingDir: 'worker', path: '.mcp.json',
             provenance: worker.provenance,
         }])
         expect(result.result.config.sibling[1].environment_files).toEqual([

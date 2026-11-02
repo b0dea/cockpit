@@ -22,7 +22,7 @@ var = "BROWSER_DECLARATIONS_DIR"
 purpose = "Browser MCP declaration"
 
 [sibling.derives]
-mcp_sources = [{ path = "browser/mcp.json", format = "mcp-json", provenance = { source = "browser/mcp.json", observed_on = "2026-11-02", kind = "declared", reason = "Playwright MCP transport for the browser runner" } }]
+mcp_sources = [{ path = "browser/mcp.json", provenance = { source = "browser/mcp.json", observed_on = "2026-11-02", kind = "declared", reason = "Playwright MCP transport for the browser runner" } }]
 
 [mcp]
 approved = ["playwright"]

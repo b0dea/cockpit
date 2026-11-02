@@ -10,6 +10,7 @@ import { stringify } from 'smol-toml'
 
 import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { DECISIONS_PATH } from '../schema.js'
 import type { CheckoutId, HolderId, StackId } from './contract.js'
 import { executeDataMode, planDataMode } from './data-plane.js'
 import { admitGeneratedObservation, createGeneratedObservationExecution, inspectGeneratedEnvironment, inspectGeneratedRuntimeAuthority, isGeneratedObservation, isGeneratedObservationAdmission, observeGeneratedEnvironment, observeGeneratedEnvironmentHealth, projectGeneratedComposeArtifactAuthority, projectGeneratedRuntimeAuthority, renderGeneratedEnvironment, resolveGeneratedDataOperation, type GeneratedEnvironmentResult } from './generated-stack.js'
@@ -682,7 +683,7 @@ describe('generated environment rendering', () => {
         const result = await rendered()
         const generated = await declaration()
         const candidates = result.manifest.map(({ path, bytes }) => ({ path, bytes }))
-        const replaceDecision = (mutate: (bytes: string) => string) => candidates.map((candidate) => candidate.path === generated.decisions.path ? { ...candidate, bytes: mutate(candidate.bytes) } : candidate)
+        const replaceDecision = (mutate: (bytes: string) => string) => candidates.map((candidate) => candidate.path === DECISIONS_PATH ? { ...candidate, bytes: mutate(candidate.bytes) } : candidate)
         const inspect = (candidateFiles: typeof candidates, now = '2026-09-26') => inspectGeneratedEnvironment({ rendered: result, candidates: candidateFiles, now })
 
         expect(inspect(replaceDecision((bytes) => bytes.replace(/^## vendor:messages[\s\S]*$/m, '')))).toMatchObject({ kind: 'refusal', code: 'GENERATED_DECISION_COVERAGE' })

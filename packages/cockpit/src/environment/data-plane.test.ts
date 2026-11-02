@@ -27,7 +27,7 @@ const structuralDecisions = [
     ['restore-policy', 'restore', 'policy'], ['mount-product-data', 'mount', 'app:volume:product-data:/app/data'],
 ].map(([id, subject, subject_id]) => ({
     id, subject, subject_id, decided_on: '2026-09-26', decision: `Synthetic ${subject}`,
-    rejected: ['Undeclared structure'], reason: 'Reproducible environment', reviewer: 'consumer-maintainer', provenance,
+    rejected: ['Undeclared structure'], reason: 'Reproducible environment', provenance,
 }))
 
 const environment = {
@@ -39,7 +39,7 @@ const environment = {
         health: { property: 'Synthetic route resolves', probe: stackOverlay, tool_probe: stackOverlay, interval_seconds: 5, timeout_seconds: 3, retries: 3, start_period_seconds: 20, measurement: { duration_seconds: 15, provenance } },
         toolchain_pins: [], provenance,
     }],
-    volumes: [{ id: 'product-data', purpose: 'product-data', target: '/app/data', provenance }],
+    volumes: [{ id: 'product-data', purpose: 'product-data', provenance }],
     data: {
         volume: 'product-data', default_mode: 'seeded',
         modes: ['empty', 'seeded', 'restored'].map((mode) => ({
@@ -62,7 +62,7 @@ const environment = {
         },
     },
     vendors: [],
-    decisions: { path: 'docs/cockpit/environment-decisions.md', entries: structuralDecisions },
+    decisions: { entries: structuralDecisions },
 }
 
 const cockpitId = `cockpit:data-plane-a1:${'a'.repeat(64)}` as CockpitId

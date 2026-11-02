@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { isProxy } from 'node:util/types'
 import { stringify as stringifyYaml } from 'yaml'
 
-import { decisionSubjects, GeneratedEnvironment, type GeneratedEnvironment as GeneratedEnvironmentDeclaration, type Provenance } from '../schema.js'
+import { DECISIONS_PATH, decisionSubjects, GeneratedEnvironment, type GeneratedEnvironment as GeneratedEnvironmentDeclaration, type Provenance } from '../schema.js'
 import { snapshotGeneratedJson, type StackId } from './contract.js'
 import { externalDependencyTemplateFragments } from './templates.js'
 
@@ -217,7 +217,6 @@ function renderDecisions(declaration: GeneratedEnvironmentDeclaration, sourceSha
             `- Decision: ${decisionValue(entry.decision)}`,
             `- Rejected: ${decisionValue(entry.rejected)}`,
             `- Reason: ${decisionValue(entry.reason)}`,
-            `- Reviewer: ${decisionValue(entry.reviewer)}`,
             `- Provenance: ${decisionValue(entry.provenance)}`,
             ...(vendor === undefined ? [] : [
                 `- Vendor posture: ${decisionValue(vendor.posture)}`,
@@ -466,7 +465,7 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
         browserService = runner.data.id
         declaration = { ...declaration, services: [...declaration.services, runner.data] }
     }
-    if (!safeGeneratedPath(declaration.compose_file) || !safeGeneratedPath(declaration.decisions.path)) {
+    if (!safeGeneratedPath(declaration.compose_file)) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'generated output path is invalid' })
     }
     const hostServices = declaration.services.filter(service => service.mounts.some(mount => mount.kind !== 'volume')
@@ -485,7 +484,7 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
     const secretsTemplates = renderSecretsTemplates(declaration, safeInput.siblingDirectories)
     if (compose === undefined || secretsTemplates === undefined) return Object.freeze({ kind: 'refusal', code: 'GENERATED_TEMPLATE_INVALID', reason: 'external dependency template projection is invalid' })
     const decisions = renderDecisions(declaration, safeInput.sourceSha256, safeInput.generation)
-    const fileValues: [string, string][] = [[declaration.compose_file, compose], [declaration.decisions.path, decisions], ...Object.entries(secretsTemplates)]
+    const fileValues: [string, string][] = [[declaration.compose_file, compose], [DECISIONS_PATH, decisions], ...Object.entries(secretsTemplates)]
     if (new Set(fileValues.map(([path]) => path)).size !== fileValues.length || fileValues.some(([path]) => !safeGeneratedPath(path))) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'generated output ownership is duplicated or invalid' })
     }

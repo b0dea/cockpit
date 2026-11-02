@@ -39,7 +39,7 @@ async function fixture(addressing = 'hostname', authentication = 'real', tags?: 
         endpoint: 'ws://localhost:3001/', maxClients: 2,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] },
         resolver: addressing === 'hostname' ? [{ hostname: 'app.example.invalid', address: '127.0.0.1' }] : [],
-        authentication: authentication === 'real' ? { policy: 'serialized', states: [{ worker: 'shared', path: '.browser/auth/worker.json', source: 'seeded' }] } : { policy: 'none', states: [] },
+        authentication: authentication === 'real' ? { policy: 'serialized', states: [{ worker: 'shared', path: '.browser/auth/worker.json' }] } : { policy: 'none', states: [] },
         data: { mode: 'seeded', isolated: true, reachesProduction: false },
         requestPreapproval: false, headed: false,
         artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },
@@ -207,7 +207,7 @@ describe('shared browser runtime', () => {
         const { input, root } = await fixture()
         expect((await attempt(input)).authentication).toEqual({ posture: 'real', policy: 'serialized', states: input.authentication.states, claim: 'exclusive' })
         await writeFile(join(root, '.browser/auth/second.json'), '{}', { mode: 0o600 })
-        const perWorker = { ...input, authentication: { policy: 'per-worker' as const, states: [...input.authentication.states, { worker: 'second', path: '.browser/auth/second.json', source: 'seeded' as const }] } }
+        const perWorker = { ...input, authentication: { policy: 'per-worker' as const, states: [...input.authentication.states, { worker: 'second', path: '.browser/auth/second.json' }] } }
         expect((await attempt(perWorker)).server.maxClients).toBe(2)
         await expect(attempt({ ...perWorker, authentication: { ...perWorker.authentication, states: [input.authentication.states[0]!, input.authentication.states[0]!] } })).rejects.toThrow('distinct')
         await chmod(join(root, '.browser/auth/worker.json'), 0o644)

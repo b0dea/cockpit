@@ -22,7 +22,6 @@ interface BrowserImage {
 interface BrowserStorageState {
     readonly worker: string
     readonly path: string
-    readonly source: 'seeded'
 }
 
 export interface BrowserRuntimeInput {
@@ -175,9 +174,9 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         }
         const root = dirname(authority.source)
         for (const state of states) {
-            if (state.source !== 'seeded' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(state.worker)
+            if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(state.worker)
                 || !GeneratedHostPath.safeParse(state.path).success || !state.path.startsWith(`${input.artifacts.auth}/`)) {
-                throw new TypeError('browser storage state must come from seeded users inside the auth artifact root')
+                throw new TypeError('browser storage state must name a worker and a path inside the auth artifact root')
             }
             const path = resolve(root, state.path)
             storage.push(Object.freeze({ path, identity: storageIdentity(path) }))

@@ -94,7 +94,7 @@ const structuralDecisions = [
     ['mount-product-data', 'mount', 'app:volume:product-data:/app/data'],
     ['mount-source', 'mount', 'app:bind:.:/app/source'],
     ['port-web', 'port', 'app:web'],
-].map(([id, subject, subject_id]) => ({ id, subject, subject_id, decided_on: '2026-09-26', decision: `Synthetic ${subject}`, rejected: ['Undeclared structure'], reason: 'Reproducible environment', reviewer: 'consumer-maintainer', provenance }))
+].map(([id, subject, subject_id]) => ({ id, subject, subject_id, decided_on: '2026-09-26', decision: `Synthetic ${subject}`, rejected: ['Undeclared structure'], reason: 'Reproducible environment', provenance }))
 const generatedConfig = {
     cockpit: { name: 'synthetic' },
     sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', toolchain: 'node', purpose: 'Synthetic service', environment_files: [{ template: '.env.example', instance: '.env' }] }],
@@ -114,7 +114,7 @@ const generatedConfig = {
                 toolchain_pins: [{ path: '.node-version', pinned: '22.0.0', observed: '22.0.0', provenance }],
                 provenance,
             }],
-            volumes: [{ id: 'dependencies', purpose: 'dependencies', install_policy: 'dependencies', target: '/app/node_modules', provenance }, { id: 'product-data', purpose: 'product-data', target: '/app/data', provenance }],
+            volumes: [{ id: 'dependencies', purpose: 'dependencies', install_policy: 'dependencies', provenance }, { id: 'product-data', purpose: 'product-data', provenance }],
             data: {
                 volume: 'product-data',
                 default_mode: 'seeded',
@@ -130,12 +130,12 @@ const generatedConfig = {
                 callback_reachability: { reachable: false, alternative: 'Synthetic local replay', reason: 'Synthetic sender cannot reach this stack' },
                 ...(posture === 'vendor-sandbox' ? { expiry: { expires_on: '2027-01-01', reason: 'Synthetic trial expiry', probe: operation } } : {}),
                 ...(posture === 'stubbed' ? {
-                    stub: { validates: ['synthetic envelope'], rejection_probe: operation, outage_probe: operation },
+                    stub: { rejection_probe: operation, outage_probe: operation },
                     callback: { enable: operation, timestamp_source: operation, fresh_window_seconds: 60, fixture: { path: 'fixtures/callback.raw', sha256: 'b'.repeat(64) }, sign: operation, dispatch: operation, tamper_probe: operation },
                     tls: { generate_at_start: operation, append_trust_probe: operation, hostname_probe: operation },
                 } : {}),
             })),
-            decisions: { path: 'docs/cockpit/environment-decisions.md', entries: [...structuralDecisions, ...['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture) => ({ id: posture, subject: 'vendor', subject_id: posture, decided_on: '2026-09-26', decision: posture, rejected: ['Undeclared live endpoint'], reason: 'Explicit local behavior', reviewer: 'consumer-maintainer', provenance }))] },
+            decisions: { entries: [...structuralDecisions, ...['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture) => ({ id: posture, subject: 'vendor', subject_id: posture, decided_on: '2026-09-26', decision: posture, rejected: ['Undeclared live endpoint'], reason: 'Explicit local behavior', provenance }))] },
         },
     },
 }
@@ -149,7 +149,6 @@ const surfaceDeclaration = {
 
 const customHarness = {
     name: 'synthetic-harness',
-    features: ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'],
     capabilities: [
         {
             feature: 'rules',
@@ -262,7 +261,7 @@ describe('consumer surface declarations', () => {
         ['unavailable emitted spelling', () => { const value = structuredClone(customHarness); Object.assign(value.capabilities[1]!, { spelling: 'hooks.json' }); return value }],
         ['unavailable emitted mechanism', () => { const value = structuredClone(customHarness); Object.assign(value.capabilities[1]!, { mechanism: { module: 'adapter.mjs', export: 'renderHooks' } }); return value }],
         ['missing feature cell', () => { const value = structuredClone(customHarness); value.capabilities.pop(); return value }],
-        ['undeclared capability feature', () => ({ ...structuredClone(customHarness), features: ['rules'] })],
+        ['duplicate feature cell', () => { const value = structuredClone(customHarness); value.capabilities[1] = structuredClone(value.capabilities[2]!); return value }],
     ])('rejects a custom harness with %s', (_label, build) => {
         expect(CustomHarness.safeParse(build()).success).toBe(false)
     })
@@ -350,9 +349,9 @@ describe('generated environment declarations', () => {
             config.environment.install_policies.push({ ...config.environment.install_policies[0], volume: 'other-dependencies', lockfile: 'other-lock.json' })
             config.environment.generated.volumes[0].install_policy = 'other-dependencies'
         }],
-        ['dependency mount target mismatch', (config: typeof generatedConfig) => {
-            config.environment.generated.services[0].mounts[0].target = '/different/dependencies'
-            config.environment.generated.decisions.entries[8].subject_id = 'app:volume:dependencies:/different/dependencies'
+        ['dependency volume mounted at two targets', (config: typeof generatedConfig) => {
+            const mounts = config.environment.generated.services[0].mounts
+            mounts.push({ ...mounts[0]!, target: '/different/dependencies' })
         }],
         ['unmounted dependency volume', (config: typeof generatedConfig) => {
             config.environment.generated.services[0].mounts.splice(0, 1)
@@ -566,8 +565,8 @@ describe('work and browser declarations', () => {
         proxy: { server_port: 3000, proxy_port: 3001, allowed_hosts: ['localhost:3001'] },
         resolver: [{ hostname: 'app.example.invalid', address: '127.0.0.1' }],
         authentication: { policy: 'per-worker', states: [
-            { worker: 'first', path: '.browser/auth/first.json', source: 'seeded' },
-            { worker: 'second', path: '.browser/auth/second.json', source: 'seeded' },
+            { worker: 'first', path: '.browser/auth/first.json' },
+            { worker: 'second', path: '.browser/auth/second.json' },
         ] },
         data: { mode: 'seeded', isolated: true, reaches_production: false },
         request_preapproval: true, headed: false,
@@ -727,7 +726,7 @@ describe('work and browser declarations', () => {
 
     it('requires authentication states below the auth root and unique proxy authorities', () => {
         expect(Browser.safeParse({ ...browser, authentication: { policy: 'serialized', states: [
-            { worker: 'shared', path: browser.artifacts.auth, source: 'seeded' },
+            { worker: 'shared', path: browser.artifacts.auth },
         ] } }).success).toBe(false)
         expect(Browser.safeParse({ ...browser, proxy: {
             ...browser.proxy, allowed_hosts: [browser.proxy.allowed_hosts[0], browser.proxy.allowed_hosts[0]],

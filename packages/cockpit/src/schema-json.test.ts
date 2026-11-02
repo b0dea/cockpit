@@ -109,7 +109,7 @@ const surfaceRuntimeChecks = [
     { path: 'surfaces.overlays[].sources[].bytes', rule: 'utf8_byte_length_at_most_65536' },
     { path: 'surfaces.overlays[].replaces.name', rule: 'matches_declaration_name' },
     { path: 'surfaces.harnesses[].name', rule: 'unique' },
-    { path: 'surfaces.harnesses[].features', rule: 'exact_capability_feature_set' },
+    { path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature' },
     { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
     { path: 'surfaces.adopted[].path', rule: 'unique' },
     { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
@@ -196,7 +196,7 @@ describe('the published cockpit schema', () => {
                     sources: [{ path: 'rules/consumer-guide.md', bytes: '# Consumer guide\n' }],
                 }],
                 harnesses: [{
-                    name: 'synthetic-harness', features: [...allSurfaceFeatures], capabilities: [{
+                    name: 'synthetic-harness', capabilities: [{
                         feature: 'rules', state: 'instructed', measured_on: '2026-09-26',
                         spelling: 'config/rules.md', control: 'controls/rules.json',
                         mechanism: { module: 'adapters/synthetic.mjs', export: 'renderRules' },
@@ -211,14 +211,14 @@ describe('the published cockpit schema', () => {
         for (const metadata of ['x-cockpit-runtime-checks', 'x-cockpit-editor-limitations']) {
             expect(schema[metadata]).toContainEqual({ path: 'surfaces.overlays[].name', rule: 'unique' })
             expect(schema[metadata]).toContainEqual({
-                path: 'surfaces.harnesses[].features', rule: 'exact_capability_feature_set',
+                path: 'surfaces.harnesses[].capabilities', rule: 'one_row_per_surface_feature',
             })
         }
     })
 
     it.each(['claudecode', 'codexcli', 'opencode'])('rejects shipped custom harness identity %s in runtime and editor schemas', (name) => {
         const config = { ...structuredClone(validConfig), surfaces: { harnesses: [{
-            name, features: [...allSurfaceFeatures], capabilities: unavailableCapabilities(),
+            name, capabilities: unavailableCapabilities(),
         }] } }
         expect(CockpitConfig.safeParse(config).success).toBe(false)
         expect(editorAccepts(config)).toBe(false)
@@ -243,7 +243,7 @@ describe('the published cockpit schema', () => {
         const config = {
             ...structuredClone(validConfig),
             surfaces: { harnesses: [{
-                name: 'synthetic-harness', features: [...allSurfaceFeatures], capabilities: unavailableCapabilities().map(
+                name: 'synthetic-harness', capabilities: unavailableCapabilities().map(
                     (capability) => capability.feature === 'hooks' ? { ...capability, spelling: 'hooks.json' } : capability,
                 ),
             }] },
@@ -264,8 +264,7 @@ describe('the published cockpit schema', () => {
 
     function configWithRulesCapability(capability: JsonObject) {
         return { ...structuredClone(validConfig), surfaces: { harnesses: [{
-            name: 'synthetic-harness', features: [...allSurfaceFeatures],
-            capabilities: [capability, ...unavailableCapabilities().slice(1)],
+            name: 'synthetic-harness', capabilities: [capability, ...unavailableCapabilities().slice(1)],
         }] } }
     }
 

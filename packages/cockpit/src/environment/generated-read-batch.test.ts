@@ -110,7 +110,7 @@ describe('generated application authenticated read batching', () => {
         const declaration = (await readFile(fixture, 'utf8')).replace(
             'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
         ) + `\n[sibling.derives]\nmcp_sources = [${sources.map(source =>
-            `{ path = ${JSON.stringify(source.path)}, format = "mcp-json", provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }`,
+            `{ path = ${JSON.stringify(source.path)}, provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }`,
         ).join(',')}]\n`
         await writeFile(configPath, declaration)
         return { root, configPath, sources }
@@ -427,7 +427,7 @@ var = "BROWSER_SOURCE_DIR"
 purpose = "Synthetic browser declaration"
 
 [sibling.derives]
-mcp_sources = [{ path = "browser.mcp.json", format = "mcp-json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
+mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
 
 [mcp]
 approved = ["playwright"]

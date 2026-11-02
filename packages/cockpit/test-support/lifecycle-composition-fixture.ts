@@ -167,7 +167,6 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
                 'id = "worker-dependencies"',
                 'purpose = "dependencies"',
                 'install_policy = "worker-dependencies"',
-                'target = "/workspace/node_modules"',
                 '',
                 '[environment.generated.volumes.provenance]',
                 'source = "overlay.toml"',

@@ -42,7 +42,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
         project: { lockfile: 'package-lock.json', sha256: digest(lockBytes), driverVersion: '1.2.3' },
         endpoint: 'ws://localhost:3001/', maxClients: 1,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [],
-        authentication: authentication === 'real' ? { policy: 'serialized', states: [{ worker: 'shared', path: '.browser/auth/shared.json', source: 'seeded' }] } : { policy: 'none', states: [] },
+        authentication: authentication === 'real' ? { policy: 'serialized', states: [{ worker: 'shared', path: '.browser/auth/shared.json' }] } : { policy: 'none', states: [] },
         data: { mode: preapprove ? 'seeded' : 'restored', isolated: true, reachesProduction: false },
         requestPreapproval: preapprove, headed: false,
         artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },

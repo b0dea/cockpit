@@ -69,7 +69,7 @@ function vendor(posture: 'bypassed' | 'stubbed' | 'substituted' | 'vendor-sandbo
         shadow_files: [{ sibling: 'web', instance: '.env', probe: probe('shadow') }],
         callback_reachability: { reachable: false, alternative: 'recorded local capture', reason: 'no public callback route' },
         ...(posture === 'vendor-sandbox' ? { expiry: { expires_on: '2026-12-31', reason: 'fixed synthetic account window', probe: probe('expiry') } } : {}),
-        ...(posture === 'stubbed' ? { stub: { validates: ['required envelope'], rejection_probe: probe('stub-rejection'), outage_probe: probe('stub-outage') } } : {}),
+        ...(posture === 'stubbed' ? { stub: { rejection_probe: probe('stub-rejection'), outage_probe: probe('stub-outage') } } : {}),
     }
 }
 

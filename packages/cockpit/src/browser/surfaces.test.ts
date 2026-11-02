@@ -58,8 +58,8 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
         resolver: localHostname ? [{ hostname: 'app.example.invalid', address: '127.0.0.1' }]
             : remoteHostname ? [{ hostname: 'app.example.localhost', address: '127.0.0.1' }] : [],
         authentication: authentication === 'real' ? { policy, states: policy === 'serialized'
-            ? [{ worker: 'shared', path: '.browser/auth/shared.json', source: 'seeded' }]
-            : [{ worker: 'shared', path: '.browser/auth/shared.json', source: 'seeded' }, { worker: 'auditor', path: '.browser/auth/auditor.json', source: 'seeded' }] } : { policy: 'none', states: [] },
+            ? [{ worker: 'shared', path: '.browser/auth/shared.json' }]
+            : [{ worker: 'shared', path: '.browser/auth/shared.json' }, { worker: 'auditor', path: '.browser/auth/auditor.json' }] } : { policy: 'none', states: [] },
         data: { mode: preapprove ? 'seeded' : 'restored', isolated: true, reachesProduction: false },
         requestPreapproval: preapprove, headed: false,
         artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },
