@@ -77,6 +77,8 @@ describe('product-owned gates', () => {
         expect(calls).toEqual(['unit'])
         expect(result.verdict).toBe('FAIL')
         expect(result.observations).toContainEqual({ id: 'browser', kind: 'unavailable', reason: 'stack unavailable: daemon stopped' })
+        expect((await runGate(registry(), { gate: 'release', stack: { state: 'unavailable', reason: 'daemon stopped' } }, dependencies())))
+            .toMatchObject({ verdict: 'DEGRADED', reasons: ['browser: stack unavailable: daemon stopped'] })
     })
 
     it('runs every selected stage after a thrown tool error and never promotes missing stability', async () => {
