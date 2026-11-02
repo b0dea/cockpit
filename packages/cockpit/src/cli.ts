@@ -1534,40 +1534,27 @@ export async function runCli(
         : commandName ? `Run 'npx --no -- cockpit --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
-    const duplicateSetupOption = definition?.handler === 'setup'
-        ? ['config', 'write-instruction-pointers'].find(name => optionCount(optionArgs, name) > 1)
-        : undefined
+    // parseArgs keeps the last of a repeated option, so a repeat is refused before it can be dropped.
+    const duplicateOption = definition && Object.entries(definition.options).find(([name, option]) =>
+        name !== 'json' && !('multiple' in option && option.multiple === true) && optionCount(optionArgs, name) > 1)?.[0]
 
     if (!commandName) {
         outcome = usageOutcome('CLI_COMMAND_REQUIRED', group === undefined ? 'a command is required'
             : `${group} requires a subcommand: ${groupMembers(group).map(member => member.name.slice(group.length + 1)).join(', ')}`)
     } else if (!definition) {
         outcome = usageOutcome('CLI_UNKNOWN_COMMAND', `unknown command "${commandName}"${respelled ? `; did you mean "${respelled.name}"?` : ''}`)
-    } else if (definition.handler === 'init' && Object.keys(definition.options).some(name => optionCount(optionArgs, name) > 1)) {
-        outcome = usageOutcome('CLI_USAGE_INVALID', 'each init option may be supplied only once')
-    } else if (
-        definition.handler === 'document' &&
-        ['registry', 'output'].some((name) => optionCount(optionArgs, name) > 1)
-    ) {
-        outcome = usageOutcome('DOCUMENT_OPTION_DUPLICATE', 'each document input or output may be supplied only once')
+    } else if (definition.handler === 'registry-resolve' && optionCount(optionArgs, 'output') > 0) {
+        outcome = usageOutcome('REGISTRY_OUTPUT_UNSUPPORTED', 'registry-resolve writes artifact bytes to stdout', '--output')
+    } else if (duplicateOption !== undefined) {
+        // Each code is a literal in its own arm so the diagnostic inventory lists it under its command only.
+        const message = `each ${definition.name} option may be supplied only once`
+        outcome = definition.handler === 'document' ? usageOutcome('DOCUMENT_OPTION_DUPLICATE', message, `--${duplicateOption}`)
+            : definition.handler === 'registry-resolve' ? usageOutcome('REGISTRY_OPTION_DUPLICATE', message, `--${duplicateOption}`)
+            : definition.handler === 'setup' ? usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, message, `--${duplicateOption}`)
+            : usageOutcome('CLI_USAGE_INVALID', message, `--${duplicateOption}`)
     } else if (definition.handler === 'document' && jsonRequested && optionCount(optionArgs, 'output') > 0) {
         // --json never writes files; without this refusal --output was dropped silently and the run exited 0.
         outcome = usageOutcome('DOCUMENT_OUTPUT_JSON_UNSUPPORTED', '--json prints the result envelope and does not write --output; drop one of the two options', '--output')
-    } else if (definition.handler === 'registry-resolve' && optionCount(optionArgs, 'output') > 0) {
-        outcome = usageOutcome('REGISTRY_OUTPUT_UNSUPPORTED', 'registry-resolve writes artifact bytes to stdout', '--output')
-    } else if (
-        definition.handler === 'registry-resolve' &&
-        ['registry', 'siblings-root', 'adoption'].some((name) => optionCount(optionArgs, name) > 1)
-    ) {
-        outcome = usageOutcome('REGISTRY_OPTION_DUPLICATE', 'each registry-resolve input may be supplied only once')
-    } else if (duplicateSetupOption !== undefined) {
-        outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE,
-            'each setup option may be supplied only once', `--${duplicateSetupOption}`)
-    } else if (
-        definition.handler !== 'document' && definition.handler !== 'registry-resolve' && definition.handler !== 'setup'
-        && Object.entries(definition.options).some(([name, option]) => name !== 'json' && !('multiple' in option && option.multiple === true) && optionCount(optionArgs, name) > 1)
-    ) {
-        outcome = usageOutcome('CLI_USAGE_INVALID', `each ${definition.name} option may be supplied only once`)
     } else {
         let parsed: ParsedCommandArguments | undefined
         try {

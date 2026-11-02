@@ -450,7 +450,7 @@ describe('CLI help', () => {
         expect(result.status).toBe(2)
         expect(JSON.parse(result.stdout)).toMatchObject({
             result: null,
-            diagnostics: [expect.objectContaining({ code: 'DOCUMENT_OPTION_DUPLICATE' })],
+            diagnostics: [expect.objectContaining({ code: 'DOCUMENT_OPTION_DUPLICATE', target: `--${option}` })],
         })
         expect(result.stderr).toBe('')
     })
