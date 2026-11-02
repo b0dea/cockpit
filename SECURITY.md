@@ -13,8 +13,7 @@ what response to expect, and what is in scope.
 | everything older | no |
 
 Fixes land on the newest minor release only. There is no long-term support branch and no
-backporting; upgrading to the newest minor is the fix. Nothing has been released yet, so this
-applies from the first release.
+backporting; upgrading to the newest minor is the fix.
 
 ## Reporting a vulnerability
 
@@ -23,22 +22,24 @@ applies from the first release.
 <!-- cockpit:operator-evidence private-reporting-channel=pending -->
 
 Report it privately through GitHub's private vulnerability reporting: open the repository's
-**Security** tab and choose **Report a vulnerability**. If that button is not there, private
-reporting has not been enabled yet. In that case open a public issue that asks for a private
-contact and contains no details of the problem.
+**Security** tab and choose **Report a vulnerability**. If that button is missing, private
+reporting is not enabled; open a public issue that asks for a private contact and contains no
+details of the problem.
 
 Do not open a pull request whose diff or message explains the vulnerability before a fix is
 released. A public fix is a disclosure.
 
-A useful report says what an attacker can do, gives the smallest reproduction you have, names
-the versions involved (cockpit, Node, operating system, and the agent tool if relevant), and
-says whether you intend to publish. Synthetic reproductions are preferred: this project cannot
-accept material that identifies someone's private deployment, even in a security report.
+A useful report gives:
+
+- what an attacker can do;
+- the smallest reproduction you have, synthetic if possible: this project cannot accept material
+  that identifies someone's private deployment, even in a security report;
+- the versions involved (cockpit, Node, operating system, and the agent tool if relevant);
+- whether you intend to publish.
 
 ## What to expect
 
-There is one maintainer and no on-call rotation. These are the windows this project can
-actually keep, which is why none of them is measured in hours:
+There is one maintainer and no on-call rotation, so these windows are in days, not hours:
 
 | | |
 |---|---|
@@ -46,11 +47,8 @@ actually keep, which is why none of them is measured in hours:
 | First assessment — is it a vulnerability, and how bad | within 14 days of acknowledgement |
 | Fix | no fixed window; a confirmed high-severity issue is the next thing worked on, lower severity ships with the next release |
 
-If you have had no acknowledgement after 14 days, send the report again rather than assuming it
-was received and ignored. Reports do get lost.
-
-You will be told what was concluded, including when the conclusion is that it is not a
-vulnerability and why.
+If you have had no acknowledgement after 14 days, send the report again: reports do get lost.
+You will be told the conclusion, including why when it is not a vulnerability.
 
 ## Disclosure
 
@@ -63,15 +61,14 @@ Reporters are credited in the advisory unless you ask not to be.
 
 ## Consumer-identifying leaks
 
-Consumer-identifying material found after publication is handled as a vulnerability. The response
-removes it from the current tree, rotates any affected credentials or endpoints, and republishes
-from a clean root when repository history carries the material. Known downstream forks or vendored
-copies are notified through their private security routes.
+Consumer-identifying material found in the published tree or history is handled as a
+vulnerability. The response removes it from the current tree, rotates any affected credentials or
+endpoints, and republishes from a clean root when repository history carries the material. Known
+downstream forks or vendored copies are notified through their private security routes.
 
-Registry retraction, Git rewrites, and cache invalidation cannot guarantee that every downloaded or
-forked copy disappears. The advisory states what was exposed, which versions or commits carried it,
-what was rotated, and what consumers must replace; it does not promise erasure that cannot be
-verified.
+Registry retraction, Git rewrites and cache invalidation cannot guarantee that every downloaded or
+forked copy disappears, so the advisory promises no erasure. It states what was exposed, which
+versions or commits carried it, what was rotated, and what consumers must replace.
 
 ## Scope
 
@@ -83,11 +80,13 @@ In scope — the parts of this project that run on someone else's machine:
 - the guards and hooks, and the generated per-harness configuration.
 
 The highest-value place to look is anywhere cockpit writes into a repository or generates
-configuration that an agent tool then executes: that is a supply-chain persistence surface, and
-it is the reason the write path is confined, the allow-lists are enumerated, and deletion is by
-name rather than by pattern. A path that escapes its tree, a generated permission that grants
-more than it reads as granting, or a restriction that is emitted and binds nothing are all
-security defects here, not merely bugs.
+configuration that an agent tool then executes. That is a supply-chain persistence surface, which
+is why the write path is confined, allow-lists are enumerated, and deletion is by name rather than
+by pattern. These are security defects here, not merely bugs:
+
+- a path that escapes its tree;
+- a generated permission that grants more than it reads as granting;
+- a restriction that is emitted and binds nothing.
 
 Out of scope:
 

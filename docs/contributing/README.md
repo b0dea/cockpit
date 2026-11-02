@@ -2,9 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-These pages are for people working on cockpit itself: how its documentation is written, how
-releases happen, and the rules that apply across several modules. They are kept apart from the user
-guides because the two have different readers.
+These pages are for people working on cockpit itself: how its documentation is written and
+tested, how releases happen, and the contracts that span several modules. Setup and the pull
+request rules are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Policies and contracts
 
@@ -14,5 +14,6 @@ guides because the two have different readers.
 - [CLI completion and generated references](cli-completion-and-references.md)
 - [Normative contracts](decisions/README.md)
 
-The linter checks each `cockpit:ref path=` marker against the tracked code it points to.
-Spotting a claim that something is enforced but has no marker is a reviewer's job; the linter cannot do it from free prose.
+The linter checks each `cockpit:ref path=` marker against the tracked code it points to. A claim
+that something is enforced but carries no marker is for a reviewer to catch; the linter cannot
+find it in free prose.

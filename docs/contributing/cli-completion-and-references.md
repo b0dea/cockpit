@@ -7,9 +7,9 @@ the generated reference pages are kept current with the source.
 
 ## Command completion and interactive decline
 
-Public CLI outcomes in `--json` mode carry a bounded invocation record with the command name, floored
-monotonic duration in milliseconds, resolved configuration path when present, and one exit status.
-Human-mode runs print no record; the process exit code is the status:
+In `--json` mode every public CLI outcome carries a bounded invocation record: the command name,
+the floored monotonic duration in milliseconds, the resolved configuration path when there is one,
+and one exit status. Human-mode runs print no record; the process exit code is the status:
 
 | Exit | CLI meaning |
 | --- | --- |
@@ -17,43 +17,44 @@ Human-mode runs print no record; the process exit code is the status:
 | `2` | Failure. |
 | `130` | Clean interactive cancellation. |
 
-`session` is the exception: once cleanup completes it exits with its command's own status, as the
-lifecycle section of the user guide `docs/environment.md` describes.
+`session` is the exception: once cleanup completes, it exits with its command's own status (see
+*Lifecycle and ownership* in the user guide `docs/environment.md`). These statuses are separate
+from the guard adapters' decision encoding. The [CLI application](../../packages/cockpit/src/cli.ts)
+measures elapsed time; [invocation records](../../packages/cockpit/src/invocation.ts) validate the
+common completion fields.
 
-These CLI completion statuses are separate from the guard adapters' decision encoding. The
-[CLI application](../../packages/cockpit/src/cli.ts) measures elapsed time;
-[invocation records](../../packages/cockpit/src/invocation.ts) validate the common completion fields.
-
-Interactive reset and baseline decline waits for cleanup before returning exit 130 with no
-result. A thrown decline cleanup reports failure instead of cancellation. JSON mode, CI, and
-non-terminal input cannot open an interactive confirmation. Noninteractive reset remains a preview;
-baseline requires interaction. These boundaries belong to the
-[operator application](../../packages/cockpit/src/environment/operator-application.ts).
+Declining an interactive reset or baseline waits for cleanup, then exits 130 with no result; if
+that cleanup throws, the run reports failure instead of cancellation. JSON mode, CI and
+non-terminal input cannot open an interactive confirmation, so a noninteractive reset stays a
+preview and baseline requires a terminal. The
+[operator application](../../packages/cockpit/src/environment/operator-application.ts) owns these
+boundaries.
 
 ## Reference currentness and ownership
 
 The maintainer [reference operations](../../scripts/diagnostic-inventory.mjs) verify one
-committed HEAD, its implementing source and shipped assets, package and build inputs, and the
+committed HEAD: its implementing source and shipped assets, package and build inputs, and the
 matching built owner bytes. The [reference renderer](../../packages/cockpit/src/references/generate.ts)
-derives four complete reference files and the diagnostic index inside troubleshooting's fixed
-marker region. Capability rows come from shipped restriction, instruction, and skill owners;
-the renderer does not upgrade their evidence strength.
+derives the whole-file references and the diagnostic index inside troubleshooting's fixed marker
+region. Capability rows come from the shipped restriction, instruction and skill owners; the
+renderer never upgrades their evidence strength.
 
-The canonical repository documentation check, `npm run lint:docs`, compares all five generated
-products read-only after its Markdown checks. Missing or stale copies fail. Explicit-path and
-evidence modes are scoped checks and do not establish canonical reference currentness.
+`npm run lint:docs` compares every generated product read-only after its Markdown checks; a missing
+or stale copy fails. Its explicit-path and evidence modes are scoped checks and do not establish
+that the references are current.
 
 Publication uses the shared
-[transaction owner](../../packages/cockpit/src/generated-environment/transaction.ts). Its reference
-ownership record is separate from consumer generated-environment ownership. Initial admission
-captures exact stage-0 Git index rows and verifies immutable blobs by object identifier;
-working-tree bytes alone cannot establish initial ownership. Later publication verifies the
-prior reference record and owned bytes. Changed owned files or an edited owned index are refused.
+[transaction owner](../../packages/cockpit/src/generated-environment/transaction.ts), with a
+reference ownership record separate from consumer generated-environment ownership:
 
-The transaction binds troubleshooting's complete preimage, owned region, postimage, and foreign
-prefix and suffix. It preserves every byte outside that region, revalidates source, build,
-bootstrap, and ownership observations, and avoids replacement for identical output. A local
-reference publication does not establish a public release or native enforcement.
+- Initial admission captures exact stage-0 Git index rows and verifies immutable blobs by object
+  identifier; working-tree bytes alone cannot establish ownership.
+- Later publication verifies the prior reference record and owned bytes, and refuses changed owned
+  files or an edited owned index.
+- For troubleshooting, the transaction binds the complete preimage, owned region, postimage, and
+  foreign prefix and suffix. It preserves every byte outside the region, revalidates source,
+  build, bootstrap and ownership observations, and does not replace identical output.
 
-For a refusal, find the diagnostic in the troubleshooting guide, `docs/troubleshooting.md`. Do not
-edit an ownership record, evidence bundle, or generated control to conceal the refusal.
+A local reference publication establishes neither a public release nor native enforcement. For a
+refusal, look the diagnostic up in the user guide `docs/troubleshooting.md`. Do not edit an
+ownership record, evidence bundle or generated control to hide the refusal.

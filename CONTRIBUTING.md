@@ -2,16 +2,17 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide is for people and AI coding agents changing cockpit itself. To use cockpit on your
-own product, start with the [README](README.md). Taking part means following the
+This guide is for people and AI coding agents changing cockpit itself: setup, the test loop,
+what a pull request needs, and what will be refused. To use cockpit on your own product, start
+with the [README](README.md). Taking part means following the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
-**AI agents:** read [AGENTS.md](AGENTS.md) first. It maps the codebase and the rules
-agents most often break. Everything below applies to agents too.
+**AI agents:** read [AGENTS.md](AGENTS.md) first; it maps the codebase and the rules agents most
+often break. Everything below applies to agents too.
 
 ## Two audiences, two trees
 
-This repository holds configuration for two different readers. Mixing them is a defect.
+This repository holds agent configuration for two different readers. Mixing them is a defect.
 
 | | Using cockpit | Working on cockpit |
 |---|---|---|
@@ -23,16 +24,15 @@ This repository holds configuration for two different readers. Mixing them is a 
 A skill about maintaining the config parser never goes into the shipped surfaces, and a shipped
 template never describes this repository.
 
-What the package ships is the allow-list in the `files` field of `packages/cockpit/package.json`,
-checked against the real `npm pack` output by `packages/cockpit/src/packaging.test.ts`. Adding a
+The package ships only the allow-list in the `files` field of `packages/cockpit/package.json`,
+which `packages/cockpit/src/packaging.test.ts` checks against real `npm pack` output. Adding a
 file to that list is the review.
 
 ## Setup
 
 You need the Node.js and platform prerequisites in
-[Getting started](docs/getting-started.md#install-cockpit), a Git release that supports the
-[`git cat-file -Z` invocation used by the hygiene scanner](scripts/hygiene-scan.mjs), and Bash
-and zsh.
+[Getting started](docs/getting-started.md#install-cockpit), Bash, zsh, and a Git release that
+supports the [`git cat-file -Z` invocation the hygiene scanner uses](scripts/hygiene-scan.mjs).
 
 ```sh
 npm ci --ignore-scripts
@@ -41,37 +41,38 @@ git config --local core.hooksPath .githooks
 test "$(git config --local --get core.hooksPath)" = .githooks
 ```
 
-The last two lines turn on the repository's hooks: a pre-commit anonymisation scan and a
-commit-message check. Git does not activate a tracked hooks directory by itself.
+The last two lines turn on the repository's hooks (a pre-commit anonymisation scan and a
+commit-message check); Git does not activate a tracked hooks directory by itself.
 
-The build and typecheck scripts invoke the native TypeScript compiler directly. Documentation
-and architecture checks use the separate compiler API compatibility package listed in
-[package.json](package.json), because the native compiler does not expose that API. Use the
-repository scripts rather than a bare `tsc`: the compatibility package also installs a compiler
-executable. Compiler work runs on one thread to leave capacity for other processes on the machine.
+Use the repository scripts, not a bare `tsc`. Build and typecheck run the native TypeScript
+compiler; the documentation and architecture checks need the compiler API, which only the
+separate compatibility package in [package.json](package.json) exposes, and that package installs
+a second compiler executable. Compiler work runs single-threaded to leave the machine capacity for
+other processes.
 
 ## Development loop
 
-While iterating, run the smallest test that covers the behaviour you are changing:
+Run the smallest test that covers the behaviour you are changing:
 
 ```sh
 npm test -- packages/cockpit/src/tree-hygiene.test.ts
 ```
 
-`npm test` is the only supported test entry point. It caps Vitest at four workers (pass
-`--maxWorkers=1`, `2` or `3` on a busy machine), accepts file paths and `-t '<test name>'` after
-`--`, and prints failures as they happen. It writes the latest result to
-**.vitest-reports/latest.json**. `npm run test:changed -- <base-commit>` runs the tests adjacent
-to what changed since that commit and lists the selected files before it starts; when a run ends
-without completing them (the deadline, a failure, an interrupt), the runner writes the unfinished
-ones to **.vitest-reports/remaining-<id>.txt** and prints the `npm test -- $(cat ...)` command that
-reruns exactly those. Test discovery stays inside this checkout's `packages/` tree,
-so nested worktrees run their own tests.
+- `npm test` is the only supported test entry point. It caps Vitest at four workers (pass
+  `--maxWorkers=1`, `2` or `3` on a busy machine), accepts file paths and `-t '<test name>'` after
+  `--`, prints failures as they happen, and writes the latest result to
+  **.vitest-reports/latest.json**.
+- `npm run test:changed -- <base-commit>` runs the tests adjacent to what changed since that
+  commit, listing the selected files first. If the run ends early (deadline, failure, interrupt),
+  it writes the unfinished files to **.vitest-reports/remaining-<id>.txt** and prints the
+  `npm test -- $(cat ...)` command that reruns exactly those.
+- Test discovery stays inside this checkout's `packages/` tree, so nested worktrees run their own
+  tests.
 
 ## Verification
 
-Before marking a pull request ready, run the complete local gates and paste their real output
-into the pull request:
+Before marking a pull request ready, run the full local gates and paste their real output into
+the pull request:
 
 ```sh
 npm test
@@ -80,39 +81,33 @@ npm run lint:docs
 npm run lint:supply-chain
 ```
 
-A targeted pass proves only its target. The full suite takes about 15 minutes at four workers on
-a developer machine.
+A targeted pass proves only its target.
 
-`npm run test:changed -- <base-commit>` follows imports through shared test helpers to select
-the tests that depend on them. A change to the Vitest configuration or shared Git-isolation setup selects every
-package test because it can change how all tests run. Unmapped paths still refuse before dispatch;
-check those paths yourself rather than treating an empty selection as a pass.
+**Changed-test selection.** `npm run test:changed -- <base-commit>` follows imports through shared
+test helpers. A change to the Vitest configuration or the shared Git-isolation setup selects every
+package test. Unmapped paths refuse before dispatch: check them yourself rather than treating an
+empty selection as a pass. `node scripts/run-changed-tests.mjs <base-commit> --list` prints the
+same selection as a JSON array without running anything (it also accepts
+`--extra-test <test-path>`); the list is not evidence that the tests passed.
 
-`node scripts/run-changed-tests.mjs <base-commit> --list` prints the same validated
-selection as a JSON array without running tests; it also accepts `--extra-test <test-path>`.
-This list does not show that the tests passed. To avoid repeating tests when a suite needs several
-separate invocations, partition complete test files and run each batch with `npm test -- <paths>`.
-Keep the commit, working tree, dependencies and test configuration unchanged throughout. Preserve
-each successful report before the next invocation replaces it, and verify that their file sets
-cover every required test file with every assertion accounted for. A changed-test run must cover
-every selected test file; a full-suite run must cover every configured test file.
+**Splitting a run.** When a suite needs several invocations, partition whole test files and run
+each batch with `npm test -- <paths>`. Keep the commit, working tree, dependencies and test
+configuration unchanged throughout, save each report before the next run replaces it, and check
+that the reports together cover every required test file with every assertion accounted for: every
+selected file for a changed-test run, every configured file for the full suite.
 
-The generated references (the CLI, configuration, command list, capability matrix and the
-troubleshooting index) are checked against committed `HEAD`, so `npm run lint:docs` refuses while
-an implementation change is uncommitted. Commit the change, rebuild (`npm run build`), run `npm run references`, commit the regenerated
-pages, then lint again. After a rebase, reference generation refreshes its ignored local ownership
-record when every reference page matches the current commit. Uncommitted page edits still refuse:
-review and commit intentional edits, or restore them before regenerating.
-`npm run references` calls `publishRepositoryReferences` in
-`scripts/diagnostic-inventory.mjs` and refuses while implementation changes are uncommitted.
-Never edit a generated reference by hand. How publication verifies those pages, and how commands
-record completion, is in
-[CLI completion and generated references](docs/contributing/cli-completion-and-references.md);
-the [contributor documentation index](docs/contributing/README.md) lists the other maintainer
-pages.
+**Generated references.** The CLI reference, configuration reference, command list, capability
+matrix and troubleshooting index are checked against committed `HEAD`, so `npm run lint:docs`
+refuses while an implementation change is uncommitted. Commit the change, run
+`npm run references` (it builds first), commit the regenerated pages, then lint again. Uncommitted page edits also
+refuse: commit intentional edits or restore them before regenerating. After a rebase, generation
+refreshes its ignored local ownership record when every page matches the current commit. Never
+edit a generated reference by hand. How publication verifies these pages is in
+[CLI completion and generated references](docs/contributing/cli-completion-and-references.md); the
+[contributor documentation index](docs/contributing/README.md) lists the other maintainer pages.
 
-CI runs the build, tests, typecheck and documentation lint, and the anonymisation scan as its
-own job; the workflow definitions in `.github/workflows/` are the source for its matrix.
+CI runs the build, tests, typecheck and documentation lint, plus the anonymisation scan as its own
+job; `.github/workflows/` defines its matrix.
 
 ## The rule that is not negotiable
 
@@ -122,11 +117,14 @@ commit messages or documentation. Fixtures are synthetic and keep the shape of t
 
 If the scan fires, anonymise. Never widen a pattern or add an allowance to make it pass.
 
-The scan has two classes. Credential shapes and private absolute paths are universal and CI
-enforces them on every push. Consumer names are site-specific and live only in the maintainer's
-private needle file, so **CI cannot catch a site-name leak**. A green CI scan means "no
-credentials and no home directories", not "no names". The scan prints which classes it covered;
-read that line.
+The scan has two classes:
+
+- Credential shapes and private absolute paths are universal; CI enforces them on every push.
+- Consumer names are site-specific and live only in the maintainer's private needle file, so
+  **CI cannot catch a site-name leak**. A green CI scan means "no credentials and no home
+  directories", not "no names".
+
+The scan prints which classes it covered; read that line.
 
 ## Commits
 
@@ -141,8 +139,8 @@ read that line.
 
 ## Pull requests
 
-One concern per pull request. The template's checklist is short because every line on it is
-something that has gone wrong before.
+One concern per pull request. Every line of the template's checklist is something that has gone
+wrong before.
 
 - **Every bug fix lands with a test that fails without it.** Say how you saw it fail.
 - **Paste real output, not a summary**, and separate what you ran from what you believe.
@@ -180,15 +178,14 @@ become a test. One defect per issue.
 
 ## Releasing
 
-Releases are cut by the maintainer. The checklist is in
-[Releasing](docs/contributing/releasing.md); the user-facing policy is in
-[Release policy](docs/release-policy.md).
+The maintainer cuts releases. The checklist is in [Releasing](docs/contributing/releasing.md); the
+user-facing policy is in [Release policy](docs/release-policy.md).
 
 ## Governance
 
 One maintainer, [@b0dea](https://github.com/b0dea), reviews and merges everything and owns every
-path in [CODEOWNERS](.github/CODEOWNERS). There is no second reviewer and no on-call, so review
-can stall, and no response window is promised except for security reports. Two things keep a
-stall from being a dead end: the license is MIT, so a fork is always available, and the
-extension seams (overlays, guard tables, custom harnesses) let you route around a decision
-without forking. A second maintainer will be named here when there is one.
+path in [CODEOWNERS](.github/CODEOWNERS). There is no second reviewer and no on-call, so review can
+stall, and no response window is promised except for security reports. A stall is not a dead end:
+the license is MIT, so a fork is always available, and the extension seams (overlays, guard
+tables, custom harnesses) let you route around a decision without forking. A second maintainer
+will be named here when there is one.

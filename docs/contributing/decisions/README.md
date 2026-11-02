@@ -2,8 +2,8 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-These contracts define behavior that contributors must keep consistent across several
-modules. They supplement the architecture and policy documentation.
+These contracts define behavior contributors must keep consistent across several modules,
+alongside the architecture and policy documentation.
 
 - [Operator paths](operator-paths.md) defines the direct-fix path and the accepted-work-order path.
 - [Installed capabilities](installed-capabilities.md) defines how execution depends on what cockpit

@@ -2,13 +2,13 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page is for people working on cockpit itself: which module owns each harness surface and
-which test command to run for each family of surface failure.
+This page is for people working on cockpit itself: which module owns each harness surface, and
+which focused test to run for each family of surface failure.
 
 ## Harness surface modules
 
 Every module below is under `packages/cockpit/src/`. Thin command adapters connect them through
-`packages/cockpit/src/cli.ts`, and all process dispatch goes through
+`packages/cockpit/src/cli.ts`; all process dispatch goes through
 [the single executor](../../packages/cockpit/src/environment-exec/execute.ts).
 
 | Responsibility | Module | Focused test file |
@@ -33,11 +33,9 @@ Repository tests check source behavior; they do not replace a selftest of the re
 
 ## Focused harness verification
 
-For the source file and where to extend it, see [Harness surface modules](#harness-surface-modules).
-Run the command for the changed failure family from this repository; these are tests on synthetic
-data, not tests of a real harness. The supported `npm test --` entry point caps workers at four,
-limits run time and cleans up child processes, and records the latest JSON result at
-`.vitest-reports/latest.json`.
+Run the command for the changed failure family from the repository root. These tests use
+synthetic data; they do not exercise a real harness. `npm test` is described in
+[Development loop](../../CONTRIBUTING.md#development-loop).
 
 | Failure family | Focused verification command |
 |---|---|
@@ -52,8 +50,8 @@ limits run time and cleans up child processes, and records the latest JSON resul
 | Selftest checks and approval | `npm test -- packages/cockpit/src/selftest/command.configured-artifact.test.ts packages/cockpit/src/selftest/command.native-execution.test.ts packages/cockpit/src/selftest/command.custom-operator.test.ts` |
 | Upgrade plan and override inspection | `npm test -- packages/cockpit/src/upgrade/command.test.ts packages/cockpit/src/upgrade/release-evidence.test.ts` |
 
-Publication recovery is in `packages/cockpit/src/environment/generated-application.ts`. This test
-checks that recovery data is kept when cleanup cannot be confirmed:
+Publication recovery lives in `packages/cockpit/src/environment/generated-application.ts`. This
+test checks that recovery data is kept when cleanup cannot be confirmed:
 
 ```sh
 npm test -- packages/cockpit/src/generated-environment/command.test.ts -t 'retains recovery records when publication finalization is not confirmed'
@@ -64,18 +62,19 @@ Follow the named diagnostic and its recovery procedure.
 
 ## Generated environment drift
 
-Rendering, inspection, publication, and recovery of the generated environment are in
-`packages/cockpit/src/environment/generated-application.ts`. The `sync` and `check` command
-adapter is `packages/cockpit/src/generated-environment/command.ts`, and the stack is rendered by
-`packages/cockpit/src/environment/generated-stack.ts`.
+| Responsibility | Module |
+|---|---|
+| Rendering, inspection, publication and recovery | `packages/cockpit/src/environment/generated-application.ts` |
+| `sync` and `check` command adapter | `packages/cockpit/src/generated-environment/command.ts` |
+| Stack rendering | `packages/cockpit/src/environment/generated-stack.ts` |
 
-The full `sync`/`check` path is covered by one test:
+One test covers the full `sync`/`check` path:
 
 ```sh
 npm test -- packages/cockpit/src/generated-environment/command.publication-core.test.ts -t 'synchronizes one owned manifest idempotently and checks without mutation'
 ```
 
-It runs `sync` to write the generated files, then `check`, which changes nothing. A second,
-deliberately broken case changes the persona source but keeps the old generated files; `check`
-then reports `GENERATED_ARTIFACT_DRIFT` for the persona output and leaves every file unchanged.
-This shows that drift detection works. It says nothing about native runtime or vendor behaviour.
+It runs `sync`, then `check`, which changes nothing. A deliberately broken second case changes
+the persona source but keeps the old generated files; `check` then reports
+`GENERATED_ARTIFACT_DRIFT` for the persona output and leaves every file unchanged. That proves drift
+detection, and nothing about native runtime or vendor behaviour.
