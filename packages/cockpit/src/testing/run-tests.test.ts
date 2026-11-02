@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -231,6 +231,10 @@ describe('bounded test runner', () => {
 
     it('caps worker options and owns reporter, selection, and completion options', async () => {
         const { root, run } = fixture()
+        expect(run([]).status).toBe(0)
+        const defaulted = JSON.parse(readFileSync(join(root, '.vitest-reports/latest.json'), 'utf8'))
+        expect(defaulted.arguments.filter((argument: string) => argument.startsWith('--maxWorkers')))
+            .toEqual([`--maxWorkers=${Math.min(4, availableParallelism())}`])
         for (const args of [['--maxWorkers=1'], ['--maxWorkers', '2']] as const) {
             expect(run([...args]).status).toBe(0)
             const report = JSON.parse(readFileSync(join(root, '.vitest-reports/latest.json'), 'utf8'))

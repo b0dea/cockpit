@@ -2,7 +2,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -112,7 +112,9 @@ function installedRunner(root) {
 
 function parseArguments(argv) {
     let filtered = false
-    let maxWorkers = 4
+    // Never more workers than cores: four workers on a two-core hosted runner ran the suite out of
+    // memory and past its per-test timeouts.
+    let maxWorkers = Math.min(4, availableParallelism())
     let hasMaxWorkers = false
     const arguments_ = []
     const positional = []
