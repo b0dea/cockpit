@@ -10,7 +10,7 @@ export const mechanism = {
 export const GUARD_INPUT_LIMITS = Object.freeze({ inputBytes: 65_536, invocations: 256, words: 4_096, wordBytes: 4_096, paths: 256, pathBytes: 4_096 })
 
 export type InvocationRole = 'executable' | 'argument' | 'environment-assignment-value' | 'wrapper-option-value'
-    | 'redirect-target' | 'heredoc-body' | 'comment' | 'definition'
+    | 'redirect-target' | 'heredoc-body' | 'comment' | 'definition' | 'directory'
 export interface InvocationWord { readonly role: InvocationRole; readonly value: string }
 export interface ParsedInvocation {
     readonly executable: string | null
@@ -20,6 +20,11 @@ export interface ParsedInvocation {
     readonly words: readonly InvocationWord[]
     /** `truncate` marks `>` and `>|`, which empty an existing file before anything is written. */
     readonly redirects: readonly { readonly target: string; readonly write: boolean; readonly truncate: boolean }[]
+    /**
+     * An argument holds `$?`, the previous command's exit status. It expands to digits the guard
+     * cannot see, so a word holding it is never proven to name a path.
+     */
+    readonly expandsStatus?: true
 }
 export type GuardParseResult = {
     readonly status: 'parsed'
@@ -38,6 +43,12 @@ export function isParsedGuardInput(value: unknown): value is Extract<GuardParseR
 
 class ParseFailure extends Error {}
 function refuse(reason: string): never { throw new ParseFailure(reason) }
+/** A word as a refusal quotes it: JSON-escaped, with the controls a harness rejects in a reason escaped too, and bounded. */
+function shown(word: string): string {
+    const characters = [...word]
+    const quoted = JSON.stringify(characters.length > 80 ? `${characters.slice(0, 80).join('')}…` : word)
+    return quoted.replace(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+}
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -52,7 +63,7 @@ function path(value: string): string {
     return value
 }
 
-interface Token { kind: 'word' | 'op' | 'comment' | 'body' | 'descriptor'; value: string; quoted?: boolean; dynamic?: boolean }
+interface Token { kind: 'word' | 'op' | 'comment' | 'body' | 'descriptor'; value: string; quoted?: boolean; dynamic?: boolean; status?: boolean }
 function lex(command: string): Token[] {
     if (/[\x00-\x08\x0b-\x1f\x7f]/.test(command)) refuse('Unsupported shell control character.')
     const tokens: Token[] = []
@@ -96,7 +107,9 @@ function lex(command: string): Token[] {
             index += descriptor.length
             continue
         }
-        const operator = /^(?:&&|\|\||<<-|<<|>>|>&|<&|<>|>\||[;&|<>(){}])/.exec(command.slice(index))?.[0]
+        // A brace is a group delimiter only as a word of its own; inside a word it is literal text
+        // unless it forms a brace expansion, which the word loop refuses.
+        const operator = /^(?:&&|\|\||<<-|<<|>>|>&|<&|<>|>\||[;&|<>()]|[{}](?=[ \t\n;&|<>()]|$))/.exec(command.slice(index))?.[0]
         if (operator) {
             if (awaitingDocument !== undefined) refuse('Missing heredoc delimiter.')
             tokens.push({ kind: 'op', value: operator })
@@ -108,9 +121,11 @@ function lex(command: string): Token[] {
         let quote = ''
         let quoted = false
         let dynamic = false
+        let status = false
+        const braces: number[] = []
         while (index < command.length) {
             const c = command[index]
-            if (!quote && /[ \t\n;&|<>(){}]/.test(c)) break
+            if (!quote && /[ \t\n;&|<>()]/.test(c)) break
             if (c === "'" && quote !== '"' || c === '"' && quote !== "'") {
                 quoted = true
                 quote = quote ? '' : c
@@ -126,15 +141,29 @@ function lex(command: string): Token[] {
                 index++
                 continue
             }
-            if (quote !== "'" && (c === '$' || c === '`' || !quote && /[*?\[~]/.test(c))) dynamic = true
+            // `$?` is the previous command's exit status: digits, never a word, glob or command.
+            if (quote !== "'" && c === '$' && command[index + 1] === '?') {
+                status = true
+                value += '$?'
+                index += 2
+                continue
+            }
+            // Bash and zsh expand `{a,b}` and `{1..3}` only; `@{u}` and `HEAD@{1}` stay literal. A comma
+            // or `..` anywhere inside, quoted or not, counts, which refuses a few literal spellings too.
+            if (!quote && c === '{') braces.push(value.length + 1)
+            if (!quote && c === '}' && braces.length && /,|\.\./.test(value.slice(braces.pop()))) {
+                refuse(`Unsupported brace expansion in ${shown(value + c)}: the shell turns it into several words the guard does not see. Write each word out.`)
+            }
+            // A tilde expands only where a word starts, or after `=` or `:` in an assignment; `HEAD~1` stays literal.
+            if (quote !== "'" && (c === '$' || c === '`' || !quote && (/[*?\[]/.test(c) || c === '~' && (value === '' && !quoted || /[=:]$/.test(value))))) dynamic = true
             value += c
             index++
         }
         if (quote) refuse('Unterminated shell quote.')
         if (++words > GUARD_INPUT_LIMITS.words || Buffer.byteLength(value) > GUARD_INPUT_LIMITS.wordBytes) refuse('Guard word limit exceeded.')
-        tokens.push({ kind: 'word', value, quoted, dynamic })
+        tokens.push({ kind: 'word', value, quoted, dynamic, status })
         if (awaitingDocument !== undefined) {
-            if (dynamic || !value) refuse('Unsupported heredoc delimiter.')
+            if (dynamic || status || !value) refuse('Unsupported heredoc delimiter.')
             documents.push({ delimiter: value, quoted, tabs: awaitingDocument })
             awaitingDocument = undefined
         }
@@ -146,7 +175,9 @@ function lex(command: string): Token[] {
 const separators = new Set([';', '\n', '&&', '||', '|', '&'])
 const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
 const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec'])
-const dynamicExecutables = new Set(['eval', 'source', '.', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'sudo', 'doas', 'xargs', 'cd'])
+const dynamicExecutables = new Set(['eval', 'source', '.', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'sudo', 'doas', 'xargs'])
+const CD_REFUSAL = 'cd is judged only as `cd <dir> && <command>` (or `;`), alone in its command, with one literal directory that is absolute or starts '
+    + 'with ./ or ../. A bare name such as `cd api` may resolve through CDPATH, which the guard cannot see: write `cd ./api`, or `git -C api` for Git.'
 // Writing to these discards or forwards output and reading /dev/null yields nothing, so they touch
 // no file; only these exact spellings qualify.
 const DEVICE_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr'])
@@ -164,7 +195,7 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
             if (tokens[i + 1]?.kind !== 'op' || !redirects.has(tokens[i + 1].value)) refuse('Descriptor lacks a redirect.')
         } else if (token.kind === 'op' && redirects.has(token.value)) {
             const target = tokens[++i]
-            if (!target || target.kind !== 'word' || target.dynamic) refuse('Missing or dynamic redirect target.')
+            if (!target || target.kind !== 'word' || target.dynamic || target.status) refuse('Missing or dynamic redirect target.')
             words.push({ role: 'redirect-target', value: target.value })
             if (!token.value.startsWith('<<') && !['>&', '<&'].includes(token.value)
                 && !(token.value === '<' ? target.value === '/dev/null' : DEVICE_SINKS.has(target.value))) {
@@ -182,7 +213,8 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
         }
         return { executable: null, argv: [], cwd, wrapped: false, words: [...words, ...args.map(({ value }) => ({ role: 'definition' as const, value }))], redirects: redirectPaths }
     }
-    if (args.some((token) => token.dynamic)) refuse('Dynamic command construction is unsupported.')
+    const expanded = args.find((token) => token.dynamic)
+    if (expanded) refuse(`Dynamic command construction is unsupported: ${shown(expanded.value)} holds a variable, command substitution, glob or home-directory tilde whose expansion the guard cannot see. Write the command and its paths out literally.`)
     let cursor = 0
     const assignments = () => {
         while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[cursor]?.value ?? '')) {
@@ -225,14 +257,30 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
         if (wrapper === 'env') assignments()
         if (cursor >= args.length) refuse(`Missing ${wrapper} executable.`)
     }
-    const executable = args[cursor++]?.value ?? null
+    const executable = args[cursor]?.value ?? null
     if (executable !== null) {
-        if (!executable || dynamicExecutables.has(posix.basename(executable)) || reserved.has(executable) || definitions.has(executable)) refuse('Unsupported executable or defined command invocation.')
+        if (!executable || args[cursor]!.status || definitions.has(executable)) refuse('Unsupported executable or defined command invocation.')
+        if (executable === 'cd') refuse(CD_REFUSAL)
+        if (dynamicExecutables.has(posix.basename(executable))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
+        if (reserved.has(executable)) refuse(`Shell control flow (${executable}) is not parsed by the guard. Run each command on its own.`)
         words.push({ role: 'executable', value: executable })
+        cursor++
     }
-    const argv = args.slice(cursor).map(({ value }) => value)
+    const operands = args.slice(cursor)
+    const argv = operands.map(({ value }) => value)
     words.push(...argv.map((value) => ({ role: 'argument' as const, value })))
-    return { executable, argv, cwd, wrapped, words, redirects: redirectPaths }
+    return { executable, argv, cwd, wrapped, words, redirects: redirectPaths, ...(operands.some((token) => token.status) ? { expandsStatus: true as const } : {}) }
+}
+
+/** The directory a command that is exactly `cd <dir>` moves to, as written, or undefined for any other command. */
+function changedDirectory(tokens: readonly Token[], definitions: ReadonlySet<string>): string | undefined {
+    if (tokens[0]?.kind !== 'word' || tokens[0].value !== 'cd' || definitions.has('cd')) return undefined
+    const operands = tokens.slice(1).filter((token) => token.kind !== 'comment')
+    if (operands[0]?.kind === 'word' && operands[0].value === '--') operands.shift()
+    const target = operands.length === 1 && operands[0]!.kind === 'word' && !operands[0]!.dynamic && !operands[0]!.status ? operands[0]!.value : undefined
+    // Both shells search CDPATH before the working directory for any other relative spelling.
+    if (target === undefined || !/^(?:\/|\.\.?(?:\/|$))/.test(target)) refuse(CD_REFUSAL)
+    return target
 }
 
 function parseShell(command: string, cwd: string): ParsedInvocation[] {
@@ -242,13 +290,33 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
     let current: Token[] = []
     let braces = 0
     let needsCommand = false
+    // Every directory the next command may run in. A `cd` moves the rest of its `&&` chain; after
+    // any other separator the `cd` may have failed and left the shell where it was, so later
+    // commands are judged from every directory they may run in.
+    let cwds = [cwd]
+    let fallback: string[] | undefined
+    let previous: string | undefined
     const append = (item: ParsedInvocation) => {
         if (result.length === GUARD_INPUT_LIMITS.invocations) refuse('Guard invocation limit exceeded.')
         result.push(item)
     }
-    const flush = () => {
-        if (current.length) append(invocation(current, cwd, definitions))
+    const flush = (separator?: string) => {
+        const target = current.length ? changedDirectory(current, definitions) : undefined
+        if (target !== undefined) {
+            // A pipeline or background job runs `cd` in a subshell in bash, and the last stage of a pipeline in the current shell in zsh.
+            if (previous === '|' || separator === '|' || separator === '&') refuse(`${CD_REFUSAL} A cd in a pipeline or background job is not.`)
+            const moved = [...new Set(cwds.map((directory) => path(posix.resolve(directory, target))))]
+            // The directory itself is inspected as each later command's working directory is.
+            for (const directory of moved) append({ executable: null, argv: [], cwd: directory, wrapped: false, words: [{ role: 'directory', value: target }], redirects: [] })
+            fallback = [...new Set([...fallback ?? cwds, ...moved])]
+            cwds = moved
+        } else if (current.length) for (const directory of cwds) append(invocation(current, directory, definitions))
         current = []
+        if (separator !== undefined && !['&&', '|', '&'].includes(separator) && fallback) {
+            cwds = fallback
+            fallback = undefined
+        }
+        previous = separator
     }
     for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i]
@@ -269,16 +337,16 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
             if (depth) refuse('Unterminated function definition.')
             i--
             definitions.add(name)
-            append({ executable: null, argv: [], cwd, wrapped: false, words: body, redirects: [] })
+            append({ executable: null, argv: [], cwd: cwds[0]!, wrapped: false, words: body, redirects: [] })
             needsCommand = false
             continue
         }
         if (token.kind === 'op' && separators.has(token.value)) {
             if (['&&', '||', '|', '&'].includes(token.value) && !current.length) refuse('Missing shell command before separator.')
-            flush()
+            flush(token.value)
             if (token.value !== '\n') needsCommand = ['&&', '||', '|'].includes(token.value)
         } else if (token.kind === 'op' && token.value === '{') {
-            if (current.length) refuse('Unsupported brace expansion.')
+            if (current.length) refuse('A standalone { is parsed only where it opens a command group, `{ command; }`. Quote a literal brace.')
             braces++
         } else if (token.kind === 'op' && token.value === '}') {
             if (!braces || current.length || needsCommand) refuse('Malformed brace group.')
@@ -292,7 +360,9 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
     flush()
     if (!result.length) refuse('Empty shell command.')
     // Definitions can affect commands regardless of textual order in compound forms.
-    if (result.some((item) => item.executable !== null && definitions.has(item.executable))) refuse('Defined command invocation is unsupported.')
+    if (result.some((item) => item.executable !== null && definitions.has(item.executable) || definitions.has('cd') && item.words[0]?.role === 'directory')) {
+        refuse('Defined command invocation is unsupported.')
+    }
     return result
 }
 

@@ -156,12 +156,37 @@ function search(argv: readonly string[], table: OptionTable, recursiveByDefault:
     return recursive ? { reads: parsed.files, trees: paths, listings: [] } : { reads: [...parsed.files, ...paths], trees: [], listings: [] }
 }
 
+// Only `p` commands on line-number or last-line addresses: any other sed command can write (`w`),
+// read another file (`r`), run a program (GNU `e`) or edit in place (`-i`).
+const SED_PRINT = /^(?:\d+|\$)(?:,(?:\d+|\$))?p(?:;(?:\d+|\$)(?:,(?:\d+|\$))?p)*$/
+
+function sed(argv: readonly string[]): Classified {
+    const scripts: string[] = []
+    const operands: string[] = []
+    let options = true
+    for (let index = 0; index < argv.length; index++) {
+        const word = argv[index]!
+        if (options && word === '--') options = false
+        else if (!options || word === '-' || !word.startsWith('-')) operands.push(word)
+        else if (word === '-e' || word === '--expression') {
+            const script = argv[++index]
+            if (script === undefined) return undefined
+            scripts.push(script)
+        } else if (word.startsWith('--expression=')) scripts.push(word.slice('--expression='.length))
+        else if (!['-n', '--quiet', '--silent'].includes(word)) return undefined
+    }
+    // Without -e the first operand is the script.
+    if (!scripts.length && operands.length) scripts.push(operands.shift()!)
+    return scripts.length && scripts.every(script => SED_PRINT.test(script)) ? { reads: operands, trees: [], listings: [] } : undefined
+}
+
 function files(argv: readonly string[], table: OptionTable): Classified {
     const parsed = parseOptions(argv, table)
     return parsed && { reads: parsed.positionals, trees: [], listings: [] }
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
+const GIT_BRANCH_LIST = set('--list', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--show-current')
 // Diff output that names files or counts lines; any other diff output prints file content.
 const GIT_NAME_ONLY = set('--stat', '--numstat', '--shortstat', '--name-only', '--name-status', '--summary', '--raw', '--dirstat', '-s', '--no-patch', '--quiet')
 // Options that print changed lines: patch output, and `--check`, which quotes each line it flags. Git
@@ -202,7 +227,10 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     const verb = argv[index++]
     const args = argv.slice(index)
     const requires = ['.git']
-    if (verb === 'branch') return args.length === 0 || args.length === 1 && args[0] === '--list' ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    // Branch names are positional only when creating, renaming or deleting, so flags alone only list.
+    if (verb === 'branch') return args.every(arg => GIT_BRANCH_LIST.has(arg)) ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
+    // rev-parse prints object names, refs and repository paths, never file content.
+    if (verb === 'rev-parse') return args.some(arg => /^--(?:git-path|resolve-git-dir|parseopt|sq-quote)(?:=|$)/.test(arg)) ? undefined : { cwd: directory, reads: [], trees: [], listings: [], requires }
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
     // --output writes a file, an external diff driver runs a program, and --no-index prints any file.
     if (args.some(arg => /^--(?:output|ext-diff|textconv|no-index)(?:=|$)/.test(arg))) return undefined
@@ -259,8 +287,20 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
     const inputs = invocation.redirects.map(redirect => redirect.target)
     const shape = (classified: Classified): ReadOnlyAccess | undefined =>
         classified && { cwd: invocation.cwd, ...classified, reads: [...classified.reads, ...inputs] }
+    const access = classify(invocation, environment, shape, inputs)
+    // `$?` expands to digits the guard cannot see, so a path holding it is unproven.
+    return invocation.expandsStatus && access && [...access.reads, ...access.trees, ...access.listings, ...access.requires ?? []].some(path => path.includes('$?'))
+        ? undefined : access
+}
+
+function classify(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] },
+    shape: (classified: Classified) => ReadOnlyAccess | undefined, inputs: readonly string[]): ReadOnlyAccess | undefined {
+    const argv = invocation.argv
     if (environment.cockpit) return shape(cockpit(environment.cockpit))
     switch (invocation.executable) {
+        // Both print their arguments and touch no file; `printf -v` only assigns a shell variable.
+        case 'echo': case 'printf': return shape({ reads: [], trees: [], listings: [] })
+        case 'sed': return shape(sed(argv))
         case 'pwd': return argv.length === 0 || argv.length === 1 && ['-L', '-P'].includes(argv[0]!) ? shape({ reads: [], trees: [], listings: [] }) : undefined
         case 'ls': {
             const parsed = parseOptions(argv, LS)
