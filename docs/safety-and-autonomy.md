@@ -186,7 +186,7 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
 | `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
 | `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
 | `npx --no cockpit test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
-| `npx --no cockpit work status`, `work resume`, `work metrics`, `work intake` (`--intent` with an optional `--candidate`, or `--work-order`), `work execute`, `work record`, `work review` and `work grade`, each with `--config cockpit.toml` and its own options | allowed | They report, publish a draft a person still has to accept, or run and record the steps of an order a person accepted; review and grading run in a separate evaluator. That a `resolve-gap` or `decision` event passed to `work record` is a person's answer is instructed, not enforced: the guard sees the event file's name, not its kind. |
+| `npx --no cockpit work status --config cockpit.toml`, `work resume`, `work metrics`, `work intake` (`--intent` with an optional `--candidate`, or `--work-order`), `work execute`, `work record`, `work review` and `work grade`, each with its own options | allowed | They report, publish a draft a person still has to accept, or run and record the steps of an order a person accepted; review and grading run in a separate evaluator. That a `resolve-gap` or `decision` event passed to `work record` is a person's answer is instructed, not enforced: the guard sees the event file's name, not its kind. |
 | `npx --no cockpit work sweep --config cockpit.toml`, `work recover --lock <lock>` and `work programme-mint --programme <programme>`, without `--apply` or `--candidate` | allowed | Without those options they only report. |
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `accessibility` and `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is set, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration must declare before it can set preapproval. |
 | `work accept` and `work renew` | a prompt, which Codex and OpenCode turn into a denial | Each is a person's answer, in an interactive terminal, to the contract digest it displays. |
@@ -217,8 +217,9 @@ it starts its own installed package:
   denied, so one cannot be planted in the same command after that check. Any other npx option, or
   npx without `--no` (which may download a package), is not the installed cockpit.
 
-Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while
-`./node_modules/.bin/cockpit <command> --config cockpit.toml` from the cockpit root still counts.
+Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while the
+same command spelled as a path, such as `./node_modules/.bin/cockpit doctor --config cockpit.toml`,
+still counts from the cockpit root.
 `doctor` reports this as `COCKPIT_LAUNCHER_UNPROVEN`, using the guard's own check, and names which
 spelling it can prove. The guard does not check which `npx` the command search path finds: it
 assumes that program behaves as npm's own, as the version-manager and package-firewall shims that
