@@ -22,7 +22,7 @@ function protectedIdentities(instances: readonly { path: string }[], known: Iden
 const candidate = (executable: string, argv: string[], cwd = root) => ({ executable, argv, cwd })
 function policy() {
     return {
-        canonicalRoot: root, configPath: `${root}/cockpit.toml`, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }], protectedIdentities: protectedIdentities([{ path: instance }]),
+        canonicalRoot: root, configPath: `${root}/cockpit.toml`, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }], templates: [] as string[], protectedIdentities: protectedIdentities([{ path: instance }]),
         protectedBranches: ['main', 'release/stable'], hostedDatabaseHosts: ['db.example.test', '*.database.example.test'], vendorHosts: ['api.vendor.example.test'],
         declaredAllows: [] as Array<{ argv: string[]; reason: string; cwd?: string }>,
         declaredDenies: [] as Array<{ match: 'prefix' | 'contains'; argv: string[]; reason: string; fix?: string }>,
@@ -310,6 +310,7 @@ describe('resolved guard evaluation', () => {
             '.cursor/mcp.json', '.cursor/cli.json', '.grok/config.toml', 'opencode.json', 'opencode.jsonc',
             '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
             '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json',
+            '.cockpit/mcp/server.sh', '.cockpit/mcp/added.sh',
             'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
@@ -585,8 +586,8 @@ describe('built-in read-only profile', () => {
     it('falls back to a prompt for every shape outside the exact read-only table', () => {
         for (const command of [
             'git diff --no-index env/.secrets/token README.md',
-            // Searches that reach a declared instance or the secrets root, or widen past ignore rules.
-            'rg needle', 'grep -r needle .', 'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src',
+            // Searches that widen past ignore rules.
+            'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src',
             // Options that run programs or write files.
             'rg --pre cat needle src', 'rg --pre=cat needle src', 'rg --hostname-bin cat needle src', 'rg -z needle src',
             'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src', 'tail -f src/a.ts',
@@ -598,6 +599,30 @@ describe('built-in read-only profile', () => {
         ]) {
             expect(decideInRepositories(command).decision, command).toBe('ask')
         }
+        // A declared template documents the instance's variables, so it is data, not an unknown `.env*` file.
+        const templated = { ...policy(), templates: [`${root}/.env.example`, `${other}/.env.example`] }
+        for (const command of ['cat .env.example', 'head -n 5 ../other/.env.example', 'grep KEY .ENV.EXAMPLE']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), templated, withGit).decision, command).toBe('allow')
+        }
+        for (const command of ['cat .env.local', 'cat ../other/.env.local', 'cat .env.example.local']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), templated, withGit).decision, command).toBe('ask')
+        }
+    })
+
+    it('lets a recursive search through only when no protected path can exist below it', () => {
+        // Nothing protected exists yet, so a search of the whole root reads no secret.
+        for (const command of ['rg needle', 'grep -r needle .', "grep -r -e 'needle' -- '.'", 'rg needle ../other']) {
+            expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
+        }
+        const present = (path: string) => ({ ...policy(), protectedIdentities: protectedIdentities([{ path: instance }], { [path]: { identity: '7:9', ancestors: [] } }) })
+        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle')), present(instance), withGit)).toEqual({ decision: 'ask',
+            reason: 'A recursive search of . would read config/active.instance, a declared environment instance or secrets directory. Search a path that does not contain it.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('grep -r needle ..', `${root}/src`)), present(`${root}/env/.secrets`), withGit).reason)
+            .toBe('A recursive search of .. would read ../env/.secrets, a declared environment instance or secrets directory. Search a path that does not contain it.')
+        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle src')), present(instance), withGit).decision).toBe('allow')
+        // Another command in the same call could create the instance before the search reads it.
+        expect(decideInRepositories('npm test && rg needle')).toEqual({ decision: 'ask',
+            reason: 'A recursive search of . could read env/.secrets, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.' })
     })
 
     it('keeps reads of declared instances and secrets a hard denial under every spelling', () => {

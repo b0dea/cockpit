@@ -47,6 +47,8 @@ export interface GuardEvaluationPolicy {
     readonly configPath: string
     readonly allowedRoots: readonly string[]
     readonly instances: readonly { readonly name: string; readonly path: string }[]
+    /** Declared environment templates: `.env*` files that are documentation, not data. */
+    readonly templates: readonly string[]
     readonly protectedIdentities: readonly GuardProtectedIdentity[]
     readonly protectedBranches: readonly string[]
     readonly hostedDatabaseHosts: readonly string[]
@@ -99,9 +101,11 @@ const GUARD_CONTROL_FILES = [
     'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
-// bundle carries its own MCP servers and hook registration, so no file below them is data. The
-// machine-local guard identity names the handler the guard launches, so it is a control as well.
-const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', GUARD_LOCAL_PATHS.directory] as const
+// bundle carries its own MCP servers and hook registration, so no file below them is data. Every
+// harness starts the generated MCP wrapper scripts as the server program, so overwriting one changes
+// what runs before the next guarded call. The machine-local guard identity names the handler the
+// guard launches, so it is a control as well.
+const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory] as const
 const SECRETS_ROOT = 'env/.secrets'
 /** Bounds on the policy's installed-code and search path directories and on the secrets files it enumerates. */
 export const GUARD_PROTECTED_LOCATION_LIMIT = 256
@@ -162,10 +166,10 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
-        || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
+        || !Array.isArray(p.instances) || !strings(p.templates) || p.templates.length > GUARD_PROTECTED_LOCATION_LIMIT || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
         || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.cockpitLaunchers) || !Array.isArray(p.projectCommands)
         || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
         || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
@@ -177,6 +181,7 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || !hosts.every(isGuardHost) || new Set(hosts.map(normalizeGuardHost)).size !== hosts.length)
         || p.protectedBranches.some((branch) => /[\s:*?\[\\]/.test(branch))
         || p.instances.some((item) => !record(item) || !keys(item, ['name', 'path']) || !scalar(item.name) || !confined(item.path))
+        || !p.templates.every(confined)
         || p.declaredAllows.length > 64 || p.declaredAllows.some((item) => !record(item)
             || !keys(item, item.cwd === undefined ? ['argv', 'reason'] : ['argv', 'reason', 'cwd'])
             || !ruleArgv(item.argv) || !scalar(item.reason) || item.cwd !== undefined && !confined(item.cwd))
@@ -788,10 +793,17 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (secretFile(evidence) || [secretRoot, ...controlDirectories].some((path) => is(path) || below(path) || covers(path))
             || [...resolved.instances.map((item) => item.path), ...controlFiles].some((path) => is(path) || covers(path))) hold(linkDenial)
     }
+    const templates = new Set(resolved.templates.map(fold))
+    const searchedProtections = [secretRoot, ...resolved.instances.map((item) => item.path)]
+    // Why the last inspected search was not safe, when one protected path is the reason.
+    let searchBlocker: GuardDecision | undefined
     // A read-only command is allowed only when every path it touches is evidenced inside the
     // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
-    const inspectReadOnly = (access: ReadOnlyAccess): boolean => {
+    // `chainReadOnly` says no other command in the call can create a protected path before the
+    // search runs, which is what lets an absent one be ignored.
+    const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false): boolean => {
         let safe = true
+        searchBlocker = undefined
         const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
             if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) { safe = false; return }
             const lexical = posix.resolve(access.cwd, path)
@@ -803,16 +815,29 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (!resolved.allowedRoots.some((root) => within(lexical, root))) { safe = false; return }
             pathCount++
             // An undeclared `.env*` file is not a known instance, but it is not known to be data either.
-            if (kind === 'read' && /^\.env/.test(posix.basename(folded))) safe = false
+            // A declared template is: the configuration names it as the instance's documentation.
+            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !templates.has(folded)) safe = false
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
-            if (kind === 'tree' && [secretRoot, ...resolved.instances.map((item) => item.path)].some((path) => within(fold(path), folded))) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
             if (!evidence) { safe = false; return }
             const { is, below, covers } = evidenceFacts(evidence)
             if (kind !== 'listing' && (is(secretRoot) || below(secretRoot) || secretFile(evidence) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
-            if (kind === 'tree' && (covers(secretRoot) || resolved.instances.some((item) => covers(item.path)))) safe = false
+            if (kind !== 'tree') return
+            // The search cannot be told which files to skip: ripgrep's hidden-file filter yields to a
+            // whitelist in an agent-writable ignore file, and grep has none. So a tree that holds an
+            // existing protected path is not safe, and one that would hold an absent one is safe only
+            // when nothing else in the call can create it first.
+            const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
+            const present = reached.find((target) => identityOf(target) !== null)
+            const blocking = present ?? (chainReadOnly ? undefined : reached[0])
+            if (blocking === undefined) return
+            safe = false
+            const shown = posix.relative(access.cwd, blocking) || '.'
+            searchBlocker = ask(present !== undefined
+                ? `A recursive search of ${path} would read ${shown}, a declared environment instance or secrets directory. Search a path that does not contain it.`
+                : `A recursive search of ${path} could read ${shown}, a declared environment instance or secrets directory, if another command in this call created it first. Run the search on its own.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -824,6 +849,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return safe
     }
     const readOnly = new Set<ParsedInvocation>()
+    const searchRefusals = new Map<ParsedInvocation, GuardDecision>()
     // Launcher words name a package or the launcher, never an operand. Only a proven spelling runs
     // the installed cockpit, so only it is evaluated as cockpit; any other may run other code.
     const launcherPrefix = (invocation: ParsedInvocation) => invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
@@ -850,6 +876,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return [invocation, { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
             words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }]
     })
+    const classifyReadOnly = (invocation: ParsedInvocation) => {
+        const cockpit = provenCockpit(invocation)
+        return classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })
+    }
+    const chainReadOnly = invocations.every((invocation) => classifyReadOnly(invocation) !== undefined)
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {
@@ -877,8 +908,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 approvalBarriers.set(invocation, ask('Removal outside configured roots requires human approval.'))
             }
         }
-        const { cockpit, operands } = launchedCockpit(invocation)
-        const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })
+        const { operands } = launchedCockpit(invocation)
+        const access = classifyReadOnly(invocation)
         const writes: VisibleWrites | undefined = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
             return { paths: transfer.writes, reads: [], removes: false, uncertain: transfer.uncertain }
@@ -903,7 +934,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
             if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))
         }
-        if (access && inspectReadOnly(access)) readOnly.add(invocation)
+        if (access && inspectReadOnly(access, chainReadOnly)) readOnly.add(invocation)
+        else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         if (!git) continue
         inspectPath({ path: git.cwd, cwd: invocation.cwd, operation: 'cwd' })
         if (git.uncertain) holdAsk(invocation, ask('Git execution context is not an exact resolved profile.'))
@@ -955,7 +987,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
             && cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, i) => word === invocation.argv[i])
         if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
-            && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) return ask('Invocation does not match an exact permitted profile.')
+            && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) return searchRefusals.get(invocation) ?? ask('Invocation does not match an exact permitted profile.')
     }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

@@ -75,7 +75,8 @@ Removing, renaming or directly overwriting a guard control is a hard denial, as 
 directory that contains one or an executable control below a protected plugin directory. Otherwise
 an exact command allow could disable a hook, or change a program a harness starts, before the next
 guarded call. The protected files include every harness's native MCP and permission outputs derived
-from the shipped harness registry. This boundary follows folded path spellings and verified
+from the shipped harness registry, and the MCP wrapper scripts under `.cockpit/mcp/` that those
+outputs start. This boundary follows folded path spellings and verified
 filesystem identities, so alternate case and aliases do not bypass it.
 
 The installed code the guard runs is a control too. The guard checks its entry point's digest, but
@@ -218,9 +219,13 @@ These reads fall back to a prompt instead of being allowed:
 
 - a recursive search, whenever a declared instance or an `env/.secrets` file has a second hard link
   anywhere;
-- a search whose tree contains an instance or the secrets directory, since the guard cannot see
-  which files the search would read;
-- a path that is a symlink, lies outside the configured roots, or is an undeclared `.env*` file.
+- a search whose tree contains an existing instance or the secrets directory, since the guard cannot
+  see which files the search would read (ripgrep's hidden-file filter yields to an ignore file the
+  agent can write). The reason names that path, so the agent can search a narrower one. A tree that
+  would contain one that does not exist yet is searched only when every other command in the call
+  is read-only too, so nothing in the call can create it first;
+- a path that is a symlink, lies outside the configured roots, or is an undeclared `.env*` file. A
+  declared environment `template` is read like any other file.
 
 The guard hook sees shell commands and edits only. Claude Code's own Read, Grep and Glob tools never
 reach it, so `sync` also writes Claude `Read` deny rules into `.claude/settings.json`: one for every

@@ -663,6 +663,7 @@ export async function prepareGuardEvaluationPolicy(
             siblingsRoot = directory(resolve(canonicalRoot, config.cockpit.siblings_root))
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
+            const templates: string[] = []
             for (const sibling of config.sibling) {
                 const root = resolve(siblingsRoot, sibling.dir)
                 if (!confinedPath(siblingsRoot, root)) throw new Error('guard policy sibling escapes its declared root')
@@ -672,6 +673,11 @@ export async function prepareGuardEvaluationPolicy(
                     if (!confinedPath(root, path) || path === root) throw new Error('guard policy instance escapes its sibling root')
                     protect(root, path, 'file', 'instance')
                     instances.push(Object.freeze({ name: `${sibling.slug}-${createHash('sha256').update(file.path).digest('hex').slice(0, 12)}`, path }))
+                }
+                for (const file of sibling.environment_files ?? []) {
+                    const path = resolve(root, file.template)
+                    if (!confinedPath(root, path) || path === root) throw new Error('guard policy environment template escapes its sibling root')
+                    templates.push(path)
                 }
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new Error('guard policy exceeds restriction root or instance bounds')
@@ -692,7 +698,7 @@ export async function prepareGuardEvaluationPolicy(
                 }
             }
             const policy = Object.freeze({ canonicalRoot, configPath,
-                allowedRoots: Object.freeze([...allowedRoots]), instances: Object.freeze(instances),
+                allowedRoots: Object.freeze([...allowedRoots]), instances: Object.freeze(instances), templates: Object.freeze(templates),
                 protectedIdentities: Object.freeze([...protectedIdentities.values()]),
                 protectedBranches: Object.freeze([...config.guards.protected_branches]),
                 hostedDatabaseHosts: Object.freeze([...config.guards.hosted_db_hosts]),

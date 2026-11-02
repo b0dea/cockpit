@@ -686,6 +686,7 @@ describe('guard policy construction', () => {
         expect(policy).toEqual({
             canonicalRoot: root, configPath: join(root, 'cockpit.toml'), allowedRoots: [root, join(root, 'app')],
             instances: ['.env', 'config/runtime.env'].map(path => ({ name: `app-${createHash('sha256').update(path).digest('hex').slice(0, 12)}`, path: join(root, 'app', path) })),
+            templates: [join(root, 'app/.env.example'), join(root, 'app/config/template.example')],
             protectedIdentities: expect.any(Array),
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],

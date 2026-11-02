@@ -36,7 +36,7 @@ describe('closed native guard representation', () => {
 
     it('keeps the real evaluator hard denial despite an exact grant on every harness', () => {
         const decision = evaluateGuard(parseGuardInput(payload), {
-            canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
+            canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], templates: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
             executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
@@ -57,7 +57,7 @@ describe('closed native guard representation', () => {
     it.each(['HEAD', '@'])('adapts the real unresolved push %s to a prompt or no-prompt denial despite an exact grant', (source) => {
         const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: `git push origin ${source}` } }
         const decision = evaluateGuard(parseGuardInput(input), {
-            canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
+            canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], templates: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
             executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitLaunchers: [],
