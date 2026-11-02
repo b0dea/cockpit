@@ -16,20 +16,34 @@ It holds none of your product code.
 > **Status: pre-alpha.** Commands, configuration and the generated file layout can still change
 > without a migration path. See [Status and limits](#status-and-limits).
 
+## See it
+
+Edit a generated file by hand and `check` fails, naming the file and the fix:
+
+<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
+```console
+$ echo "# tweak" >> compose.generated.yml
+$ npx --no cockpit check --config cockpit.toml
+ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]
+What failed: owned generated artifact differs from canonical bytes
+Why it matters: generated files no longer match the canonical cockpit configuration
+Fix: npx --no cockpit sync --config /path/to/cockpit-demo/cockpit.toml
+```
+
+Every diagnostic has that shape (what failed, why it matters, the exact fix), so a person or an
+agent can act on it without reading the source.
+
 ## Why cockpit
 
 An agent working on one repository of a multi-repository product runs into three problems that
 better prompts do not fix:
 
 1. **It can't run the product.** The services, sibling repositories, ports and seed data live in
-   someone's head or a stale script. cockpit declares them once and boots the product from your
-   live checkouts.
+   someone's head or a stale script.
 2. **Every agent tool wants its own config.** Claude Code, Codex CLI and OpenCode each expect
-   instructions, skills, hooks and permissions in a different file and format. cockpit generates
-   all of them from one source, and `cockpit check` fails when any of them changes by hand.
-3. **The agent grades its own work.** "Done" is usually the author's own summary. cockpit's work
-   orders end with a separate evaluator that reruns the declared checks and grades each acceptance
-   criterion from their results.
+   instructions, skills, hooks and permissions in a different file and format, and they drift
+   apart.
+3. **The agent grades its own work.** "Done" is usually the author's own summary.
 
 ## How it works
 
@@ -50,12 +64,27 @@ flowchart LR
 ```
 
 1. **Generate.** `cockpit sync` writes the Compose file and every agent tool's instructions, skills,
-   hooks and permissions, and records what it wrote. You commit the output.
+   hooks and permissions from `cockpit.toml`. You commit the output.
 2. **Check.** `cockpit check` regenerates in memory and fails on any difference, locally or in CI.
 3. **Run.** `cockpit up` starts the stack on your live checkouts, `cockpit preflight` says whether
    it is healthy, and `cockpit session` keeps it up for exactly as long as one agent command runs.
-4. **Grade.** A work order's acceptance criteria are graded by a separate evaluator, not by the
-   agent that did the work.
+4. **Grade.** A work order's acceptance criteria are graded by a separate evaluator that reruns the
+   declared checks, not by the agent that did the work.
+
+## Supported agent tools
+
+| Tool | Where cockpit writes | Guard hook |
+|---|---|---|
+| Claude Code | `CLAUDE.md`, `.claude/` | fires |
+| Codex CLI | `AGENTS.md`, `.agents/skills/`, `.codex/` | fires once a person trusts the hook on that machine; `cockpit doctor` warns until then |
+| OpenCode | `opencode.jsonc`, `.opencode/` | fires |
+| Cursor | `.cursor/` | none; files are generated but not confirmed to load |
+| Grok Build | `AGENTS.md`, `.grok/` | none; files are generated but not confirmed to load |
+
+Any other tool that reads `AGENTS.md` gets the same instructions, without skills, hooks or
+permissions. Writing a file is not proof that a tool obeys it: `cockpit selftest` tests the
+controls against the installed tools, and the [capability matrix](docs/capability-matrix.md)
+records what has been measured, with dates and versions.
 
 ## Quickstart
 
@@ -82,31 +111,8 @@ npm install --save-dev "$COCKPIT_PACKAGE_DIR"/*.tgz
 ```
 
 **3. Create the example's repositories** by running the bootstrap block in
-[examples/synthetic/README.md](examples/synthetic/README.md).
-
-**4. Preview what cockpit generates.** The dry run lists every file and writes nothing (output
-trimmed):
-
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
-```console
-$ ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run
-write "AGENTS.md"
-write "CLAUDE.md"
-write "compose.generated.yml"
-write "opencode.jsonc"
-write ".agents/skills/cockpit-setup/SKILL.md"
-...
-write ".claude/agents/evaluator.md"
-write ".claude/settings.json"
-...
-write ".cockpit/guards/bash-guard.sh"
-write ".codex/agents/evaluator.toml"
-write ".codex/config.toml"
-...
-write ".opencode/plugin/cockpit-guards.js"
-...
-write ".cockpit/generated-environment-ownership.json"
-```
+[examples/synthetic/README.md](examples/synthetic/README.md), then preview the files cockpit would
+write with `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run`.
 
 The [tutorial](docs/tutorial.md) carries on from here: apply the sync, break a generated file and
 watch `check` catch it, then read the configuration section by section.
@@ -118,35 +124,39 @@ watch `check` catch it, then read the configuration section by section.
 ## What you get
 
 - **One validated registry.** Repositories, services, images, volumes, ports, seed data and stubbed
-  vendors in one file.
-- **Live checkouts, not copies.** The stack mounts the working trees your agent is editing.
+  vendors in one file, with sibling repositories cloned and linked by `cockpit setup`.
+- **Live checkouts, not copies.** The stack mounts the working trees your agents are editing.
 - **The same agent setup in every tool.** Rules, skills, subagents, hooks, MCP servers and
   permissions for Claude Code, Codex CLI and OpenCode, from one source.
-- **Drift is a failing check.** Generated files are committed and compared byte for byte.
+- **One guard policy.** The guard hook denies pushes to protected branches, reads and edits of
+  declared environment files and `.secrets`, and commands that reach declared hosted databases or
+  vendor hosts, and fails closed on input it cannot parse. See
+  [Safety and autonomy](docs/safety-and-autonomy.md).
 - **Preview before every write.** `sync --dry-run` and `reset` show the exact change; deleting
   stale files or resetting data needs you to confirm that exact preview.
-- **One guard policy.** cockpit's guard hook denies pushes to protected branches, reads and edits
-  of declared environment files and `.secrets`, and commands that reach declared hosted databases
-  or vendor hosts. It fails closed on input it cannot parse. See
-  [Safety and autonomy](docs/safety-and-autonomy.md).
+- **Tests at the right size.** You declare product test stages and gates once; agents run the
+  narrow gate while iterating and the full gate before handing back, with `cockpit test-run`.
+- **Graded work orders** *(experimental)*. Acceptance criteria, declared checks and a separate
+  evaluator that grades each criterion from the check results.
+- **Browser checks** *(experimental)*. Drive, screenshot and run accessibility checks against the
+  running application.
 - **Safe on a shared machine.** Port leases and holder tracking mean one agent cannot stop another
   agent's stack.
-- **Adopt what you already have.** `cockpit document` turns an existing shell-script setup into an
-  annotated draft that marks every value it had to guess.
+- **Adopt what you already have.** `cockpit init` previews a first setup for one agent tool, and
+  `cockpit document` turns an existing shell-script setup into an annotated draft that marks every
+  value it had to guess.
 
-## Supported agent tools
+## Commands at a glance
 
-| Tool | Where cockpit writes | Guard hook |
-|---|---|---|
-| Claude Code | `CLAUDE.md`, `.claude/` | fires |
-| Codex CLI | `AGENTS.md`, `.agents/skills/`, `.codex/` | fires once a person trusts the hook on that machine; `cockpit doctor` warns until then |
-| OpenCode | `opencode.jsonc`, `.opencode/` | fires |
-| Cursor | `.cursor/` | none; files are generated but not confirmed to load |
-| Grok Build | `AGENTS.md`, `.grok/` | none; files are generated but not confirmed to load |
+| Stage | Commands |
+|---|---|
+| Set up | `init`, `document`, `setup`, `sibling add` / `sibling remove` |
+| Generate and verify | `sync`, `check`, `selftest` |
+| Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
+| Diagnose | `doctor` |
+| Test and grade | `test-run`, `work-*` *(experimental)*, `browser-*` *(experimental)* |
 
-Any other tool that reads `AGENTS.md` gets the same instructions, without skills, hooks or
-permissions. Writing a file is not proof that a tool obeys it: the
-[capability matrix](docs/capability-matrix.md) records what has actually been measured, and when.
+Every command and flag is in the [CLI reference](docs/cli-reference.md).
 
 ## How cockpit compares
 
@@ -161,15 +171,11 @@ permissions. Writing a file is not proof that a tool obeys it: the
 
 - **Pre-alpha.** Commands, configuration fields and the generated layout can change between
   minors; the [release policy](docs/release-policy.md) covers deprecations and migration notes.
-  Work orders and browser commands are experimental and say so in `--help`.
 - **macOS and Linux.** Native Windows stops at startup with `CLI_PLATFORM_UNSUPPORTED`.
-- **Running the stack needs Docker Compose** and a measured local runtime (`cockpit runtime
-  measure`). Generation and `check` work without Docker; see
-  [which commands need a runtime](docs/environment.md#measure-the-container-runtime).
+- **Running the stack needs Docker Compose** and a measured local runtime. Generation and `check`
+  work without Docker; see [which commands need a runtime](docs/environment.md#measure-the-container-runtime).
 - **Not a sandbox.** Guards, ignore rules and file permissions stop mistakes, not malicious code
   running as your user.
-- **The synthetic example stops at `check`**: it has no service code to run. For a running stack,
-  use [examples/minimal](examples/minimal/README.md).
 - **One maintainer.** See [Governance](CONTRIBUTING.md#governance).
 
 ## Documentation
