@@ -1,6 +1,6 @@
 import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from '../team-metadata.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import type { FixContext } from '../fix-catalogue.js'
+import { cockpitCommand, type FixContext } from '../fix-catalogue.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -330,11 +330,29 @@ async function siblingRootsCurrent(authority: AuthenticatedSiblingRoots): Promis
     }
 }
 
+// A teammate's clone of a cockpit has none of its siblings until setup clones them; a sibling
+// setup cannot clone was reported as a bare realpath ENOENT with nothing to do about it.
+function absentSibling(sibling: DerivedRegistry['config']['sibling'][number], path: string, configPath: string) {
+    const setup = cockpitCommand('setup', { config: configPath })
+    const fix = sibling.acquire === 'auto' ? `run ${setup}, which clones ${sibling.remote} there, then rerun this command`
+        : sibling.acquire === 'manual' ? `clone ${sibling.remote} into ${path}, then rerun this command`
+            : `clone or create the repository at ${path}, then rerun this command; cockpit.toml records no remote for it (acquire = "none"), so setup cannot clone it: whoever has the checkout records one with ${cockpitCommand('sibling add', { operand: sibling.slug, config: configPath, args: '--remote <url>' })} and commits cockpit.toml, and every later ${setup} clones it`
+    return Object.freeze({
+        kind: 'refusal' as const,
+        // A literal, so the diagnostic inventory captures the fix beside the code.
+        code: 'SIBLING_MISSING' satisfies typeof ENVIRONMENT_CODES.SIBLING_MISSING,
+        reason: `sibling ${sibling.slug} is declared at ${path}, and nothing is there`,
+        target: `sibling:${sibling.slug}`,
+        fix,
+    })
+}
+
 async function authenticateSiblingRoots(
     root: string,
     config: DerivedRegistry['config'],
+    configPath: string,
 ): Promise<Readonly<{ kind: 'complete'; roots: AuthenticatedSiblingRoots }>
-    | Readonly<{ kind: 'refusal'; reason: string }>> {
+    | Readonly<{ kind: 'refusal'; reason: string; code?: string; target?: string; fix?: string }>> {
     try {
         const declaredRoot = resolve(root, config.cockpit.siblings_root)
         const canonicalRoot = await realpath(declaredRoot)
@@ -348,6 +366,11 @@ async function authenticateSiblingRoots(
             if (!containedPath(declaredRoot, declared)) {
                 return { kind: 'refusal', reason: `sibling ${sibling.slug} escapes the declared sibling root` }
             }
+            const present = await lstat(declared).then(() => true, (error: NodeJS.ErrnoException) => {
+                if (error.code === 'ENOENT') return false
+                throw error
+            })
+            if (!present) return absentSibling(sibling, declared, configPath)
             const canonical = await realpath(declared)
             const status = await lstat(canonical)
             if (!containedPath(canonicalRoot, canonical)) {
@@ -1585,11 +1608,12 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'declare [environment.generated] for the runner, or remove browser.endpoint',
     )
     const root = dirname(loaded.result.source.path)
-    const authenticatedSiblings = await authenticateSiblingRoots(root, derived.result.config)
+    const authenticatedSiblings = await authenticateSiblingRoots(root, derived.result.config, loaded.result.source.path)
     if (authenticatedSiblings.kind === 'refusal') return refuse(
-        'GENERATED_SIBLING_ROOT_INVALID',
+        authenticatedSiblings.code ?? 'GENERATED_SIBLING_ROOT_INVALID',
         authenticatedSiblings.reason,
-        'sibling',
+        authenticatedSiblings.target ?? 'sibling',
+        authenticatedSiblings.fix,
     )
     const siblingRoots = authenticatedSiblings.roots
     const runtimeCheckout = declaration || workEnvironment.browser || config.environment.compose_files.length > 0

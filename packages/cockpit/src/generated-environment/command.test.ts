@@ -787,6 +787,14 @@ describe('generated environment command', () => {
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_SIBLING_ROOT_INVALID', target: 'sibling' })] })
         await expect(stat(join(outside, '.env.example'))).rejects.toMatchObject({ code: 'ENOENT' })
 
+        // A teammate's clone has no siblings yet; one with no recorded remote says how to obtain it.
+        const absent = await consumer('absent-sibling')
+        await rm(join(absent.root, 'app'), { recursive: true })
+        expect(await checkGeneratedEnvironment({ configPath: absent.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'SIBLING_MISSING', target: 'sibling:app', message: `sibling app is declared at ${join(absent.root, 'app')}, and nothing is there`,
+            fix: expect.stringContaining(`npx --no cockpit sibling add app --config ${absent.configPath} --remote <url>`),
+        }] })
+
         const partial = await consumer('partial')
         const initial = await syncGeneratedEnvironment({ configPath: partial.configPath })
         expect(initial.kind).toBe('complete')
