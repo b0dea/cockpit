@@ -13,7 +13,7 @@ A test file named `*.slow.test.ts` is in the slow tier; every other test file is
 change and prints the slow-tier owners it left out, with the `npm test -- <paths>` command that
 runs them. A file named with `--extra-test` runs whatever its tier. `--wide` is the selection CI
 runs for a pull request: both tiers, and every test that imports the change, directly or through
-other modules, instead of stopping at the first importer that has its own adjacent tests.
+other modules, instead of stopping at the first importer that has its own fast-tier adjacent tests.
 
 A file belongs in the slow tier when its cost is set by something other than the code under test:
 

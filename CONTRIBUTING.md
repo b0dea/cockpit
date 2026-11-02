@@ -89,13 +89,14 @@ npm run lint:supply-chain
 A targeted pass proves only its target.
 
 **Changed-test selection.** `npm run test:changed -- <base-commit>` follows imports through shared
-test helpers and stops at the first importer that has its own adjacent tests. It runs the fast
-tier only, so run `npm test` before pushing. `--wide` runs what CI's changed-test cell runs: the
-slow tier too, and every test that reaches the change through its importers. A change to the Vitest configuration or the shared Git-isolation setup selects
-every package test. Unmapped paths refuse before dispatch: check them yourself rather than
-treating an empty selection as a pass. `node scripts/run-changed-tests.mjs <base-commit> --list`
-prints the tests it would run as a JSON array without running anything (it also accepts `--wide`
-and `--extra-test <test-path>`); the list is not evidence that the tests passed.
+test helpers and stops at the first importer that has its own fast-tier adjacent tests. It runs the
+fast tier only, so run `npm test` before pushing. `--wide` runs what CI's changed-test cell runs:
+the slow tier too, and every test that reaches the change through its importers. A change to the
+Vitest configuration or the shared Git-isolation setup selects every package test. Unmapped paths
+refuse before dispatch: check them yourself rather than treating an empty selection as a pass.
+`node scripts/run-changed-tests.mjs <base-commit> --list` prints the tests it would run as a JSON
+array without running anything (it also accepts `--wide` and `--extra-test <test-path>`); the list
+is not evidence that the tests passed.
 
 **Splitting a run.** When a suite needs several invocations, partition whole test files and run
 each batch with `npm test -- <paths>`. Keep the commit, working tree, dependencies and test
