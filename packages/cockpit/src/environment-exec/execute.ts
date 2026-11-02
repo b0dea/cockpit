@@ -1140,6 +1140,12 @@ export async function executeProbe(
     return issueProbeOutcome(immutableProbeOutput({ kind: 'complete', execution, receipt } as const, stdout, stderr), resolved)
 }
 
+const PREPARATION_REFUSALS = {
+    'input-changed': { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, message: 'consumed execution input changed', target: 'execution-input' },
+    'cleanup-failed': { code: ENVIRONMENT_CODES.EXECUTION_STAGING_CLEANUP_FAILED, message: 'execution staging cleanup failed', target: 'execution-staging' },
+    'staging-failed': { code: ENVIRONMENT_CODES.EXECUTION_STAGING_FAILED, message: 'execution staging failed', target: 'execution-staging' },
+} as const satisfies Record<Extract<PreparationResult, { kind: 'failure' }>['reason'], { code: string; message: string; target: string }>
+
 export async function executePlan(plan: ExecutionPlan, options: { signal?: AbortSignal } = {}): Promise<ExecutePlanOutcome> {
     let signal: AbortSignal | undefined
     let optionsReadable = true
@@ -1157,14 +1163,17 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
         },
     })
     const preparation = await prepareExecutionPlan(resolvedPlan)
-    if (preparation.kind === 'failure') return immutablePlanOutcome({
-        kind: 'refusal', status: 2, result: null,
-        diagnostics: [{ severity: 'error', code: preparation.reason === 'input-changed' ? ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED : preparation.reason === 'cleanup-failed' ? ENVIRONMENT_CODES.EXECUTION_STAGING_CLEANUP_FAILED : ENVIRONMENT_CODES.EXECUTION_STAGING_FAILED, message: preparation.reason === 'input-changed' ? 'consumed execution input changed' : preparation.reason === 'cleanup-failed' ? 'execution staging cleanup failed' : 'execution staging failed', target: preparation.reason === 'input-changed' ? 'execution-input' : 'execution-staging' }],
-        execution: {
-            completedStepIds: [], failedStep: { id: preparation.reason === 'input-changed' ? 'execution-input' : 'execution-staging', started: false },
-            compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-        },
-    })
+    if (preparation.kind === 'failure') {
+        const { code, message, target } = PREPARATION_REFUSALS[preparation.reason]
+        return immutablePlanOutcome({
+            kind: 'refusal', status: 2, result: null,
+            diagnostics: [{ severity: 'error', code, message, target }],
+            execution: {
+                completedStepIds: [], failedStep: { id: target, started: false },
+                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
+            },
+        })
+    }
     const preparedPlan = preparation.plan
     let preserveStaging = false
     const runPreparedPlan = async (): Promise<ExecutePlanOutcome> => {
