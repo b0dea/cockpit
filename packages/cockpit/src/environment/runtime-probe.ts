@@ -15,6 +15,7 @@ import { decodeCoordinationRecord, readActiveStackInventory, type ActiveStackInv
 import { readState, type StateRecord, type StateResult } from './state.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
+import { PROBE_OWNER_LABEL, isProbeOwner } from './runtime-probe-residue.js'
 
 export const mechanism = {
     id: 'runtime-capability-probe',
@@ -28,6 +29,8 @@ export interface RuntimeProbeRequest {
     readonly cwd: string
     /** The measuring cockpit's name; the probe's Compose project carries it so its resources are attributable. */
     readonly projectPrefix: string
+    /** The measuring process, labelled on every probe resource so a later measure can tell whether it still runs. */
+    readonly owner: string
     readonly env: Readonly<Record<string, string>>
     readonly composeFloor: string
     readonly measuredOn: string
@@ -145,12 +148,13 @@ class RuntimeProbeFailure extends Error {}
 function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value)
-            || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
+            || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'owner', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
         const input = value as Partial<RuntimeProbeRequest>
         if (!isResolvedDockerExecutable(input.executable)
             || !isResolvedGitExecutable(input.gitExecutable)
             || typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd || input.cwd.includes('\0')
             || typeof input.projectPrefix !== 'string' || !PROJECT_PREFIX.test(input.projectPrefix)
+            || typeof input.owner !== 'string' || !isProbeOwner(input.owner)
             || input.env === null || typeof input.env !== 'object' || Array.isArray(input.env)
             || Object.entries(input.env).some(([name, item]) => !SAFE_ENV.has(name) || typeof item !== 'string' || item.includes('\0'))
             || typeof input.composeFloor !== 'string' || VERSION.exec(input.composeFloor) === null
@@ -546,6 +550,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             'dev.b0dea.cockpit.owner-id': context.cockpitId,
             'dev.b0dea.cockpit.generation-id': hash(`compose-volume-generation\0${context.runtimeSha256}`),
             [ownerLabelName]: batchId,
+            [PROBE_OWNER_LABEL]: input.owner,
         }
         ownerCleanup = async () => {
             ownerCleanupAttempted = true

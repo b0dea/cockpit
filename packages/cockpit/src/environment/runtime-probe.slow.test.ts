@@ -117,6 +117,7 @@ function request(overrides: Partial<RuntimeProbeRequest> = {}): RuntimeProbeRequ
         },
         cwd: realpathSync(liveDirectory),
         projectPrefix: 'synthetic-measure',
+        owner: String(process.pid),
         env: runtimeEnvironment(),
         composeFloor: '2.20.0',
         measuredOn: new Date().toISOString().slice(0, 10),
@@ -277,6 +278,7 @@ describe('installed container-runtime capability promotion', () => {
         ['secret-bearing environment', { env: { ...runtimeEnvironment(), API_SECRET: 'probe-secret-canary' } }],
         ['future measurement', { measuredOn: '9999-01-01' }],
         ['project prefix that is not a cockpit name', { projectPrefix: 'Synthetic Measure' }],
+        ['owner that names no process', { owner: 'not-a-process' }],
         ['fake executor path', { executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'verified-path' as const } }],
     ])('keeps %s unavailable without retaining caller values', async (_name, overrides) => {
         const verdict = await probeRuntimeSupport(request(overrides as Partial<RuntimeProbeRequest>))

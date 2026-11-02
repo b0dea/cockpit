@@ -58,7 +58,7 @@ export const mechanism = {
     exports: [
         'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
-        'observeProcessStart', 'processHost', 'isProcessStart', 'releaseDeadSessionHolders', 'describeHolder', 'liveHolderMessage',
+        'observeProcessStart', 'processHost', 'isProcessStart', 'isProcessGone', 'releaseDeadSessionHolders', 'describeHolder', 'liveHolderMessage',
         'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
@@ -727,6 +727,16 @@ export function isProcessStart(value: unknown): value is string {
 
 const startKind = (start: string): string => start.slice(0, start.indexOf(':'))
 
+/**
+ * Whether an observation proves gone the process recorded with `processStart`. A gone pid proves it
+ * whether or not a start was recorded, since reuse can only make a dead process look alive; a start
+ * identity decides only against one read the same way.
+ */
+export function isProcessGone(processStart: string | undefined, observed: ProcessStartObservation): boolean {
+    return observed.state === 'absent' || observed.state === 'present' && processStart !== undefined
+        && startKind(observed.start) === startKind(processStart) && observed.start !== processStart
+}
+
 // A pid alone does not name a holder: the pid of a killed session is reused, and a reused pid read
 // as the session would wedge its stack for as long as the stranger runs. So a session records its
 // process's start identity, and a holder is dead when its pid is gone or now belongs to a process
@@ -861,11 +871,7 @@ export async function releaseDeadSessionHolders(input: {
     const dead: ClaimHolder[] = []
     for (const holder of value.holders) {
         if (holder.holderId === input.successor.holderId || holder.pid === undefined) continue
-        const observed = await input.observe(holder.pid)
-        // A gone pid proves the session gone whether or not its start was recorded: reuse can only
-        // make a dead holder look alive. A start identity decides only against one read the same way.
-        if (observed.state === 'absent' || observed.state === 'present' && holder.processStart !== undefined
-            && startKind(observed.start) === startKind(holder.processStart) && observed.start !== holder.processStart) dead.push(holder)
+        if (isProcessGone(holder.processStart, await input.observe(holder.pid))) dead.push(holder)
     }
     if (dead.length === 0) return { kind: 'complete', released: [] }
     let committed: readonly ClaimHolder[] = []

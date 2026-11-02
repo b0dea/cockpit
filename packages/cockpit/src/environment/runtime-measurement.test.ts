@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
+import { observeProcessStart, processHost } from './claims.js'
 import { runRuntimeMeasure, type RuntimeMeasureProbe } from './runtime-measurement.js'
 import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import { selectMachineStateRoot } from './state.js'
@@ -105,7 +106,8 @@ describe('runtime measurement recording', () => {
 
         const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
             { execute: async step => {
-                executionEnvironments.push(step.env)
+                // Docker's steps; the measure's own process observation reaches no daemon.
+                if (step.argv[0].endsWith('/docker')) executionEnvironments.push(step.env)
                 return executeProbe(step)
             }, probe })
 
@@ -167,7 +169,10 @@ describe('runtime measurement recording', () => {
         const environments: Readonly<Record<string, string>>[] = []
         const env = { ...host.env, DOCKER_CONTEXT: 'synthetic-named' }
         const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env }, {
-            execute: async (step) => { steps.push(step.argv.slice(1).join(' ')); environments.push(step.env); return executeProbe(step) },
+            execute: async (step) => {
+                if (step.argv[0].endsWith('/docker')) { steps.push(step.argv.slice(1).join(' ')); environments.push(step.env) }
+                return executeProbe(step)
+            },
             probe: async (request) => {
                 expect(request.env).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic-named' })
                 return verdict(true, request.executable.sha256)
@@ -287,44 +292,54 @@ describe('runtime measurement recording', () => {
         expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toMatchObject({ kind: 'read', rows: [] })
     })
 
-    it('removes only this cockpit\'s dead probe leftovers before probing, names them, and keeps a live measure\'s', async () => {
+    // Agent tools give each session its own TMPDIR, so a concurrent measure's directory is not
+    // visible here; judging liveness by directories removed that measure's running probe.
+    it('removes only this cockpit\'s probe leftovers whose measure is gone, names them, and keeps a running measure\'s', async () => {
         const host = await measuredHost()
         const scratch = join(host.root, 'tmp')
         await mkdir(scratch)
         vi.stubEnv('TMPDIR', scratch)
+        const self = await observeProcessStart(process.pid, processHost(executeProbe))
+        if (self.state !== 'present') throw new Error(JSON.stringify(self))
+        const stranger = self.start.startsWith('proc:') ? self.start.replace(/:[0-9]+$/, ':1') : 'lstart:2000-01-01T00:00:00.000Z'
         const dead = 'a'.repeat(32)
         const live = 'b'.repeat(32)
         const foreign = 'c'.repeat(32)
+        const reused = 'd'.repeat(32)
+        const unowned = 'e'.repeat(32)
+        const gonePid = '2147483646'
         const project = (batch: string, prefix = 'synthetic-measure') => `${prefix}-probe-${batch}-0123456789ab`
         await writeFile(join(host.root, 'listing-container'), [
-            `${'1'.repeat(64)}\t${project(dead)}\t${dead}`, `${'2'.repeat(64)}\t${project(live)}\t${live}`,
-            `${'3'.repeat(64)}\t${project(foreign, 'other-cockpit')}\t${foreign}`, `${'4'.repeat(64)}\t\t`,
+            `${'1'.repeat(64)}\t${project(dead)}\t${dead}\t${gonePid}`,
+            // A running measure in another session: its directory is in a TMPDIR this one cannot see.
+            `${'2'.repeat(64)}\t${project(live)}\t${live}\t${process.pid}@${self.start}`,
+            `${'3'.repeat(64)}\t${project(foreign, 'other-cockpit')}\t${foreign}\t${gonePid}`, `${'4'.repeat(64)}\t\t\t`,
             // Named like a dead probe but carrying a different probe label: not provably cockpit's.
-            `${'6'.repeat(64)}\t${project(dead)}\t${foreign}`,
+            `${'6'.repeat(64)}\t${project(dead)}\t${foreign}\t${gonePid}`,
+            // A gone measure whose pid now belongs to a process that started at another time.
+            `${'7'.repeat(64)}\t${project(reused)}\t${reused}\t${process.pid}@${stranger}`,
+            // No owner label: nothing proves its measure gone.
+            `${'8'.repeat(64)}\t${project(unowned)}\t${unowned}\t`,
         ].join('\n'))
-        await writeFile(join(host.root, 'listing-network'), `${'5'.repeat(64)}\t${project(dead)}\t${dead}\n`)
-        await writeFile(join(host.root, 'listing-volume'), `${project(dead)}-data\t${project(dead)}\t${dead}\n`)
-        // A measure that exited without cleaning up, whose probe directory still names its batch.
+        await writeFile(join(host.root, 'listing-network'), `${'5'.repeat(64)}\t${project(dead)}\t${dead}\t${gonePid}\n`)
+        await writeFile(join(host.root, 'listing-volume'), `${project(dead)}-data\t${project(dead)}\t${dead}\t${gonePid}\n`)
         const deadDirectory = join(scratch, 'cockpit-runtime-measure-AAAAAA')
-        await mkdir(join(deadDirectory, 'probe'), { recursive: true })
-        await writeFile(join(deadDirectory, 'owner'), '2147483646\n')
-        await writeFile(join(deadDirectory, 'probe', `candidate-${dead}.yml`), '')
-        // A measure whose owner is still running: its batch must survive.
+        await mkdir(deadDirectory)
+        await writeFile(join(deadDirectory, 'owner'), `${gonePid}\n`)
         const liveDirectory = join(scratch, 'cockpit-runtime-measure-BBBBBB')
-        await mkdir(join(liveDirectory, 'probe'), { recursive: true })
-        await writeFile(join(liveDirectory, 'owner'), `${process.pid}\n`)
-        await writeFile(join(liveDirectory, 'probe', `candidate-${live}.yml`), '')
+        await mkdir(liveDirectory)
+        await writeFile(join(liveDirectory, 'owner'), `${process.pid}@${self.start}\n`)
 
         const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
             { execute: executeProbe, probe: async (request) => verdict(true, request.executable.sha256) })
 
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
         expect((await readFile(join(host.root, 'removals'), 'utf8')).trim().split('\n')).toEqual([
-            `container rm ${'1'.repeat(64)}`, `network rm ${'5'.repeat(64)}`, `volume rm ${project(dead)}-data`,
+            `container rm ${'1'.repeat(64)}`, `container rm ${'7'.repeat(64)}`, `network rm ${'5'.repeat(64)}`, `volume rm ${project(dead)}-data`,
         ])
         expect(outcome.artifact).toContain('removed what an interrupted measure left behind')
         expect(outcome.artifact).toContain(`container ${'1'.repeat(12)} (project ${project(dead)})`)
-        expect(outcome.artifact).toContain(`left in place, since a measure may still be running: container ${'2'.repeat(12)} (project ${project(live)})`)
+        expect(outcome.artifact).toContain(`left in place, since a measure may still be running: container ${'2'.repeat(12)} (project ${project(live)}); container ${'8'.repeat(12)} (project ${project(unowned)})`)
         await expect(stat(deadDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
         expect((await stat(liveDirectory)).isDirectory()).toBe(true)
     })
@@ -334,7 +349,7 @@ describe('runtime measurement recording', () => {
         const scratch = join(host.root, 'tmp')
         await mkdir(scratch)
         vi.stubEnv('TMPDIR', scratch)
-        await writeFile(join(host.root, 'listing-container'), `${'1'.repeat(64)}\tsynthetic-measure-probe-${'a'.repeat(32)}-0123456789ab\t${'a'.repeat(32)}\n`)
+        await writeFile(join(host.root, 'listing-container'), `${'1'.repeat(64)}\tsynthetic-measure-probe-${'a'.repeat(32)}-0123456789ab\t${'a'.repeat(32)}\t2147483646\n`)
         await writeFile(join(host.root, 'rm-fails'), '')
         let probed = false
 

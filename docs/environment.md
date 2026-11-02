@@ -476,8 +476,11 @@ pulls. Its Compose project is `<cockpit.name>-probe-<id>`, so anything it leaves
 names the cockpit that ran it, and the probe removes it before returning. If a measure was killed
 before it could, the next `runtime measure` first removes that cockpit's own probe containers,
 network and volume and the stale `cockpit-runtime-measure-*` temporary directory, and lists what it
-removed. It leaves alone anything that may belong to a measure still running, and refuses to probe
-when a leftover cannot be removed, naming it. The probe runs only from
+removed. Each probe resource carries a `dev.b0dea.cockpit.probe-owner` label naming the measure
+process that created it, so a measure running from another worktree or terminal, with its own
+temporary directory, is still recognised: only resources whose process is gone are removed, and
+anything that may belong to a measure still running is left and named. It refuses to probe when a
+leftover cannot be removed, naming it. The probe runs only from
 an installed `@b0dea/cockpit` package and only against a daemon that passes the
 [local endpoint rules](#choose-the-docker-daemon).
 

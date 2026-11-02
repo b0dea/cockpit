@@ -21,7 +21,8 @@ import type { Diagnostic } from '../diagnostics.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
+import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
+import { observeProcessStart, processHost } from './claims.js'
 import { observeDockerRuntime, observedVersionCore } from './runtime.js'
 import { recordLocalRuntimeMeasurement } from './runtime-measurement-record.js'
 import { MEASURE_DIRECTORY_PREFIX, claimMeasureDirectory, sweepProbeResidue } from './runtime-probe-residue.js'
@@ -58,8 +59,6 @@ export interface RuntimeMeasureOutcome {
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
 const STEP_TIMEOUT_MS = 10_000
 const PROBE_STEP_TIMEOUT_MS = 30_000
-// Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
-const PROCESS_STATE_SCRIPT = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
 
 function refused(code: string, message: string, target?: string, fix?: string): RuntimeMeasureOutcome {
     return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
@@ -171,17 +170,17 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     let verdict: RuntimeProbeVerdict
     let swept: Awaited<ReturnType<typeof sweepProbeResidue>>
     try {
-        await claimMeasureDirectory(parent)
+        // The probe's resources and this directory name this process, so a later measure can tell
+        // whether it still runs. Without a readable start only the pid is named, and its resources
+        // are then removed only once that pid is gone.
+        const host = processHost(dependencies.execute)
+        const self = await observeProcessStart(process.pid, host)
+        const owner = self.state === 'present' ? `${process.pid}@${self.start}` : String(process.pid)
+        await claimMeasureDirectory(parent, owner)
         // A measure killed mid-probe leaves containers, a network, a volume and this directory
         // behind; clear this cockpit's own before adding another set to a shared daemon.
-        const node = await resolveDiskCapacityExecutable()
         swept = await sweepProbeResidue({
-            processState: async (pid) => {
-                if (node.state !== 'available') return 'unavailable'
-                const state = await readDocker(dependencies.execute, dockerStep(node.value, dirname(node.value.canonicalPath), runtimeEnv, 'runtime:measure:residue:owner',
-                    ['-e', PROCESS_STATE_SCRIPT, String(pid)]))
-                return state.kind === 'complete' && (state.text === 'live' || state.text === 'absent') ? state.text : 'unavailable'
-            },
+            observe: (pid) => observeProcessStart(pid, host),
             projectPrefix: config.cockpit.name.slice(0, 40), temporaryDirectory: dirname(parent), ownDirectory: parent,
             run: (id, args) => readDocker(dependencies.execute, dockerStep(docker.value, cwd, runtimeEnv, id, args, 65_536)),
             ...(process.getuid === undefined ? {} : { uid: process.getuid() }),
@@ -191,7 +190,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         const probeRoot = join(parent, 'probe')
         await mkdir(probeRoot, { mode: 0o700 })
         verdict = await dependencies.probe({
-            executable: docker.value, gitExecutable: git.value, cwd: probeRoot, projectPrefix: config.cockpit.name.slice(0, 40),
+            executable: docker.value, gitExecutable: git.value, cwd: probeRoot, projectPrefix: config.cockpit.name.slice(0, 40), owner,
             env: Object.freeze({ ...runtimeEnv, ...(input.env.TMPDIR === undefined ? {} : { TMPDIR: input.env.TMPDIR }) }),
             composeFloor, measuredOn, timeoutMs: PROBE_STEP_TIMEOUT_MS,
             image: Object.freeze({ reference: image.text, id: image.text }),
