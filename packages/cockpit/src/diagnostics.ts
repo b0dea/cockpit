@@ -44,7 +44,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
         fix: `follow the refusal reason or ask a human to change cockpit.toml and run ${cockpitCommand('sync')}`,
     }),
     RUNTIME_UNAVAILABLE: Object.freeze({
-        why: 'cockpit cannot start or inspect the declared environment without a reachable container runtime',
+        why: 'cockpit cannot start or inspect the declared environment without a container runtime it can reach and identify',
         fix: 'start the configured container runtime and verify docker info succeeds, then retry',
     }),
     RUNTIME_UNMEASURED: Object.freeze({
