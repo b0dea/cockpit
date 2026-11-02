@@ -39,35 +39,38 @@ repository. The configuration declares both as siblings.
 ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run
 ```
 
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
+<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ cockpit sync --config cockpit.toml --dry-run
+write "package.json"
+write ".gitignore"
 write "AGENTS.md"
 write "CLAUDE.md"
 write "compose.generated.yml"
 write "opencode.jsonc"
-write ".agents/skills/cockpit-setup/SKILL.md"
-write ".agents/skills/cockpit-setup/agents/openai.yaml"
+write ".agents/skills/cockpit-explain/SKILL.md"
+write ".agents/skills/cockpit-explain/agents/openai.yaml"
 ...
 write ".claude/agents/evaluator.md"
 write ".claude/settings.json"
 ...
 write ".cockpit/guards/bash-guard.sh"
-write ".codex/agents/evaluator.toml"
 write ".codex/config.toml"
 write ".codex/hooks.json"
-write ".opencode/agents/evaluator.md"
+write ".codex/agents/evaluator.toml"
 ...
 write ".opencode/plugin/cockpit-guards.js"
+...
 write "docs/cockpit/environment-decisions.md"
 write "env/.secrets/.gitignore"
 write "fixtures/personas.generated.ts"
 write "repositories/app/.env.example"
 write ".cockpit/generated-environment-ownership.json"
-WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook, ...
+WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook ...
 ```
 
-Nothing is written yet. The warning is deliberate: the generated Claude Code settings grant
+Nothing is written yet. `package.json` and `.gitignore` get the `cockpit:*` scripts and a marked
+ignore block. The warning is deliberate: the generated Claude Code settings grant
 access to the sibling directory and name the approved MCP servers, which deserves the same review
 as a hook. Add `--json` to get the result, diagnostics and invocation metadata as
 one JSON document on stdout.
@@ -88,13 +91,15 @@ it there; `setup` refuses an untracked template. `setup` then verifies both repo
 creates the ignored **.env** from the template. `check` recomputes every generated file and
 compares it with disk:
 
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
+<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
 WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: ...
+WARNING CODEX_HOOK_UNTRUSTED [.codex/hooks.json]: Codex has not trusted the guard hook in …/cockpit-demo/.codex/hooks.json on this machine, ...
 ```
 
-Exit code 0: nothing has drifted.
+Exit code 0: nothing has drifted. The Codex warning stays until a person trusts the generated hook
+on this machine ([Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook)).
 
 ## Look at what was generated
 
@@ -122,18 +127,21 @@ echo "# edited by hand" >> compose.generated.yml
 ./node_modules/.bin/cockpit check --config cockpit.toml
 ```
 
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
+<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
-ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]: owned generated artifact differs from canonical bytes Fix: npx --no cockpit sync --config '…/cockpit-demo/cockpit.toml'
+ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]
+What failed: owned generated artifact differs from canonical bytes
+Why it matters: generated files no longer match the canonical cockpit configuration
+Fix: npx --no cockpit sync --config …/cockpit-demo/cockpit.toml
 ...
 ```
 
 `check` exits 2, names the file and prints the fix; it never repairs anything itself. Run the
 suggested `sync`, which rewrites the file, and `check` passes again. A changed skill file reports
 `SURFACE_STATE_CONFLICT` instead, and `sync` refuses it too, because cockpit will not overwrite a
-surface it can no longer prove it owns: undo that edit. Your own text outside a cockpit-owned region, such as notes at the end of AGENTS.md, is not
-drift.
+surface it can no longer prove it owns: undo that edit. Your own text outside a cockpit-owned
+region, such as notes at the end of AGENTS.md, is not drift.
 
 ## Read the configuration
 
