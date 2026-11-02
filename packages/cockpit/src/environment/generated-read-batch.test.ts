@@ -514,6 +514,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             const compose = parseYaml(await readFile(join(root, 'compose.generated.yml'), 'utf8'))
             expect(compose.services['cockpit-browser-runner'].healthcheck.start_period).toBe('15s')
             expect(compose.services['cockpit-browser-runner']).toMatchObject({ mem_limit: '1024m', cpus: 0.75 })
+            // Names resolve on the host through the client's exposed network; an alias here would
+            // point the declared name at the container's own loopback.
+            expect(compose.services['cockpit-browser-runner']).not.toHaveProperty('extra_hosts')
             expect(await readFile(join(root, 'docs/cockpit/environment-decisions.md'), 'utf8')).toContain('- Resource ceilings: cockpit-browser-runner: {"memory_mb":1024,"cpus":0.75,')
             // Generated observations authenticate no host executable but Node, so a runner observation
             // that needs one could never be planned and every up would refuse.

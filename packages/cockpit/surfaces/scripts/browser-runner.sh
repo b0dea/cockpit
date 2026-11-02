@@ -201,9 +201,10 @@ const runServer = () => new Promise((resolve, reject) => {
         forbidden()
         return
       }
-      // run-server lets each client pick its browser and launch options; the served runner pins
-      // them to the declared engine and a headless launch, as launchServer did. The Host header is
-      // the upstream's own loopback authority, which it checks; the public one was checked above.
+      // run-server lets each client pick its browser and launch options, in headers or in the query
+      // string; the exact request line above admits no query, and the served runner pins the headers
+      // to the declared engine and a headless launch, as launchServer did. The Host header is the
+      // upstream's own loopback authority, which it checks; the public one was checked above.
       const headers = operation === 'serve'
         ? [...lines.slice(1).filter(line => !/^(?:host|x-playwright-browser|x-playwright-launch-options)\s*:/i.test(line)),
           `Host: 127.0.0.1:${endpoint.port}`, `x-playwright-browser: ${engine}`, 'x-playwright-launch-options: {"headless":true}']
@@ -220,7 +221,12 @@ const runServer = () => new Promise((resolve, reject) => {
   await new Promise((resolve, reject) => { proxy.once('error', reject); proxy.listen(operation === 'serve' ? Number(proxyPort) : 0, operation === 'serve' ? '0.0.0.0' : '127.0.0.1', resolve) })
   const address = proxy.address()
   if (operation === 'debugger') process.stdout.write(`ws://${debuggerHostnames[0]}:${address.port}${publicWsPath}\n`)
-  server.on('close', () => close(0))
+  // A served runner whose browser server dies is down, not finished: say so and exit non-zero so
+  // the container's restart policy and logs show it.
+  server.on('close', (code, signal) => {
+    if (operation === 'serve' && !closing) process.stderr.write(`browser server exited: ${code ?? signal}\n`)
+    close(operation === 'serve' ? 1 : 0)
+  })
   if (operation === 'debugger') setTimeout(() => close(0), Number(deadline) * 1000)
 })().catch(error => { fs.rmSync(workspace, { recursive: true, force: true }); process.stderr.write(`${error.message}\n`); process.exit(1) })
 NODE

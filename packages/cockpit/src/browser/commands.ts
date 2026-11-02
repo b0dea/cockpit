@@ -109,17 +109,20 @@ function failureHint(reason: string | undefined, url: string, runtime: BrowserRu
 
 // Mirrors Playwright's exposeNetwork matching: a remote browser reaches an address through the
 // connecting client only when a rule covers it, and goes to its own network for everything else.
+// Chromium hands the tunnel an IPv6 literal without brackets, which no rule matches (its
+// <loopback> names only the bracketed form), so an IPv6 origin is never covered.
 function networkExposureCovers(exposure: string, origin: URL): boolean {
     const hostname = origin.hostname.toLowerCase()
+    if (hostname.startsWith('[')) return false
     const port = Number(origin.port || (origin.protocol === 'http:' ? '80' : '443'))
-    const ip = isIP(hostname.replace(/^\[|\]$/g, '')) !== 0
+    const ip = isIP(hostname) !== 0
     return exposure.split(',').some(rule => {
         const match = /^(.*?)(?::(\d+))?$/.exec(rule)
         if (!match || match[2] !== undefined && Number(match[2]) !== port) return false
         const host = match[1]!.toLowerCase()
-        if (host === '<loopback>') return ['localhost', '127.0.0.1', '[::1]'].includes(hostname) || hostname.endsWith('.localhost')
+        if (host === '<loopback>') return ['localhost', '127.0.0.1'].includes(hostname) || hostname.endsWith('.localhost')
         if (host === '*') return true
-        if (isIP(host.replace(/^\[|\]$/g, '')) !== 0) return host === hostname
+        if (isIP(host) !== 0) return host === hostname
         if (ip) return false
         const pattern = host.startsWith('.') ? `*${host}` : host
         return pattern.startsWith('*.') ? hostname.endsWith(pattern.slice(1)) : hostname === pattern
@@ -323,7 +326,7 @@ export async function executeBrowserCommand(value: BrowserCommandInput): Promise
     if (input.runtime.connection.kind === 'remote' && !networkExposureCovers(input.runtime.networkExposure, new URL(input.policy.origin))) {
         return refusal(`Browser application origin ${input.policy.origin} is outside browser.network_exposure (${input.runtime.networkExposure}): `
             + 'the generated runner reaches host addresses only through that exposure, so the browser would look for the application inside its own container. '
-            + 'Use a 127.0.0.1, localhost or .localhost origin, or widen network_exposure with a network_exposure_reason')
+            + 'Use a 127.0.0.1, localhost or .localhost origin (an IPv6 literal is never tunnelled), or widen network_exposure with a network_exposure_reason')
     }
     if (input.headed === true) {
         if (!input.runtime.debugger.enabled) return refusal('Headed browser use was not enabled by the runtime')

@@ -1447,7 +1447,7 @@ async function projectBrowserRunner(
         id: 'cockpit-browser-runner', sibling: declaration.services[0]!.sibling, role: 'service' as const, profiles: Object.freeze([]),
         ...(browser.resources ? { resources: browser.resources } : {}),
         command: Object.freeze(command), image: Object.freeze({ reference: browser.images.runner.reference,
-            reason: 'The configured browser runner image is digest-pinned and its architectures are explicitly declared.', architectures,
+            reason: 'The configured browser runner image is digest-pinned; the running runner checks that its own architecture is one of the declared architectures.', architectures,
             manifest_probe: manifestProbe, provenance }),
         ports: Object.freeze([{ name: 'browser-proxy', host_variable: hostVariable, host_ip: browser.proxy.bind, internal: browser.proxy.proxyPort }]),
         mounts: Object.freeze([

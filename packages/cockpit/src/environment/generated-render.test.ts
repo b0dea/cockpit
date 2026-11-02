@@ -302,6 +302,7 @@ const listener = net.createServer(socket => socket.once('data', bytes => {
     : 'HTTP/1.1 403 Forbidden\\r\\nConnection: close\\r\\nContent-Length: 0\\r\\n\\r\\n')
 }))
 listener.listen(Number(option('--port')), '127.0.0.1', () => process.stdout.write('Listening on ws://127.0.0.1:' + listener.address().port + option('--path') + '\\n'))
+if (process.env.COCKPIT_TEST_RUN_SERVER_EXIT) listener.once('listening', () => setTimeout(() => process.exit(3), 300))
 process.stdin.on('close', () => process.exit(0)); process.on('SIGTERM', () => process.exit(0))
 JS
 cat > node_modules/playwright/index.js <<'JS'
@@ -521,7 +522,18 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
         expect(allLaunches.at(-1)).toMatchObject({ runServer: expect.arrayContaining(['--port', String(firefoxServerPort)]) })
         const firefoxUpstream = JSON.parse((await readFile(upstreamRecord, 'utf8')).trim().split('\n').at(-1)!) as { headers: string[] }
         expect(firefoxUpstream.headers).toContain('x-playwright-browser: firefox')
+        // A served runner whose browser server dies reports it and exits non-zero rather than as finished.
+        const crashed = spawnSync('/bin/sh', [resolve('packages/cockpit/surfaces/scripts/browser-runner.sh'), 'serve',
+            '--manifest', join(root, 'package.json'), '--lockfile', join(root, 'package-lock.json'),
+            '--manifest-sha256', sha(manifest), '--lock-sha256', sha(lockfile), '--driver-version', '1.2.3',
+            '--server-port', String(firefoxServerPort), '--proxy-port', String(firefoxProxyPort), '--max-clients', serializedClientLimit,
+            '--artifacts', join(root, 'crashed-artifacts'), '--allowed-host', `localhost:${firefoxProxyPort}`, '--engine', 'chromium',
+            '--ws-path', '/fixed-token'], {
+            encoding: 'utf8', timeout: 20_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COCKPIT_TEST_WORKSPACE: workspaceRecord,
+                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord, COCKPIT_TEST_NPM: npmRecord, COCKPIT_TEST_RUN_SERVER_EXIT: '1' } })
+        expect({ status: crashed.status, stderr: crashed.stderr.trim() }).toEqual({ status: 1, stderr: 'browser server exited: 3' })
         // Exposed traffic resolves on the connecting client's host, so a served rule would bind nothing.
+        const installs = (await readFile(npmRecord, 'utf8')).trim().split('\n').length
         const ruled = spawnSync('/bin/sh', [resolve('packages/cockpit/surfaces/scripts/browser-runner.sh'), 'serve',
             '--manifest', join(root, 'package.json'), '--lockfile', join(root, 'package-lock.json'),
             '--manifest-sha256', sha(manifest), '--lock-sha256', sha(lockfile), '--driver-version', '1.2.3',
@@ -531,5 +543,6 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
             encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COCKPIT_TEST_WORKSPACE: workspaceRecord,
                 COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord, COCKPIT_TEST_NPM: npmRecord } })
         expect({ status: ruled.status, stderr: ruled.stderr.trim() }).toEqual({ status: 2, stderr: 'browser resolver rules apply only to the foreground debugger' })
+        expect((await readFile(npmRecord, 'utf8')).trim().split('\n')).toHaveLength(installs)
     }, 30_000)
 })

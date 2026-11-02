@@ -277,6 +277,10 @@ describe('browser driving commands', () => {
         expect(refused).toMatchObject({ kind: 'refusal', reason: expect.stringContaining(
             'Browser application origin http://app.example.invalid:4000 is outside browser.network_exposure (<loopback>)') })
         expect(await calls(logPath)).toEqual([])
+        const literal = issueBrowserRoutePolicy(runtime, { origin: 'http://[::1]:4000', routes: [{ name: 'home', path: '/' }] })
+        expect(await executeBrowserCommand({ runtime, client, policy: literal, kind: 'drive' })).toMatchObject({ kind: 'refusal',
+            reason: expect.stringContaining('Browser application origin http://[::1]:4000 is outside browser.network_exposure (<loopback>)') })
+        expect(await calls(logPath)).toEqual([])
         const local = await fixture({ local: true })
         await expect(executeBrowserCommand({ runtime: local.runtime, client: local.client, kind: 'drive',
             policy: issueBrowserRoutePolicy(local.runtime, { origin: 'http://app.example.invalid:4000', routes: [{ name: 'home', path: '/' }] }) }))
