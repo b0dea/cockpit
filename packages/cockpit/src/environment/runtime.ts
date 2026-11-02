@@ -17,6 +17,7 @@ import {
     OBSERVATION_REASON_BYTE_LIMIT,
     snapshotEnvironmentObservation,
     EXECUTION_FAILURE_CODES,
+    HOST_PROCESS_CONTROL_ENV,
     REFUSAL_CODES,
     snapshotExecutionPlan,
     snapshotExecutionStep,
@@ -1290,7 +1291,6 @@ function dependencyLevels(services: ReadonlyMap<string, RuntimeTopologyService>)
 const SERVICE_ID = /^[a-z0-9][a-z0-9_.-]*$/
 const CONTAINER_ID = /^[a-f0-9]{64}$/
 const SHORT_CONTAINER_ID = /^[a-f0-9]{12}$/
-const HOST_PROCESS_CONTROL_ENV = /^(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$)/
 
 function unavailableTopology(reason = 'runtime topology is unavailable'): RuntimeTopologyPlan {
     return Object.freeze({ kind: 'unavailable', reason })

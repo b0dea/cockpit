@@ -5,7 +5,7 @@ import { isProxy } from 'node:util/types'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { GeneratedEnvironment } from '../schema.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, HOST_PROCESS_CONTROL_ENV, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     admitRuntimeServiceHealth,
@@ -35,7 +35,6 @@ export const observationDeclarations = Object.freeze([
 const VendorDeclaration = GeneratedEnvironment.shape.vendors.unwrap().element
 type Vendor = typeof VendorDeclaration._output
 type Operation = Vendor['loader_probe']
-const HOST_PROCESS_CONTROL_ENV = /^(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$)/
 
 export interface ExternalDependencyRuntime {
     readonly root: string
