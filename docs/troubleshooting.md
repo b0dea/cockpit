@@ -252,6 +252,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `CLI_PLATFORM_UNSUPPORTED` | see the message |
 | `CLI_UNKNOWN_COMMAND` | see the message |
 | `CLI_USAGE_INVALID` | see the message |
+| `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `COCKPIT_NOT_INSTALLED` | see the message |
 | `COCKPIT_REVISION_INVALID` | depends on what failed; see the message |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |

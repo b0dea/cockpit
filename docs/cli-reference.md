@@ -43,6 +43,7 @@ Does not read `cockpit.toml`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
@@ -1678,6 +1679,7 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
@@ -2898,6 +2900,7 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
