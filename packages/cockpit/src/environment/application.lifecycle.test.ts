@@ -352,6 +352,25 @@ describe('lifecycle application contracts', () => {
             result: { child, sleep: { change: 'stopped' } } })
     })
 
+    it('says why the stack keeps running when another holder outlives the session', async () => {
+        const stack = `stack:${'8'.repeat(64)}` as StackId
+        const env = { PATH: '/usr/bin:/bin' }
+        const outcome = await runSession({
+            configPath: '/synthetic/cockpit.toml', argv: ['sh', '-c', 'exit 0'], cwd: tmpdir(), env,
+        }, {
+            up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
+                stackId: stack, change: 'unchanged', ports: {}, entrypoints: [],
+            } }),
+            resolveExecutable: (name) => resolveExecutable(name, env),
+            executeForeground: executeForegroundProcess,
+            sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { stackId: stack, change: 'retained' } }),
+        })
+
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0, result: { sleep: { change: 'retained' } },
+            diagnostics: [{ severity: 'info', code: 'SESSION_STACK_RETAINED', target: stack,
+                fix: 'run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout\'s remaining hold' }] })
+    })
+
     it('hands the supervised command the leased ports and entrypoints, over values its caller set', async () => {
         const stack = `stack:${'9'.repeat(64)}` as StackId
         const children: Readonly<Record<string, string>>[] = []

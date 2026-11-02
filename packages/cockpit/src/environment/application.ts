@@ -3268,6 +3268,18 @@ function sessionChildEnvironment(
     })
 }
 
+// A session over a stack an earlier up still holds ends with the containers running, which read as a
+// failed release when nothing said why. Literals, so the diagnostic inventory captures the fix.
+function sessionStackRetained(stackId: string) {
+    return Object.freeze({
+        severity: 'info' as const,
+        code: 'SESSION_STACK_RETAINED' as const satisfies typeof ENVIRONMENT_CODES.SESSION_STACK_RETAINED,
+        message: 'the session released its hold, and the stack keeps running because another holder, such as an earlier up from this checkout, still holds it',
+        target: stackId,
+        fix: 'run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
+    })
+}
+
 export async function runSession(
     input: SessionCommandInput,
     adapters: SessionCommandAdapters,
@@ -3338,10 +3350,11 @@ export async function runSession(
             ...sleep.diagnostics,
         ]),
     }
+    const retained = sleep.result.change === 'retained' ? [sessionStackRetained(sleep.result.stackId)] : []
     return Object.freeze({
         kind: 'complete' as const,
         status: childStatus,
-        diagnostics: uniqueDiagnostics([...up.diagnostics, ...sleep.diagnostics]),
+        diagnostics: uniqueDiagnostics([...up.diagnostics, ...sleep.diagnostics, ...retained]),
         result: Object.freeze({
             child: Object.freeze({ exitCode: child.exitCode, signal: child.signal }),
             sleep: sleep.result,

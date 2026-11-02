@@ -288,7 +288,9 @@ returns is under `COCKPIT_ENTRYPOINT_` followed by its name in upper case with h
 underscores, as in `API_HOST_PORT=4210` and
 `COCKPIT_ENTRYPOINT_API_HOST_PORT=http://127.0.0.1:4210/`. The lease is the truth for
 the stack, so these replace a value of the same name already set in the calling shell. They are
-read once when the command starts and do not follow a later `down` and `up`.
+read once when the command starts and do not follow a later `down` and `up`. When the command ends, the
+session releases only its own hold: a stack that an earlier `up` from this checkout still holds
+keeps running, and the session says so with `SESSION_STACK_RETAINED`; `sleep` releases that hold.
 
 Each `sleep` and `down` stops containers with a stop grace: Docker sends SIGTERM and waits ten
 seconds before killing. A service whose PID 1 ignores SIGTERM, as `node` does unless the program
