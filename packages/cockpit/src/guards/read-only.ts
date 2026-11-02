@@ -22,6 +22,13 @@ export interface ReadOnlyAccess {
     readonly listings: readonly string[]
     /** Paths that must exist, relative to `cwd`, for the command to be read-only. */
     readonly requires?: readonly string[]
+    /** The `trees` are searched as ripgrep searches by default: what Git ignores below them is not read. */
+    readonly skipsIgnored?: boolean
+    /**
+     * The command prints the content of files in the repository at `cwd`, its index or history: only
+     * below these paths, relative to `cwd`, or anywhere when null.
+     */
+    readonly trackedContent?: { readonly limitedTo: readonly string[] | null }
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
@@ -155,6 +162,28 @@ function files(argv: readonly string[], table: OptionTable): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
+// Diff output that names files or counts lines; any other diff output prints file content.
+const GIT_NAME_ONLY = set('--stat', '--numstat', '--shortstat', '--name-only', '--name-status', '--summary', '--raw', '--dirstat', '-s', '--no-patch', '--quiet')
+// Options that turn on patch output. Git also accepts some short options bundled, so any single-dash
+// word holding one of these letters counts, at the cost of asking for an attached `-S` pickaxe value.
+const GIT_PATCH = /^(?:--patch(?:-with-(?:stat|raw))?|--cc|--dd|--remerge-diff|--diff-merges|--word-diff|--color-words|--function-context|--unified|--binary)$/
+
+/** What file content `git diff`, `show` or `log` prints, or undefined when it prints none. */
+function gitTrackedContent(verb: string, args: readonly string[]): ReadOnlyAccess['trackedContent'] {
+    const end = args.indexOf('--')
+    const options = end < 0 ? args : args.slice(0, end)
+    const name = (arg: string) => arg.split('=')[0]!
+    const patch = options.some(arg => GIT_PATCH.test(name(arg)) || /^-[^-]/.test(arg) && /[pucmWU]/.test(arg.slice(1)))
+    const revisions = options.some(arg => !arg.startsWith('-'))
+    const nameOnly = options.some(arg => GIT_NAME_ONLY.has(name(arg)))
+    // `git show` prints a named blob whatever its options, and `diff` and `show` print a named blob
+    // whatever pathspec follows, so only a revision-free command is limited by its pathspecs.
+    if (!(verb === 'log' ? patch : patch || !nameOnly || verb === 'show' && revisions)) return undefined
+    const pathspecs = end < 0 ? null : args.slice(end + 1)
+    // Magic and wildcard pathspecs match more than their spelling, so they limit nothing.
+    return { limitedTo: pathspecs === null || verb !== 'log' && revisions || pathspecs.length === 0
+        || pathspecs.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? null : pathspecs }
+}
 
 // Git discovers an implicit bare repository in any directory holding HEAD, objects and refs, and runs
 // programs its config names, so read-only Git runs only where `.git` exists: discovery takes it before
@@ -179,7 +208,8 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     if (args.some(arg => !arg.startsWith('-') && arg.includes(':'))) return undefined
     // Operands may be pathspecs whose content is printed, and a path outside the repository turns
     // `git diff` into a file comparison, so every operand is inspected as a read.
-    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires }
+    const trackedContent = verb === 'status' ? undefined : gitTrackedContent(verb, args)
+    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires, ...(trackedContent ? { trackedContent } : {}) }
 }
 
 /**
@@ -237,7 +267,11 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
         case 'head': case 'tail': return shape(files(argv, HEAD_TAIL))
         case 'wc': return shape(files(argv, WC))
         case 'grep': return shape(search(argv, GREP, false))
-        case 'rg': return environment.ripgrepConfigActive ? undefined : shape(search(argv, RG, true))
+        // Every option ripgrep is admitted with keeps its ignore filters, which the trees are then judged by.
+        case 'rg': {
+            const access = environment.ripgrepConfigActive ? undefined : shape(search(argv, RG, true))
+            return access && { ...access, skipsIgnored: true }
+        }
         case 'fd': {
             const parsed = parseOptions(argv, FD)
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length > 1 ? parsed.positionals.slice(1) : ['.'] })

@@ -38,15 +38,16 @@ import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupRe
 import type { InstructionPointerResult } from './instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
-import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
+import { evaluateGuard, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { ordinarySessionCommand, resolveOrdinaryInvocation } from '../command-table.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
-import { guardInstalledDirectories, guardLauncherEvidence, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow } from '../guards/protected-locations.js'
-import { cockpitLauncherPrefix } from '../guards/read-only.js'
+import { guardInstalledDirectories, guardLauncherEvidence, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow,
+    guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from '../guards/protected-locations.js'
+import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { cockpitCommand, formatShellCommand, type FixContext } from '../fix-catalogue.js'
@@ -485,6 +486,34 @@ export async function runGuardEvaluationApplication(
         if (parsed.cwd !== data.cwd) return unavailable('Guard request cwd does not match its invocation authority.')
         const prepared = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
         if (prepared.kind !== 'complete') return unavailable('Guard policy authority could not be authenticated.')
+        // The inspector answers synchronously, so what only Git can say is asked first: which protected
+        // paths a default ripgrep search reads, and which a repository's index holds for a Git command
+        // that prints committed content. A request not asked here gets the walk, or no answer.
+        const policy = prepared.result.policy
+        const instancePaths = policy.instances.map(item => item.path)
+        const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error } }
+        const allowed = (path: string) => policy.allowedRoots.some(root => confinedPath(root, path))
+        const unignored = new Map<string, readonly string[] | null | undefined>()
+        const tracked = new Map<string, readonly string[] | null>()
+        for (const invocation of parsed.invocations) {
+            const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
+            if (access?.trackedContent && allowed(access.cwd) && !tracked.has(access.cwd)) {
+                tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe))
+            }
+            for (const tree of access?.skipsIgnored ? access.trees : []) {
+                const path = resolve(access!.cwd, tree)
+                if (allowed(path) && !unignored.has(path) && present(path)) unignored.set(path, await guardUnignoredSensitivePaths(path, instancePaths, git.value, adapters.execute ?? executeProbe))
+            }
+        }
+        const searched = (path: string, unignoredOnly: boolean): readonly string[] | null => {
+            const listed = unignoredOnly ? unignored.get(path) : undefined
+            if (listed !== undefined) return listed
+            const walked = guardSensitivePathsBelow(path)
+            // The walk names environment and secrets names; an ignore-aware search also needs the instances it reads.
+            if (!unignoredOnly || walked === null) return walked
+            const found = [...new Set([...walked, ...instancePaths.filter(item => confinedPath(path, item) && present(item))])].sort()
+            return found.length > GUARD_PROTECTED_LOCATION_LIMIT ? null : found
+        }
         const inspected = new Map<string, Stats>()
         const inspect: import('../guards/evaluator.js').PathInspection = request => {
             const path = resolve(request.cwd, request.path)
@@ -509,8 +538,10 @@ export async function runGuardEvaluationApplication(
                 inspected.set(cursor, status)
                 chain.push(guardIdentity(status))
             }
+            const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
-                ...(request.operation === 'search' ? { sensitive: exists ? guardSensitivePathsBelow(path) : [] } : {}) }
+                ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search') : [] } : {}),
+                ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null } : {}) }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')

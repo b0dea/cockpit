@@ -83,8 +83,15 @@ export interface GuardEvaluationPolicy {
 export interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
-    /** A `search` is a recursive read; its evidence also carries `sensitive`, every existing path at or below it named `.env*` or `.secrets`, or null past the walk's bound. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'remove' | 'search'
+    /**
+     * A `search` is a recursive read; its evidence also carries `sensitive`, every existing path at or
+     * below it named `.env*` or `.secrets`, or null past the walk's bound. An `unignored-search` reads
+     * only what Git does not ignore, as ripgrep does by default; its `sensitive` holds only what such
+     * a search reads, and also every declared instance it reads. A `repository` is the Git repository
+     * at the path; its evidence carries `tracked`, every `.env*`, secrets or instance path its index
+     * holds, or null when Git could not say.
+     */
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'remove' | 'search' | 'unignored-search' | 'repository'
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -700,12 +707,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
         catch { return undefined }
         const lexical = posix.resolve(request.cwd, request.path)
-        const search = request.operation === 'search'
-        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(search ? ['sensitive'] : [])]) && evidence.status === 'resolved'
+        const listed = request.operation === 'search' || request.operation === 'unignored-search' ? 'sensitive' : request.operation === 'repository' ? 'tracked' : undefined
+        const paths = listed && evidence !== undefined && record(evidence) ? evidence[listed] : null
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : [])]) && evidence.status === 'resolved'
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
-            && (!search || evidence.sensitive === null || Array.isArray(evidence.sensitive) && evidence.sensitive.length <= GUARD_PROTECTED_LOCATION_LIMIT
-                && evidence.sensitive.every((path) => canonical(path) && within(path, lexical))) ? evidence : undefined
+            && (paths === null || Array.isArray(paths) && paths.length <= GUARD_PROTECTED_LOCATION_LIMIT
+                && paths.every((path) => canonical(path) && within(path, lexical))) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
     const inspectPath = (request: PathInspectionRequest, controlCoverage = false): JsonSnapshotObject | undefined => {
@@ -832,7 +840,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
-            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? 'search' : 'read' })
+            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind !== 'tree' ? 'read' : access.skipsIgnored ? 'unignored-search' : 'search' })
             if (!evidence) { safe = false; return }
             const { is, below, covers } = evidenceFacts(evidence)
             if (kind !== 'listing' && (is(secretRoot) || below(secretRoot) || secretFile(evidence) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
@@ -844,9 +852,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // undeclared sibling `.env.local` that `cat` would have stopped at. The walk sees only what
             // exists now, so the search is safe only when nothing else in the call can write first, as
             // `vercel env pull .env.local && rg KEY .` would.
-            const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
-            const present = reached.find((target) => identityOf(target) !== null)
             const sensitive = evidence.sensitive as readonly string[] | null
+            // A search that skips what Git ignores reads a protected path only where it is listed.
+            const read = (target: string) => !access.skipsIgnored || sensitive === null
+                || sensitive.some((found) => within(fold(target), fold(found)) || within(fold(found), fold(target)))
+            const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
+            const present = reached.find((target) => identityOf(target) !== null && read(target))
             const unseen = sensitive?.find((found) => !templates.has(fold(found)))
             if (present === undefined && sensitive !== null && unseen === undefined && chainReadOnly) return
             safe = false
@@ -862,6 +873,19 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
             if (!evidence || evidence.identity === null) safe = false
+        }
+        // Diffs, patches and blobs print committed content, which the path inspection never sees. The
+        // index stands for the repository: a file once committed and since removed from it is not seen.
+        if (access.trackedContent) {
+            const tracked = resolvedEvidence({ path: '.', cwd: access.cwd, operation: 'repository' })?.tracked as readonly string[] | null | undefined
+            const limits = access.trackedContent.limitedTo?.map((spec) => fold(posix.resolve(access.cwd, spec)))
+            const exposed = tracked?.find((file) => !templates.has(fold(file)) && (limits === undefined || limits.some((limit) => within(fold(file), limit))))
+            if (!tracked || exposed !== undefined || !chainReadOnly) {
+                safe = false
+                searchBlocker = ask(!tracked ? 'The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.'
+                    : exposed !== undefined ? `This Git command can print ${posix.relative(access.cwd, exposed)}, a tracked environment file, secrets file or declared instance. Limit it with \`-- <path>\` to paths that do not hold one.`
+                        : 'This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
+            }
         }
         for (const path of access.reads) visit(path, 'read')
         for (const path of access.trees) visit(path, 'tree')

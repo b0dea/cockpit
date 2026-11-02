@@ -447,6 +447,29 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    it('asks Git which protected files a default ripgrep search reads and a Git command prints, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
+            payload: { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } } }, adapters)).decision
+        writeFileSync(join(root, 'fixtures/.gitignore'), '.env\n')
+        writeFileSync(join(root, 'fixtures/.env'), 'SYNTHETIC_KEY=synthetic\n')
+        try {
+            // ripgrep skips the ignored file, so only searches that would read it ask.
+            expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'allow' })
+            expect(await decide('grep -rn needle fixtures')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('would read fixtures/.env,') })
+            expect(await decide('rg --no-ignore needle fixtures')).toMatchObject({ decision: 'ask' })
+            writeFileSync(join(root, 'fixtures/.env.local'), 'SYNTHETIC_KEY=synthetic\n')
+            expect(await decide('rg needle fixtures')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('would read fixtures/.env.local,') })
+            expect(await decide('git diff')).toMatchObject({ decision: 'allow' })
+            execFileSync('git', ['-C', root, 'add', '--force', 'fixtures/.env'])
+            expect(await decide('git diff --cached')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('can print fixtures/.env,') })
+            expect(await decide('git log -p -- app')).toMatchObject({ decision: 'allow' })
+        } finally {
+            execFileSync('git', ['-C', root, 'rm', '--cached', '--quiet', '--ignore-unmatch', 'fixtures/.env'])
+            for (const file of ['.gitignore', '.env', '.env.local']) rmSync(join(root, 'fixtures', file), { force: true })
+        }
+    }, 120_000)
+
     it.each([
         ['app/.env.example', 'allow'],
         ['app/config/runtime.env', 'deny'],

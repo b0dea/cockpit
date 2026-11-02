@@ -1,17 +1,21 @@
 // Owns the machine facts behind the guard protections: the directories holding the code the
 // running guard loads, the command search path directories inside the allowed roots, the identity
 // of every file in the root secrets directory, the environment and secrets names below a searched
-// tree, and which launcher spellings start the installed cockpit. It reads the filesystem and decides
-// nothing; the guard application filters these facts into the policy and the evaluator turns them
-// into hard denials.
+// tree or tracked by a repository, and which launcher spellings start the installed cockpit. It reads
+// the filesystem and asks Git, and decides nothing; the guard application filters these facts into the
+// policy and the evaluator turns them into hard denials.
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { basename, dirname, join, posix } from 'node:path'
+import { basename, dirname, join, posix, relative } from 'node:path'
 
+import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep } from '../environment/contract.js'
+import type { ResolvedExecutable } from '../environment/executable.js'
+import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { foldGuardSpelling, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
 
 export const mechanism = {
     id: 'guard-protected-locations', module: 'packages/cockpit/src/guards/protected-locations.ts',
-    exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSearchPathRelativeEntry', 'guardSecretFiles', 'guardSensitivePathsBelow', 'GUARD_SEARCH_ENTRY_LIMIT'],
+    exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSearchPathRelativeEntry', 'guardSecretFiles', 'guardSensitivePathsBelow',
+        'guardUnignoredSensitivePaths', 'guardTrackedSensitivePaths', 'GUARD_SEARCH_ENTRY_LIMIT'],
 } as const
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
@@ -134,16 +138,17 @@ export function guardSearchPathRelativeEntry(searchPath: string): string | null 
 /** Directory entries a recursive search may walk before the guard stops proving what it reads. */
 export const GUARD_SEARCH_ENTRY_LIMIT = 20_000
 
+const sensitiveName = (name: string) => { const folded = foldGuardSpelling(name); return folded.startsWith('.env') || folded === '.secrets' }
+
 /**
  * Every path at or below `path` whose case-folded name starts with `.env` or is `.secrets`, of any
  * type, without following links, as a recursive search would reach it; null once the walk passes
  * `entryLimit` entries or finds more than the protected location bound. A missing path has none.
  */
 export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT): readonly string[] | null {
-    const sensitive = (name: string) => { const folded = foldGuardSpelling(name); return folded.startsWith('.env') || folded === '.secrets' }
     let status
     try { status = lstatSync(path) } catch (error) { if (missing(error)) return []; throw error }
-    const found = sensitive(basename(path)) ? [path] : []
+    const found = sensitiveName(basename(path)) ? [path] : []
     const pending = status.isDirectory() ? [path] : []
     let seen = 0
     while (pending.length) {
@@ -151,11 +156,125 @@ export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH
         for (const entry of readdirSync(directory, { withFileTypes: true })) {
             if (++seen > entryLimit) return null
             const child = join(directory, entry.name)
-            if (sensitive(entry.name) && found.push(child) > GUARD_PROTECTED_LOCATION_LIMIT) return null
+            if (sensitiveName(entry.name) && found.push(child) > GUARD_PROTECTED_LOCATION_LIMIT) return null
             if (entry.isDirectory()) pending.push(child)
         }
     }
     return found.sort()
+}
+
+export type GuardExecute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+
+// A repository's index and work tree can each list hundreds of thousands of paths.
+const GIT_LIST_BYTES = 16_777_216
+
+/**
+ * The NUL-separated paths `git <args>` prints in `repository`, with an empty answer for exit 1, or
+ * null when Git did not answer. The configuration overrides keep Git from running the fsmonitor
+ * program or trusting its untracked cache, and match ignore rules case-sensitively, as ripgrep does.
+ */
+async function gitPaths(git: ResolvedExecutable, repository: string, args: readonly string[], execute: GuardExecute): Promise<readonly string[] | null> {
+    const step = snapshotExecutionStep({
+        id: 'guard-git-paths',
+        argv: [git.canonicalPath, '-C', repository, `--work-tree=${repository}`, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'core.ignoreCase=false', ...args],
+        argv0: git.invocationPath, cwd: repository, env: {}, timeoutMs: 10_000,
+        stdoutLimitBytes: GIT_LIST_BYTES, stderrLimitBytes: 65_536, paths: [repository], ports: [], labels: { action: 'guard-git-paths' },
+        expected: [{ kind: 'path', target: repository, state: 'repository' }],
+        consumedFiles: [{ path: git.canonicalPath, sha256: git.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: git.executionMode }],
+        filesystemChecks: [], compensation: [],
+    })
+    if (!step) throw new TypeError(`guard Git query could not be planned in ${repository}`)
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (outcome?.kind === 'complete') return outcome.stdout.toString('utf8').split('\0').filter(Boolean)
+    return outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
+        && outcome.execution.exitCode === 1 && outcome.execution.signal === null ? [] : null
+}
+
+/** The nearest directory at or above `directory` holding a `.git` entry, or undefined. */
+function repositoryAbove(directory: string): string | undefined {
+    for (let cursor = directory; ; cursor = dirname(cursor)) {
+        try { lstatSync(join(cursor, '.git')); return cursor } catch (error) { if (!missing(error)) throw error }
+        if (dirname(cursor) === cursor) return undefined
+    }
+}
+
+/**
+ * The paths a default ripgrep search of `path` reads that are named `.env*`, lie below a `.secrets`
+ * directory or are one of `watched`, each reported at its first such name, as Git lists what the
+ * enclosing repository does not ignore; null past the protected location bound or when Git did not
+ * answer. Undefined when Git's list cannot stand for ripgrep's: outside a repository, through a
+ * nested repository or submodule, below an `.ignore` or `.rgignore` file, which ripgrep reads and Git
+ * does not, or when the search names an ignored directory, whose children ripgrep may still read.
+ *
+ * Only `.gitignore` files are applied: ripgrep reads those, the repository's exclude file and the
+ * global excludes file, but finds the global one by other rules than Git, so Git applying fewer
+ * lists more. Hidden paths are kept: a type such as `rg -t sh`, which matches `.env`, reads them.
+ */
+export async function guardUnignoredSensitivePaths(path: string, watched: readonly string[], git: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null | undefined> {
+    // ripgrep reads a path it is named whatever ignores it, and one such name already decides.
+    if (sensitiveName(basename(path))) return [path]
+    const status = lstatSync(path)
+    // A case-insensitive volume finds `SRC` where Git's pathspec and ignore rules see only `src`.
+    if (realpathSync.native(path) !== path) return undefined
+    const start = status.isDirectory() ? path : dirname(path)
+    for (let cursor = start; ; cursor = dirname(cursor)) {
+        for (const name of ['.ignore', '.rgignore']) {
+            try { lstatSync(join(cursor, name)); return undefined } catch (error) { if (!missing(error)) throw error }
+        }
+        if (dirname(cursor) === cursor) break
+    }
+    const repository = repositoryAbove(start)
+    if (repository === undefined) return undefined
+    const below = relative(repository, path)
+    if (/[*?[\\]/.test(below)) return undefined
+    const scope = below === '' ? [] : [`:(literal)${below}`]
+    if (below !== '' && (await gitPaths(git, repository, ['check-ignore', '--no-index', '--', below], execute))?.length !== 0) return undefined
+    const prefix = below === '' ? '' : `${below}/`
+    const [cached, others, ignoreFiles] = await Promise.all([
+        gitPaths(git, repository, ['ls-files', '-z', '--stage', '--', ...scope], execute),
+        gitPaths(git, repository, ['ls-files', '-z', '--others', '--exclude-per-directory=.gitignore', '--', ...scope], execute),
+        gitPaths(git, repository, ['ls-files', '-z', '--others', '--ignored', '--exclude-per-directory=.gitignore', '--',
+            `:(icase,glob)${prefix}**/.ignore`, `:(icase,glob)${prefix}**/.rgignore`], execute),
+    ])
+    if (cached === null || others === null || ignoreFiles === null) return null
+    if (ignoreFiles.length) return undefined
+    const listed: string[] = []
+    for (const line of cached) {
+        const tab = line.indexOf('\t')
+        // A submodule's work tree is ripgrep's to search and absent from this index.
+        if (tab < 0 || line.startsWith('160000 ')) return undefined
+        listed.push(line.slice(tab + 1))
+    }
+    for (const entry of others) {
+        // Git names an untracked nested repository as a directory and lists nothing inside it.
+        if (entry.endsWith('/')) return undefined
+        listed.push(entry)
+    }
+    const folded = new Set(watched.map(foldGuardSpelling))
+    const found = new Set<string>()
+    for (const entry of listed) {
+        if (entry.split('/').some(name => ['.ignore', '.rgignore'].includes(foldGuardSpelling(name)))) return undefined
+        const absolute = join(repository, entry)
+        if (absolute !== path && !absolute.startsWith(`${path}/`)) continue
+        const names = absolute === path ? [] : relative(path, absolute).split('/')
+        const first = names.findIndex(sensitiveName)
+        if (first >= 0) found.add(join(path, ...names.slice(0, first + 1)))
+        else if (folded.has(foldGuardSpelling(absolute))) found.add(absolute)
+        if (found.size > GUARD_PROTECTED_LOCATION_LIMIT) return null
+    }
+    return [...found].sort()
+}
+
+/**
+ * Every path `repository`'s index holds that is named `.env*`, lies below a `.secrets` or `.env*`
+ * directory or is one of `watched`, or null past the protected location bound or when Git did not
+ * answer. Only the index is asked: a file removed from it stays in history, which this does not walk.
+ */
+export async function guardTrackedSensitivePaths(repository: string, watched: readonly string[], git: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null> {
+    const inside = watched.map(path => relative(repository, path)).filter(path => path !== '' && !path.startsWith('..'))
+    const tracked = await gitPaths(git, repository, ['ls-files', '-z', '--', ':(icase,glob)**/.env*', ':(icase,glob)**/.env*/**', ':(icase,glob)**/.secrets/**',
+        ...inside.map(path => `:(icase,literal)${path}`)], execute)
+    return tracked === null || tracked.length > GUARD_PROTECTED_LOCATION_LIMIT ? null : tracked.map(path => join(repository, path)).sort()
 }
 
 /**

@@ -1,10 +1,14 @@
+import { execFileSync } from 'node:child_process'
 import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from '../environment/executable.js'
+import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
-import { guardInstalledDirectories, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow } from './protected-locations.js'
+import { guardInstalledDirectories, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow,
+    guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -66,6 +70,46 @@ describe('guard protected locations', () => {
         expect(guardSensitivePathsBelow(join(root, 'tree/src/.ENV.local'))).toEqual([join(root, 'tree/src/.ENV.local')])
         expect(guardSensitivePathsBelow(join(root, 'absent'))).toEqual([])
         expect(guardSensitivePathsBelow(join(root, 'tree'), 6)).toBeNull()
+    })
+
+    it('lists the protected paths a default ripgrep search reads from Git, and declines where Git cannot stand for ripgrep', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const write = (path: string, content = 'SYNTHETIC=1\n') => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content) }
+        execFileSync('git', ['init', '-q', root])
+        write('.gitignore', '.env\nnode_modules\n')
+        write('src/a.ts', 'export {}\n')
+        write('.env')
+        write('node_modules/pkg/.env')
+        write('config/runtime.env')
+        const instance = join(root, 'config/runtime.env')
+        const unignored = (path: string) => guardUnignoredSensitivePaths(join(root, path), [instance], git, executeProbe)
+        // Git ignores .env and node_modules, which ripgrep then skips; the declared instance it reads.
+        expect(await unignored('.')).toEqual([instance])
+        write('.env.local')
+        write('pkg/.secrets/token')
+        expect(await unignored('.')).toEqual([join(root, '.env.local'), instance, join(root, 'pkg/.secrets')])
+        expect(await unignored('src')).toEqual([])
+        expect(await unignored('.env')).toEqual([join(root, '.env')])
+        // ripgrep searches inside a directory it is named, ignored or not.
+        expect(await unignored('node_modules')).toBeUndefined()
+        // An ignore file Git does not read, even one Git ignores, and a nested repository Git does not list.
+        write('src/.ignore', '!.env\n')
+        expect(await unignored('src')).toBeUndefined()
+        rmSync(join(root, 'src/.ignore'))
+        write('node_modules/.rgignore', '!.env\n')
+        expect(await unignored('.')).toBeUndefined()
+        rmSync(join(root, 'node_modules/.rgignore'))
+        execFileSync('git', ['init', '-q', join(root, 'vendor/nested')])
+        expect(await unignored('.')).toBeUndefined()
+        expect(await unignored('src')).toEqual([])
+        expect(await guardUnignoredSensitivePaths(scratch(), [], git, executeProbe)).toBeUndefined()
+        // Only the index is asked what the repository tracks.
+        expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])
+        execFileSync('git', ['-C', root, 'add', '--force', '.env', 'config/runtime.env', 'src/a.ts'])
+        expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([join(root, '.env'), instance])
     })
 
     it('enumerates every secrets file identity under any folded spelling and reports a second hard link or an exceeded bound', () => {

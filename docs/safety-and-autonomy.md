@@ -251,13 +251,25 @@ These reads fall back to a prompt instead of being allowed:
 - a recursive search, whenever a declared instance or an `env/.secrets` file has a second hard link
   anywhere;
 - a search whose tree contains an existing instance, a `.secrets` directory at any depth, or a
-  `.env*` file that is not a declared template, since the guard cannot see which files the search
-  would read: `grep -r` reads hidden files, and ripgrep's hidden-file filter yields to an ignore file
-  the agent can write. The guard walks each searched tree to find them, without following links,
-  and a tree too large for its bounded walk is not searched either. The reason names the path, so
-  the agent can search a narrower one. The walk sees only what exists before the call runs, so a
+  `.env*` file that is not a declared template, since `grep -r` reads every file below it. The guard
+  walks each searched tree to find them, without following links, and a tree too large for its
+  bounded walk is not searched either. The reason names the path, so the agent can search a
+  narrower one;
+- an `rg` search that would read one. ripgrep skips what Git ignores, so the guard asks Git, with
+  the guard's own Git executable, which files the enclosing repository does not ignore, and a
+  gitignored `.env` or `node_modules` does not block it. Only `.gitignore` files are applied, and
+  hidden files count, because a type such as `rg -t sh` reads a `.env`. Where Git's list cannot stand
+  for ripgrep's (outside a repository, with an `.ignore` or `.rgignore` file in or above the tree,
+  through a nested repository or submodule, or when the search names an ignored path), the search
+  is walked like `grep -r`. Either way the guard sees only what exists before the call runs, so a
   recursive search is allowed only when every other command in the call is read-only too, and
   nothing in it can write an environment file first;
+- `git diff`, `git show`, and `git log` with patch output, whenever the repository's index holds a
+  `.env*` file that is not a declared template, a file below a `.secrets` directory or a declared
+  instance, unless the command names no revision and is limited with `-- <path>` to paths that hold
+  none (`git log` may name revisions). A revision may name a blob, which prints whatever pathspec
+  follows. Only the index is asked: a file committed once and since removed from it is still in
+  history, and `git log -p` prints it. Run `git rm --cached` and rotate what it held;
 - a path that is a symlink, lies outside the configured roots, or is an undeclared `.env*` file. A
   declared environment `template` is read like any other file.
 

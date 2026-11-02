@@ -12,9 +12,11 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 const root = '/workspace/project'
 const other = '/workspace/other'
 const instance = `${root}/config/active.instance`
-// A search's evidence also lists the `.env*` and `.secrets` names below it; synthetic trees hold none.
+// A search's evidence also lists the `.env*` and `.secrets` names below it, and a repository's the
+// ones its index holds; synthetic trees and repositories hold none.
+const searches = (operation?: string) => operation === 'search' || operation === 'unignored-search'
 const inspect = ({ path, cwd, operation }: { path: string; cwd: string; operation?: string }) => ({ status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
-    ...(operation === 'search' ? { sensitive: [] as string[] | null } : {}) })
+    ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null } : {}) })
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
 type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
 function protectedIdentities(instances: readonly { path: string }[], known: IdentityFacts = {}) {
@@ -633,8 +635,14 @@ describe('built-in read-only profile', () => {
             expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
         const present = (path: string) => ({ ...policy(), protectedIdentities: protectedIdentities([{ path: instance }], { [path]: { identity: '7:9', ancestors: [] } }) })
-        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle')), present(instance), withGit)).toEqual({ decision: 'ask',
+        expect(evaluateGuard(parseGuardInput(shellPayload('grep -r needle .')), present(instance), withGit)).toEqual({ decision: 'ask',
             reason: 'A recursive search of . would read config/active.instance, a declared environment instance or secrets directory. Search a path that does not contain it.' })
+        // ripgrep skips what Git ignores, so an existing instance blocks it only where its file list holds it.
+        const listing = (found: string[]) => (request: { path: string; cwd: string; operation?: string }) => ({ ...withGit(request),
+            ...(request.operation === 'unignored-search' ? { sensitive: found } : {}) })
+        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle')), present(instance), listing([])).decision).toBe('allow')
+        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle')), present(instance), listing([instance])).reason)
+            .toBe('A recursive search of . would read config/active.instance, a declared environment instance or secrets directory. Search a path that does not contain it.')
         expect(evaluateGuard(parseGuardInput(shellPayload('grep -r needle ..', `${root}/src`)), present(`${root}/env/.secrets`), withGit).reason)
             .toBe('A recursive search of .. would read ../env/.secrets, a declared environment instance or secrets directory. Search a path that does not contain it.')
         expect(evaluateGuard(parseGuardInput(shellPayload('rg needle src')), present(instance), withGit).decision).toBe('allow')
@@ -648,7 +656,7 @@ describe('built-in read-only profile', () => {
         // Any environment file or secrets directory the walk finds below the tree is unproven, wherever it sits.
         const walked = (found: string[] | null, templates: string[] = []) => (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)),
             { ...policy(), templates }, (request: { path: string; cwd: string; operation?: string }) => ({ ...withGit(request),
-                ...(request.operation === 'search' ? { sensitive: found && found.filter((path) => path.startsWith(posix.resolve(request.cwd, request.path))) } : {}) }))
+                ...(searches(request.operation) ? { sensitive: found && found.filter((path) => path.startsWith(posix.resolve(request.cwd, request.path))) } : {}) }))
         const local = walked([`${other}/.env.local`, `${root}/packages/web/.secrets`])
         expect(local('grep -rn API_KEY ..', `${root}/src`)).toEqual({ decision: 'ask',
             reason: 'A recursive search of .. would read ../packages/web/.secrets, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.' })
@@ -659,6 +667,25 @@ describe('built-in read-only profile', () => {
         expect(walked([`${root}/.env.example`], [`${root}/.env.example`])('grep -rn KEY .').decision).toBe('allow')
         expect(walked(null)('rg needle src')).toEqual({ decision: 'ask',
             reason: 'A recursive search of src covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.' })
+    })
+
+    it('asks before a Git command prints committed content while the repository tracks an environment file', () => {
+        const tracking = (tracked: string[] | null, templates: string[] = []) => (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)),
+            { ...policy(), templates }, (request: { path: string; cwd: string; operation?: string }) => ({ ...withGit(request),
+                ...(request.operation === 'repository' ? { tracked } : {}) }))
+        const decide = tracking([`${root}/.env`, `${root}/.env.example`], [`${root}/.env.example`])
+        // A revision may name a blob, which diff and show print whatever pathspec or option follows.
+        for (const command of ['git diff', 'git diff --cached', 'git show HEAD', 'git show -s abc123', 'git show HEAD --stat -- src', 'git log -p', 'git log -p5 -- .', 'git log --patch', 'git diff -U3 -- src/..']) {
+            expect(decide(command), command).toEqual({ decision: 'ask',
+                reason: 'This Git command can print .env, a tracked environment file, secrets file or declared instance. Limit it with `-- <path>` to paths that do not hold one.' })
+        }
+        for (const command of ['git status', 'git diff --stat', 'git diff --name-only main', 'git show --stat', 'git log --oneline -5', 'git diff -- src', 'git log -p main -- src', 'git branch']) {
+            expect(decide(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
+        }
+        expect(tracking([`${root}/.env.example`], [`${root}/.env.example`])('git diff').decision).toBe('allow')
+        expect(tracking(null)('git log -p').reason).toBe('The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.')
+        expect(tracking([])('npm test && git diff -- src').reason)
+            .toBe('This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')
     })
 
     it('keeps reads of declared instances and secrets a hard denial under every spelling', () => {
