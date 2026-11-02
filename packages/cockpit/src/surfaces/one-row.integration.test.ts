@@ -294,13 +294,14 @@ describe('one-row generated surface integration', () => {
         const codexDocument = parseToml(codexBytes)
         expect({ sandbox_mode: codexDocument.sandbox_mode, sandbox_workspace_write: codexDocument.sandbox_workspace_write }).toEqual({
             sandbox_mode: 'workspace-write',
-            sandbox_workspace_write: { writable_roots: ['app', 'worker'] },
+            // Codex resolves a relative root from `.codex/`.
+            sandbox_workspace_write: { writable_roots: ['../app', '../worker'] },
         })
-        const changedCodexBytes = codexBytes.replace('"worker"', '"nested/worker"')
+        const changedCodexBytes = codexBytes.replace('"../worker"', '"../nested/worker"')
         expect(changedCodexBytes).not.toBe(codexBytes)
         expect(parseToml(changedCodexBytes)).toEqual({
             ...codexDocument,
-            sandbox_workspace_write: { writable_roots: ['app', 'nested/worker'] },
+            sandbox_workspace_write: { writable_roots: ['../app', '../nested/worker'] },
         })
         await writeFile(codexPath, changedCodexBytes)
         await expectDrift(added.configPath, '.codex/config.toml')

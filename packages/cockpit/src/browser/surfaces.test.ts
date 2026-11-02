@@ -216,7 +216,9 @@ describe('browser transport surfaces', () => {
         const claude = JSON.parse(files[0]!.bytes)
         const codex = parseToml(files[1]!.bytes)
         const open = JSON.parse(files[2]!.bytes)
-        const wrapper = join(input.cockpitDirectory, result.mcp.result.wrappers[0]!.path)
+        // Root-relative, so the committed config is the same in every clone of the cockpit.
+        const wrapper = result.mcp.result.wrappers[0]!.path
+        expect(wrapper).toMatch(/^\.cockpit\/mcp\/[a-f0-9]{64}\.sh$/)
         expect(claude).toEqual({ mcpServers: { playwright: { command: '/bin/sh', args: [wrapper] } } })
         expect(codex).toEqual({ mcp_servers: { playwright: { command: '/bin/sh', args: [wrapper], enabled: true, default_tools_approval_mode: 'approve' } } })
         expect(open).toEqual({ mcp: { playwright: { type: 'local', command: ['/bin/sh', wrapper], enabled: true } } })
