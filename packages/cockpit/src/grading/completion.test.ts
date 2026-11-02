@@ -107,11 +107,22 @@ describe('production grading and completion', () => {
         expect(result.grade?.runId).not.toBe(grade.runId)
     })
 
+    it('accepts a verbatim quote cited at miscounted offsets, as a real grader returns them', async () => {
+        const h = harness()
+        // A real model cited an 83-character quote as ending at 78; the quote, not the arithmetic, is the evidence.
+        alterClaim(h, claim => ({
+            ...claim,
+            evidence: claim.evidence.map(row => ({ ...row, start: row.start + 3, end: row.end - 5 })),
+            verificationEvidence: claim.verificationEvidence.map(row => ({ ...row, start: row.start + 2, end: row.end + 40 })),
+        }))
+        const result = await completeWorkOrder(h.input, h.deps)
+        expect(result.completed).toBe(true)
+    })
+
     const adversaries: [string, (h: Harness) => void][] = [
         ['fabricated quote', h => alterClaim(h, claim => ({ ...claim, evidence: claim.evidence.map(row => ({ ...row, quote: 'fabricated observation' })) }))],
         ['unrelated artifact', h => alterClaim(h, claim => ({ ...claim, evidence: claim.evidence.map(row => ({ ...row, path: 'unrelated/cache.ts' })) }))],
         ['stale artifact', h => alterClaim(h, claim => ({ ...claim, evidence: claim.evidence.map(row => ({ ...row, digest: '0'.repeat(64) })) }))],
-        ['out-of-bounds citation', h => alterClaim(h, claim => ({ ...claim, evidence: claim.evidence.map(row => ({ ...row, end: 10_000, quote: h.artifacts.get(row.path)! })) }))],
         ['changed criterion', h => alterClaim(h, claim => ({ ...claim, criterionDigest: '0'.repeat(64) }))],
         ['unrelated verification', h => alterClaim(h, claim => ({ ...claim, verificationDigests: ['0'.repeat(64)] }))],
         ['fabricated verification observation', h => alterClaim(h, claim => ({ ...claim, verificationEvidence: claim.verificationEvidence.map(row => ({ ...row, quote: 'invented command output' })) }))],

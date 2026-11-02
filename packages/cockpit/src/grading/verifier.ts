@@ -200,16 +200,29 @@ function declarationContains(body: string, symbol: string, start: number, end: n
     return false
 }
 
+// The quote is the evidence; the cited range only says where to look. A real model miscounts
+// character offsets (an 83-character quote cited as ending at 78), and requiring them exactly made
+// every real grade read as unsupported. The quote must still appear verbatim in the cited text: when
+// the range does not hold it, the occurrence nearest the cited start is used, and none means rejected.
+function locateQuote(text: string, quote: string, start: number, end: number): { start: number; end: number } | undefined {
+    if (text.slice(start, end) === quote) return { start, end }
+    let nearest: number | undefined
+    for (let index = text.indexOf(quote); index !== -1; index = text.indexOf(quote, index + 1)) {
+        if (nearest === undefined || Math.abs(index - start) < Math.abs(nearest - start)) nearest = index
+    }
+    return nearest === undefined ? undefined : { start: nearest, end: nearest + quote.length }
+}
+
 function supportingEvidence(assessment: CriterionAssessment, context: GraderContext): boolean {
     if (!Array.isArray(assessment.evidence) || !assessment.evidence.length || assessment.evidence.length > context.contract.authority.length) return false
     return assessment.evidence.every(evidence => {
         if (!evidence || !Number.isSafeInteger(evidence.start) || !Number.isSafeInteger(evidence.end)
             || evidence.start < 0 || evidence.end <= evidence.start || !text(evidence.quote)) return false
         const artifact = context.artifacts.find(item => item.path === evidence.path)
-        return artifact !== undefined && artifact.digest === evidence.digest && evidence.end <= artifact.text.length
-            && artifact.text.slice(evidence.start, evidence.end) === evidence.quote
-            && (evidence.symbol === undefined || typeof evidence.symbol === 'string'
-                && declarationContains(artifact.text, evidence.symbol, evidence.start, evidence.end))
+        if (artifact === undefined || artifact.digest !== evidence.digest) return false
+        const located = locateQuote(artifact.text, evidence.quote, evidence.start, evidence.end)
+        return located !== undefined && (evidence.symbol === undefined || typeof evidence.symbol === 'string'
+            && declarationContains(artifact.text, evidence.symbol, located.start, located.end))
     })
 }
 
@@ -222,7 +235,7 @@ function supportingVerification(assessment: CriterionAssessment, records: readon
             || !Number.isSafeInteger(evidence.start) || !Number.isSafeInteger(evidence.end)
             || evidence.start < 0 || evidence.end <= evidence.start || !text(evidence.quote)) return false
         const output = evidence.stream === 'stdout' ? record.result.stdout : record.result.stderr
-        return evidence.end <= output.length && output.slice(evidence.start, evidence.end) === evidence.quote
+        return locateQuote(output, evidence.quote, evidence.start, evidence.end) !== undefined
     })
 }
 
