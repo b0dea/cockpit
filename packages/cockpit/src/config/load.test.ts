@@ -408,6 +408,26 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         expect(JSON.stringify(outcome)).not.toContain('ssh://example.invalid/api.git')
     })
 
+    it('refuses a host operation that names an executable other than node, naming the operation', async () => {
+        const image = `node@sha256:${'d'.repeat(64)}`
+        const withManifestProbe = (argv: readonly string[]) => `${readFileSync(resolve('examples/minimal/cockpit.toml'), 'utf8')}
+[[environment.generated.services]]
+id = "idle"
+sibling = "api"
+command = ["node", "-e", "setInterval(() => {}, 1000)"]
+image = { reference = "${image}", reason = "Synthetic sidecar", architectures = ["arm64"], manifest_probe = { location = "host", cwd = ".", argv = ${JSON.stringify(argv)}, timeout_seconds = 30 } }
+health = { property = "the process answers", probe = { location = "in-stack", service = "idle", cwd = ".", argv = ["node", "-e", "0"], timeout_seconds = 10 }, interval_seconds = 5, timeout_seconds = 3, retries = 4, start_period_seconds = 20 }
+`
+        const refused = await loadCockpitConfig(fixture(withManifestProbe(['docker', 'image', 'inspect', image])))
+        expect(refused).toMatchObject({ kind: 'refusal', result: null, diagnostics: [{
+            severity: 'error', code: 'CONFIG_HOST_EXECUTABLE_UNSUPPORTED',
+            message: expect.stringContaining('environment.generated.services.1.image.manifest_probe runs "docker" on the host'),
+            fix: expect.stringContaining('location = "in-stack"'),
+        }] })
+
+        expect((await loadCockpitConfig(fixture(withManifestProbe(['node', '-e', '0'])))).kind).toBe('complete')
+    })
+
     it('names port families whose bases overlap across stacks and the step that separates them', async () => {
         const overlapping = await loadCockpitConfig(fixture(validConfig.replace(
             'bases = { APP_PORT = 4100 }', 'bases = { API_HOST_PORT = 4200, WEB_HOST_PORT = 4300 }')))

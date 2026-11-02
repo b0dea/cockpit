@@ -140,7 +140,7 @@ else process.exit(7)
         COCKPIT_OWNER_ID: cockpitId,
         COCKPIT_STACK_ID: stackId,
     }
-    const observationRuntime = { root, executable, composeFiles: [{ path: compose, sha256: composeSha256 }], projectName: 'synthetic', publicEnv, stdoutLimitBytes: 4_096, stderrLimitBytes: 1_024, hostExecutables: { [process.execPath]: nodeExecutable } }
+    const observationRuntime = { root, executable, composeFiles: [{ path: compose, sha256: composeSha256 }], projectName: 'synthetic', publicEnv, stdoutLimitBytes: 4_096, stderrLimitBytes: 1_024, hostExecutables: { node: nodeExecutable } }
     await mkdir(join(root, 'app'), { recursive: true })
     const siblingIdentity = await stat(join(root, 'app'))
     const hostInputRoots = { app: { path: join(root, 'app'), dev: siblingIdentity.dev, ino: siblingIdentity.ino } }
@@ -165,7 +165,7 @@ describe('generated environment rendering', () => {
             const generated = structuredClone(base.result.config.environment.generated!)
             generated.data!.modes.find(mode => mode.mode === 'seeded')!.operations[0]!.prerequisites.push({
                 location: 'host', cwd: '.',
-                argv: [process.execPath, '-e', "if (process.env.COCKPIT_OWNER_ID || process.env.COCKPIT_STACK_ID || process.env.APP_HOST_PORT) process.exit(9)"],
+                argv: ['node', '-e', "if (process.env.COCKPIT_OWNER_ID || process.env.COCKPIT_STACK_ID || process.env.APP_HOST_PORT) process.exit(9)"],
                 timeout_seconds: 30, provenance: generated.data!.modes[0]!.provenance,
             })
             const configPath = join(root, 'cockpit.toml')
@@ -307,7 +307,7 @@ describe('generated environment rendering', () => {
         generated.services[0]!.image!.manifest_probe = {
             ...manifestProbe,
             location: 'host', cwd: '.',
-            argv: [process.execPath, '-e', 'process.exit(0)'],
+            argv: ['node', '-e', 'process.exit(0)'],
         }
         const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput })
         if (result.kind !== 'complete') throw new Error(result.reason)
@@ -375,10 +375,10 @@ describe('generated environment rendering', () => {
         expect(projectGeneratedRuntimeAuthority({
             rendered: result, topology: harness.topology, hostInputRoots: harness.hostInputRoots, runtime: { ...harness.runtime, executable: executableProxy },
         })).toBeUndefined()
-        const hostProxy = new Proxy(harness.runtime.hostExecutables[process.execPath]!, { get: () => { nestedEvaluations += 1; throw new Error('must not run') } })
+        const hostProxy = new Proxy(harness.runtime.hostExecutables.node!, { get: () => { nestedEvaluations += 1; throw new Error('must not run') } })
         expect(projectGeneratedRuntimeAuthority({
             rendered: result, topology: harness.topology, hostInputRoots: harness.hostInputRoots,
-            runtime: { ...harness.runtime, hostExecutables: { [process.execPath]: hostProxy } },
+            runtime: { ...harness.runtime, hostExecutables: { node: hostProxy } },
         })).toBeUndefined()
         const accessor = Object.defineProperty({}, 'canonicalPath', { enumerable: true, get: () => { nestedEvaluations += 1; return process.execPath } })
         expect(projectGeneratedRuntimeAuthority({
