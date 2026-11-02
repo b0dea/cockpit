@@ -144,7 +144,8 @@ export function describePublicOption(name: string): string {
     return description
 }
 
-type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image'
+type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
+    | 'identifier' | 'work-lock' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -161,7 +162,7 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[]; values: readonly { option: string; predicate: 'not-lowercase-sha256' }[] }>
-    selection?: 'root-xor-registry' | 'release-evidence-pair'
+    selection?: 'root-xor-registry' | 'release-evidence-pair' | 'intent-xor-work-order'
 }>
 
 const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
@@ -180,6 +181,8 @@ function unavailable(reason: string): OrdinaryCommandMetadata { return Object.fr
 
 const workOptions = { config: { type: 'string' }, json: { type: 'boolean', default: false } } as const
 const workOrderOption = { 'work-order': { type: 'string' } } as const
+const workOrderOptions = Object.freeze({ ...configured, 'work-order': value('identifier', true) })
+const browserOptions = Object.freeze({ ...configured, role: value('identifier') })
 
 
 export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIdentifier {
@@ -466,62 +469,77 @@ export const commands: readonly CommandDefinition[] = [
             json: { type: 'boolean', default: false },
         },
     },
+    // A gate runs only the stages a person declared in the reviewed cockpit.toml, which is the trust
+    // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('test-run', { ...configured, gate: value('declared-gate', true), mode: value('gate-mode'), select: value('gate-selector') }),
         options: { ...workOptions, ...{ gate: { type: 'string' }, mode: { type: 'string', default: 'canonical' }, select: { type: 'string' } } } },
+    // Intake publishes a draft at most; a person accepts it separately.
     { name: 'work intake', handler: 'work-intake', stage: 'test-and-grade', summary: 'Prepare a work order from its source document', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-intake', { ...configured, 'work-order': value('identifier'), intent: value('confined-path'), candidate: value('confined-path') },
+            { selection: 'intent-xor-work-order' }),
         options: { ...workOptions, ...workOrderOption, intent: { type: 'string' }, candidate: { type: 'string' } } },
     { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report current work-order state', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-status', { ...configured, 'work-order': value('identifier') }),
         options: { ...workOptions, ...workOrderOption } },
     { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Interactively accept the exact current work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: unavailable("acceptance is a person's answer, in an interactive terminal, to the contract digest it displays"),
         options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
     { name: 'work renew', handler: 'work-renew', stage: 'test-and-grade', summary: 'Interactively renew a changed work-order contract', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: unavailable("renewal is a person's answer, in an interactive terminal, to the changed contract digest it displays"),
         options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
     { name: 'work resume', handler: 'work-resume', stage: 'test-and-grade', summary: 'Resume the next executable step of the single active work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-resume'),
         options: workOptions },
+    // Inspection only reports the holder. --apply deletes the lock once a pid probe calls its holder
+    // dead, and that probe sees only this machine's process table: a holder running in a container or
+    // on another host that shares the checkout looks dead to it, so a person confirms it is gone.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-recover', { ...configured, lock: value('work-lock', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['apply']), values: Object.freeze([]) }) }),
         options: { ...workOptions, lock: { type: 'string' }, apply: { type: 'boolean', default: false } } },
+    // Execute runs the verification command of a step in an order a person accepted; the approach is a
+    // label it records and selects nothing it runs.
     { name: 'work execute', handler: 'work-execute', stage: 'test-and-grade', summary: 'Execute one accepted work-order step', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-execute', { ...workOrderOptions, approach: value('label', true) }),
         options: { ...workOptions, ...{ ...workOrderOption, approach: { type: 'string' } } } },
     { name: 'work record', handler: 'work-record', stage: 'test-and-grade', summary: 'Persist current work-order progress', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-record', { ...workOrderOptions, 'event-file': value('confined-path', true) }),
         options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' } } },
     { name: 'work review', handler: 'work-review', stage: 'test-and-grade', summary: 'Review the current accepted work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-review', workOrderOptions),
         options: { ...workOptions, ...workOrderOption } },
+    // The preview is a report. Parking or un-parking an order changes which orders count against the
+    // work-in-progress cap a person set, so applying a sweep and reversing one stay with a person.
     { name: 'work sweep', handler: 'work-sweep', stage: 'test-and-grade', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-sweep', configured, { forbidden: Object.freeze({ presence: Object.freeze(['apply']), values: Object.freeze([]) }) }),
         options: { ...workOptions, ...{ apply: { type: 'boolean', default: false } } } },
     { name: 'work reverse', handler: 'work-reverse', stage: 'test-and-grade', summary: 'Reverse a recorded work-order sweep', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: unavailable('reversing a sweep un-parks an order, which changes the orders that count against the work-in-progress cap a person set'),
         options: { ...workOptions, ...workOrderOption } },
+    // Without a candidate it reports the next item. With one it binds that item of the person's
+    // programme ledger to the draft for good, so only the report is an agent's to run.
     { name: 'work programme-mint', handler: 'work-programme-mint', stage: 'test-and-grade', summary: 'Mint the next declared programme work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-programme-mint', { ...configured, programme: value('identifier', true), item: value('identifier') },
+            { forbidden: Object.freeze({ presence: Object.freeze(['candidate']), values: Object.freeze([]) }) }),
         options: { ...workOptions, ...{ programme: { type: 'string' }, item: { type: 'string' }, candidate: { type: 'string' } } } },
     { name: 'work metrics', handler: 'work-metrics', stage: 'test-and-grade', summary: 'Report work-order metrics', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-metrics'),
         options: workOptions },
+    // Review and grade hand the order to evaluators running apart from the agent that did the work.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Independently grade the current accepted work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('work-grade', workOrderOptions),
         options: { ...workOptions, ...workOrderOption } },
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('browser-drive', browserOptions),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser accessibility', handler: 'browser-accessibility', stage: 'test-and-grade', summary: 'Collect accessibility observations from the application', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('browser-accessibility', browserOptions),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: ordinary('browser-screenshot', browserOptions),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser debugger', handler: 'browser-debugger', stage: 'test-and-grade', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        ordinary: unavailable("the debugger opens a headed browser for a person at this machine's display, on that person's explicit request"),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
 ] as const satisfies readonly CommandDefinition[]
 
@@ -545,10 +563,18 @@ export interface OrdinaryInvocationAuthority {
     readonly allowedRoots: readonly string[]
     readonly configPath: string
     readonly services: readonly string[]
+    /** Test gate ids the configuration declares. */
+    readonly gates: readonly string[]
 }
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
 const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
+// A work order, lock, programme, item or browser role id: one inert word, never a path or an option.
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+// The admission locks have fixed dotted names beside the work-order ids.
+const WORK_LOCKS = new Set(['.admission-capacity', '.identity-admission'])
+// A selected value that starts with `-` would reach the product's tool as an option of its own.
+const GATE_SELECTOR = /^(?:spec|file|test|route):[^-]/
 
 function canonicalPath(path: unknown): path is string {
     return typeof path === 'string' && path !== '/' && isAbsolute(path) && normalize(path) === path
@@ -583,18 +609,21 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     if (!record(candidate)
         || Object.keys(candidate).sort().join(',') !== 'argv,cwd,executable'
         || !record(captured)
-        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,services') return undefined
+        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,gates,services') return undefined
     const source = captured as unknown as OrdinaryInvocationAuthority
     if (!canonicalPath(source.executable) || !canonicalPath(source.canonicalRoot) || !canonicalPath(source.configPath)
         || !Array.isArray(source.allowedRoots) || source.allowedRoots.length > GUARD_INPUT_LIMITS.paths
         || !source.allowedRoots.every(canonicalPath) || !source.allowedRoots.includes(source.canonicalRoot)
         || !Array.isArray(source.services) || !source.services.every(service => typeof service === 'string' && /^[a-z0-9][a-z0-9_.-]{0,127}$/.test(service))
+        || !Array.isArray(source.gates) || !source.gates.every(gate => typeof gate === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(gate))
         || candidate.executable !== source.executable || candidate.cwd !== source.canonicalRoot
         || !Array.isArray(candidate.argv) || candidate.argv.length === 0 || candidate.argv.length > GUARD_INPUT_LIMITS.words
         || !candidate.argv.every(arg => typeof arg === 'string' && arg.length > 0
             && Buffer.byteLength(arg) <= GUARD_INPUT_LIMITS.wordBytes && !/[\x00-\x1f\x7f-\x9f\uD800-\uDFFF]/u.test(arg))) return undefined
     const args = candidate.argv as readonly string[]
-    const definition = commands.find(row => row.name === args[0])
+    // A group member is named by its first two words; its options follow both.
+    const spelling = commandSpelling(args)
+    const definition = commands.find(row => row.name === spelling.name)
     const available: OrdinaryCommandMetadata | undefined = definition?.ordinary
     if (!definition || definition.visibility !== 'public' || available?.availability !== 'available') return undefined
     const grammar = available
@@ -609,8 +638,9 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     if (grammar.configuration === 'resolved' && !confined(source.configPath)) return undefined
     const positionals: string[] = []
     const options = new Map<string, string | true>()
-    for (let index = 1; index < args.length; index++) {
-        const arg = args[index]!
+    const words = spelling.rest
+    for (let index = 0; index < words.length; index++) {
+        const arg = words[index]!
         if (!arg.startsWith('-')) { positionals.push(arg); continue }
         if (!arg.startsWith('--') || arg === '--') return undefined
         const equal = arg.indexOf('=')
@@ -622,11 +652,17 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             options.set(name, true)
             continue
         }
-        const text = equal < 0 ? args[++index] : arg.slice(equal + 1)
+        const text = equal < 0 ? words[++index] : arg.slice(equal + 1)
         if (!text || text.startsWith('-')) return undefined
         const valid = option.role === 'confined-path' ? confined(text)
             : option.role === 'resolved-config' ? confined(text) && resolve(source.canonicalRoot, text) === source.configPath
             : option.role === 'declared-service' ? source.services.includes(text)
+            : option.role === 'declared-gate' ? source.gates.includes(text)
+            : option.role === 'gate-mode' ? ['canonical', 'full', 'staged'].includes(text)
+            : option.role === 'gate-selector' ? GATE_SELECTOR.test(text)
+            : option.role === 'identifier' ? IDENTIFIER.test(text)
+            : option.role === 'work-lock' ? IDENTIFIER.test(text) || WORK_LOCKS.has(text)
+            : option.role === 'label' ? true
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
@@ -644,6 +680,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         || grammar.selection === 'root-xor-registry' && (positionals.length === 1) === options.has('registry')
         || grammar.selection === 'release-evidence-pair' && options.has('release-evidence') !== options.has('release-evidence-sha256')
+        || grammar.selection === 'intent-xor-work-order' && (options.has('intent') === options.has('work-order') || options.has('candidate') && !options.has('intent'))
         || grammar.forbidden.values.some(predicate => options.has(predicate.option)
             && predicate.predicate === 'not-lowercase-sha256' && !/^[a-f0-9]{64}$/.test(String(options.get(predicate.option))))
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined

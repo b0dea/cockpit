@@ -131,8 +131,15 @@ describe('invocation publication', () => {
 
 describe('closed ordinary invocation metadata', () => {
     const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
-        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'] }
+        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'] }
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
+    // The words each available config-bearing row needs besides --config.
+    const requiredWords: Readonly<Record<string, readonly string[]>> = {
+        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'], sync: ['--dry-run'],
+        'test-run': ['--gate', 'quick'], 'work intake': ['--intent', 'intents/task.json'], 'work recover': ['--lock', 'WO-001'],
+        'work execute': ['--work-order', 'WO-001', '--approach', 'first-try'], 'work record': ['--work-order', 'WO-001', '--event-file', 'workorders/events/progress.json'],
+        'work review': ['--work-order', 'WO-001'], 'work grade': ['--work-order', 'WO-001'], 'work programme-mint': ['--programme', 'release'],
+    }
     it('keeps public rows compatible and internal transport separately typed and closed', async () => {
         expect(commands.every(row => row.visibility === 'public' && row.ordinary !== undefined)).toBe(true)
         expect(internalCommands).toMatchObject([{ name: 'guard-evaluate', visibility: 'internal', ordinary: { availability: 'unavailable' } }])
@@ -156,6 +163,16 @@ describe('closed ordinary invocation metadata', () => {
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
             ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
             ['runtime', 'measure', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', `sha256:${'c'.repeat(64)}`, '--json'],
+            // The documented agent steps of the test, work-order and browser loops.
+            ['test-run', '--gate', 'quick', '--json'], ['test-run', '--gate=quick', '--mode', 'staged', '--select', 'file:src/cache.test.ts'],
+            ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-001'], ['work', 'resume'], ['work', 'metrics', '--json'],
+            ['work', 'intake', '--intent', 'intents/task.json'], ['work', 'intake', '--intent', 'intents/task.json', '--candidate', 'drafts/task.md', '--json'],
+            ['work', 'intake', '--work-order', 'WO-001'], ['work', 'execute', '--work-order', 'WO-001', '--approach', 'cache refresh, first try'],
+            ['work', 'record', '--work-order', 'WO-001', '--event-file', 'workorders/events/progress.json'],
+            ['work', 'review', '--work-order', 'WO-001', '--json'], ['work', 'grade', '--work-order', 'WO-001'],
+            ['work', 'recover', '--lock', 'WO-001'], ['work', 'recover', '--lock', '.admission-capacity'], ['work', 'sweep'],
+            ['work', 'programme-mint', '--programme', 'release', '--item', 'first-item'],
+            ['browser', 'drive', '--json'], ['browser', 'accessibility', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
         ]
         for (const args of cases) {
             const argv = ['document', 'registry-resolve'].includes(args[0]!) ? args : [...args, '--config', authority.configPath]
@@ -169,10 +186,11 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor'])
+        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
+            'test-run', 'work intake', 'work status', 'work resume', 'work recover', 'work execute', 'work record', 'work review', 'work sweep',
+            'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser accessibility', 'browser screenshot'])
         for (const row of rows) {
-            const argv = [row.name, ...(row.name === 'selftest' ? ['--probe-specifications', 'probes.json'] : row.name === 'logs' ? ['--service', 'app']
-                : row.name === 'runtime' ? ['measure', '--image', 'node:22-alpine'] : row.name === 'sync' ? ['--dry-run'] : [])]
+            const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
             expect(ordinary(argv), `${row.name} missing config`).toBeUndefined()
             expect(ordinary([...argv, '--config', authority.configPath]), row.name).toBeDefined()
             expect(ordinary([...argv, '--config', 'other.toml']), `${row.name} wrong config`).toBeUndefined()
@@ -197,6 +215,16 @@ describe('closed ordinary invocation metadata', () => {
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
+            // A person answers the displayed digest, applies or reverses a sweep, takes a lock, binds a programme item or opens the debugger.
+            ['work', 'accept', '--work-order', 'WO-001'], ['work', 'accept', '--work-order', 'WO-001', '--interactive'], ['work', 'renew', '--work-order', 'WO-001'],
+            ['work', 'reverse', '--work-order', 'WO-001'], ['work', 'sweep', '--apply'], ['work', 'recover', '--lock', 'WO-001', '--apply'],
+            ['work', 'programme-mint', '--programme', 'release', '--candidate', 'drafts/task.md'], ['browser', 'debugger'],
+            ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
+            ['test-run', '--gate', 'quick', '--select', 'file:--config=evil.ts'], ['test-run', '--gate', 'quick', '--select', 'src/cache.test.ts'],
+            ['work', 'intake'], ['work', 'intake', '--candidate', 'drafts/task.md', '--work-order', 'WO-001'],
+            ['work', 'intake', '--intent', 'intents/task.json', '--work-order', 'WO-001'], ['work', 'intake', '--intent', '../outside.json'],
+            ['work', 'execute', '--work-order', 'WO-001'], ['work', 'execute', '--approach', 'first'], ['work', 'grade', '--work-order', '../WO-001'],
+            ['work', 'status', 'WO-001'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
         ]
         for (const args of cases) {
             const argv = ['document', 'registry-resolve'].includes(args[0]!) || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
@@ -204,15 +232,16 @@ describe('closed ordinary invocation metadata', () => {
         }
         for (const row of commands) {
             if (row.ordinary.availability !== 'available') continue
-            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(row.name === 'selftest' ? ['--probe-specifications', 'p'] : row.name === 'logs' ? ['--service', 'app'] : row.name === 'runtime' ? ['measure', '--image', 'node:22-alpine'] : row.name === 'sync' ? ['--dry-run'] : [])]
+            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
-                const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m' : name.endsWith('sha256') || name === 'accept-reset' ? 'a'.repeat(64) : 'path']
+                const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
+                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name.endsWith('sha256') || name === 'accept-reset' ? 'a'.repeat(64) : 'path']
                 let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
-                if (row.name === 'document' && name === 'registry') baseline = []
+                if (row.name === 'document' && name === 'registry' || row.name === 'work intake' && name === 'work-order') baseline = baseline.filter(arg => !['.', '--intent', 'intents/task.json'].includes(arg))
                 if (name === 'release-evidence') baseline.push('--release-evidence-sha256', 'a'.repeat(64))
                 if (name === 'release-evidence-sha256') baseline.push('--release-evidence', 'path')
-                expect(ordinary([row.name, ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
-                expect(ordinary([row.name, ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
+                expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
+                expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
             }
         }
         for (const executable of ['cockpit', '/other/cockpit', 'bash']) expect(ordinary(['check', '--config', authority.configPath], { executable })).toBeUndefined()

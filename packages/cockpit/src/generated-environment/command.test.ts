@@ -607,7 +607,12 @@ it('consumes vendor and exact build/test authority through installed hook regist
 }, 120_000)
 
 it('admits the npx and installed-path launcher spellings only while they run the installed cockpit', async () => {
-    const { root, configPath } = await surfaceConsumer('launcher-spellings')
+    const { root, configPath } = await surfaceConsumer('launcher-spellings', { custom: `
+[testing]
+stages = [{ id = "quick", command = ["sh", "-c", "echo ok"], requires_stack = false }]
+gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synthetic gate" }]
+native_hooks = { install = "inspect" }
+` })
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
@@ -631,13 +636,16 @@ it('admits the npx and installed-path launcher spellings only while they run the
         'npx --no -- cockpit --version', 'npx --no cockpit sync --config cockpit.toml --dry-run', './node_modules/.bin/cockpit check --config cockpit.toml',
         `${bin} preflight --config cockpit.toml`, `node ${launcher} doctor --config cockpit.toml`, './node_modules/.bin/cockpit doctor --config cockpit.toml 2>/dev/null',
         'npx --no cockpit up --config cockpit.toml', 'npx --no cockpit down --config cockpit.toml',
-        'npx --no cockpit session --config cockpit.toml -- cat cockpit.toml', 'npx --no cockpit session --config cockpit.toml -- git status']
+        'npx --no cockpit session --config cockpit.toml -- cat cockpit.toml', 'npx --no cockpit session --config cockpit.toml -- git status',
+        // The guard reads the declared gate ids from the configuration it authenticated.
+        'npx --no cockpit test-run --config cockpit.toml --gate quick --json', './node_modules/.bin/cockpit work status --config cockpit.toml --json']
     for (const command of proven) expect(decision(command), command).toBe('allow')
     for (const command of ['npx cockpit doctor --config cockpit.toml', 'npx --no -p other cockpit doctor --config cockpit.toml',
         'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true',
     ]) expect(decision(command), command).not.toBe('allow')
     for (const command of ['npx --no cockpit sync --config cockpit.toml',
-        'npx --no cockpit reset --config cockpit.toml', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
+        'npx --no cockpit reset --config cockpit.toml', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared',
+        'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
         // A session runs only what the agent could run directly.
         'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures',
         // A session inside a session would run a command the guard never judged.

@@ -543,7 +543,8 @@ export async function runGuardEvaluationApplication(
             const services = await guardServiceIds(config, identity.root,
                 { node, resolveDocker: adapters.resolveDocker, execute: adapters.execute ?? executeProbe })
             if (typeof services === 'string') return unavailable(`Guard could not read the Compose service list: ${services}`)
-            const authority = { executable: launcher, ...configured, allowedRoots: prepared.result.policy.allowedRoots, services }
+            const authority = { executable: launcher, ...configured, allowedRoots: prepared.result.policy.allowedRoots, services,
+                gates: config.testing?.gates.map(gate => gate.id) ?? [] }
             for (const { executable, cwd, argv, prefix, session } of launched) {
                 const args = argv.slice(prefix)
                 // A session inside a session would run a command the evaluator never sees.

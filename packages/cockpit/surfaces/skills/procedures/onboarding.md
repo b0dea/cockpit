@@ -371,7 +371,8 @@ contract and the independent grading, not the thinking: reuse the planning skill
    with `work record` as above, then run `./node_modules/.bin/cockpit work execute --config cockpit.toml --work-order WO-001 --approach second-try`, which refuses a
    capped approach.
 7. **Park, sweep and unpark.** `./node_modules/.bin/cockpit work sweep --config cockpit.toml` previews which untouched drafts
-   would be parked to free capacity; add `--apply` to park them. `./node_modules/.bin/cockpit work reverse --config cockpit.toml --work-order WO-001`
-   restores a swept order. An order a human parked by hand is reversed by a human, not by the sweep.
+   would be parked to free capacity. Parking changes what counts against the cap a person set, so a person adds `--apply` to park them,
+   and runs `./node_modules/.bin/cockpit work reverse --config cockpit.toml --work-order WO-001` to restore a swept order. An order a human
+   parked by hand is reversed by a human, not by the sweep.
 
 Report the outcome of each criterion with the reasons the grade gave, and name any step you could not run.
