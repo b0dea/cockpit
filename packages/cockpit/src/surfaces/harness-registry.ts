@@ -15,7 +15,7 @@ const pendingNative = (measuredOn: '2026-09-26') => Object.freeze({
 const generatedNative = Object.freeze({
     state: 'generated' as const,
     measuredOn: '2026-10-28' as const,
-    reason: 'cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it',
+    reason: 'cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them',
 })
 const noGuardAdapter = Object.freeze({
     capability: 'unavailable' as const,

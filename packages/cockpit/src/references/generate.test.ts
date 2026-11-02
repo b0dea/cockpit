@@ -177,7 +177,7 @@ describe('reference generation', () => {
         expect(files.get('docs/cli-reference.md')).toContain('for users looking up an exact command, flag, exit code or diagnostic')
         expect(files.get('docs/configuration-reference.md')).toContain('for users authoring or reviewing `cockpit.toml`')
         expect(files.get('docs/command-list.md')).toContain('for users choosing the command that owns their next operation')
-        expect(files.get('docs/capability-matrix.md')).toContain('for users checking how far each harness feature is confirmed to work')
+        expect(files.get('docs/capability-matrix.md')).toContain('for users checking what cockpit actually enforces in each agent tool')
     })
     it('preserves the exact CRLF marker boundary when replacing its bounded index', () => {
         const source = prose.replace(`${begin}\n`, `${begin}\r\n`)
@@ -215,25 +215,34 @@ describe('reference generation', () => {
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
         if (rendered.kind !== 'complete') return
         const matrix = rendered.files.find(file => file.path === 'docs/capability-matrix.md')!.bytes
-        expect(matrix).toContain('human_needed')
-        expect(matrix).toContain('pending_evidence')
-        // Cursor and Grok Build get generated rules and skills but no guard hook: the matrix must not
-        // call emitted files unavailable, nor call the absent guard anything else.
-        // A date under "Last probed" reads as a test of the tool, so cells nobody probed say never.
-        expect(matrix).toContain('| Harness | Capability | Skill | State | Evidence | Provenance | Last probed | Probed version |')
-        expect(matrix).toContain('| cursor | instruction-loading | n/a | generated | pending_evidence | rulesync-rules: cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | never | never |')
-        expect(matrix).toContain('| grokcli | skill-parity | cockpit-setup | generated | pending_evidence | skill rendered to .grok/skills/cockpit-setup/SKILL.md; cockpit generates this file;')
-        expect(matrix).toContain('| claudecode | skill-parity | cockpit-setup | instructed | human_needed | skill rendered to .claude/skills/cockpit-setup/SKILL.md; parity review by a person pending | never | never |')
-        expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | never | never |')
-        expect(matrix).toMatch(/\| claudecode \| instruction-loading \| n\/a \| instructed \| pending_evidence \| [^|]+ \| \d{4}-\d{2}-\d{2} \| not recorded \|/)
-        expect(matrix).not.toMatch(/inspectSkillSet|operator parity|unmeasured/)
-        expect(matrix).not.toMatch(/\| (?:cursor|grokcli) \| (?:instruction-loading|skill-parity) \| [^|]+ \| unavailable \|/)
-        // Guard firing is enforced only where a dated run of the real tool showed a refusal; Codex's
-        // depends on a person trusting the hook.
-        expect(matrix).toMatch(/\| codexcli \| guard-firing \| n\/a \| enforced \| human_needed \| only after a person trusts the hook: [^|]+ \| 2026-11-01 \| 0\.165\.0 \|/)
-        expect(matrix).toMatch(/\| opencode \| guard-firing \| n\/a \| enforced \| not_applicable \| [^|]+ \| 2026-11-01 \| 1\.19\.4 \|/)
-        expect(matrix).toMatch(/\| claudecode \| guard-firing \| n\/a \| enforced \| not_applicable \| [^|]+ \| 2026-11-01 \| 2\.1\.316 \|/)
-        expect(matrix).not.toMatch(/\| (?:instruction-loading|skill-parity) \| [^|]+ \| enforced \|/)
+        const section = (page: string, heading: string) => page.slice(page.indexOf(`## ${heading}\n`)).split(/\n(?=## )/)[0]!
+        // One row per harness, one column per capability. Cursor and Grok Build get generated rules and
+        // skills but no guard hook: the grid must not call emitted files unavailable, nor the absent
+        // guard anything else. Guard firing is enforced only where a dated run of the real tool showed
+        // a refusal, and Codex's holds only once a person trusts the hook.
+        expect(matrix).toContain('| Tool | Guard firing | Instruction loading | Skills |\n| --- | --- | --- | --- |\n'
+            + '| Claude Code (`claudecode`) | enforced | instructed | instructed |\n'
+            + '| Codex (`codexcli`) | enforced (needs a person) | instructed | instructed |\n'
+            + '| OpenCode (`opencode`) | enforced | instructed | instructed |\n'
+            + '| Cursor (`cursor`) | unavailable | generated | generated |\n'
+            + '| Grok Build (`grokcli`) | unavailable | generated | generated |\n')
+        // Every measured cell names its date and tool version beside what the run showed.
+        const measurements = section(matrix, 'Measurements')
+        expect(measurements).toMatch(/^- Claude Code, guard firing \(2026-11-01, version 2\.1\.316\): [^\n]+\.$/m)
+        expect(measurements).toMatch(/^- Codex, guard firing \(2026-11-01, version 0\.165\.0\): only after a person trusts the hook: [^\n]+\.$/m)
+        expect(measurements).toMatch(/^- OpenCode, guard firing \(2026-11-01, version 1\.19\.4\): [^\n]+\.$/m)
+        for (const tool of ['Claude Code', 'Codex', 'OpenCode']) {
+            expect(measurements).toMatch(new RegExp(`^- ${tool}, instruction loading \\(\\d{4}-\\d{2}-\\d{2}, version \\d[^)]*\\): [^\\n]+\\.$`, 'm'))
+        }
+        expect(measurements).not.toMatch(/Cursor|Grok Build|skills/)
+        // A date reads as a run of the tool, so cells nobody ran carry none. The skills share one
+        // verdict per harness and read as one line per verdict, not one per skill.
+        const unmeasured = section(matrix, 'Without a measurement')
+        expect(unmeasured).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+        expect(unmeasured).toContain('- Guard firing in Cursor and Grok Build: no guard adapter is checked in, so cockpit generates no guard hook.\n')
+        expect(unmeasured).toContain('- Skills in Claude Code (`.claude/skills`), Codex (`.agents/skills`) and OpenCode (`.opencode/skills`): ')
+        expect(unmeasured).toContain('- Skills in Cursor (`.cursor/skills`) and Grok Build (`.grok/skills`): ')
+        expect(matrix).not.toMatch(/cockpit-setup\/SKILL\.md|pending_evidence|human_needed|not_applicable|inspectSkillSet|operator parity|unmeasured/)
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, skillSources: assetInput.skillSources.slice(2) })).kind).toBe('refusal')
@@ -245,7 +254,9 @@ describe('reference generation', () => {
         expect(edited.kind, JSON.stringify(edited)).toBe('complete')
         if (edited.kind !== 'complete') return
         const editedMatrix = renderReferences({ committed: edited.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
-        const manifestLine = (page: string) => /^Source manifest: .+$/m.exec(page)?.[0]
+        // The manifest is invisible to readers but still moves with any shipped skill byte.
+        const manifestLine = (page: string) => /^<!-- Source manifest: [0-9a-f]{64} -->$/m.exec(page)?.[0]
+        expect(manifestLine(matrix)).toBeDefined()
         expect(editedMatrix.kind === 'complete' && manifestLine(editedMatrix.files[3]!.bytes)).not.toBe(manifestLine(matrix))
         const unavailable = await prepareCommittedCapabilityProjection({ ...assetInput, adapters: assetInput.adapters.map(row => row.target === 'codexcli'
             ? { format: row.format, target: row.target, mechanism: 'unavailable', measuredOn: row.measuredOn, measuredVersion: null,
@@ -254,7 +265,11 @@ describe('reference generation', () => {
         if (unavailable.kind !== 'complete') return
         const changed = renderReferences({ committed: unavailable.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         expect(changed.kind).toBe('complete')
-        if (changed.kind === 'complete') expect(changed.files[3]!.bytes).toContain('| codexcli | guard-firing | n/a | unavailable | not_applicable | synthetic unavailable adapter |')
+        if (changed.kind === 'complete') {
+            expect(changed.files[3]!.bytes).toContain('| Codex (`codexcli`) | unavailable | instructed | instructed |')
+            expect(changed.files[3]!.bytes).toContain('- Guard firing in Codex: synthetic unavailable adapter.\n')
+            expect(changed.files[3]!.bytes).not.toMatch(/^- Codex, guard firing/m)
+        }
     })
 
     it('derives exactly the whole-file references and one bounded region from real owners', () => {

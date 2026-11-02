@@ -14,7 +14,7 @@ import {
 import { configurationDefaults } from '../schema.js'
 import { renderCockpitSchema } from '../schema-json.js'
 import { SURFACE_TARGETS } from '../surfaces/contract.js'
-import { harnessFact } from '../surfaces/harness-registry.js'
+import { harnessFact, type SurfaceTarget } from '../surfaces/harness-registry.js'
 import { surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { inspectSkillSet, isAdmittedSkillCollection, type AdmittedSkillCollection } from '../surfaces/skill-contract.js'
 import { shippedInstructionCapabilities, type StandingCost } from '../surfaces/projection.js'
@@ -53,14 +53,15 @@ interface CommittedReferenceInput {
     readonly adoptSkill: AdoptSkillSources
 }
 interface CapabilityCell {
-    readonly target: string
-    readonly capability: string
-    readonly skill: string
+    readonly target: SurfaceTarget
+    readonly capability: typeof CAPABILITY_COLUMNS[number][0]
     readonly state: string
     readonly evidence: string
     readonly provenance: string
     readonly measuredOn: string
     readonly measuredVersion: string | null
+    // The directory the skills render into; null for the cells that are not skills.
+    readonly location: string | null
 }
 export interface RenderedReferences {
     readonly kind: 'complete'
@@ -122,36 +123,42 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
         for (const row of restrictions.targets) {
             const guard = harnessFact(row.target).guard
             // A dated run of the real tool outranks the adapter's record, but never revives an adapter
-            // that no longer emits a hook.
+            // that no longer emits a hook. The adapter's own date records the transport it was written
+            // against, not a run of the tool, so it is never shown as a measurement.
             const firing = row.capability !== 'unavailable' && 'firing' in guard ? guard.firing : undefined
             cells.push(Object.freeze(firing
-                ? { target: row.target, capability: 'guard-firing', skill: 'n/a', state: firing.state, evidence: firing.evidence,
-                    provenance: firing.provenance, measuredOn: firing.measuredOn, measuredVersion: firing.measuredVersion }
-                : { target: row.target, capability: 'guard-firing', skill: 'n/a', state: row.capability, evidence: row.evidenceStatus,
-                    provenance: row.provenance, measuredOn: row.measuredOn, measuredVersion: row.measuredVersion }))
+                ? { target: row.target, capability: 'guard-firing', state: firing.state, evidence: firing.evidence,
+                    provenance: firing.provenance, measuredOn: firing.measuredOn, measuredVersion: firing.measuredVersion, location: null }
+                : { target: row.target, capability: 'guard-firing', state: row.capability, evidence: row.evidenceStatus,
+                    provenance: row.provenance, measuredOn: NEVER_PROBED, measuredVersion: null, location: null }))
         }
         // Without an adapter no guard is generated, so nothing was probed; the registry's date only
         // records when that was decided.
         for (const target of SURFACE_TARGETS) {
             const guard = harnessFact(target).guard
-            if (guard.capability === 'unavailable') cells.push(Object.freeze({ target, capability: 'guard-firing', skill: 'n/a',
-                state: guard.capability, evidence: 'not_applicable', provenance: guard.reason, measuredOn: NEVER_PROBED, measuredVersion: null }))
+            if (guard.capability === 'unavailable') cells.push(Object.freeze({ target, capability: 'guard-firing',
+                state: guard.capability, evidence: 'not_applicable', provenance: guard.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location: null }))
         }
         const instructions = shippedInstructionCapabilities()
         if (instructions.length !== SURFACE_TARGETS.length || new Set(instructions.map(row => row.target)).size !== SURFACE_TARGETS.length
             || SURFACE_TARGETS.some(target => !instructions.some(row => row.target === target))) return refusal('shipped instruction capabilities do not cover the fixed targets')
-        for (const row of instructions) cells.push(Object.freeze({ target: row.target, capability: 'instruction-loading', skill: 'n/a',
-            state: row.capability, evidence: row.evidence, provenance: `${row.mechanism}: ${row.provenance}`,
-            measuredOn: row.capability === 'generated' ? NEVER_PROBED : row.characterizedOn, measuredVersion: null }))
-        for (const target of SURFACE_TARGETS) for (const skill of skills.skills) {
-            const file = skills.files.find(row => row.target === target && row.path.endsWith(`/${skill}/SKILL.md`))
-            if (!file) return refusal(`shipped skill output is missing for ${target}:${skill}`, 'surfaces/skills')
-            const native = harnessFact(target).native
+        for (const row of instructions) cells.push(Object.freeze({ target: row.target, capability: 'instruction-loading',
+            state: row.capability, evidence: row.evidence, provenance: row.provenance,
+            measuredOn: row.capability === 'generated' ? NEVER_PROBED : row.characterizedOn, measuredVersion: row.measuredVersion, location: null }))
+        // A skill's verdict is the harness's, so each harness gets one skills cell: a row per skill
+        // repeated one sentence and buried the cells that differ.
+        for (const target of SURFACE_TARGETS) {
+            const { native, outputs: { skills: location } } = harnessFact(target)
+            for (const skill of skills.skills) {
+                if (!skills.files.some(row => row.target === target && row.path === `${location}/${skill}/SKILL.md`)) {
+                    return refusal(`shipped skill output is missing for ${target}:${skill}`, 'surfaces/skills')
+                }
+            }
             cells.push(native.state === 'generated'
-                ? Object.freeze({ target, capability: 'skill-parity', skill, state: native.state, evidence: 'pending_evidence',
-                    provenance: `skill rendered to ${file.path}; ${native.reason}`, measuredOn: NEVER_PROBED, measuredVersion: null })
-                : Object.freeze({ target, capability: 'skill-parity', skill, state: 'instructed', evidence: 'human_needed',
-                    provenance: `skill rendered to ${file.path}; parity review by a person pending`, measuredOn: NEVER_PROBED, measuredVersion: null }))
+                ? Object.freeze({ target, capability: 'skill-parity', state: native.state, evidence: 'pending_evidence',
+                    provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location })
+                : Object.freeze({ target, capability: 'skill-parity', state: 'instructed', evidence: 'human_needed',
+                    provenance: 'a person has not yet reviewed whether the tool loads and triggers them as written', measuredOn: NEVER_PROBED, measuredVersion: null, location }))
         }
         // The rendered skill digests stay out of the table but in the manifest, so editing a skill
         // still changes the published source manifest.
@@ -291,6 +298,52 @@ function replaceIndex(document: string, bytes: string): string | undefined {
     return document.slice(0, contentStart) + newline + bytes + document.slice(tokens[1]!.index!)
 }
 
+const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills']] as const
+const MATRIX_STATES = 'Each cell holds one of four states:\n\n'
+    + '- `enforced`: a dated run of the real tool, beside a deliberately broken control, showed it refusing the forbidden operation.\n'
+    + '- `instructed`: cockpit writes the guidance or setting, but nothing makes the agent follow it.\n'
+    + '- `generated`: cockpit writes the files, but nobody has checked that the tool even loads them.\n'
+    + '- `unavailable`: cockpit writes nothing for this cell.\n\n'
+    + 'Only a dated run of the real tool changes a state; writing a file or passing cockpit\'s own tests never does.\n\n'
+
+const listed = (names: readonly string[]) => names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+
+function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256: string, skills: readonly string[]): string {
+    const name = (target: SurfaceTarget) => harnessFact(target).displayName
+    const at = (target: SurfaceTarget, capability: CapabilityCell['capability']) => {
+        const rows = cells.filter(row => row.target === target && row.capability === capability)
+        if (rows.length !== 1) throw new Error(`capability matrix needs exactly one ${capability} cell for ${target}`)
+        return rows[0]!
+    }
+    // A verdict that holds only once a person acts says so where the reader looks first; the skills'
+    // pending review is a maintainer's task and does not condition their use.
+    const state = (row: CapabilityCell) => row.measuredOn !== NEVER_PROBED && row.evidence === 'human_needed' ? `${row.state} (needs a person)` : row.state
+    const grid = `| Tool | ${CAPABILITY_COLUMNS.map(([, label]) => label).join(' | ')} |\n| --- |${' --- |'.repeat(CAPABILITY_COLUMNS.length)}\n`
+        + SURFACE_TARGETS.map(target => `| ${cell(name(target))} (${code(target)}) | ${CAPABILITY_COLUMNS.map(([capability]) => cell(state(at(target, capability)))).join(' | ')} |\n`).join('')
+    const entries = CAPABILITY_COLUMNS.flatMap(([capability, label]) => SURFACE_TARGETS.map(target => ({ label, row: at(target, capability) })))
+    const measured = entries.filter(({ row }) => row.measuredOn !== NEVER_PROBED).map(({ label, row }) =>
+        `- ${cell(name(row.target))}, ${label.toLowerCase()} (${row.measuredOn}, version ${cell(row.measuredVersion ?? 'not recorded')}): ${cell(row.provenance)}.\n`)
+    // Cells nobody has run are grouped by their shared reason, so several harnesses with one gap read as one line.
+    const pending = new Map<string, { label: string; provenance: string; targets: string[] }>()
+    for (const { label, row } of entries.filter(({ row }) => row.measuredOn === NEVER_PROBED)) {
+        const key = JSON.stringify([label, row.state, row.provenance])
+        const where = row.location === null ? name(row.target) : `${name(row.target)} (${code(row.location)})`
+        const group = pending.get(key) ?? { label, provenance: row.provenance, targets: [] }
+        group.targets.push(where)
+        pending.set(key, group)
+    }
+    const unmeasured = [...pending.values()].map(({ label, provenance, targets }) => `- ${label} in ${listed(targets.map(cell))}: ${cell(provenance)}.\n`)
+    // Readers have no use for the manifest, but it changes with any shipped skill or guard byte, so
+    // the reference check reports this page stale until it is regenerated.
+    return documentHeading('Capability matrix')
+        + `<!-- Source manifest: ${manifestSha256} -->\n\n`
+        + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
+        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}.\n\n`
+        + grid
+        + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
+        + '\n## Without a measurement\n\n' + unmeasured.join('')
+}
+
 export function renderReferences(input: ReferenceInput | CommittedReferenceInput): ReferenceResult {
     try {
         const committed = 'committed' in input ? committedAuthority.get(input.committed) : undefined
@@ -367,18 +420,9 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const list = documentHeading('Command list')
             + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
             + commands.map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
-        const matrixOpening = 'This generated matrix is for users checking how far each harness feature is confirmed to work. The State column has four values:\n\n'
-            + '- `enforced`: a dated test with a deliberately broken control showed the harness refusing the forbidden operation.\n'
-            + '- `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the harness obeys it.\n'
-            + '- `generated`: cockpit writes the file for a harness that has no guard adapter or loading test, so nobody has verified that the tool even loads it.\n'
-            + '- `unavailable`: cockpit writes nothing for this cell; the Provenance column says why.\n\n'
-            + 'The Evidence column names what would confirm a cell: `pending_evidence` needs a paired test of the real tool, `human_needed` needs a person\'s review, and `not_applicable` means there is nothing to confirm. Generating a file or passing repository tests never promotes a cell.\n\n'
-            + 'Last probed and Probed version say when cockpit\'s mechanism was last tested against that tool and at which version, or `never`. A probe date is not a confirmation: only the State column says what is confirmed.\n\n'
-        const matrix = committed ? documentHeading('Capability matrix') + matrixOpening
-            + `Source manifest: ${code(committed.sha256)}.\n\n| Harness | Capability | Skill | State | Evidence | Provenance | Last probed | Probed version |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n`
-            + committed.cells.map(row => `| ${cell(row.target)} | ${cell(row.capability)} | ${cell(row.skill)} | ${cell(row.state)} | ${cell(row.evidence)} | ${cell(row.provenance)} | ${cell(row.measuredOn)} | ${cell(row.measuredVersion ?? (row.measuredOn === NEVER_PROBED ? NEVER_PROBED : 'not recorded'))} |\n`).join('')
-            : documentHeading('Capability matrix') + matrixOpening + 'This version lists the cells that `cockpit selftest` would test for one configuration. Listing a cell confirms nothing, and a missing test result never counts as confirmation.\n\n'
-            + `Source manifest: ${code(expectation!.generatedManifestSha256)}.\n\n| Harness | Capability | Skill | Evidence |\n| --- | --- | --- | --- |\n`
+        const matrix = committed ? renderCapabilityMatrix(committed.cells, committed.sha256, collection.skills)
+            : documentHeading('Capability matrix') + MATRIX_STATES + 'This version lists the cells that `cockpit selftest` would test for one configuration. Listing a cell confirms nothing, and a missing test result never counts as confirmation.\n\n'
+            + `<!-- Source manifest: ${expectation!.generatedManifestSha256} -->\n\n| Harness | Capability | Skill | Evidence |\n| --- | --- | --- | --- |\n`
             + expectation!.cells.map(row => `| ${cell(row.harness.kind === 'builtin' ? row.harness.name : row.harness.id)} | ${row.capability} | ${row.capability === 'skill-parity' ? row.skill : 'n/a'} | instructed; native probe pending |\n`).join('')
             + '\nCustom declarations retain their recorded state and measurement date; a declaration alone supplies no native proof.\n\n'
             + ('capabilities' in input ? input.capabilities.declarations : []).flatMap(row => row.capabilities.map(capability =>
