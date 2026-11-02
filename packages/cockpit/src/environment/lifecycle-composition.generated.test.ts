@@ -29,6 +29,7 @@ import {
     type RuntimeTopologyEvidence,
 } from './runtime.js'
 import { createLifecycleCompositionFixtureSupport } from '../../test-support/lifecycle-composition-fixture.js'
+import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
 const roots: string[] = []
@@ -222,6 +223,8 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             for (const defect of ['final-link', 'intermediate-link', 'wrong-type', 'missing', 'valid'] as const) {
                 const home = join(candidate.root, `home-${defect}`)
                 await mkdir(home)
+                // The runtime measurement is a machine fact kept under HOME, so each fresh home needs one.
+                await recordSyntheticMeasurement(home)
                 await rm(join(candidate.checkout, 'app/inputs'), { recursive: true, force: true })
                 const directory = input === 'bind' || input === 'build-context'
                 const build = input.includes('dockerfile') || input === 'build-context'
