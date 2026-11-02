@@ -130,11 +130,14 @@ describe('effective documentation ownership', () => {
     it('sends the adoption skill to the public guide only for what precedes the install', () => {
         const skill = readFileSync(new URL(`../../../${ADOPTION_SKILL}`, import.meta.url), 'utf8')
         const tracked = new Set(trackedFiles())
-        const prefix = 'https://raw.githubusercontent.com/b0dea/cockpit/main/'
+        const prefix = 'https://github.com/b0dea/cockpit/blob/main/'
         const links = skill.match(PUBLIC_GUIDE) ?? []
 
-        expect(skill.replace(/\s+/g, ' ')).toContain('`./node_modules/@b0dea/cockpit/docs/agent-adoption.md`')
-        expect(links).toEqual([`${prefix}docs/agent-adoption.md`, `${prefix}docs/getting-started.md#install-cockpit`])
+        const text = skill.replace(/\s+/g, ' ')
+        expect(text).toContain('`./node_modules/@b0dea/cockpit/docs/agent-adoption.md`')
+        // Before the install the same page is in the package tarball, which works while the repository is private.
+        expect(text).toContain('`package/docs/agent-adoption.md` inside the `.tgz`')
+        expect(links).toEqual([`${prefix}docs/agent-adoption.md`])
         for (const link of links) expect(tracked.has(link.slice(prefix.length).split('#')[0]!), link).toBe(true)
     })
 
