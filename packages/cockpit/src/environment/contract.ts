@@ -16,7 +16,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/contract.ts',
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
-        'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
+        'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'DOCKER_CLIENT_ENVIRONMENT', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
         'isCanonicalTimestamp', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
         'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
@@ -135,6 +135,9 @@ export const SETUP_ACTION_KINDS = ['clone', 'wire-remote', 'report'] as const
 // Every other parent variable stays out of product test stages, verification commands and MCP servers,
 // because they run repository code and the environment of an agent session routinely holds tokens.
 export const INHERITED_TOOL_ENVIRONMENT = Object.freeze(['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const)
+// The only parent variables a Docker or Compose step receives: where the client finds the daemon and
+// how it authenticates to it. Anything else could reconfigure Compose or the process it starts.
+export const DOCKER_CLIENT_ENVIRONMENT: ReadonlySet<string> = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 export const OBSERVATION_PRODUCER_BYTE_LIMIT = 256
 export const OBSERVATION_REASON_BYTE_LIMIT = 1_024
 export const ENVIRONMENT_CODES = Object.freeze({

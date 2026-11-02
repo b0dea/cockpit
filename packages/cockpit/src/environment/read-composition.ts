@@ -16,7 +16,7 @@ import {
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import { ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
@@ -58,7 +58,6 @@ export const mechanism = {
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const DEFAULT_OUTPUT_LIMIT = 1_048_576
-const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
 export interface ReadCommandCompositionInput {
     readonly configPath: string
@@ -233,7 +232,7 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
 
 function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
     return Object.freeze(Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => SAFE_RUNTIME_ENV.has(entry[0]) && typeof entry[1] === 'string')))
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string')))
 }
 
 function confined(root: string, path: string): boolean {

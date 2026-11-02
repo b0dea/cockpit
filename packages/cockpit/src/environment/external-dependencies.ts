@@ -5,7 +5,7 @@ import { isProxy } from 'node:util/types'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { GeneratedEnvironment } from '../schema.js'
-import { ENVIRONMENT_CODES, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     admitRuntimeServiceHealth,
@@ -35,7 +35,6 @@ export const observationDeclarations = Object.freeze([
 const VendorDeclaration = GeneratedEnvironment.shape.vendors.unwrap().element
 type Vendor = typeof VendorDeclaration._output
 type Operation = Vendor['loader_probe']
-const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 const HOST_PROCESS_CONTROL_ENV = /^(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$)/
 
 export interface ExternalDependencyRuntime {
@@ -221,7 +220,7 @@ function composeStep(
     fixture?: Readonly<{ path: string; sha256: string }>,
     processEnvironment?: Readonly<{ name: string; value: string }>,
     planId?: string,
-    allowedRuntimeEnv: ReadonlySet<string> = SAFE_RUNTIME_ENV,
+    allowedRuntimeEnv: ReadonlySet<string> = DOCKER_CLIENT_ENVIRONMENT,
 ): ExecutionStep | undefined {
     const docker = resolvedDockerExecutable(runtime.executable)
     if (docker === undefined || !isAbsolute(runtime.root) || normalize(runtime.root) !== runtime.root
@@ -369,9 +368,9 @@ export function planExternalDependency(input: {
     if (generated?.declaration.services.some(({ ports }) => ports.some(({ host_variable }) => HOST_PROCESS_CONTROL_ENV.test(host_variable)))) {
         return unmeasured('EXTERNAL_DEPENDENCY_EXECUTION_UNAVAILABLE', 'generated port variables must not control host processes', dependency)
     }
-    const allowedRuntimeEnv = generated ? new Set([...SAFE_RUNTIME_ENV,
+    const allowedRuntimeEnv = generated ? new Set([...DOCKER_CLIENT_ENVIRONMENT,
         'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID',
-        ...generated.declaration.services.flatMap(({ ports }) => ports.map(({ host_variable }) => host_variable))]) : SAFE_RUNTIME_ENV
+        ...generated.declaration.services.flatMap(({ ports }) => ports.map(({ host_variable }) => host_variable))]) : DOCKER_CLIENT_ENVIRONMENT
     const steps: ExternalDependencyStep[] = []
     for (const item of orderedOperations(declaration, issuedAt, purpose)) {
         const processEnvironment = item.role === 'egress' && declaration.egress_guard !== undefined

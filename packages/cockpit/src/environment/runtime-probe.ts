@@ -14,7 +14,7 @@ import { createReadCommandAdapters } from './read-composition.js'
 import { decodeCoordinationRecord, readActiveStackInventory, type ActiveStackInventoryResult } from './claims.js'
 import { readState, type StateRecord, type StateResult } from './state.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
-import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
+import { isVersionFloor, issueRuntimeMeasurementProbeAuthority, observeDockerRuntime, versionAtLeast } from './runtime.js'
 import { PROBE_OWNER_LABEL, isProbeOwner } from './runtime-probe-residue.js'
 
 export const mechanism = {
@@ -81,9 +81,6 @@ export interface RuntimeProbeVerdict {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
-const VERSION = /^v?(\d+\.\d+\.\d+)$/
-// An observed version may carry a vendor suffix (Docker Desktop's `2.29.7-desktop.1`); a floor may not.
-const OBSERVED_VERSION = /^v?(\d+\.\d+\.\d+)(?:[-+][0-9A-Za-z.-]+)?$/
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
 // A cockpit name, bounded so the probe's project and resource names stay short.
@@ -113,15 +110,6 @@ function validDate(value: string): boolean {
     return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value
 }
 
-function versionAtLeast(actual: string, floor: string): boolean {
-    const left = actual.match(OBSERVED_VERSION)?.[1].split('.').map(Number)
-    const right = floor.match(VERSION)?.[1].split('.').map(Number)
-    if (!left || !right) return false
-    for (let index = 0; index < 3; index += 1) {
-        if (left[index] !== right[index]) return left[index]! > right[index]!
-    }
-    return true
-}
 
 function unavailable(
     input: Partial<RuntimeProbeRequest>,
@@ -157,7 +145,7 @@ function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
             || typeof input.owner !== 'string' || !isProbeOwner(input.owner)
             || input.env === null || typeof input.env !== 'object' || Array.isArray(input.env)
             || Object.entries(input.env).some(([name, item]) => !SAFE_ENV.has(name) || typeof item !== 'string' || item.includes('\0'))
-            || typeof input.composeFloor !== 'string' || VERSION.exec(input.composeFloor) === null
+            || typeof input.composeFloor !== 'string' || !isVersionFloor(input.composeFloor)
             || typeof input.measuredOn !== 'string' || !validDate(input.measuredOn)
             || input.measuredOn !== new Date().toISOString().slice(0, 10)
             || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs! < 1 || input.timeoutMs! > MAX_TIMEOUT_MS

@@ -45,7 +45,6 @@ import {
     isRuntimeObservation,
     isRuntimeTopologyEvidence,
     issueMachineFloorAuthority,
-    measureColdStart,
     measureMachineFloor,
     observeDockerRuntime,
     observedVersionCore,
@@ -908,21 +907,6 @@ describe('runtime measurement classification', () => {
         expect(result.gaps).toEqual([unavailable, failed])
     })
 
-    it('passes cold start at the budget and fails immediately above it', () => {
-        const atBudget = measureColdStart(90, observed(90, 'runtime-cold-start-collector'))
-        const overBudget = measureColdStart(90, observed(90.001, 'runtime-cold-start-collector'))
-
-        expect(atBudget).toEqual(expect.objectContaining({ verdict: 'pass', relation: 'at-most', passed: true }))
-        expect(overBudget).toEqual(expect.objectContaining({ verdict: 'fail', relation: 'at-most', passed: false }))
-        expect(atBudget).toEqual(expect.objectContaining({ producer: 'runtime-cold-start-collector', observedAt: '2026-09-07T12:00:00.000Z' }))
-    })
-
-    it('treats a negative cold-start observation as unavailable', () => {
-        expect(measureColdStart(90, observed(-1, 'runtime-cold-start-collector'))).toEqual(expect.objectContaining({
-            verdict: 'unavailable',
-        }))
-    })
-
     it.each([
         ['null floor', null, {
             runtimeMemoryMb: observed(8192, 'runtime-resource-collector'),
@@ -998,24 +982,6 @@ describe('runtime measurement classification', () => {
         expect(reads).toBe(0)
     })
 
-    it.each([
-        ['invalid budget', Number.NaN, observed(1, 'runtime-cold-start-collector')],
-        ['negative budget', -1, observed(1, 'runtime-cold-start-collector')],
-        ['invalid instant', 90, { ...observed(1, 'runtime-cold-start-collector'), observedAt: 'yesterday' }],
-        ['extra key', 90, { ...observed(1, 'runtime-cold-start-collector'), decision: true }],
-        ['primitive observation', 90, 7],
-    ])('closes malformed cold-start evidence: %s', (_name, budget, observation) => {
-        expect(() => measureColdStart(budget, observation as never)).not.toThrow()
-        expect(measureColdStart(budget, observation as never).verdict).toBe('unavailable')
-    })
-
-    it('closes a revoked cold-start observation', () => {
-        const observation = Proxy.revocable(observed(1, 'runtime-cold-start-collector'), {})
-        observation.revoke()
-        expect(() => measureColdStart(90, observation.proxy)).not.toThrow()
-        expect(measureColdStart(90, observation.proxy).verdict).toBe('unavailable')
-    })
-
     it('does not accept host or free-form observations as runtime allocation evidence', () => {
         const result = measureMachineFloor(
             { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 },
@@ -1026,7 +992,6 @@ describe('runtime measurement classification', () => {
             },
         )
         expect(result.verdict).toBe('unavailable')
-        expect(measureColdStart(90, observed(1, 'wall-clock')).verdict).toBe('unavailable')
     })
 })
 

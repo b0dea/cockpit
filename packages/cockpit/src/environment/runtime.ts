@@ -11,6 +11,7 @@ import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../envi
 import { MAX_COLD_START_SECONDS, type MachineFloor } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
 import {
+    DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
     isCanonicalTimestamp,
     OBSERVATION_REASON_BYTE_LIMIT,
@@ -66,7 +67,7 @@ import { composeProcessEnvironment } from './compose-environment.js'
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'isVersionFloor', 'versionAtLeast', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -589,9 +590,15 @@ function runtimeUnmeasured(reason: string): RuntimeMeasurementAdmission {
     return Object.freeze({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason })
 }
 
-function versionAtLeast(actual: string, floor: string): boolean {
+/** A floor cockpit writes: a bare numeric core. */
+export function isVersionFloor(value: string): boolean {
+    return VERSION.test(value)
+}
+
+/** Whether a version Docker or Compose printed is at least `floor`; false when either is malformed. */
+export function versionAtLeast(actual: string, floor: string): boolean {
     const core = observedVersionCore(actual)
-    if (core === undefined) return false
+    if (core === undefined || !isVersionFloor(floor)) return false
     const left = core.split('.').map(Number)
     const right = floor.split('.').map(Number)
     for (let index = 0; index < left.length; index += 1) {
@@ -1283,7 +1290,6 @@ function dependencyLevels(services: ReadonlyMap<string, RuntimeTopologyService>)
 const SERVICE_ID = /^[a-z0-9][a-z0-9_.-]*$/
 const CONTAINER_ID = /^[a-f0-9]{64}$/
 const SHORT_CONTAINER_ID = /^[a-f0-9]{12}$/
-const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 const HOST_PROCESS_CONTROL_ENV = /^(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$)/
 
 function unavailableTopology(reason = 'runtime topology is unavailable'): RuntimeTopologyPlan {
@@ -1311,7 +1317,7 @@ function runtimeCommandEnvironment(
     env: Readonly<Record<string, string>>,
     generatedPortNames: readonly string[],
 ): Readonly<Record<string, string>> {
-    const allowed = new Set([...SAFE_RUNTIME_ENV, ...generatedPortNames])
+    const allowed = new Set([...DOCKER_CLIENT_ENVIRONMENT, ...generatedPortNames])
     return Object.freeze(Object.fromEntries(Object.entries(env).filter(([name]) => allowed.has(name))))
 }
 
@@ -3866,44 +3872,6 @@ export function measureMachineFloor(
     }
     if (gaps.length > 0) return { verdict: 'unavailable', comparisons, gaps }
     return { verdict: comparisons.every(({ passed }) => passed) ? 'pass' : 'fail', comparisons, gaps: [] }
-}
-
-export type ColdStartResult =
-    | {
-          verdict: 'pass' | 'fail'
-          measured: number
-          threshold: number
-          relation: 'at-most'
-          passed: boolean
-          producer: string
-          observedAt: string
-      }
-    | { verdict: 'unavailable'; observation: Observation<number> }
-
-export function measureColdStart(budgetSeconds: number, observation: Observation<number>): ColdStartResult {
-    const snapshot = snapshotJson({ budgetSeconds, observation })
-    if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-        return { verdict: 'unavailable', observation: malformedMeasurement }
-    }
-    const input = snapshot as { budgetSeconds?: unknown; observation?: unknown }
-    if (typeof input.budgetSeconds !== 'number' || !Number.isFinite(input.budgetSeconds) || input.budgetSeconds <= 0) {
-        return { verdict: 'unavailable', observation: malformedMeasurement }
-    }
-    const owned = parsedObservation(input.observation)
-    if (owned === undefined) return { verdict: 'unavailable', observation: malformedMeasurement }
-    if (owned.state !== 'available' || owned.producer !== 'runtime-cold-start-collector') {
-        return { verdict: 'unavailable', observation: owned }
-    }
-    const passed = owned.value <= input.budgetSeconds
-    return {
-        verdict: passed ? 'pass' : 'fail',
-        measured: owned.value,
-        threshold: input.budgetSeconds,
-        relation: 'at-most',
-        passed,
-        producer: owned.producer,
-        observedAt: owned.observedAt,
-    }
 }
 
 export type ProbeExecution = { kind: 'complete'; exitCode: 0; binding?: ProbeBinding }

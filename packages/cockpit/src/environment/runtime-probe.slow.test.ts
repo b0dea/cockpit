@@ -279,6 +279,7 @@ describe('installed container-runtime capability promotion', () => {
         ['future measurement', { measuredOn: '9999-01-01' }],
         ['project prefix that is not a cockpit name', { projectPrefix: 'Synthetic Measure' }],
         ['owner that names no process', { owner: 'not-a-process' }],
+        ['Compose floor with a leading v', { composeFloor: 'v2.20.0' }],
         ['fake executor path', { executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'verified-path' as const } }],
     ])('keeps %s unavailable without retaining caller values', async (_name, overrides) => {
         const verdict = await probeRuntimeSupport(request(overrides as Partial<RuntimeProbeRequest>))

@@ -43,6 +43,7 @@ import {
 } from './application.js'
 import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
+    DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
     snapshotExecutionPlan,
     type EnvironmentCommandOutcome,
@@ -111,7 +112,6 @@ export const mechanism = {
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
-const SAFE_DOCKER_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
 function environmentCode(code: string): code is EnvironmentDiagnostic['code'] {
     return (Object.values(ENVIRONMENT_CODES) as readonly string[]).includes(code)
@@ -331,7 +331,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
 
 function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
     return Object.freeze(Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => SAFE_DOCKER_ENV.has(entry[0]) && typeof entry[1] === 'string')))
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string')))
 }
 
 function confined(root: string, path: string): boolean {

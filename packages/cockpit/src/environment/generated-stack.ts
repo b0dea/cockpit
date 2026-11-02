@@ -8,7 +8,7 @@ import { parse as parseYaml } from 'yaml'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { DECISIONS_PATH, decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
-import { ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     authenticateGeneratedRender,
@@ -299,7 +299,6 @@ export function inspectGeneratedEnvironment(input: {
 }
 
 
-const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 const GENERATED_RUNTIME_IDENTITY_ENV = new Set(['COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
 
 function generatedComposePrefix(
@@ -328,7 +327,7 @@ function generatedObservationStep(
         || !/^[a-z0-9][a-z0-9_-]*$/.test(runtime.projectName)
         || runtime.composeFiles.length === 0
         || runtime.composeFiles.some(({ path, sha256: digest }) => !isAbsolute(path) || normalize(path) !== path || !SHA256.test(digest))
-        || Object.entries(runtime.publicEnv).some(([name, value]) => (!SAFE_RUNTIME_ENV.has(name)
+        || Object.entries(runtime.publicEnv).some(([name, value]) => (!DOCKER_CLIENT_ENVIRONMENT.has(name)
             && !GENERATED_RUNTIME_IDENTITY_ENV.has(name) && !declaredPortVariables.has(name))
             || typeof value !== 'string' || value.includes('\0'))
         || !Number.isSafeInteger(runtime.stdoutLimitBytes) || runtime.stdoutLimitBytes < 0 || runtime.stdoutLimitBytes > 16_777_216
@@ -573,7 +572,7 @@ export function projectGeneratedRuntimeAuthority(input: {
         || [...declaredPortVariables].some((name) => !Object.hasOwn(runtime.publicEnv, name)
             || !/^\d+$/.test(runtime.publicEnv[name]!) || Number(runtime.publicEnv[name]) < 1 || Number(runtime.publicEnv[name]) > 65_535)
         || Object.entries(runtime.publicEnv).some(([name, value]) => {
-            if (SAFE_RUNTIME_ENV.has(name)) return false
+            if (DOCKER_CLIENT_ENVIRONMENT.has(name)) return false
             if (GENERATED_RUNTIME_IDENTITY_ENV.has(name)) return false
             return !declaredPortVariables.has(name) || !/^\d+$/.test(value)
                 || Number(value) < 1 || Number(value) > 65_535
