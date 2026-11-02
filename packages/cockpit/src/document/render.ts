@@ -45,6 +45,8 @@ export interface DocumentModel {
     attributions: readonly Attribution[]
     gaps: readonly Gap[]
     unconfirmed?: readonly UnconfirmedAnswer[]
+    /** Values read from the cockpit root's own files, keyed by their target. */
+    inferred?: Readonly<Partial<Record<'ports.bases' | 'environment.compose_files', unknown>>>
 }
 
 function renderAttributions(attributions: readonly Attribution[]): string {
@@ -59,6 +61,13 @@ function renderAttributions(attributions: readonly Attribution[]): string {
 }
 
 function draftConfig(model: DocumentModel): Record<string, unknown> {
+    // Written, the guard hosts read as a decision that none exists, even as the schema default [].
+    const { hosted_db_hosts: _hosted, vendor_endpoint_hosts: _vendors, ...guards } = model.defaults.guards
+    // No registry dialect records the work-order time budgets, so a draft that wrote the schema's
+    // values would present them as this product's; left out, the loader applies the same defaults.
+    const { verification_timeout_seconds: _verification, evaluator_timeout_seconds: _evaluator, ...workorders } = model.defaults.workorders
+    const bases = model.inferred?.['ports.bases']
+    const composeFiles = model.inferred?.['environment.compose_files']
     return {
         ...model.defaults,
         cockpit: {
@@ -69,6 +78,10 @@ function draftConfig(model: DocumentModel): Record<string, unknown> {
             ...sibling,
             ...model.defaults.sibling,
         })),
+        ports: { ...model.defaults.ports, ...(bases === undefined ? {} : { bases }) },
+        guards,
+        workorders,
+        environment: { ...model.defaults.environment, ...(composeFiles === undefined ? {} : { compose_files: composeFiles }) },
     }
 }
 
@@ -78,7 +91,7 @@ export function renderIncompleteDocument(
     const config = configuration ?? draftConfig(model)
     return [
         `#:schema ${schemaDirective}\n`,
-        configuration
+        configuration || !model.gaps.some(gap => gap.blocking)
             ? '# COCKPIT DOCUMENT: REVIEW DRAFT — confirm the inferred and default values before publication.\n'
             : '# COCKPIT DOCUMENT: INCOMPLETE DRAFT — this file intentionally fails validation.\n',
         renderAttributions(model.attributions),

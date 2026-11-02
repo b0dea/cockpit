@@ -15,7 +15,7 @@ import {
     ANSWER_PROVENANCES, renderCompleteDocument, renderIncompleteDocument, UNCONFIRMED_FIX, unconfirmedReason,
     type AnswerProvenance, type Attribution, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
 } from './render.js'
-import { COMPOSE_NAMES, readDockerfileFacts } from '../init/derive.js'
+import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from '../init/derive.js'
 import { productPackageManifest } from '../team-metadata.js'
 
 export const mechanism = {
@@ -262,6 +262,8 @@ async function observeRepositorySources(repository: string, label: string): Prom
     const sources: { path: string; sha256: string }[] = []
     let runnable: EstateRepositoryObservation['runnable'] = 'absent'
     const reasons: string[] = []
+    // Reasons from several repositories are joined into one why, so each names its own file.
+    const named = (source: string) => label === '.' ? source : `${label}/${source}`
     for (const manifest of PUBLIC_RUNNABLE_SOURCES) {
         const path = resolve(repository, manifest)
         let bytes: Buffer
@@ -290,13 +292,13 @@ async function observeRepositorySources(repository: string, label: string): Prom
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
             catch {
                 if (runnable !== 'confirmed') runnable = 'unknown'
-                reasons.push('Dockerfile is not valid UTF-8')
+                reasons.push(`${named('Dockerfile')} is not valid UTF-8`)
                 continue
             }
             if (readDockerfileFacts(text).command) runnable = 'confirmed'
             else {
                 if (runnable !== 'confirmed') runnable = 'unknown'
-                reasons.push('Dockerfile final stage declares no CMD or ENTRYPOINT')
+                reasons.push(`${named('Dockerfile')} final stage declares no CMD or ENTRYPOINT`)
             }
             continue
         }
@@ -305,26 +307,26 @@ async function observeRepositorySources(repository: string, label: string): Prom
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
             catch {
                 if (runnable !== 'confirmed') runnable = 'unknown'
-                reasons.push(`${manifest} is not valid UTF-8`)
+                reasons.push(`${named(manifest)} is not valid UTF-8`)
                 continue
             }
             if (composeDeclaresServices(text)) runnable = 'confirmed'
             else {
                 if (runnable !== 'confirmed') runnable = 'unknown'
-                reasons.push(`${manifest} is not valid Compose YAML with at least one service`)
+                reasons.push(`${named(manifest)} is not valid Compose YAML with at least one service`)
             }
             continue
         }
         if (manifest !== 'package.json') {
             if (runnable !== 'confirmed') runnable = 'unknown'
-            reasons.push(`${manifest} does not declare a supported runnable command`)
+            reasons.push(`${named(manifest)} does not declare a supported runnable command`)
             continue
         }
         let parsed: unknown
         try { parsed = JSON.parse(bytes.toString('utf8')) }
         catch {
             if (runnable !== 'confirmed') runnable = 'unknown'
-            reasons.push('package.json is not valid JSON')
+            reasons.push(`${named('package.json')} is not valid JSON`)
             continue
         }
         const scripts = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -333,7 +335,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
             && PACKAGE_RUN_SCRIPTS.some(name => typeof (scripts as Record<string, unknown>)[name] === 'string'
                 && ((scripts as Record<string, unknown>)[name] as string).trim().length > 0)
         if (confirmed) runnable = 'confirmed'
-        else reasons.push('package.json declares no non-empty dev, start or serve script')
+        else reasons.push(`${named('package.json')} declares no non-empty dev, start or serve script`)
     }
     return { runnable, reasons, sources }
 }
@@ -628,8 +630,8 @@ function buildAttributions(
         ['cockpit.guide_cap', defaults.cockpit.guide_cap, 'the root guide line cap'],
         ['ports.step', defaults.ports.step, 'the stack port step'],
         ['ports.count', defaults.ports.count, 'the available stack count'],
-        ['guards.hosted_db_hosts', defaults.guards.hosted_db_hosts, 'hosted database hosts'],
-        ['guards.vendor_endpoint_hosts', defaults.guards.vendor_endpoint_hosts, 'vendor endpoint hosts'],
+        // The guard hosts are not here: written, even as [], they record a decision that no
+        // non-local host exists, and doctor stops warning GUARD_HOSTS_UNDECLARED.
         ['guards.protected_branches', defaults.guards.protected_branches, 'protected branches'],
         ['guards.allow', defaults.guards.allow, 'allowed commands'],
         ['guards.deny', defaults.guards.deny, 'denied commands'],
@@ -695,7 +697,10 @@ function cockpitName(root?: string): string | undefined {
     return name && /^[a-z0-9][a-z0-9-]*$/.test(name) ? name : undefined
 }
 
-function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined, rootProvided: boolean): Gap[] {
+const inferredValue = (inference: InferenceResult | undefined, target: string) =>
+    inference?.facts.find(fact => fact.target === target)
+
+function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined, rootProvided: boolean, inference?: InferenceResult): Gap[] {
     return [
         ...(!name
             ? [{
@@ -710,9 +715,24 @@ function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined,
                     : 'supply this value before treating the draft as valid',
             }]
             : []),
-        { slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map', blocking: true },
+        ...(inferredValue(inference, 'ports.bases') ? []
+            : [{ slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map and no Compose file at the cockpit root publishes one', blocking: true }]),
+        // A Compose file whose host ports cannot all be read leaves bases that check would refuse.
+        ...(inference?.skipped ?? []).filter(row => (COMPOSE_NAMES as readonly string[]).includes(row.source))
+            .map(row => ({ slug: 'ports', field: 'bases', why: `${row.source} ${row.reason}`, blocking: true })),
+        ...(['hosted_db_hosts', 'vendor_endpoint_hosts'] as const).map(field => ({ slug: 'guards', field, blocking: false,
+            why: 'the registry dialect does not record the non-local hosts the guard denies, so the key is left unwritten and doctor warns GUARD_HOSTS_UNDECLARED',
+            fix: 'list the database and live vendor API hosts of every non-local environment under [guards], or write both hosted_db_hosts = [] and vendor_endpoint_hosts = [] to record that none exists' })),
         ...gaps(siblings),
     ]
+}
+
+/** The registry draft's values read from the cockpit root's own Compose file. */
+function composeAttributions(inference: InferenceResult | undefined): Attribution[] {
+    return (['ports.bases', 'environment.compose_files'] as const).flatMap(target => {
+        const fact = inferredValue(inference, target)
+        return fact ? [{ target, value: fact.value, from: 'inferred' as const, because: `${fact.provenance.source}: ${fact.provenance.reason}` }] : []
+    })
 }
 
 type ConfigurationContext = Readonly<{
@@ -760,14 +780,13 @@ const QUESTION_WHY = {
     policies: 'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
     generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer environment.compose_files instead: compose_files = ["compose.yml"] under [environment] in an answers file, or { "compose_files": ["compose.yml"] } typed at this question',
-    machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements, so cockpit proposes them only from the product\'s own files and never invents them',
+    machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements a person states: cockpit never proposes them, because no product file records them and this machine\'s capacity is not what the product needs',
     posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
     testing: 'declare the product\'s test commands as [testing] stages and gates: a targeted gate agents run while iterating and a full gate they run before handing back shared changes; init proposes them from test entry points it finds on disk. Answer "none" when the product has no tests yet: no work can then be graded PASS, and doctor warns until gates are declared',
     guards: 'name the database hosts and live vendor API hosts of every non-local environment the product has (production, staging, shared dev or QA): cockpit runs only locally, so the guard denies agent commands that reach them; answer { "hosted_db_hosts": [], "vendor_endpoint_hosts": [] } to record that none exists',
     defaults: 'confirm the exact surfaced inferred and schema-default values before completing the document',
 } as const
 
-const GUARD_HOST_FIELDS = ['guards.hosted_db_hosts', 'guards.vendor_endpoint_hosts'] as const
 /** How a decision comment attributes an answer, so a value the agent chose never reads as one a person stated. */
 const STATED_BY: Readonly<Record<AnswerProvenance, string>> = {
     'operator-confirmed': 'the operator stated that',
@@ -896,6 +915,14 @@ function inferGreenfieldSiblingRoot(attributions: Attribution[], siblingsRoot: G
     return attributions
 }
 
+/** Why an estate sibling's toolchain is the schema default, naming the lockfile read when one was. */
+function estateToolchainReason(slug: string, directory: string, inference: InferenceResult | undefined): string {
+    const fact = inferredValue(inference, `${slug}.toolchain`)
+    return fact
+        ? `${fact.provenance.source} proposes the ${String(fact.value)} toolchain, but the sibling answer leaves toolchain unset; materialised from the CockpitConfig schema default`
+        : `no lockfile that maps to a toolchain (${NODE_LOCKFILE_NAMES.join(', ')}) was found in ${directory}, so no sibling toolchain is proposed; materialised from the CockpitConfig schema default`
+}
+
 function defaultAttributions(
     defaults: ReturnType<typeof configurationDefaults>,
     siblings: readonly Record<string, unknown>[],
@@ -903,6 +930,7 @@ function defaultAttributions(
     root: string | undefined,
     source: DefaultSource,
     siblingsRoot: GreenfieldSiblingsRoot = undefined,
+    inference?: InferenceResult,
 ): Attribution[] {
     // The name is always an answer, so it is never surfaced as an inferred value to confirm.
     const attributions = buildAttributions({ siblings: detected, defaults }, root, source)
@@ -916,7 +944,9 @@ function defaultAttributions(
     for (const sibling of siblings) {
         for (const field of ['toolchain', 'guides'] as const) if (!(field in sibling)) {
             attributions.push({ target: `sibling.${String(sibling.slug)}.${field}`,
-                value: defaults.sibling[field], from: 'default', because: defaultReason(`a sibling ${field}`, source) })
+                value: defaults.sibling[field], from: 'default', because: field === 'toolchain' && source === 'estate' && root
+                    ? estateToolchainReason(String(sibling.slug), relative(root, resolve(root, siblingsRoot ?? '.', String(sibling.dir))) || '.', inference)
+                    : defaultReason(`a sibling ${field}`, source) })
         }
     }
     return inferGreenfieldSiblingRoot(attributions, siblingsRoot)
@@ -933,14 +963,14 @@ function documentedRows(rows: CockpitConfig['sibling']): DocumentedSibling[] {
         acquire: { value: row.acquire, from: 'read' }, var: row.var, purpose: row.purpose }))
 }
 
-function completeConfigurationDocument(
+async function completeConfigurationDocument(
     input: DocumentCommandInput,
     root: string | undefined,
     registrySha256: string | null,
     detected: readonly DocumentedSibling[],
     estateGaps: EstateClassificationResult['gaps'] = [],
     estateRunnable: EstateClassificationResult['runnable'] = [],
-): DocumentOutcome {
+): Promise<DocumentOutcome> {
     const configuration = configurationInput(input.configuration)
     if (!configuration) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         'configuration completion requires bounded source-bound operator-confirmed answers')
@@ -1022,6 +1052,10 @@ function completeConfigurationDocument(
         siblingAnswerRows = detectedRows
     }
 
+    // Read with the same inference init proposed from, so a defaulted toolchain names the lockfile it overrode.
+    const inference = defaultSource === 'estate' && root ? await deriveInferredFacts({ root: resolve(root, siblingsRoot ?? '.'),
+        configurationRoot: root, repositories: siblingRows.map(row => ({ slug: row.slug, path: row.dir })) }) : undefined
+
     if (estateRunnable.length > 0) {
         const dispositionSlugs = estateRunnable.map(row => row.slug)
         const siblingSlugs = siblingRows.map(row => row.slug)
@@ -1044,7 +1078,7 @@ function completeConfigurationDocument(
         const question = configurationQuestion(context, 'estate.runnable', runnableWhy(estateGaps))
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: documentedRows(siblingRows),
-            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource), gaps: [] },
+            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, undefined, inference), gaps: [] },
             input.output ? resolve(input.output) : null, question)
         if (read.kind === 'refusal') return read.outcome
         if (!read.value || typeof read.value !== 'object' || Array.isArray(read.value)
@@ -1077,7 +1111,7 @@ function completeConfigurationDocument(
     const portQuestion = configurationQuestion(context, 'ports.bases', QUESTION_WHY.ports)
     const portRead = readConfigurationAnswer(configuration.answers, answerIndex, portQuestion)
     const previewRows = documentedRows(siblingRows)
-    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot)
+    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference)
     if (portRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
         attributions, gaps: [] }, destination, portQuestion)
     if (portRead.kind === 'refusal') return portRead.outcome
@@ -1244,10 +1278,6 @@ function completeConfigurationDocument(
     if (!parsedGuards?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
         `the operator-confirmed guard hosts must be exactly { hosted_db_hosts, vendor_endpoint_hosts }${parsedGuards
             ? `: ${issueSummary(parsedGuards.error)}` : ''}`, guardQuestion.field)
-    for (const target of GUARD_HOST_FIELDS) {
-        const index = attributions.findIndex(row => row.target === target)
-        if (index >= 0) attributions.splice(index, 1)
-    }
     const noGuardHosts = parsedGuards.data.hosted_db_hosts.length === 0 && parsedGuards.data.vendor_endpoint_hosts.length === 0
     record('guards', guardRead.provenance)
     answerIndex += 1
@@ -1353,8 +1383,11 @@ async function documentCommandOwned(
     if (source.trim() === '') return refusal('REGISTRY_EMPTY', 'the registry file is empty', registry)
 
     const parsed = parseRegistry(source)
+    // A registry cockpit runs a Compose file of its own beside the registry; its published host
+    // ports are the port map the registry dialect does not record.
+    const inference = root && input.configuration === undefined ? await deriveInferredFacts({ root, repositories: [] }) : undefined
     if (parsed.skipped.length > 0) {
-        const knownGaps = diagnosticsFor([], unresolvedGaps(parsed.siblings, cockpitName(root), root !== undefined))
+        const knownGaps = diagnosticsFor([], unresolvedGaps(parsed.siblings, cockpitName(root), root !== undefined, inference))
         return {
             kind: 'skipped-scope',
             artifact: null,
@@ -1389,15 +1422,17 @@ async function documentCommandOwned(
     }
 
     const validName = cockpitName(root)
-    const unresolved = unresolvedGaps(parsed.siblings, validName, root !== undefined)
+    const unresolved = unresolvedGaps(parsed.siblings, validName, root !== undefined, inference)
+    const inferred = composeAttributions(inference)
     const model: DocumentModel = {
         name: validName,
         defaults: configurationDefaults(),
         siblings: parsed.siblings,
         attributions: [],
         gaps: unresolved,
+        inferred: Object.fromEntries(inferred.map(row => [row.target, row.value])),
     }
-    model.attributions = buildAttributions(model, root, 'registry')
+    model.attributions = [...buildAttributions(model, root, 'registry'), ...inferred]
     const destination = input.output ? resolve(input.output) : null
     const artifact = renderIncompleteDocument(model, SCHEMA_DIRECTIVE)
     const diagnostics = diagnosticsFor(model.attributions, unresolved)

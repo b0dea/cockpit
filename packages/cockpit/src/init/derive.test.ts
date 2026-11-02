@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { deriveInferredFacts } from './derive.js'
+import { GeneratedService, Sibling } from '../schema.js'
 
 const scratch: string[] = []
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -18,18 +19,42 @@ function estate(files: Record<string, string>): string {
 }
 
 const api = [{ slug: 'api', path: 'api' }]
-const byTarget = (facts: readonly { target: string }[], target: string) => facts.find(fact => fact.target === target)
+const byTarget = <T extends { target: string }>(facts: readonly T[], target: string) => facts.find(fact => fact.target === target)
 
 describe('inferred interview answers', () => {
-    it('reads the final Dockerfile stage for the run command and exposed ports, naming the file', async () => {
+    it('reads the final Dockerfile stage for the run command, exposed ports and health check, naming the file', async () => {
         const root = estate({ 'api/Dockerfile': [
-            'FROM node:22 AS build', 'EXPOSE 9999', 'CMD ["node", "build.mjs"]',
-            'FROM node:22-slim', 'ENTRYPOINT ["node"]', 'CMD ["server.mjs"]', 'EXPOSE 3000/tcp 8080', ''].join('\n') })
+            'FROM node:22 AS build', 'EXPOSE 9999', 'CMD ["node", "build.mjs"]', 'HEALTHCHECK CMD ["true"]',
+            'FROM node:22-slim', 'ENTRYPOINT ["node"]', 'CMD ["server.mjs"]', 'EXPOSE 3000/tcp 8080',
+            'HEALTHCHECK --interval=10s --start-period=1m30s \\', '  CMD wget -qO- http://localhost:3000/healthz || exit 1', ''].join('\n') })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
         expect(byTarget(facts, 'api.command')).toMatchObject({ value: ['node', 'server.mjs'],
             provenance: { kind: 'inferred', source: 'api/Dockerfile' } })
         expect(byTarget(facts, 'api.container_ports')).toMatchObject({ value: [3000, 8080],
             provenance: { kind: 'inferred', source: 'api/Dockerfile' } })
+        // Docker runs a shell-form HEALTHCHECK through sh -c and applies its defaults to unset options.
+        const health = byTarget(facts, 'api.health')
+        expect(health).toMatchObject({ fields: ['environment.generated'], value: {
+            probe: { location: 'in-stack', service: 'api', argv: ['sh', '-c', 'wget -qO- http://localhost:3000/healthz || exit 1'], timeout_seconds: 30 },
+            interval_seconds: 10, timeout_seconds: 30, retries: 3, start_period_seconds: 90,
+        }, provenance: { kind: 'inferred', source: 'api/Dockerfile', reason: expect.stringContaining('--timeout, --retries are unset') } })
+        expect(GeneratedService.shape.health.safeParse(health!.value).success).toBe(true)
+
+        const disabled = estate({ 'api/Dockerfile': 'FROM node:22\nHEALTHCHECK CMD ["true"]\nFROM node:22-slim\nCMD ["node"]\nHEALTHCHECK NONE\n' })
+        const none = await deriveInferredFacts({ root: disabled, repositories: api })
+        expect(byTarget(none.facts, 'api.health')).toBeUndefined()
+        expect(none.skipped).toContainEqual({ source: 'api/Dockerfile', reason: expect.stringContaining('HEALTHCHECK NONE') })
+    })
+
+    it('proposes the package manager\'s run of a start, serve or dev script only when no Dockerfile sets the command', async () => {
+        const root = estate({ 'api/package.json': JSON.stringify({ scripts: { dev: 'vite', start: 'node index.js', serve: ' ' } }), 'api/yarn.lock': '' })
+        const { facts } = await deriveInferredFacts({ root, repositories: api })
+        expect(byTarget(facts, 'api.command')).toEqual({ fields: ['estate.runnable', 'environment.generated'], target: 'api.command',
+            value: ['yarn', 'run', 'start'], provenance: { kind: 'inferred', source: 'api/package.json',
+                reason: expect.stringMatching(/start script.*yarn\.lock selects yarn; dev is also declared/) } })
+        const imaged = estate({ 'api/package.json': JSON.stringify({ scripts: { start: 'node index.js' } }), 'api/Dockerfile': 'FROM node:22\nCMD ["node", "server.mjs"]\n' })
+        const fromImage = await deriveInferredFacts({ root: imaged, repositories: api })
+        expect(fromImage.facts.filter(fact => fact.target === 'api.command')).toEqual([expect.objectContaining({ value: ['node', 'server.mjs'] })])
     })
 
     it('records .env.example variable names and never their values', async () => {
@@ -116,14 +141,38 @@ describe('inferred interview answers', () => {
         expect(observed.facts.filter(fact => fact.fields.includes('sibling'))).toEqual([expect.objectContaining({ target: 'sibling.api' })])
     })
 
-    it('proposes the product repository a dedicated cockpit sits beside as its sibling', async () => {
-        const parent = estate({ 'shop/package.json': '{}\n' })
+    it('proposes the product repository a dedicated cockpit sits beside as its sibling, cloned from its origin remote', async () => {
+        const parent = estate({ 'shop/package.json': '{}\n', 'shop/.git/config': [
+            '[core]', '\tbare = false', '[remote "upstream"]', '\turl = git@example.invalid:fork/shop.git',
+            '[remote "origin"]', '\turl = git@example.invalid:team/shop.git', '\tfetch = +refs/heads/*:refs/remotes/origin/*', ''].join('\n') })
         mkdirSync(join(parent, 'shop-cockpit'))
-        const { facts } = await deriveInferredFacts({ root: parent, configurationRoot: join(parent, 'shop-cockpit'),
-            repositories: [{ slug: 'shop', path: 'shop' }] })
+        const proposed = async () => (await deriveInferredFacts({ root: parent, configurationRoot: join(parent, 'shop-cockpit'),
+            repositories: [{ slug: 'shop', path: 'shop' }] }))
+        const { facts } = await proposed()
         expect(facts.filter(fact => fact.fields.includes('sibling'))).toEqual([{ fields: ['sibling'], target: 'sibling.shop',
-            value: { slug: 'shop', dir: 'shop', mount: 'always', acquire: 'none', var: 'SHOP_DIR' },
-            provenance: expect.objectContaining({ kind: 'inferred', source: '../shop' }) }])
+            value: { slug: 'shop', dir: 'shop', remote: 'git@example.invalid:team/shop.git', mount: 'always', acquire: 'auto', var: 'SHOP_DIR' },
+            provenance: expect.objectContaining({ kind: 'inferred', source: '../shop/.git/config' }) }])
+        expect(Sibling.safeParse({ ...byTarget(facts, 'sibling.shop')!.value as object, purpose: 'storefront' }).success).toBe(true)
+
+        // A token in the URL is never proposed or echoed; the repository stays acquire "none" and says why.
+        writeFileSync(join(parent, 'shop/.git/config'), '[remote "origin"]\n\turl = https://deploy:synthetic-secret@example.invalid/team/shop.git\n')
+        const credentialed = await proposed()
+        expect(byTarget(credentialed.facts, 'sibling.shop')).toMatchObject({ value: { acquire: 'none' },
+            provenance: { reason: expect.stringContaining('carries credentials') } })
+        expect(byTarget(credentialed.facts, 'sibling.shop')!.value).not.toHaveProperty('remote')
+        expect(credentialed.skipped).toContainEqual({ source: '../shop/.git/config', reason: expect.stringContaining('carries credentials') })
+        expect(JSON.stringify(credentialed)).not.toContain('synthetic-secret')
+
+        writeFileSync(join(parent, 'shop/.git/config'), '[remote "upstream"]\n\turl = git@example.invalid:fork/shop.git\n')
+        expect(byTarget((await proposed()).facts, 'sibling.shop')).toMatchObject({ value: { acquire: 'none' },
+            provenance: { source: '../shop', reason: expect.stringContaining('../shop/.git/config names no origin remote') } })
+
+        // A worktree or submodule checkout points at its Git directory from a .git file, which is not followed.
+        rmSync(join(parent, 'shop/.git'), { recursive: true })
+        writeFileSync(join(parent, 'shop/.git'), 'gitdir: ../elsewhere/.git\n')
+        const pointer = await proposed()
+        expect(byTarget(pointer.facts, 'sibling.shop')).toMatchObject({ value: { acquire: 'none' } })
+        expect(pointer.skipped).toContainEqual({ source: '../shop/.git', reason: expect.stringContaining('is a file (a worktree or submodule pointer)') })
     })
 
     it('reads an in-repo cockpit\'s root once, as the repository at "." that is its own first sibling', async () => {
@@ -195,6 +244,10 @@ describe('inferred interview answers', () => {
             { id: 'api-full', tier: 'full', stages: ['api-test'], changes: 'Shared or cross-system behavior in api' },
         ] }, provenance: { kind: 'inferred', source: 'api/package.json', reason: expect.stringMatching(
             /pnpm-lock\.yaml selects pnpm.*targeted gate runs the same command.*test:e2e are not proposed.*requires_stack is false/) } })
+        // The same lockfile proposes the node toolchain, naming the install policy row setup then needs.
+        expect(byTarget(facts, 'api.toolchain')).toEqual({ fields: ['sibling', 'environment.install_policies'], target: 'api.toolchain',
+            value: 'node', provenance: { kind: 'inferred', source: 'api/pnpm-lock.yaml',
+                reason: expect.stringMatching(/toolchain "node" and lockfile "pnpm-lock\.yaml".*INSTALL_POLICY_MISSING/) } })
     })
 
     it('proposes the affected run of a build tool as the targeted gate', async () => {

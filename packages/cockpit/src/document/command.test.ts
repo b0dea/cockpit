@@ -59,8 +59,6 @@ const schemaDefaultTargets = [
     'cockpit.guide_cap',
     'ports.step',
     'ports.count',
-    'guards.hosted_db_hosts',
-    'guards.vendor_endpoint_hosts',
     'guards.protected_branches',
     'guards.allow',
     'guards.deny',
@@ -296,6 +294,8 @@ describe('public estate observation', () => {
         } })
         if (outcome.kind !== 'complete') throw new Error('ambiguous public source observation was refused')
         expect(outcome.result.gaps[0]!.why.length).toBeLessThanOrEqual(512)
+        // Joined with other repositories' reasons into one why, each reason names its repository's file.
+        expect(outcome.result.gaps[0]!.why).toMatch(/^app\/package\.json declares no non-empty dev, start or serve script; app\/pyproject\.toml /)
     })
 
     it('refuses a manifest appearing inside an omitted candidate during observation', async () => {
@@ -704,7 +704,20 @@ describe('document round trip inventory', () => {
             ports: { bases: { API_PORT: 8080 } },
         })
 
-        expect({ ...draft, ports: { ...draft.ports as object, bases: { API_PORT: 8080 } } }).toEqual(runtime)
+        // The guard hosts are left unwritten: written as the schema default [], doctor would read them
+        // as a decision that no non-local host exists and stop warning GUARD_HOSTS_UNDECLARED.
+        expect(draft.guards).not.toHaveProperty('hosted_db_hosts')
+        expect(draft.guards).not.toHaveProperty('vendor_endpoint_hosts')
+        // The work-order time budgets are left unwritten too: no dialect records them, and written
+        // they would read as this product's. The loader applies the same defaults.
+        expect(draft.workorders).not.toHaveProperty('verification_timeout_seconds')
+        expect(draft.workorders).not.toHaveProperty('evaluator_timeout_seconds')
+        const { verification_timeout_seconds: _verification, evaluator_timeout_seconds: _evaluator, ...workorders } = runtime.workorders
+        expect({ ...draft, ports: { ...draft.ports as object, bases: { API_PORT: 8080 } } })
+            .toEqual({ ...runtime, guards: { protected_branches: runtime.guards.protected_branches, allow: [], deny: [] }, workorders })
+        const configPath = temporaryPath('cockpit.toml')
+        writeFileSync(configPath, outcome.artifact!.replace('[ports]', '[ports]\nbases = { API_PORT = 8080 }'))
+        expect(await loadCockpitConfig(configPath)).toMatchObject({ kind: 'complete', result: { guardHostsStated: false } })
         for (const target of schemaDefaultTargets) {
             const [section, key] = target.split('.')
             const values = runtime[section as keyof typeof runtime] as Record<string, unknown>
@@ -713,6 +726,21 @@ describe('document round trip inventory', () => {
         for (const field of ['toolchain', 'guides'] as const) {
             expect(outcome.artifact).toContain(`# [default] sibling.api.${field} = ${JSON.stringify(runtime.sibling[0][field])}:`)
         }
+    })
+
+    it('reads the port map and Compose file a registry cockpit runs from its own root', async () => {
+        const { input } = sourceInput('X_SIBLINGS=(\n  "web|web|web|app|WEB_DIR|Storefront"\n)\n', 'root')
+        writeFileSync(join(input.root!, 'compose.yml'),
+            'services:\n  web:\n    build: ${WEB_DIR}\n    ports: ["${WEB_HOST_PORT:-3000}:3000", "${ADMIN_HOST_PORT}:9000"]\n')
+        const outcome = await documentCommand(input)
+        const draft = parseToml(outcome.artifact!) as { ports: Record<string, unknown>; environment: Record<string, unknown> }
+        expect(draft.ports.bases).toEqual({ WEB_HOST_PORT: 3000 })
+        expect(draft.environment.compose_files).toEqual(['compose.yml'])
+        expect(outcome.artifact).toContain('# [inferred] ports.bases = {"WEB_HOST_PORT":3000}: compose.yml: the Compose file publishes')
+        expect(outcome.artifact).toContain('# [inferred] environment.compose_files = ["compose.yml"]: compose.yml: a Compose file already exists')
+        // The variable with no default is still a required gap; the map itself is no longer one.
+        expect(outcome.diagnostics.filter(item => item.code === 'DOCUMENT_GAP' && item.target === 'ports.bases')).toEqual([
+            expect.objectContaining({ severity: 'error', message: expect.stringMatching(/^compose\.yml publishes a host port from \$\{ADMIN_HOST_PORT\} with no default/) })])
     })
 
     const dialects = [
@@ -765,8 +793,6 @@ describe('document round trip inventory', () => {
                 expect(draft.sibling.every((s) => JSON.stringify(s.guides) === JSON.stringify(['CLAUDE.md', 'AGENTS.md']))).toBe(true)
                 expect(draft.ports).toEqual({ step: 100, count: 27 })
                 expect(draft.guards).toEqual({
-                    hosted_db_hosts: [],
-                    vendor_endpoint_hosts: [],
                     protected_branches: ['main', 'master'],
                     allow: [],
                     deny: [],
@@ -789,6 +815,8 @@ describe('document round trip inventory', () => {
 
                 const gaps = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_GAP')
                 expect(gaps.some((item) => item.target === 'ports.bases' && item.severity === 'error')).toBe(true)
+                expect(gaps.filter((item) => item.target?.startsWith('guards.')).map((item) => [item.target, item.severity]))
+                    .toEqual([['guards.hosted_db_hosts', 'warning'], ['guards.vendor_endpoint_hosts', 'warning']])
                 expect(gaps.some((item) => item.target === 'cockpit.name')).toBe(mode === 'registry')
                 expect(outcome.diagnostics.some((item) => item.target === 'cockpit.name' && item.code === 'DOCUMENT_INFERRED'))
                     .toBe(mode === 'root')
@@ -838,6 +866,8 @@ describe('operator-confirmed document completion', () => {
         const machine = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],
         } })
+        // Nothing reads a floor from the product, so the question must not claim one was looked for.
+        expect(machine.question).toMatchObject({ field: 'environment.machine', why: expect.stringContaining('a person states: cockpit never proposes them') })
         const machineAnswer = answer(machine.question!, machineFloor)
         const posture = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer],
@@ -1191,6 +1221,7 @@ describe('operator-confirmed document completion', () => {
         const parent = realpathSync(temporaryPath('workspace').replace(/workspace$/, ''))
         for (const name of ['shop', 'unrelated', 'shop-cockpit']) mkdirSync(join(parent, name))
         writeFileSync(join(parent, 'shop/package.json'), JSON.stringify({ name: 'shop' }))
+        writeFileSync(join(parent, 'shop/package-lock.json'), '{}\n')
         writeFileSync(join(parent, 'unrelated/package.json'), JSON.stringify({ scripts: { dev: 'vite' } }))
         expect(await observeCockpitRoot({ root: join(parent, 'shop') })).toBe('cockpit-root')
         mkdirSync(join(parent, 'shop/.git'))
@@ -1223,7 +1254,10 @@ describe('operator-confirmed document completion', () => {
         const completed = await documentObservedCommand({ root: cockpitRoot, estate: siblings, configuration })
         expect(completed, JSON.stringify(completed.diagnostics)).toMatchObject({ kind: 'complete' })
         expect(parseToml(completed.artifact!)).toMatchObject({ cockpit: { name: 'shop-cockpit', siblings_root: '..' },
-            sibling: [{ slug: 'shop', dir: 'shop' }] })
+            sibling: [{ slug: 'shop', dir: 'shop', toolchain: 'none' }] })
+        // A defaulted toolchain names the lockfile it overrode instead of claiming nothing declares one.
+        expect(completed.diagnostics).toContainEqual(expect.objectContaining({ code: 'DOCUMENT_DEFAULT', target: 'sibling.shop.toolchain',
+            message: '../shop/package-lock.json proposes the node toolchain, but the sibling answer leaves toolchain unset; materialised from the CockpitConfig schema default' }))
         // A repository the dedicated cockpit was not created for is never observed into its estate.
         expect(await classifyEstateObservation({ root: parent, repositories: ['missing'] }, { observe: observePublicEstate }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID' }] })
