@@ -20,7 +20,9 @@ import {
     type GeneratedApplicationProjection,
 } from './generated-application.js'
 import { redactSensitiveMessage } from './sensitive.js'
-import { snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, type ConsumedFile, type ExecutionStep } from './contract.js'
+import {
+    snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep,
+} from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import {
@@ -109,7 +111,12 @@ const PROBE_TIMEOUT_MS = 30_000
 const EVIDENCE_EXPIRY_MS = 300_000
 const BUILTIN_EXECUTABLES = Object.freeze({ claudecode: 'claude', codexcli: 'codex', opencode: 'opencode' } as const)
 
-function captureSearchEnvironment(value: unknown): Readonly<Record<string, string | undefined>> | undefined {
+// A signed-in tool locates its stored sign-in through HOME, so a probe given PATH alone reports
+// every cell as not signed in. The allowlist carries no credential; every other variable, tokens
+// included, stays out of the probe.
+const PROBE_ENVIRONMENT: ReadonlySet<string> = new Set(['PATH', ...INHERITED_TOOL_ENVIRONMENT])
+
+function captureProbeEnvironment(value: unknown): Readonly<Record<string, string | undefined>> | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return undefined
         const prototype = Object.getPrototypeOf(value)
@@ -118,7 +125,7 @@ function captureSearchEnvironment(value: unknown): Readonly<Record<string, strin
         if (keys.length > 4_096) return undefined
         const env: Record<string, string | undefined> = {}
         for (const key of keys) {
-            if (key !== 'PATH') continue
+            if (typeof key !== 'string' || !PROBE_ENVIRONMENT.has(key)) continue
             const descriptor = Object.getOwnPropertyDescriptor(value, key)
             if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
                 || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
@@ -139,7 +146,7 @@ function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
             || required.some((key) => !Object.hasOwn(descriptors, key) || !Object.hasOwn(descriptors[key]!, 'value'))
             || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
         const root = descriptors.root!.value
-        const env = captureSearchEnvironment(descriptors.env!.value)
+        const env = captureProbeEnvironment(descriptors.env!.value)
         const specifications = descriptors.specifications!.value
         if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
         return Object.freeze({ application: descriptors.application!.value, root, specifications, env }) as SurfaceSelftestCommandInput
@@ -157,7 +164,7 @@ function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestComman
             || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
         const configPath = descriptors.configPath!.value
         const probeSpecificationsPath = descriptors.probeSpecificationsPath!.value
-        const env = captureSearchEnvironment(descriptors.env!.value)
+        const env = captureProbeEnvironment(descriptors.env!.value)
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
             || probeSpecificationsPath.includes('\0') || !env) return undefined
@@ -283,11 +290,12 @@ function step(
     consumedFiles: readonly ConsumedFile[],
     deadline: number,
     labels: Readonly<Record<string, string>>,
+    env: Readonly<Record<string, string>>,
 ): ExecutionStep | undefined {
     const remaining = deadline - Date.now()
     if (remaining <= 0) return undefined
     return snapshotExecutionStep({
-        id, argv, argv0, cwd: root, env: {}, timeoutMs: Math.min(PROBE_TIMEOUT_MS, remaining),
+        id, argv, argv0, cwd: root, env, timeoutMs: Math.min(PROBE_TIMEOUT_MS, remaining),
         spawnNotAfter: new Date(deadline).toISOString(), stdoutLimitBytes: STREAM_BYTES, stderrLimitBytes: STREAM_BYTES,
         paths: [root], ports: [], labels, expected: [], consumedFiles, filesystemChecks: [], compensation: [],
     })
@@ -456,6 +464,8 @@ async function runEvidenceProbe(
     const versionCommand = publicCommand(probe.versionCommand, executable.canonicalPath)
     const helpCommand = publicCommand(probe.helpCommand, executable.canonicalPath)
     const commonFiles = Object.freeze([consumedExecutable(executable)])
+    const probeEnvironment = Object.freeze(Object.fromEntries(Object.entries(env).filter(
+        (row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0 && !row[1].includes('\0'))))
     const controlIndex = invocation.indexOf('{control}')
     if (controlIndex < 0) return undefined
     const candidateCommand = publicCommand(invocation, executable.canonicalPath, candidatePath)
@@ -466,7 +476,7 @@ async function runEvidenceProbe(
         if (control) files.push({ path: control, sha256: control === controls.candidate ? controls.candidateSha256 : controls.brokenSha256,
             maxBytes: MAX_CONTROL_BYTES, argvIndexes: [controlIndex], executable: false })
         return step(`surface-selftest-${randomBytes(8).toString('hex')}-${role}`, root, execution, executable.invocationPath, files, deadline,
-            { harness: harnessName, capability: probe.capability, role })
+            { harness: harnessName, capability: probe.capability, role }, probeEnvironment)
     }
     const version = await run(adapters, createStep('version', versionCommand))
     const help = await run(adapters, createStep('help', helpCommand))

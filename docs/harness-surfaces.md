@@ -282,9 +282,11 @@ parity of each shipped skill, plus custom harness cells). The file is tied to th
    mode, nothing in the file runs.
 
 For each approved built-in tool, `selftest` runs the version and help commands, then the invocation
-with the broken control and with the candidate, and records each event. The probes run with an
-empty environment, so a tool that keeps its sign-in in the environment or a keychain may report
-that it is not signed in; that cell stays `human_needed` with `authentication_required`.
+with the broken control and with the candidate, and records each event. The probes inherit only
+`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TZ`, so a tool that
+keeps its sign-in under `HOME` finds it. No other variable reaches the probe, so a tool signed in
+only through an environment token reports that it is not signed in; that cell stays `human_needed`
+with `authentication_required`.
 
 Some cells stay `human_needed` regardless:
 

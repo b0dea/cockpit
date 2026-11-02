@@ -68,6 +68,7 @@ import {
 } from './environment/setup-observation.js'
 import {
     ENVIRONMENT_CODES,
+    INHERITED_TOOL_ENVIRONMENT,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     type SetupRefusalEvidence,
@@ -975,15 +976,16 @@ async function decodeRequest(
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID',
             'provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
-            'selftest executable search inputs must be bounded own string or undefined values; supply PATH without accessors and run npx --no cockpit selftest --help to retry')
+            `selftest probe environment inputs must be bounded own string or undefined values; supply ${['PATH', ...INHERITED_TOOL_ENVIRONMENT].join(', ')} without accessors and run npx --no cockpit selftest --help to retry`)
         const env: Record<string, string | undefined> = {}
         try {
             if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
                 || utilTypes.isProxy(runtimeEnv)) return invalidEnvironment()
             const keys = Reflect.ownKeys(runtimeEnv)
             if (keys.length > 4_096) return invalidEnvironment()
+            const inherited = new Set<string>(['PATH', ...INHERITED_TOOL_ENVIRONMENT])
             for (const key of keys) {
-                if (key !== 'PATH') continue
+                if (typeof key !== 'string' || !inherited.has(key)) continue
                 const descriptor = Object.getOwnPropertyDescriptor(runtimeEnv, key)
                 if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
                     || descriptor.value !== undefined && (typeof descriptor.value !== 'string'

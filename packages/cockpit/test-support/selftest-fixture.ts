@@ -125,12 +125,17 @@ capabilities = [${capabilities.join(', ')}]
         }))
     }
 
-    async function fakeHarnesses(root: string, sensitiveOutput: boolean | 'partial' | 'deep' = false): Promise<string> {
+    // With `signIn`, each tool behaves like a signed-in CLI: it reads its sign-in from a file under
+    // HOME and answers "Not logged in" without one, and it fails outright if the parent's
+    // SYNTHETIC_TOKEN reached it.
+    async function fakeHarnesses(root: string, sensitiveOutput: boolean | 'partial' | 'deep' = false, signIn = false): Promise<string> {
         const bin = join(root, 'harness-bin')
         await mkdir(bin)
         const script = `#!${process.execPath}
 const fs = require('node:fs')
 const args = process.argv.slice(2)
+${signIn ? `if (process.env.SYNTHETIC_TOKEN !== undefined) { process.stderr.write('SYNTHETIC_TOKEN_VISIBLE\\n'); process.exit(3) }
+if (!process.env.HOME || !fs.existsSync(require('node:path').join(process.env.HOME, '.synthetic-sign-in'))) { process.stderr.write('Not logged in\\n'); process.exit(1) }` : ''}
 if (args[0] === '--version') process.stdout.write(${JSON.stringify(sensitiveOutput === true ? 'token=version-canary\n' : 'synthetic 1.0.0\n')})
 else if (args[0] === '--help') process.stdout.write('synthetic help\\n')
 else {
