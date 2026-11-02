@@ -4,41 +4,55 @@
 
 This generated index is for users choosing the command that owns their next operation. The command table supplies this list.
 
+## Set up
+
 - `cockpit init`: Preview, then accept, a first cockpit setup for one agent tool.
 - `cockpit document`: Draft cockpit.toml from an existing cockpit, marking every inferred value.
-- `cockpit registry-resolve`: Turn a validated shell registry into data shell scripts can source.
 - `cockpit setup`: Clone or locate the declared sibling repositories and link them.
+- `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
+- `cockpit registry-resolve`: Turn a validated shell registry into data shell scripts can source.
+- `cockpit upgrade` (experimental): Show the steps to upgrade cockpit without applying them.
+
+## Generate and verify
+
 - `cockpit sync`: Write the generated stack and agent files from cockpit.toml.
 - `cockpit check`: Report generated files that no longer match cockpit.toml.
 - `cockpit selftest`: Test whether agent tools enforce the generated controls.
-- `cockpit upgrade` (experimental): Show the steps to upgrade cockpit without applying them.
+
+## Run the stack
+
+- `cockpit runtime`: Measure the local container runtime (runtime measure) and record the result for this machine.
 - `cockpit up`: Start or resume the declared environment.
-- `cockpit sleep`: Release this checkout and stop the stack if no other holder remains.
+- `cockpit preflight`: Check that the environment is healthy and ready for work.
 - `cockpit session`: Keep the environment available for one command, then release it.
+- `cockpit logs`: Show recent logs for one declared service.
+- `cockpit sleep`: Release this checkout and stop the stack if no other holder remains.
 - `cockpit down`: Stop and remove the stack (on the active local Docker context).
 - `cockpit reset`: Preview a reset, or approve that exact preview interactively (on the active local Docker context).
-- `cockpit runtime`: Measure the local container runtime (runtime measure) and record the result for this machine.
-- `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
-- `cockpit preflight`: Check that the environment is healthy and ready for work.
+
+## Diagnose
+
 - `cockpit doctor`: Report environment problems without changing anything.
-- `cockpit logs`: Show recent logs for one declared service.
 - `cockpit baseline-record` (experimental): Record an explicitly confirmed environment baseline.
-- `cockpit work-intake` (experimental): Prepare a work order from its source document.
-- `cockpit work-status` (experimental): Report current work-order state.
-- `cockpit work-accept` (experimental): Interactively accept the exact current work order.
-- `cockpit work-renew` (experimental): Interactively renew a changed work-order contract.
-- `cockpit work-resume` (experimental): Resume the next executable step of the single active work order.
-- `cockpit work-recover` (experimental): Inspect or explicitly recover one interrupted work lock.
-- `cockpit work-execute` (experimental): Execute one accepted work-order step.
-- `cockpit work-record` (experimental): Persist current work-order progress.
-- `cockpit work-review` (experimental): Review the current accepted work order.
-- `cockpit work-sweep` (experimental): Inspect or apply a reversible work-order sweep.
-- `cockpit work-reverse` (experimental): Reverse a recorded work-order sweep.
-- `cockpit work-programme-mint` (experimental): Mint the next declared programme work order.
-- `cockpit work-metrics` (experimental): Report work-order metrics.
-- `cockpit work-grade` (experimental): Independently grade the current accepted work order.
-- `cockpit browser-drive` (experimental): Drive the declared application browser surfaces.
-- `cockpit browser-accessibility` (experimental): Collect accessibility observations from the application.
-- `cockpit browser-screenshot` (experimental): Capture the declared application surfaces.
-- `cockpit browser-debugger` (experimental): Prepare an explicitly requested browser debugger.
+
+## Test and grade
+
 - `cockpit test-run`: Run a declared product test gate and report which tests it selected.
+- `cockpit work intake` (experimental): Prepare a work order from its source document.
+- `cockpit work status` (experimental): Report current work-order state.
+- `cockpit work accept` (experimental): Interactively accept the exact current work order.
+- `cockpit work renew` (experimental): Interactively renew a changed work-order contract.
+- `cockpit work resume` (experimental): Resume the next executable step of the single active work order.
+- `cockpit work recover` (experimental): Inspect or explicitly recover one interrupted work lock.
+- `cockpit work execute` (experimental): Execute one accepted work-order step.
+- `cockpit work record` (experimental): Persist current work-order progress.
+- `cockpit work review` (experimental): Review the current accepted work order.
+- `cockpit work sweep` (experimental): Inspect or apply a reversible work-order sweep.
+- `cockpit work reverse` (experimental): Reverse a recorded work-order sweep.
+- `cockpit work programme-mint` (experimental): Mint the next declared programme work order.
+- `cockpit work metrics` (experimental): Report work-order metrics.
+- `cockpit work grade` (experimental): Independently grade the current accepted work order.
+- `cockpit browser drive` (experimental): Drive the declared application browser surfaces.
+- `cockpit browser accessibility` (experimental): Collect accessibility observations from the application.
+- `cockpit browser screenshot` (experimental): Capture the declared application surfaces.
+- `cockpit browser debugger` (experimental): Prepare an explicitly requested browser debugger.

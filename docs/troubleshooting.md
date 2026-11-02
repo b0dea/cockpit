@@ -606,8 +606,8 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `UPGRADE_SOURCE_INVALID` | see the message |
 | `UPGRADE_VERSION_AMBIGUOUS` | see the message |
 | `WORK_APPLICATION_REFUSED` | see the message |
-| `WORK_EXECUTION_PAUSED` | read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work-execute --config <your cockpit.toml> --work-order <id> --approach <text> |
-| `WORK_GRADE_UNSATISFIED` | read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work-grade --config <your cockpit.toml> --work-order <id> |
+| `WORK_EXECUTION_PAUSED` | read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work execute --config <your cockpit.toml> --work-order <id> --approach <text> |
+| `WORK_GRADE_UNSATISFIED` | read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id> |
 | `WORK_OPERATOR_REQUIRED` | see the message |
 | `WO_ACCEPTANCE_DECLINED` | see the message |
 | `WO_ACCEPTANCE_INVALID` | see the message |
