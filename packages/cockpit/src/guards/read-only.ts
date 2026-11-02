@@ -196,10 +196,13 @@ export function cockpitLauncherPrefix(executable: string, argv: readonly string[
 
 const COCKPIT_READ_VERBS = set('check', 'doctor')
 
-// Help and version print and exit before any command runs; `<verb> --help` does the same.
+// Help and version print and exit before any command runs; `<verb> --help` and, for a command
+// group, `<group> <subcommand> --help` do the same.
 function cockpit(argv: readonly string[]): Classified {
     if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '--version')
-        || argv.length === 2 && argv[1] === '--help' && /^[a-z][a-z-]*$/.test(argv[0]!)) return { reads: [], trees: [], listings: [] }
+        || argv.length >= 2 && argv.length <= 3 && argv.at(-1) === '--help' && argv.slice(0, -1).every(word => /^[a-z][a-z-]*$/.test(word))) {
+        return { reads: [], trees: [], listings: [] }
+    }
     const [verb, ...rest] = argv
     if (verb === undefined || !COCKPIT_READ_VERBS.has(verb)) return undefined
     const parsed = parseOptions(rest, { flags: set('--json'), values: set('--config'), fileValues: set('--config') })

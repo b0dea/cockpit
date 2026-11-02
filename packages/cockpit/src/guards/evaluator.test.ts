@@ -523,7 +523,7 @@ describe('built-in read-only profile', () => {
             candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script])] })
         const decideLaunched = (command: string, configured = launched(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
         for (const command of ['cockpit check', 'npx --no cockpit doctor --config cockpit.toml', 'npx --no cockpit check --json', 'npx --no -- cockpit --help',
-            'npx --no -- cockpit --version', 'npx --no cockpit session --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`]) {
+            'npx --no -- cockpit --version', 'npx --no cockpit session --help', 'npx --no cockpit work intake --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`]) {
             expect(decideLaunched(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
             expect(decideLaunched(command, { ...launched(), cockpitLaunchers: [] }).decision, command).toBe('ask')
         }
