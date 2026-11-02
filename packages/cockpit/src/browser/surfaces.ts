@@ -19,7 +19,7 @@ import { assertBrowserArtifactRegistration, assertBrowserStorageStateCurrent, br
 export const mechanism = {
     id: 'browser-surfaces',
     module: 'packages/cockpit/src/browser/surfaces.ts',
-    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'validateBrowserNativeReceipt', 'withBrowserProjectOperationAdmission'],
+    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'measuredBrowserHarnessVersions', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'validateBrowserNativeReceipt', 'withBrowserProjectOperationAdmission'],
 } as const
 
 export type BrowserTestPackage = Readonly<{
