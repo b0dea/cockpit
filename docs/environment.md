@@ -663,7 +663,10 @@ Run the declared flow in this order. Replace the two `*-gate-id` placeholders wi
 ```
 
 The first `up` applies the default data mode. Reset previews exactly which data and auth files it
-will remove; only the interactive command applies that preview. The second `up` reseeds, the first
+will remove; only the interactive command applies that preview. The second `up` reseeds: a
+product-data volume created after the data mode was last applied, whether `reset`, a
+`docker volume prune` or a runtime reset removed the old one, holds none of that data, so `up`
+applies the default data mode again rather than only rerunning its read-only probes. The first
 product gate mints one signed-in state per persona, and the second proves both an allowed and a
 denied operation. Running only part of a gate is PARTIAL, never a pass of the whole gate.
 
