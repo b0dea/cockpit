@@ -4,7 +4,7 @@ import { hasErrorCode, snapshotJson, type JsonSnapshot, type JsonSnapshotObject 
 
 export const mechanism = {
     id: 'guard-invocation-parser', module: 'packages/cockpit/src/guards/invocation-parser.ts',
-    exports: ['GUARD_INPUT_LIMITS', 'parseGuardInput', 'isParsedGuardInput'],
+    exports: ['GUARD_INPUT_LIMITS', 'parseGuardInput', 'isParsedGuardInput', 'shownGuardWord'],
 } as const
 
 export const GUARD_INPUT_LIMITS = Object.freeze({ inputBytes: 65_536, invocations: 256, words: 4_096, wordBytes: 4_096, paths: 256, pathBytes: 4_096 })
@@ -42,9 +42,10 @@ export function isParsedGuardInput(value: unknown): value is Extract<GuardParseR
 }
 
 class ParseFailure extends Error {}
+const shown = (word: string) => shownGuardWord(word)
 function refuse(reason: string): never { throw new ParseFailure(reason) }
 /** A word as a refusal quotes it: JSON-escaped, with the controls a harness rejects in a reason escaped too, and bounded. */
-function shown(word: string): string {
+export function shownGuardWord(word: string): string {
     const characters = [...word]
     const quoted = JSON.stringify(characters.length > 80 ? `${characters.slice(0, 80).join('')}…` : word)
     return quoted.replace(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
@@ -296,6 +297,8 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
     let cwds = [cwd]
     let fallback: string[] | undefined
     let previous: string | undefined
+    // A list ending in `&` runs in a background subshell, so its cd moves nothing after it.
+    let list = { cwds, fallback }
     const append = (item: ParsedInvocation) => {
         if (result.length === GUARD_INPUT_LIMITS.invocations) refuse('Guard invocation limit exceeded.')
         result.push(item)
@@ -312,10 +315,12 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
             cwds = moved
         } else if (current.length) for (const directory of cwds) append(invocation(current, directory, definitions))
         current = []
-        if (separator !== undefined && !['&&', '|', '&'].includes(separator) && fallback) {
+        if (separator === '&') ({ cwds, fallback } = list)
+        else if (separator !== undefined && !['&&', '||', '|'].includes(separator) && fallback) {
             cwds = fallback
             fallback = undefined
-        }
+        } else if (separator === '||' && fallback) cwds = fallback
+        if (separator !== undefined && !['&&', '||', '|'].includes(separator)) list = { cwds, fallback }
         previous = separator
     }
     for (let i = 0; i < tokens.length; i++) {
@@ -330,6 +335,10 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
             let depth = 1
             while (++i < tokens.length && depth) {
                 const item = tokens[i]
+                // A brace is a reserved word only where a command starts; elsewhere bash reads it as an
+                // argument, so counting it would hide the commands after the body inside it.
+                if (item.kind === 'op' && ['{', '}'].includes(item.value)
+                    && !(tokens[i - 1]?.kind === 'op' && ['{', '}', ';', '\n', '&&', '||', '|', '&'].includes(tokens[i - 1]!.value))) refuse('Unsupported function body.')
                 if (item.kind === 'op' && item.value === '{') depth++
                 if (item.kind === 'op' && item.value === '}') depth--
                 body.push({ role: 'definition', value: item.value })

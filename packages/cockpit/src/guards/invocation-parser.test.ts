@@ -66,6 +66,7 @@ describe('guard invocation capture', () => {
         expect(at('cd ./api && npm test || git status')).toEqual([[null, `${root}/api`], ['npm', `${root}/api`], ['git', root], ['git', `${root}/api`]])
         expect(at('cd /workspace/other && cd ../project/web && ls')).toEqual([[null, '/workspace/other'], [null, `${root}/web`], ['ls', `${root}/web`]])
         expect(at('cd .. && ls')).toEqual([[null, '/workspace'], ['ls', '/workspace']])
+        expect(at('cd ./api && pwd & ls; cat x')).toEqual([[null, `${root}/api`], ['pwd', `${root}/api`], ['ls', root], ['cat', root]])
         expect(at('cd api && ls')).toEqual(expect.stringContaining('may resolve through CDPATH'))
         for (const command of ['cd && ls', 'cd - && ls', 'cd ./a ./b', 'cd "$HOME" && ls', 'cd ~/a && ls', 'cd ./a | ls', 'ls | cd ./a', 'cd ./a & ls',
             'CDPATH=/x cd ./a', 'command cd ./a', 'cd ./a > out']) {
@@ -83,6 +84,12 @@ describe('guard invocation capture', () => {
             expect(parseGuardInput(input).status).toBe('unavailable')
         }
         expect(touched).toBe(false)
+    })
+
+    it('counts a function body brace only where a command starts, as the shell does', () => {
+        // bash reads `echo {` as an argument, so the body ends at the first `}` and `rm` runs.
+        expect(parseGuardInput(shellPayload('f() { echo { ; }; rm -rf ./src; echo }'))).toEqual({ status: 'unavailable', reason: 'Unsupported function body.' })
+        expect(parseGuardInput(shellPayload('f() { { echo a; }; }; printf ok')).status).toBe('parsed')
     })
 
     it('refuses malformed bytes, JSON and unpaired surrogates', () => {

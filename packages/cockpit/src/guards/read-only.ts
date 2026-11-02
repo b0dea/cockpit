@@ -289,7 +289,7 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
         classified && { cwd: invocation.cwd, ...classified, reads: [...classified.reads, ...inputs] }
     const access = classify(invocation, environment, shape, inputs)
     // `$?` expands to digits the guard cannot see, so a path holding it is unproven.
-    return invocation.expandsStatus && access && [...access.reads, ...access.trees, ...access.listings, ...access.requires ?? []].some(path => path.includes('$?'))
+    return invocation.expandsStatus && access && [access.cwd, ...access.reads, ...access.trees, ...access.listings, ...access.requires ?? []].some(path => path.includes('$?'))
         ? undefined : access
 }
 
@@ -298,8 +298,10 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
     const argv = invocation.argv
     if (environment.cockpit) return shape(cockpit(environment.cockpit))
     switch (invocation.executable) {
-        // Both print their arguments and touch no file; `printf -v` only assigns a shell variable.
-        case 'echo': case 'printf': return shape({ reads: [], trees: [], listings: [] })
+        // Both print their arguments and touch no file. `printf -v` assigns any variable, PATH and HOME
+        // included, and evaluates an array subscript, so printf is read-only only without options.
+        case 'echo': return shape({ reads: [], trees: [], listings: [] })
+        case 'printf': return argv[0] !== undefined && !argv[0].startsWith('-') ? shape({ reads: [], trees: [], listings: [] }) : undefined
         case 'sed': return shape(sed(argv))
         case 'pwd': return argv.length === 0 || argv.length === 1 && ['-L', '-P'].includes(argv[0]!) ? shape({ reads: [], trees: [], listings: [] }) : undefined
         case 'ls': {

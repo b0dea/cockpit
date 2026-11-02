@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { GUARD_INPUT_LIMITS, isParsedGuardInput, type ParsedInvocation } from './invocation-parser.js'
+import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
@@ -752,7 +752,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
-            hold(unavailable('Guard path escapes configured roots.'))
+            hold(unavailable('Guard path escapes configured roots. A path or working directory in this command is outside every root this cockpit manages, '
+                + 'which the guard does not judge: work inside the cockpit, or a person runs the command.'))
             return
         }
         const evidence = resolvedEvidence(request)
@@ -851,7 +852,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (kind !== 'listing' && protectedRead) hold(readDenial)
             if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
                 safe = false
-                searchBlocker ??= ask(`${path} is outside the configured roots, where the guard cannot prove it holds no secret. Read a copy inside the cockpit, or a person approves it.`)
+                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. Read a copy inside the cockpit, or a person approves it.`)
                 return
             }
             pathCount++
@@ -945,8 +946,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const cockpit = provenCockpit(invocation)
         return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
     }))
-    // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it.
-    const chainReadOnly = [...accesses].every(([invocation, access]) => invocation.executable === null || access !== undefined)
+    // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
+    const chainReadOnly = [...accesses].every(([invocation, access]) => access !== undefined
+        || invocation.executable === null && !invocation.redirects.some((redirect) => redirect.write))
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {
@@ -1031,7 +1033,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                     if (['-A', '--all', '-u', '--update'].includes(arg)) {
                         // These forms can stage an instance even without a literal operand.
                         inspectPath({ path: '.', cwd: git.cwd, operation: 'stage' })
-                    } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option.'))
+                    } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
                 } else {
                     operands++
                     pathCount++
