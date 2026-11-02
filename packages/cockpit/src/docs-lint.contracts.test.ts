@@ -128,9 +128,9 @@ describe('runtime evidence', () => {
             const runtime = validateRuntimeEvidence({ root: fixture.root, path: 'runtime.json', expectedFixedPoint: fixture.base, candidate: fixture.head }).join('\n')
             expect(runtime).toContain('[DOCEV060_JSON_INVALID] runtime.json is not valid JSON; expected one JSON object')
             writeJson(join(fixture.root, 'manifest.json'), fixture.manifest)
-            writeFileSync(join(fixture.root, 'review.md'), `# Review\n\n\`\`\`review-evidence\n{\n  "token": "${canary}",,\n}\n\`\`\`\n`)
+            writeFileSync(join(fixture.root, 'review.md'), `# Review\n\n\`\`\`review-evidence\n\n{\n  "token": "${canary}",,\n}\n\`\`\`\n`)
             const review = validateReviewReports({ root: fixture.root, manifestPath: 'manifest.json', reviewPaths: ['review.md'], expectedFixedPoint: fixture.base, candidate: fixture.head }).join('\n')
-            expect(review).toContain('[DOCEV060_JSON_INVALID] review.md is not valid JSON at line 5; expected one JSON object')
+            expect(review).toContain('[DOCEV060_JSON_INVALID] review.md is not valid JSON at line 6; expected one JSON object')
             // The parser quotes only a short window of input, so the check looks for the prefix.
             expect(`${runtime}\n${review}`).not.toContain('CANARY')
         } finally {

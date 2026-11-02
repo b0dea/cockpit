@@ -942,8 +942,8 @@ function parseJsonObject(text, path, firstLine = 1) {
 
 // The body of a block, and the file line its first body line sits on.
 function fencedJsonBlocks(body, label) {
-    return [...body.matchAll(new RegExp('```' + label + '\\s*\\n([\\s\\S]*?)\\n```', 'g'))]
-        .map(match => ({ text: match[1], firstLine: body.slice(0, match.index).split('\n').length + 1 }))
+    return [...body.matchAll(new RegExp('```' + label + '\\s*\\n([\\s\\S]*?)\\n```', 'dg'))]
+        .map(match => ({ text: match[1], firstLine: body.slice(0, match.indices[1][0]).split('\n').length }))
 }
 
 function readText(path, root, code) {
