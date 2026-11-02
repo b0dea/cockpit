@@ -148,6 +148,88 @@ async function fixture() {
     return { root, prior, publicationFor }
 }
 
+type SchemaNode = Readonly<Record<string, unknown>>
+const isNode = (value: unknown): value is SchemaNode => value !== null && typeof value === 'object' && !Array.isArray(value)
+const isTable = (value: unknown): boolean => isNode(value) && isNode(value.properties)
+
+/**
+ * Reads the configuration reference back against the schema it was rendered from, and returns
+ * every schema property, constraint, rule and runtime check the page lost. It follows the page's
+ * links, so a table rendered once as a shared shape is checked at every place that uses it.
+ */
+function configurationReferenceGaps(page: string, schema: SchemaNode): string[] {
+    const anchor = (heading: string) => heading.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
+    const sections = new Map(page.split(/^#{2,3} /m).slice(1).map(part => [anchor(part.slice(0, part.indexOf('\n'))), part.slice(part.indexOf('\n') + 1)]))
+    const cells = (line: string) => line.split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim().replaceAll('\\|', '|'))
+    const rowsOf = (body: string) => body.split('\n').filter(line => line.startsWith('| `')).map(cells)
+    const patterns = new Map((sections.get('patterns') ?? '').split('\n').filter(line => /^\| P\d+ \|/.test(line)).map(cells)
+        .map(([name, regex]) => [regex!.slice(1, -1), name!]))
+    const gaps: string[] = []
+    const expectText = (text: string, needle: string, where: string, what: string) => { if (!text.includes(needle)) gaps.push(`${where}: ${what} ${needle} is missing`) }
+    const expectNumber = (text: string, value: number, where: string, what: string) => {
+        if (!new RegExp(`(?<![\\w.])${String(value).replace('.', '\\.')}(?![\\w.])`).test(text)) gaps.push(`${where}: ${what} ${value} is missing`)
+    }
+    const variants = (node: SchemaNode) => {
+        const branches = Array.isArray(node.anyOf) ? node.anyOf : Array.isArray(node.oneOf) ? node.oneOf : []
+        return !isTable(node) && branches.length > 0 && branches.every(isTable) ? branches as SchemaNode[] : undefined
+    }
+    const facts = (node: SchemaNode, row: string, where: string) => {
+        if (node.default !== undefined) expectText(row, JSON.stringify(node.default), where, 'default')
+        if (typeof node.description === 'string') expectText(row, node.description, where, 'description')
+        if (isTable(node) || variants(node)) return
+        for (const key of ['minLength', 'maxLength', 'minimum', 'maximum', 'minItems', 'maxItems']) {
+            if (typeof node[key] === 'number') expectNumber(row, node[key] as number, where, key)
+        }
+        if (node.exclusiveMinimum === true) expectText(row, `greater than ${node.minimum}`, where, 'exclusiveMinimum')
+        if (node.uniqueItems === true) expectText(row, 'unique items', where, 'uniqueItems')
+        if (typeof node.format === 'string') expectText(row, `\`${node.format}\``, where, 'format')
+        if (Array.isArray(node.enum)) for (const literal of node.enum) expectText(row, `\`${JSON.stringify(literal)}\``, where, 'enum value')
+        if (typeof node.pattern === 'string' && !row.includes(`\`${node.pattern}\``)) {
+            expectText(row, `[${patterns.get(node.pattern) ?? 'an inline or named pattern'}](#patterns)`, where, 'pattern')
+        }
+        if (node.not !== undefined) expectText(row, JSON.stringify(node.not), where, 'not')
+        for (const keyword of ['allOf', 'anyOf', 'oneOf']) {
+            if (Array.isArray(node[keyword])) for (const branch of node[keyword] as SchemaNode[]) facts(branch, row, where)
+        }
+        if (isNode(node.items)) facts(node.items, row, `${where}[]`)
+        if (isNode(node.additionalProperties)) facts(node.additionalProperties, row, `${where}.*`)
+    }
+    const table = (node: SchemaNode, id: string, where: string) => {
+        const body = sections.get(id)
+        if (body === undefined) { gaps.push(`${where}: no section #${id}`); return }
+        for (const rule of Array.isArray(node.allOf) ? node.allOf : []) expectText(body, JSON.stringify(rule), where, 'allOf rule')
+        for (const keyword of ['anyOf', 'oneOf', 'not']) if (node[keyword] !== undefined) expectText(body, JSON.stringify(node[keyword]), where, `${keyword} rule`)
+        if (node.additionalProperties !== false) expectText(body, node.additionalProperties === undefined ? 'Accepts keys this table does not list'
+            : JSON.stringify(node.additionalProperties), where, 'additionalProperties')
+        const rows = rowsOf(body)
+        const required = new Set(Array.isArray(node.required) ? node.required : [])
+        for (const [key, child] of Object.entries(node.properties as SchemaNode)) {
+            const path = where === '' ? key : `${where}.${key}`
+            const matches = rows.filter(row => row[0] === `\`${key}\``)
+            if (matches.length !== 1 || !isNode(child)) { gaps.push(`${path}: expected one row in #${id}, found ${matches.length}`); continue }
+            const row = matches[0]!.join(' | ')
+            if (required.has(key)) expectText(matches[0]![3]!, 'required', path, 'required')
+            const nested = isTable(child) ? [child] : isTable(child.items) ? [child.items as SchemaNode] : variants(child) ?? (isNode(child.items) ? variants(child.items) : undefined) ?? []
+            const links = [...matches[0]![1]!.matchAll(/\]\(#([^)]+)\)/g)].map(match => match[1]!)
+            if (links.length !== nested.length) gaps.push(`${path}: links ${links.length} tables, expected ${nested.length}`)
+            nested.forEach((branch, index) => table(branch, links[index] ?? '', path))
+            facts(child, row, path)
+        }
+    }
+    table(schema, 'top-level-keys', '')
+    const checks = rowsOf(sections.get('checks-beyond-the-schema') ?? '')
+    const editor = schema['x-cockpit-editor-limitations'] as readonly SchemaNode[]
+    for (const check of schema['x-cockpit-runtime-checks'] as readonly SchemaNode[]) {
+        const where = `${String(check.path)} ${String(check.rule)}`
+        const row = checks.find(cells => cells[0] === `\`${String(check.path)}\`` && cells[1]!.startsWith(`\`${String(check.rule)}\``))
+        if (!row) { gaps.push(`${where}: runtime check is missing`); continue }
+        if (check.limit !== undefined) expectNumber(row[1]!, check.limit as number, where, 'limit')
+        const limited = editor.some(entry => entry.path === check.path && entry.rule === check.rule)
+        if ((row[2] === 'yes') !== limited) gaps.push(`${where}: editor limitation is ${limited ? 'unmarked' : 'marked wrongly'}`)
+    }
+    return gaps
+}
+
 describe('reference generation', () => {
     it('renders captured repository sources for committed collection, displacement and entrypoints', () => {
         const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
@@ -297,7 +379,10 @@ describe('reference generation', () => {
         expect(commandSection('sync', 'check')).toContain('| `--adopt` | string | unset |')
         expect(commandSection('up', 'sleep')).toContain('Start or resume the declared environment.')
         expect(commandSection('test-run')).toContain('| `--gate` | string | unset |')
-        expect(first.files[1]!.bytes).toContain(renderCockpitSchema().trim())
+        // The JSON Schema is linked, not inlined: inlined, it was nearly all of an 11,000-line page.
+        expect(first.files[1]!.bytes).toContain('[`cockpit.schema.json`](../packages/cockpit/cockpit.schema.json)')
+        expect(first.files[1]!.bytes).not.toContain('"$schema"')
+        expect(configurationReferenceGaps(first.files[1]!.bytes, JSON.parse(renderCockpitSchema()) as SchemaNode)).toEqual([])
         expect(first.files[1]!.bytes).toContain(String(configurationDefaults().cockpit.guide_cap))
         expect(first.files[1]!.bytes).toContain(skills.source.sha256)
         expect(first.files[1]!.bytes).toContain('is read on demand and has no size limit')

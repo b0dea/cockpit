@@ -351,6 +351,226 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + '\n## Without a measurement\n\n' + unmeasured.join('')
 }
 
+type SchemaNode = Readonly<Record<string, unknown>>
+const isNode = (value: unknown): value is SchemaNode => value !== null && typeof value === 'object' && !Array.isArray(value)
+const isTable = (node: SchemaNode) => isNode(node.properties)
+// Alternatives that are each a whole table, such as the two forms of a guard deny rule.
+const variantsOf = (node: SchemaNode) => {
+    const keyword = (['anyOf', 'oneOf'] as const).find(name => Array.isArray(node[name]))
+    const branches = keyword === undefined ? [] : node[keyword] as unknown[]
+    return !isTable(node) && branches.length > 0 && branches.every(branch => isNode(branch) && branch.type === 'object' && isTable(branch))
+        ? branches as SchemaNode[] : undefined
+}
+// A table's default and description belong to the field that holds it, so they are left out of the
+// identity that decides whether two tables are the same shape.
+const shapeIdentity = (node: SchemaNode) => JSON.stringify(Object.fromEntries(Object.entries(node).filter(([key]) => key !== 'default' && key !== 'description')))
+const inlineCode = (value: string) => {
+    const text = value.replaceAll('\n', ' ').replaceAll('\r', ' ')
+    const fence = '`'.repeat(Math.max(0, ...[...text.matchAll(/`+/g)].map(run => run[0].length)) + 1)
+    return fence.length > 1 || text.startsWith('`') || text.endsWith('`') ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`
+}
+// GFM splits table cells on every unescaped pipe, even inside code; outside a table the escape would show.
+const tableCode = (value: string) => inlineCode(value.replaceAll('|', '\\|'))
+const json = (value: unknown) => tableCode(JSON.stringify(value))
+const SCALAR_KEYWORDS = new Set(['type', 'enum', 'default', 'description', 'format', 'pattern', 'minLength', 'maxLength', 'minimum', 'maximum',
+    'exclusiveMinimum', 'minItems', 'maxItems', 'uniqueItems', 'items', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not'])
+const TABLE_KEYWORDS = new Set(['type', 'properties', 'required', 'additionalProperties', 'default', 'description', 'allOf', 'anyOf', 'oneOf', 'not'])
+const ROOT_KEYWORDS = new Set([...TABLE_KEYWORDS, '$schema', 'x-cockpit-runtime-checks', 'x-cockpit-editor-limitations'])
+// Long patterns that recur are listed once and cited by name; a short one reads better inline.
+const INLINE_PATTERN_LENGTH = 40
+const CONFIGURATION_HEADINGS = ['Configuration reference', 'Defaults', 'Tables', 'Shapes', 'Patterns', 'Checks beyond the schema', 'Skill size limits']
+
+/**
+ * Renders the JSON Schema as one table per TOML table. A table shape that recurs, such as the probe
+ * and provenance tables the generated environment repeats dozens of times, is rendered once and
+ * linked, as is a long recurring pattern. Inlining the schema made the page about 11,000 lines, and
+ * every keyword the schema uses is rendered: an unknown one refuses rather than disappearing.
+ */
+function renderConfigurationTables(schema: SchemaNode): string {
+    const shapes = new Map<string, { names: string[]; name?: string }>()
+    const discover = (node: SchemaNode, name: string) => {
+        if (isTable(node)) {
+            const known = shapes.get(shapeIdentity(node))
+            if (known) { known.names.push(name); return }
+            shapes.set(shapeIdentity(node), { names: [name] })
+            for (const [key, child] of Object.entries(node.properties as SchemaNode)) if (isNode(child)) discover(child, key)
+        }
+        if (isNode(node.items)) discover(node.items, name)
+        for (const branch of variantsOf(node) ?? []) discover(branch, name)
+    }
+    for (const [key, child] of Object.entries(schema.properties as SchemaNode)) if (isNode(child)) discover(child, key)
+    const shapeNames = new Set<string>()
+    for (const shape of shapes.values()) {
+        if (shape.names.length < 2) continue
+        const counts = new Map<string, number>()
+        for (const name of shape.names) counts.set(name, (counts.get(name) ?? 0) + 1)
+        const name = [...counts].reduce((best, entry) => entry[1] > best[1] ? entry : best)[0]
+        // A second shape under a taken name is rendered in place: a numbered name tells the reader nothing.
+        if (shapeNames.has(name)) continue
+        shapeNames.add(name)
+        shape.name = name
+    }
+
+    const patternUses = new Map<string, number>()
+    const countPatterns = (value: unknown): void => {
+        if (Array.isArray(value)) { value.forEach(countPatterns); return }
+        if (!isNode(value)) return
+        if (typeof value.pattern === 'string') patternUses.set(value.pattern, (patternUses.get(value.pattern) ?? 0) + 1)
+        for (const [key, child] of Object.entries(value)) if (key !== 'enum' && key !== 'default' && !key.startsWith('x-')) countPatterns(child)
+    }
+    countPatterns(schema)
+    const patternNames = new Map([...patternUses].filter(([pattern, uses]) => uses > 1 && pattern.length > INLINE_PATTERN_LENGTH)
+        .map(([pattern], index) => [pattern, `P${index + 1}`]))
+    const pattern = (value: string) => patternNames.has(value) ? `[${patternNames.get(value)}](#patterns)` : tableCode(value)
+
+    interface Described { readonly type: string; readonly facts: readonly string[] }
+    const sections: string[] = []
+    const shapeSections = new Map<string, string[]>()
+    // GitHub numbers a repeated heading's anchor, which would silently retarget every link to it.
+    const anchors = new Set(CONFIGURATION_HEADINGS.map(headingAnchor))
+    const unknownKeyword = (node: SchemaNode, allowed: ReadonlySet<string>, where: string) => {
+        const unknown = Object.keys(node).find(key => !allowed.has(key))
+        if (unknown !== undefined) throw new Error(`the configuration reference cannot render schema keyword ${unknown} at ${where}`)
+    }
+    const bounds = (low: unknown, high: unknown, unit: string) => {
+        const units = (count: unknown) => unit === '' ? '' : ` ${unit}${count === 1 ? '' : 's'}`
+        if (low === undefined && high === undefined) return []
+        if (low !== undefined && high !== undefined) return [low === high ? `exactly ${low}${units(low)}` : `${low}–${high}${units(high)}`]
+        return [low !== undefined ? `at least ${low}${units(low)}` : `at most ${high}${units(high)}`]
+    }
+    const rules = (node: SchemaNode) => [
+        ...(Array.isArray(node.allOf) ? node.allOf.map(rule => `- Must match ${inlineCode(JSON.stringify(rule))}.\n`) : []),
+        ...(Array.isArray(node.anyOf) ? [`- Must match at least one of ${inlineCode(JSON.stringify(node.anyOf))}.\n`] : []),
+        ...(Array.isArray(node.oneOf) ? [`- Must match exactly one of ${inlineCode(JSON.stringify(node.oneOf))}.\n`] : []),
+        ...(node.not === undefined ? [] : [`- Must not match ${inlineCode(JSON.stringify(node.not))}.\n`]),
+        ...(node.additionalProperties === false ? [] : node.additionalProperties === undefined ? ['- Accepts keys this table does not list.\n']
+            : [`- Accepts other keys whose values match ${inlineCode(JSON.stringify(node.additionalProperties))}.\n`]),
+    ]
+    const link = (title: string) => `[${title}](#${headingAnchor(title)})`
+    // Renders one table's section, then the sections of the tables nested in it.
+    const table = (node: SchemaNode, title: string, path: readonly string[], into: string[]) => {
+        unknownKeyword(node, path.length === 0 ? ROOT_KEYWORDS : TABLE_KEYWORDS, title)
+        if (anchors.has(headingAnchor(title))) throw new Error(`the configuration reference would render two headings with the anchor of ${title}`)
+        anchors.add(headingAnchor(title))
+        const required = new Set(Array.isArray(node.required) ? node.required as string[] : [])
+        const properties = node.properties as SchemaNode
+        for (const name of required) if (!(name in properties)) throw new Error(`${title} requires ${name}, which it does not declare`)
+        const nested: string[] = []
+        const rows = Object.entries(properties).map(([key, child]) => {
+            if (!isNode(child)) throw new Error(`${title}.${key} is not a schema`)
+            const described = value(child, [...path, key], false, nested, `${title}.${key}`)
+            const facts = [...(required.has(key) ? ['required'] : []), ...described.facts]
+            return `| ${tableCode(key)} | ${described.type} | ${child.default === undefined ? '' : json(child.default)} | ${facts.join('; ')} |\n`
+        })
+        const tableRules = rules(node)
+        into.push(`### ${title}\n\n| Key | Type | Default | Constraints |\n| --- | --- | --- | --- |\n${rows.join('')}`
+            + (tableRules.length > 0 ? `\n${tableRules.join('')}` : ''), ...nested)
+    }
+    const sectionTitle = (path: readonly string[], array: boolean) => {
+        const shape = path[0]!.startsWith('`')
+        const toml = array ? `[[${path.slice(shape ? 1 : 0).join('.')}]]` : `[${path.slice(shape ? 1 : 0).join('.')}]`
+        return shape ? `${path[0]} shape: ${tableCode(toml)}` : tableCode(toml)
+    }
+    const tableReference = (node: SchemaNode, path: readonly string[], array: boolean, nested: string[]) => {
+        const shape = shapes.get(shapeIdentity(node))
+        if (shape?.name !== undefined) {
+            const title = `${tableCode(shape.name)} shape`
+            if (!shapeSections.has(shape.name)) {
+                const into: string[] = []
+                shapeSections.set(shape.name, into)
+                table(node, title, [tableCode(shape.name)], into)
+            }
+            return link(title)
+        }
+        const title = sectionTitle(path, array)
+        table(node, title, path, nested)
+        return link(title)
+    }
+    // Describes a field's value: its type cell and its constraints. Nested tables add sections.
+    const value = (node: SchemaNode, path: readonly string[], array: boolean, nested: string[], where: string): Described => {
+        if (isTable(node)) return { type: `table: ${tableReference(node, path, array, nested)}`, facts: node.description === undefined ? [] : [String(node.description)] }
+        unknownKeyword(node, SCALAR_KEYWORDS, where)
+        const variants = variantsOf(node)
+        if (variants) {
+            const base = sectionTitle(path, array)
+            const forms = variants.map((branch, index) => {
+                const title = `${base} form ${index + 1}`
+                table(branch, title, path, nested)
+                return link(title)
+            })
+            return { type: `table, one of: ${forms.join(', ')}`, facts: [] }
+        }
+        if (node.exclusiveMinimum !== undefined && node.exclusiveMinimum !== true) throw new Error(`the configuration reference reads exclusiveMinimum only as the draft-04 boolean, at ${where}`)
+        const facts: string[] = []
+        let type = typeof node.type === 'string' ? node.type
+            : Array.isArray(node.enum) ? [...new Set(node.enum.map(literal => typeof literal))].join(' or ') : undefined
+        if (Array.isArray(node.enum)) facts.push(node.enum.length === 1 ? `exactly ${json(node.enum[0])}` : `one of ${node.enum.map(json).join(', ')}`)
+        if (typeof node.format === 'string') facts.push(`format ${tableCode(node.format)}`)
+        if (typeof node.pattern === 'string') facts.push(`pattern ${pattern(node.pattern)}`)
+        facts.push(...bounds(node.minLength, node.maxLength, 'character'))
+        if (node.exclusiveMinimum === true) facts.push(`greater than ${node.minimum}`, ...bounds(undefined, node.maximum, ''))
+        else facts.push(...bounds(node.minimum, node.maximum, ''))
+        facts.push(...bounds(node.minItems, node.maxItems, 'item'))
+        if (node.uniqueItems === true) facts.push('unique items')
+        if (isNode(node.items)) {
+            const item = value(node.items, path, true, nested, `${where}[]`)
+            type = `array of ${item.type}`
+            if (item.facts.length > 0) facts.push(`each item: ${item.facts.join(', ')}`)
+        }
+        if (isNode(node.additionalProperties)) {
+            const entry = value(node.additionalProperties, path, false, nested, `${where}.*`)
+            type = `table of ${entry.type}`
+            facts.push(`any key; each value: ${entry.facts.join(', ')}`)
+        }
+        if (Array.isArray(node.allOf)) for (const branch of node.allOf as SchemaNode[]) {
+            const described = value(branch, path, array, nested, where)
+            type ??= described.type
+            facts.push(...described.facts)
+        }
+        for (const keyword of ['anyOf', 'oneOf'] as const) if (Array.isArray(node[keyword])) {
+            const branches = (node[keyword] as SchemaNode[]).map(branch => value(branch, path, array, nested, where))
+            const types = [...new Set(branches.map(branch => branch.type))]
+            type ??= types.join(' or ')
+            // A branch names its type only where the branches differ in it.
+            const shown = (branch: Described) => types.length === 1 && branch.type === type ? branch.facts : [branch.type, ...branch.facts]
+            facts.push(`${keyword === 'oneOf' ? 'exactly one of' : 'either'} ${branches.map(branch => `(${shown(branch).join(', ')})`).join(' or ')}`)
+        }
+        if (node.not !== undefined) facts.push(`must not match ${json(node.not)}`)
+        if (node.description !== undefined) facts.push(String(node.description))
+        if (type === undefined) throw new Error(`the configuration reference cannot name the type at ${where}`)
+        return { type, facts }
+    }
+
+    table(schema, 'Top-level keys', [], sections)
+    const checks = schema['x-cockpit-runtime-checks'] as readonly Readonly<Record<string, unknown>>[]
+    const editor = schema['x-cockpit-editor-limitations'] as readonly Readonly<Record<string, unknown>>[]
+    const checkKey = (check: Readonly<Record<string, unknown>>) => JSON.stringify([check.path, check.rule])
+    for (const check of [...checks, ...editor]) {
+        if (Object.keys(check).some(key => !['path', 'rule', 'limit'].includes(key))) throw new Error(`the configuration reference cannot render runtime check ${JSON.stringify(check)}`)
+    }
+    if (editor.some(limitation => !checks.some(check => checkKey(check) === checkKey(limitation)))) {
+        throw new Error('every editor limitation must also be a runtime check')
+    }
+    return '## Tables\n\n'
+        + 'Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. '
+        + 'A table accepts only the keys it lists unless its rules below say otherwise. '
+        + 'Rules are JSON Schema fragments that relate several keys of the same table. '
+        + 'A pattern is a regular expression the value must contain a match for; `^` and `$` in it make it cover the whole value. '
+        + 'A type that links to a shape is a table whose keys are listed once, under [Shapes](#shapes).\n\n'
+        + sections.join('\n')
+        + '\n## Shapes\n\nThese tables recur in several places; each place links here instead of repeating the keys.\n\n'
+        + [...shapeSections].sort(([left], [right]) => left.localeCompare(right)).flatMap(([, rendered]) => rendered).join('\n')
+        + '\n## Patterns\n\nLong patterns that several keys share, cited by name in the tables.\n\n'
+        + '| Pattern | Regular expression |\n| --- | --- |\n'
+        + [...patternNames].map(([regex, name]) => `| ${name} | ${tableCode(regex)} |\n`).join('')
+        + '\n## Checks beyond the schema\n\n'
+        + 'cockpit checks these rules when it loads the configuration (`x-cockpit-runtime-checks` in the JSON Schema). '
+        + 'An editor validating against the JSON Schema does not report the ones marked in the last column (`x-cockpit-editor-limitations`).\n\n'
+        + '| Path | Rule | Not reported by editors |\n| --- | --- | --- |\n'
+        + checks.map(check => `| ${tableCode(String(check.path))} | ${tableCode(String(check.rule))}${check.limit === undefined ? '' : ` (limit ${check.limit})`} | `
+            + `${editor.some(limitation => checkKey(limitation) === checkKey(check)) ? 'yes' : ''} |\n`).join('')
+}
+
 export function renderReferences(input: ReferenceInput | CommittedReferenceInput): ReferenceResult {
     try {
         const committed = 'committed' in input ? committedAuthority.get(input.committed) : undefined
@@ -413,16 +633,19 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const guideCosts = ('guideCosts' in input ? input.guideCosts : []).map(cost => cost.status === 'unavailable' ? `- ${cost.target}: unavailable (${cell(cost.reason)}).\n`
             : `- ${cost.target}: ${cost.value}/${cost.cap} ${cost.metric}; ${cost.status}; ${cell(cost.provenance)} (${cost.measuredOn}).\n`).join('')
         const configuration = documentHeading('Configuration reference')
-            + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version.\n\n'
-            + '## Defaults\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
+            + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version. '
+            + 'For the handful of tables a typical cockpit sets, start with [Configuration essentials](configuration-essentials.md).\n\n'
+            + 'The same schema ships as JSON Schema in [`cockpit.schema.json`](../packages/cockpit/cockpit.schema.json), installed at `node_modules/@b0dea/cockpit/cockpit.schema.json`; '
+            + 'point an editor at it for completion and validation as you type.\n\n'
+            + '## Defaults\n\nThe values cockpit uses for a key the configuration leaves out.\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
+            + renderConfigurationTables(JSON.parse(renderCockpitSchema()) as SchemaNode) + '\n'
             + '## Skill size limits\n\n'
             + 'Agent tools load every skill\'s frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. '
             + `The limits come from ${code(sourcePath(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`
             + '| Target | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + caps + '\n'
             + '| Skill entry point | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + entrypoints + '\n'
             + `The procedure ${code(sourcePath(collection.terminal.path))} is read on demand and has no size limit; SHA-256 ${code(collection.terminal.sha256)}.\n\n`
-            + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} limits always-loaded guidance to ${defaults.cockpit.guide_cap} lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.\n\n` + guideCosts
-            + '\n## JSON Schema\n\n```json\n' + renderCockpitSchema().trim() + '\n```\n'
+            + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} limits always-loaded guidance to ${defaults.cockpit.guide_cap} lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.\n` + (guideCosts === '' ? '' : `\n${guideCosts}`)
         const list = documentHeading('Command list')
             + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
             + commandStages.map(stage => `## ${stage.title}\n\n` + commands.filter(command => command.stage === stage.id)
