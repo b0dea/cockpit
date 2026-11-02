@@ -445,7 +445,7 @@ describe('public estate observation', () => {
             answers: [...configuration.answers, answerQuestion(pending.question!, changedDirectory)] } })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH', target: 'sibling',
                 message: 'the sibling answer must declare exactly the repositories init observed (app (dir "app")); it declares app (dir "different-app"), which init did not observe; it omits app (dir "app")',
-                fix: 'declare exactly one sibling per observed repository: slug "app" with dir "app"; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>' }],
+                fix: 'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>' }],
         })
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await documentObservedCommand({ root: canonical, configuration })

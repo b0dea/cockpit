@@ -1088,8 +1088,7 @@ async function completeConfigurationDocument(
                     undeclared.length === 0 ? '' : `; it omits ${undeclared.join(', ')}`}${
                     input.estate === undefined ? '' : '; a cockpit inside or beside a product repository starts with that repository alone'}`,
                 'sibling',
-                `declare exactly one sibling per observed repository: ${estateRunnable
-                    .map(row => `slug ${JSON.stringify(row.slug)} with dir ${JSON.stringify(row.path)}`).join('; ')}; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>`,
+                'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>',
             )
         }
     }
