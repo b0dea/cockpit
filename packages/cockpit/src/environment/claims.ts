@@ -758,8 +758,9 @@ async function observeProcStart(pid: number, host: ProcessHost): Promise<Process
     let stat: string
     try { stat = await host.readFile(`/proc/${pid}/stat`) } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
-        // Signal 0 just found it, so a missing entry means it has exited since.
-        if (code === 'ENOENT') return { state: 'absent' }
+        // Signal 0 just found it, so a missing entry means it exited since, unless this /proc is not
+        // this pid namespace's (unmounted in a chroot or sandbox); only a second signal decides.
+        if (code === 'ENOENT' && await host.presence(pid) === 'absent') return { state: 'absent' }
         return { state: 'unknown', reason: `/proc/${pid}/stat could not be read (${code ?? String(error)})` }
     }
     let bootId: string

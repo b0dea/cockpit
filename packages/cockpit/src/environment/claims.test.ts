@@ -1554,6 +1554,10 @@ describe('dead session holders', () => {
         wallClock = 'Mon Sep  7 11:59:41 2026'
         expect(await release()).toEqual({ kind: 'complete', released: [] })
 
+        // Without a /proc for this pid namespace a running process has no entry; that is not proof it is gone.
+        const withoutProc: ProcessHost = { ...host, readFile: async (path) => { throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' }) } }
+        expect(await observeProcessStart(4242, withoutProc)).toMatchObject({ state: 'unknown' })
+
         processes.set(4242, 123_456)
         expect(await release()).toMatchObject({ kind: 'complete', released: [{ holderId: holderB, pid: 4242 }] })
     })
