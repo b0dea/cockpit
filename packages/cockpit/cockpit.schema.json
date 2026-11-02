@@ -35,10 +35,6 @@
           "default": "..",
           "type": "string"
         },
-        "guide": {
-          "default": "AGENTS.md",
-          "type": "string"
-        },
         "guide_cap": {
           "default": 200,
           "type": "integer",
@@ -190,12 +186,6 @@
                         "enum": [
                           "service",
                           "one-shot"
-                        ]
-                      },
-                      "one_shot_failure": {
-                        "type": "string",
-                        "enum": [
-                          "park"
                         ]
                       },
                       "resources": {
@@ -1563,35 +1553,6 @@
                           }
                         ]
                       }
-                    ],
-                    "oneOf": [
-                      {
-                        "properties": {
-                          "role": {
-                            "enum": [
-                              "one-shot"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "role",
-                          "one_shot_failure"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "role": {
-                            "enum": [
-                              "service"
-                            ]
-                          }
-                        },
-                        "not": {
-                          "required": [
-                            "one_shot_failure"
-                          ]
-                        }
-                      }
                     ]
                   },
                   "checkout_mount": {
@@ -2755,12 +2716,6 @@
           "minimum": 1,
           "maximum": 3
         },
-        "programme_wip_cap": {
-          "default": 1,
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1
-        },
         "verification_timeout_seconds": {
           "default": 1800,
           "description": "Seconds one declared work-order verification command may run before it is stopped and reported as not run.",
@@ -2842,7 +2797,8 @@
                 },
                 "driver_version": {
                   "type": "string",
-                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  "maxLength": 128,
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$"
                 },
                 "architectures": {
                   "minItems": 1,
@@ -2872,7 +2828,8 @@
                 },
                 "driver_version": {
                   "type": "string",
-                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  "maxLength": 128,
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$"
                 }
               },
               "required": [
@@ -3063,7 +3020,8 @@
             },
             "driver_version": {
               "type": "string",
-              "pattern": "^\\d+\\.\\d+\\.\\d+$"
+              "maxLength": 128,
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?$"
             }
           },
           "required": [
@@ -3847,12 +3805,6 @@
                     "enum": [
                       "service",
                       "one-shot"
-                    ]
-                  },
-                  "one_shot_failure": {
-                    "type": "string",
-                    "enum": [
-                      "park"
                     ]
                   },
                   "profiles": {
@@ -5335,35 +5287,6 @@
                       }
                     ]
                   }
-                ],
-                "oneOf": [
-                  {
-                    "properties": {
-                      "role": {
-                        "enum": [
-                          "one-shot"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "role",
-                      "one_shot_failure"
-                    ]
-                  },
-                  {
-                    "properties": {
-                      "role": {
-                        "enum": [
-                          "service"
-                        ]
-                      }
-                    },
-                    "not": {
-                      "required": [
-                        "one_shot_failure"
-                      ]
-                    }
-                  }
                 ]
               }
             },
@@ -6163,12 +6086,6 @@
                           ]
                         }
                       },
-                      "constraints_and_indexes": {
-                        "type": "boolean",
-                        "enum": [
-                          true
-                        ]
-                      },
                       "provenance": {
                         "type": "object",
                         "properties": {
@@ -6253,7 +6170,6 @@
                       "mode",
                       "operations",
                       "probes",
-                      "constraints_and_indexes",
                       "provenance"
                     ],
                     "additionalProperties": false
@@ -6262,39 +6178,9 @@
                 "fixtures": {
                   "type": "object",
                   "properties": {
-                    "writer": {
-                      "type": "string",
-                      "enum": [
-                        "product-models"
-                      ]
-                    },
-                    "stable_key": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 4096,
-                      "pattern": "\\S"
-                    },
-                    "random_seed": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 256
-                    },
-                    "sweep_scope": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 4096,
-                      "pattern": "\\S"
-                    },
                     "persona_source": {
                       "type": "string",
                       "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
-                    },
-                    "identity_owner": {
-                      "type": "string",
-                      "enum": [
-                        "product",
-                        "identity-provider"
-                      ]
                     },
                     "persona_outputs": {
                       "maxItems": 64,
@@ -6332,12 +6218,6 @@
                       "type": "string",
                       "maxLength": 128,
                       "pattern": "^[a-z0-9][a-z0-9-]*$"
-                    },
-                    "default_small": {
-                      "type": "boolean",
-                      "enum": [
-                        true
-                      ]
                     },
                     "pagination_warning": {
                       "type": "string",
@@ -6760,14 +6640,9 @@
                     }
                   },
                   "required": [
-                    "writer",
-                    "stable_key",
-                    "sweep_scope",
                     "persona_source",
-                    "identity_owner",
                     "persona_outputs",
                     "volume_tag",
-                    "default_small",
                     "pagination_warning",
                     "provenance",
                     "volume_operations",
@@ -7755,12 +7630,6 @@
                       }
                     ]
                   },
-                  "normalize_empty": {
-                    "type": "boolean",
-                    "enum": [
-                      true
-                    ]
-                  },
                   "placeholder": {
                     "type": "string",
                     "maxLength": 256,
@@ -8165,11 +8034,6 @@
                   "callback": {
                     "type": "object",
                     "properties": {
-                      "feature_flag": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[A-Z][A-Z0-9_]*$"
-                      },
                       "enable": {
                         "type": "object",
                         "properties": {
@@ -8509,18 +8373,11 @@
                           "sha256": {
                             "type": "string",
                             "pattern": "^[a-f0-9]{64}$"
-                          },
-                          "immutable_raw_bytes": {
-                            "type": "boolean",
-                            "enum": [
-                              true
-                            ]
                           }
                         },
                         "required": [
                           "path",
-                          "sha256",
-                          "immutable_raw_bytes"
+                          "sha256"
                         ],
                         "additionalProperties": false
                       },
@@ -8848,42 +8705,6 @@
                           }
                         ]
                       },
-                      "order": {
-                        "type": "array",
-                        "items": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              "enable"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "timestamp"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "sign"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "dispatch"
-                            ]
-                          }
-                        ],
-                        "additionalItems": false,
-                        "minItems": 4,
-                        "maxItems": 4
-                      },
-                      "verifier_source": {
-                        "type": "string",
-                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
-                      },
                       "tamper_probe": {
                         "type": "object",
                         "properties": {
@@ -9048,15 +8869,12 @@
                       }
                     },
                     "required": [
-                      "feature_flag",
                       "enable",
                       "timestamp_source",
                       "fresh_window_seconds",
                       "fixture",
                       "sign",
                       "dispatch",
-                      "order",
-                      "verifier_source",
                       "tamper_probe"
                     ],
                     "additionalProperties": false
@@ -9549,19 +9367,12 @@
                             ]
                           }
                         ]
-                      },
-                      "verification": {
-                        "type": "string",
-                        "enum": [
-                          "required"
-                        ]
                       }
                     },
                     "required": [
                       "generate_at_start",
                       "append_trust_probe",
-                      "hostname_probe",
-                      "verification"
+                      "hostname_probe"
                     ],
                     "additionalProperties": false
                   },
@@ -9921,7 +9732,6 @@
                   "loader_probe",
                   "route_probe",
                   "egress_probe",
-                  "normalize_empty",
                   "placeholder",
                   "callback_reachability"
                 ],
@@ -9979,13 +9789,6 @@
                   "type": "string",
                   "enum": [
                     "docs/cockpit/environment-decisions.md"
-                  ]
-                },
-                "ownership": {
-                  "default": "whole-file",
-                  "type": "string",
-                  "enum": [
-                    "whole-file"
                   ]
                 },
                 "entries": {
@@ -10762,6 +10565,10 @@
       "rule": "matches_environment_addressing_authentication_and_client_cap"
     },
     {
+      "path": "browser.images",
+      "rule": "runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor"
+    },
+    {
       "path": "testing.gates[].stages[]",
       "rule": "references_declared_testing_stage"
     },
@@ -10935,6 +10742,10 @@
     {
       "path": "browser",
       "rule": "matches_environment_addressing_authentication_and_client_cap"
+    },
+    {
+      "path": "browser.images",
+      "rule": "runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor"
     },
     {
       "path": "testing.gates[].stages[]",

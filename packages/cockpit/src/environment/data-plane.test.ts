@@ -247,6 +247,22 @@ describe('data mode execution', () => {
         })).toMatchObject({ kind: 'refusal' })
     })
 
+    // A field read only to be hashed into history looks consumed to the static schema-consumer
+    // check, so each fixture field must change the plan the product's operations run from.
+    it.each([
+        ['volume_tag', (fixtures: typeof environment.data.fixtures) => { fixtures.volume_tag = 'other-volume' }],
+        ['pagination_warning', (fixtures: typeof environment.data.fixtures) => { fixtures.pagination_warning = 'Other fixtures warning' }],
+        ['volume_operations', (fixtures: typeof environment.data.fixtures) => { fixtures.volume_operations = [{ ...overlay, argv: [...overlay.argv, 'other'] }] }],
+        ['volume_probes', (fixtures: typeof environment.data.fixtures) => { fixtures.volume_probes = [{ ...overlay, argv: [...overlay.argv, 'probe'] }] }],
+    ] as const)('changes the seeded plan beyond its digests when fixtures.%s changes', async (_field, mutate) => {
+        const state = await namespace()
+        const changed = structuredClone(environment)
+        mutate(changed.data.fixtures)
+        const observed = async (declaration: typeof environment) => JSON.stringify(await planned('seeded', state, { includeFixtureVolume: true, declaration }))
+            .replace(/[a-f0-9]{64}/g, '<digest>')
+        expect(await observed(changed)).not.toBe(await observed(environment))
+    })
+
     it.each([
         ['an unbound host executable', (step: ExecutionStep) => ({ ...step, consumedFiles: [] })],
         ['a resolver-selected preload variable', (step: ExecutionStep) => ({ ...step, env: { ...step.env, NODE_OPTIONS: '--require=synthetic' } })],
