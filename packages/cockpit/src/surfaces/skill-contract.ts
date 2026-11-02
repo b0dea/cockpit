@@ -3,7 +3,7 @@ import { parseDocument, visit } from 'yaml'
 
 import { commandSpelling, commands } from '../command-table.js'
 import { stripDevelopmentMarkers } from './development-markers.js'
-import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { snapshotGeneratedJson, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import {
     type SurfaceGenerationDiagnostic,
     generateSurfaceBatch,
@@ -208,7 +208,9 @@ function captureInput(input: unknown): CapturedInput | undefined {
 }
 
 function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined {
-    const captured = snapshotJson(input)
+    // Rendered output carries every target's copy of each procedure, so it outgrows the generic
+    // JSON limit with one extra skill; bundleSurfaceFiles below enforces the real output cap.
+    const captured = snapshotGeneratedJson(input)
     if (!object(captured) || !exact(captured, ['sources', 'collection', 'terminal', 'generated',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])])) return undefined
     const base = captureInput({ sources: captured.sources, collection: captured.collection, terminal: captured.terminal,
