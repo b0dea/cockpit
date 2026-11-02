@@ -668,6 +668,16 @@ function overrideChanged(finding: SurfaceUpgradeFinding, severity: 'error' | 'wa
     })
 }
 
+// Linked sibling guides count toward the cap, so a sibling's own edit can push it over.
+function guideCapExceeded(cost: Readonly<{ target: string; value: number; cap: number }>): RefusalOutcome {
+    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: Object.freeze([Object.freeze({
+            severity: 'error' as const, code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, target: 'cockpit.guide_cap',
+            message: `the instructions ${cost.target} loads at start are ${cost.value} lines, over cockpit.guide_cap ${cost.cap}; the count includes each linked sibling guide`,
+            fix: 'shorten the root or linked sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
+        })]) })
+}
+
 function overrideChangedRefusal(finding: SurfaceUpgradeFinding): RefusalOutcome {
     return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
         diagnostics: Object.freeze([overrideChanged(finding, 'error')]) })
@@ -2837,7 +2847,7 @@ async function prepareSurfaces(
     projection = planSiblingProjection(projectionInput)
     if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)
     const tierGuide = renderTierGuide(testingRegistry, projectionInput)
-    if (tierGuide.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', tierGuide.reason, 'testing-tiers')
+    if (tierGuide.kind !== 'complete') return tierGuide.exceeded ? guideCapExceeded(tierGuide.exceeded) : refuse('SURFACE_INPUT_INVALID', tierGuide.reason, 'testing-tiers')
     if (!prepared.workEnvironment.testing && tierGuide.bytes !== stripDevelopmentMarkers(asset('references/testing-tiers.md').bytes)) {
         return refuse('SURFACE_INPUT_INVALID', 'the shipped testing tier guide differs from its canonical registry projection', 'references/testing-tiers.md')
     }
@@ -2944,9 +2954,8 @@ async function prepareSurfaces(
         return Object.freeze({ ...cost, value, status: value > cost.cap ? 'exceeded' as const : 'within_cap' as const })
     })
     if (missingLinkedGuide) return refuse('SURFACE_INPUT_INVALID', 'a published linked guide lost its authenticated measurement', 'AGENTS.md')
-    if (actualGuideCosts.some(cost => cost.status !== 'within_cap')) {
-        return refuse('SURFACE_INPUT_INVALID', 'combined published instruction cost exceeds the existing guide cap', 'AGENTS.md')
-    }
+    const overCap = actualGuideCosts.filter(cost => cost.status === 'exceeded').sort((left, right) => right.value - left.value)[0]
+    if (overCap) return guideCapExceeded(overCap)
     if (explicitNativeHooks && !surfaceEntries.some(entry => entry.kind === 'file'
         && entry.path === explicitNativeHooks.source.path && entry.sha256 === explicitNativeHooks.source.sha256)) {
         return refuse('SURFACE_INPUT_INVALID', 'native hook policy must remain an exact desired owned surface', explicitNativeHooks.source.path)

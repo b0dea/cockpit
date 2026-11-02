@@ -110,6 +110,10 @@ const LISTENER_CONCURRENCY = 16
 const MAX_TOPOLOGY_OBSERVATION_WINDOW_MS = 300_000
 const SAFE_DOCKER_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
+function environmentCode(code: string): code is EnvironmentDiagnostic['code'] {
+    return (Object.values(ENVIRONMENT_CODES) as readonly string[]).includes(code)
+}
+
 function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string): readonly EnvironmentDiagnostic[] {
     return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target })])
 }
@@ -536,6 +540,7 @@ export function createLifecycleCommandAdapters(
         context: LifecycleRunContext,
         action: 'sync' | 'check',
         ports?: PortLeaseProjection,
+        onCheckRefusal?: (diagnostics: readonly Readonly<{ code: string; message: string; target?: string; fix?: string }>[]) => void,
     ): Promise<GeneratedApplicationProjection | undefined> => {
         const binding = bindings.get(context)
         const generated = binding?.config.environment.generated
@@ -546,6 +551,7 @@ export function createLifecycleCommandAdapters(
         if (outcome.kind !== 'complete') {
             if (action === 'sync') throw new Error(outcome.diagnostics
                 .map(({ code, message, target }) => `${code}: ${message}${target ? ` (${target})` : ''}`).join('; '))
+            onCheckRefusal?.(outcome.diagnostics)
             return undefined
         }
         const projection = generatedApplicationProjection(outcome.result.application)
@@ -872,10 +878,20 @@ export function createLifecycleCommandAdapters(
         let binding = bindings.get(context)
         if (!input || !binding) return undefined
         const generated = binding.config.environment.generated
+        let checkRefusal: Readonly<{ code: string; message: string; target?: string; fix?: string }> | undefined
         const generatedApplication = generated
-            ? binding.generatedApplication ?? await projectGeneratedApplication(context, 'check', ports)
+            ? binding.generatedApplication ?? await projectGeneratedApplication(context, 'check', ports, diagnostics => { checkRefusal = diagnostics[0] })
             : undefined
-        if (generated && !generatedApplication) return undefined
+        // Name why the generated files do not match cockpit.toml (an edit not yet synced, a hand
+        // edit) instead of letting health report only that its evidence went missing.
+        if (generated && !generatedApplication) return checkRefusal ? refuse?.(Object.freeze([Object.freeze({
+            ...environmentCode(checkRefusal.code)
+                ? { code: checkRefusal.code, message: checkRefusal.message }
+                : { code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+                    message: `the generated files do not match cockpit.toml, so the running stack cannot be checked: ${checkRefusal.code}: ${checkRefusal.message}` },
+            severity: 'error' as const, target: checkRefusal.target ?? input.configPath,
+            ...(checkRefusal.fix ? { fix: checkRefusal.fix } : {}),
+        })])) : undefined
         if (generated && !ports) return undefined
         if (generated && generatedApplication) {
             const stored = await readState(context.namespace.paths.lifecycle(context.stackId))

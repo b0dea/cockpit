@@ -4952,15 +4952,17 @@ export async function runPreflight(
     adapters: PreflightCommandAdapters,
 ): Promise<PreflightCommandResult> {
     let health: HealthEvaluation
+    let refused: readonly EnvironmentDiagnostic[] | undefined
     try {
-        let refused: readonly EnvironmentDiagnostic[] | undefined
         const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined })
         if (!source) return unavailablePreflight('preflight observation source is unavailable', refused)
         const observed = prepareHealthObservation(input, source)
         if (!observed) return unavailablePreflight('preflight requires authenticated steady lifecycle evidence')
         health = await evaluateApplicationHealth(observed, adapters)
-    } catch {
-        return unavailablePreflight('preflight requires authentic observation and lifecycle evidence')
+    } catch (error) {
+        // A producer that refused (a configuration edited since `up`, for one) says why; its refusal
+        // outranks the lost observation window that refusal caused.
+        return unavailablePreflight(`preflight requires authentic observation and lifecycle evidence: ${error instanceof Error ? error.message : String(error)}`, refused)
     }
     const result = Object.freeze({
         verdict: health.verdict,

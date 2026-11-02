@@ -577,6 +577,23 @@ describe('observation application runners', () => {
         })
     })
 
+    it('reports the refusal a producer recorded instead of the observation window it cost', async () => {
+        applicationOwners.observations.aggregateObservations = vi.fn(() => {
+            throw new TypeError('health preflight authority could not preserve its observation window')
+        }) as never
+        const refusal = Object.freeze({ severity: 'error' as const, code: 'GENERATED_ENVIRONMENT_UNAVAILABLE' as const,
+            message: 'the generated files do not match cockpit.toml', target: 'cockpit.toml' })
+        let refuse: ((diagnostics: readonly unknown[]) => undefined) | undefined
+        const source = await healthSourceFixture(context, () => async () => { refuse?.([refusal]); return [] })
+        const load = (input: unknown, issue: never, reject: (diagnostics: readonly unknown[]) => undefined) => {
+            refuse = reject
+            return source.load(input, issue)
+        }
+        await expect(runPreflight(source.input, { load, execute: vi.fn() } as never)).resolves.toMatchObject({
+            kind: 'blocked', result: { verdict: 'unavailable' }, diagnostics: [refusal],
+        })
+    })
+
     it('rejects a preflight context issued for another configuration before producers or execution', async () => {
         const first = await healthSourceFixture(context)
         const producer = vi.fn(async () => [])

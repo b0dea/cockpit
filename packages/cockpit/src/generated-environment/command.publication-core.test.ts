@@ -237,6 +237,21 @@ describe('generated environment command', () => {
         }
     })
 
+    it('names cockpit.guide_cap with the measured lines when the root or a linked sibling guide outgrows it', async () => {
+        const fixture = await surfaceConsumer('guide-cap')
+        const config = await readFile(fixture.configPath, 'utf8')
+        const capped = (cap: number) => config.replace('[cockpit]\n', `[cockpit]\nguide_cap = ${cap}\n`)
+        expect(capped(5)).not.toBe(config)
+        await writeFile(fixture.configPath, capped(5))
+        expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })).toMatchObject({ kind: 'refusal',
+            diagnostics: [expect.objectContaining({ code: 'GUIDE_CAP_EXCEEDED', target: 'cockpit.guide_cap', message: expect.stringMatching(/ \d+ lines, over cockpit\.guide_cap 5;/) })] })
+        await writeFile(fixture.configPath, capped(150))
+        expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+        await writeFile(join(fixture.siblingDirectory, 'AGENTS.md'), 'A rule the sibling team added.\n'.repeat(200))
+        expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'refusal',
+            diagnostics: [expect.objectContaining({ code: 'GUIDE_CAP_EXCEEDED', message: expect.stringMatching(/ \d+ lines, over cockpit\.guide_cap 150;/) })] })
+    })
+
     it('writes a rules overlay with Rulesync frontmatter into the always-loaded guide and refuses a scoped one by name', async () => {
         const fixture = await surfaceConsumer('rules-frontmatter', { rules: true })
         const config = await readFile(fixture.configPath, 'utf8')

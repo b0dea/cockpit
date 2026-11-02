@@ -175,7 +175,8 @@ describe('product-owned gates', () => {
                 target, path: 'packages/cockpit/surfaces/references/testing-tiers.md', content: 'Old guide\n'.repeat(200), scope: 'always' as const,
             }))] })
         expect(rerender).toMatchObject({ kind: 'complete', bytes: guide.bytes, costs: guide.costs.map(cost => ({ ...cost, cap: guide.lines + 1 })) })
-        expect(renderTierGuide(registry(), { ...guideInput(), guideCapLines: guide.lines }).kind).toBe('refusal')
+        expect(renderTierGuide(registry(), { ...guideInput(), guideCapLines: guide.lines })).toMatchObject({
+            kind: 'refusal', exceeded: { value: guide.lines + 1, cap: guide.lines } })
         expect(renderTierGuide(registry(), { ...guideInput(), loadCharacterizations: {} }).kind).toBe('refusal')
         expect(() => renderTierGuide({ ...TESTING_GUIDE_REGISTRY }, guideInput())).toThrow('issued')
     })

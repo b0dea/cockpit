@@ -182,7 +182,7 @@ const NO_GATE_GUIDE = '# Testing tiers\n\n'
     + 'Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` describes.\n'
 
 export type TierGuideResult = Readonly<{ kind: 'complete'; bytes: string; lines: number; costs: readonly StandingCost[] }>
-    | Readonly<{ kind: 'refusal'; reason: string }>
+    | Readonly<{ kind: 'refusal'; reason: string; exceeded?: Readonly<{ target: string; value: number; cap: number }> }>
 
 export function renderTierGuide(registry: GateRegistry, projection: ProjectionPlannerInput): TierGuideResult {
     if (!issuedRegistries.has(registry)) throw new Error('testing guide requires an issued registry')
@@ -204,6 +204,10 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
         ...GUARD_SURFACE_TARGETS.map(target => ({ target,
             path: guidePath, content: bytes, scope: 'always' as const }))] })
     if (checked.kind === 'refusal') return Object.freeze({ kind: 'refusal', reason: checked.diagnostic.message })
-    if (checked.costs.some(cost => cost.status !== 'within_cap')) return Object.freeze({ kind: 'refusal', reason: 'combined instruction cost is unavailable or exceeds the existing guide cap' })
+    const exceeded = checked.costs.find(cost => cost.status === 'exceeded')
+    if (exceeded?.status === 'exceeded') return Object.freeze({ kind: 'refusal',
+        reason: `the instructions ${exceeded.target} loads at start are ${exceeded.value} lines, over cockpit.guide_cap ${exceeded.cap}`,
+        exceeded: Object.freeze({ target: exceeded.target, value: exceeded.value, cap: exceeded.cap }) })
+    if (checked.costs.some(cost => cost.status !== 'within_cap')) return Object.freeze({ kind: 'refusal', reason: 'combined instruction cost is not characterized for every harness' })
     return Object.freeze({ kind: 'complete', bytes, lines, costs: checked.costs })
 }

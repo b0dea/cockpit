@@ -9,6 +9,7 @@ import {
     type DoctorCommandAdapters,
     type HealthObservationProducers,
     type PreflightCommandAdapters,
+    type RuntimeReadiness,
     withLifecycleConfiguration,
 } from './application.js'
 import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } from './claims.js'
@@ -180,6 +181,9 @@ function producers(input: {
     readonly env: Readonly<Record<string, string | undefined>>
     readonly timeoutMs: number
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+    // Why the running stack could not be read (a configuration edited since `up`, say) reaches the
+    // command through here instead of surfacing only as missing evidence.
+    readonly refuse?: (diagnostics: readonly EnvironmentDiagnostic[]) => undefined
 }): Readonly<{ observations: HealthObservationProducers; revalidate: () => Promise<boolean> }> {
     const observedAt = () => new Date().toISOString()
     const siblingRoot = resolve(dirname(input.config.result.source.path), input.config.result.config.cockpit.siblings_root)
@@ -215,6 +219,7 @@ function producers(input: {
             timeoutMs: input.timeoutMs,
         }, input.execute)
         const loaded = await adapters.load({ configPath: input.config.result.source.path })
+        if (loaded.kind === 'refusal') return input.refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
         const stored = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
         if (stored.kind !== 'complete') return undefined
@@ -233,7 +238,8 @@ function producers(input: {
         if (entrypoints.kind !== 'complete') return undefined
         const ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
         if (!ports) return undefined
-        const readiness = await adapters.withRuntimeReadiness(loaded.result, async (value) => value, ports)
+        const readiness = await adapters.withRuntimeReadiness<RuntimeReadiness | undefined>(loaded.result, async (value) => value, ports,
+            (diagnostics) => input.refuse?.(diagnostics))
         return readiness ? Object.freeze({ adapters, context: loaded.result, readiness, lifecycle, ports,
             lifecycleSnapshot: JSON.stringify(stored.value) }) : undefined
     })() : undefined
@@ -727,6 +733,7 @@ export function createHealthCommandAdapters(
             env: input.env,
             timeoutMs: input.timeoutMs,
             execute,
+            ...(refuse ? { refuse: (diagnostics: readonly EnvironmentDiagnostic[]) => refuse(diagnostics) } : {}),
         })
         const secondObservedAt = new Date().toISOString()
         const secondObservation = await observeSetupCheckout({
