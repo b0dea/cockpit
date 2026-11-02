@@ -168,7 +168,6 @@ export function diagnosticInventory(root, candidate) {
 
 export function diagnosticInventoryFromSources(paths, sources) {
     const owners = new Map()
-    const emissions = new Map()
     const remedies = new Map()
     const parsedSources = new Map(paths.map((path) => {
         const bytes = sources.get(path)
@@ -183,66 +182,18 @@ export function diagnosticInventoryFromSources(paths, sources) {
             : [joined, `${joined}.ts`, `${joined}/index.ts`]
         return candidates.find((candidate) => sources.has(candidate))
     }
-    const runtimeImports = new Map()
-    const importBindings = new Map()
-    for (const [path, source] of parsedSources) {
-        const dependencies = new Set()
-        const bindings = new Map()
-        for (const statement of source.statements) {
-            if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
-            const dependency = resolveSourceImport(path, statement.moduleSpecifier.text)
-            if (!dependency) continue
-            const clause = statement.importClause
-            if (!clause) {
-                dependencies.add(dependency)
-                continue
-            }
-            if (clause.isTypeOnly) continue
-            if (clause.name) bindings.set(clause.name.text, dependency)
-            const named = clause.namedBindings
-            if (named && ts.isNamespaceImport(named)) bindings.set(named.name.text, dependency)
-            if (named && ts.isNamedImports(named)) for (const element of named.elements) {
-                if (!element.isTypeOnly) bindings.set(element.name.text, dependency)
-            }
-            if (clause.name || named && (ts.isNamespaceImport(named) || named.elements.some(element => !element.isTypeOnly))) {
-                dependencies.add(dependency)
-            }
-        }
-        runtimeImports.set(path, dependencies)
-        importBindings.set(path, bindings)
+    // Each emission is also recorded at the syntax node that produces it, so command attribution
+    // can tell which function, not just which module, emits a code.
+    const sites = new Map()
+    const recordSite = (site, code) => {
+        if (!sites.has(site)) sites.set(site, new Set())
+        sites.get(site).add(code)
     }
-    const directCommandOwners = new Map()
-    const cliPath = 'packages/cockpit/src/cli.ts'
-    const cliSource = parsedSources.get(cliPath)
-    if (cliSource) {
-        const handlerFunction = cliSource.statements.find((statement) => ts.isFunctionDeclaration(statement)
-            && statement.name?.text === 'defaultHandlers')
-        const returned = handlerFunction?.body?.statements.find(ts.isReturnStatement)?.expression
-        const cliBindings = importBindings.get(cliPath) ?? new Map()
-        if (returned && ts.isObjectLiteralExpression(returned)) for (const property of returned.properties) {
-            if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) continue
-            const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : undefined
-            if (!name) continue
-            const direct = new Set()
-            const collectBindings = (node) => {
-                if (ts.isTypeNode(node)) return
-                if (ts.isIdentifier(node)) {
-                    const dependency = cliBindings.get(node.text)
-                    if (dependency) direct.add(dependency)
-                }
-                ts.forEachChild(node, collectBindings)
-            }
-            collectBindings(ts.isPropertyAssignment(property) ? property.initializer : property.name)
-            if (direct.size === 0) continue
-            directCommandOwners.set(name, direct)
-        }
-    }
-    const addCode = (code, path, emitted = true) => {
+    const addCode = (code, path, site) => {
         if (!owners.has(code)) owners.set(code, new Set())
-        if (!emissions.has(code)) emissions.set(code, new Set())
         if (!remedies.has(code)) remedies.set(code, new Set())
         owners.get(code).add(path)
-        if (emitted) emissions.get(code).add(path)
+        if (site) recordSite(site, code)
     }
     const environmentContract = sources.get('packages/cockpit/src/environment/contract.ts')
     const environmentCodes = environmentContract === undefined
@@ -250,7 +201,7 @@ export function diagnosticInventoryFromSources(paths, sources) {
         : new Map(Object.entries(environmentDiagnosticRegistry(environmentContract)))
     if (environmentContract !== undefined) {
         for (const code of environmentCodes.values()) {
-            addCode(code, 'packages/cockpit/src/environment/contract.ts', false)
+            addCode(code, 'packages/cockpit/src/environment/contract.ts')
         }
     }
     for (const path of paths) {
@@ -406,7 +357,7 @@ export function diagnosticInventoryFromSources(paths, sources) {
             const codes = codeValue ? staticStrings(codeValue).filter(uppercaseDiagnostic) : []
             const fixes = fixValue ? staticStrings(fixValue).filter(value => value.length > 0 && !/[\r\n]/.test(value)) : []
             for (const code of codes) for (const fix of fixes) {
-                addCode(code, path)
+                addCode(code, path, object)
                 remedies.get(code).add(fix)
             }
         }
@@ -415,33 +366,50 @@ export function diagnosticInventoryFromSources(paths, sources) {
             if (ts.isPropertyAccessExpression(expression)) return expression.name.text
             return ''
         }
-        const collectDiagnosticExpression = (expression) => {
+        // owned: false records the site for command attribution only, leaving the owner index on
+        // its stricter rules.
+        const collectDiagnosticExpression = (expression, site, owned = true) => {
+            const emit = (code) => owned ? addCode(code, path, site) : recordSite(site, code)
             const value = unwrapExpression(expression)
             if (ts.isStringLiteral(value)) {
-                if (uppercaseDiagnostic(value.text)) addCode(value.text, path)
+                if (uppercaseDiagnostic(value.text)) emit(value.text)
             } else if (ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)
                 && environmentCodeBindings.has(value.expression.text)) {
                 const code = environmentCodes.get(value.name.text)
-                if (code) addCode(code, path)
+                if (code) emit(code)
             } else if (ts.isConditionalExpression(value)) {
-                collectDiagnosticExpression(value.whenTrue)
-                collectDiagnosticExpression(value.whenFalse)
+                collectDiagnosticExpression(value.whenTrue, site, owned)
+                collectDiagnosticExpression(value.whenFalse, site, owned)
             } else if (ts.isBinaryExpression(value)
                 && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(value.operatorToken.kind)) {
-                collectDiagnosticExpression(value.left)
-                collectDiagnosticExpression(value.right)
+                collectDiagnosticExpression(value.left, site, owned)
+                collectDiagnosticExpression(value.right, site, owned)
             }
         }
         const visit = (node) => {
             if (ts.isCallExpression(node) && /(?:diagnostic|refus|fail|error|usageOutcome)/i.test(constructorName(node.expression))) {
                 const first = node.arguments[0]
-                if (first) collectDiagnosticExpression(first)
+                if (first) collectDiagnosticExpression(first, node)
             }
             const codeProperty = (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
                 && ((ts.isIdentifier(node.name) && node.name.text === 'code') || (ts.isStringLiteral(node.name) && node.name.text === 'code'))
+            // A code named in an object that is not returned directly (a lookup row, an array element,
+            // a pushed diagnostic) or as a `code` parameter default is still emitted by whatever
+            // reaches it, so command attribution counts it.
+            if (codeProperty && !returnedObjects.has(node.parent) && ts.isPropertyAssignment(node)) {
+                collectDiagnosticExpression(node.initializer, node, false)
+            }
+            if (ts.isParameter(node) && ts.isIdentifier(node.name) && node.name.text === 'code' && node.initializer) {
+                collectDiagnosticExpression(node.initializer, node, false)
+            }
+            // A registry code held in a variable before it reaches a diagnostic, as a process
+            // runner's failure code is. Comparisons, case labels, code lists and lookup keys only
+            // test or index a code.
+            if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && environmentCodeBindings.has(node.expression.text)
+                && environmentCodes.has(node.name.text) && !testsCode(node)) recordSite(node, environmentCodes.get(node.name.text))
             if (codeProperty && returnedObjects.has(node.parent)) {
                 const value = ts.isShorthandPropertyAssignment(node) ? node.name : node.initializer
-                collectDiagnosticExpression(value)
+                collectDiagnosticExpression(value, node)
                 if (ts.isIdentifier(value)) {
                     let owner = node.parent
                     while (owner && !ts.isFunctionLike(owner)) owner = owner.parent
@@ -449,6 +417,9 @@ export function diagnosticInventoryFromSources(paths, sources) {
                     if (parameter?.type) {
                         const typeText = parameter.type.getText(source)
                         for (const [name, values] of exportedUnions) {
+                            // No site: the code is whatever each caller passes, and the callers' own
+                            // literal codes are their sites. Recording every union member here would
+                            // list it under every command that reaches this helper for any one code.
                             if (new RegExp(`\\b${name}\\b`).test(typeText)) for (const code of values) addCode(code, path)
                         }
                     }
@@ -458,20 +429,487 @@ export function diagnosticInventoryFromSources(paths, sources) {
         }
         visit(source)
     }
-    const diagnosticOwnerPaths = new Set([...owners.values()].flatMap(paths => [...paths]))
-    const commandOwners = new Map([...directCommandOwners].map(([name, direct]) => {
-        const captured = new Set(direct)
-        let frontier = [...direct]
-        while (frontier.length > 0) {
-            const wrappers = frontier.filter(path => !diagnosticOwnerPaths.has(path))
-            const next = [...new Set(wrappers.flatMap(path => [...(runtimeImports.get(path) ?? [])]))]
-                .filter(path => !captured.has(path))
-            for (const path of next) captured.add(path)
-            frontier = next
+    const commandDiagnostics = commandDiagnosticsFromSources(parsedSources, resolveSourceImport, sites, new Set(owners.keys()))
+    return { items: [...owners.keys()].sort().map((code) => `diagnostic:${code}`), owners, remedies, commandDiagnostics }
+}
+
+const CLI_PATH = 'packages/cockpit/src/cli.ts'
+const COMMAND_TABLE_PATH = 'packages/cockpit/src/command-table.ts'
+// The CLI binding's own vocabulary, which the attribution below reads to follow one command through
+// shared dispatch code. Renaming any of these loses precision rather than coverage: the analysis
+// then walks every branch and lists codes under commands that cannot reach them, which the
+// reference tests catch by asserting codes that must stay out of every command's table.
+const CLI_ENTRY = 'runCli'
+// Functions returning the handler objects; only the selected command's entry, and entries the
+// dispatch code names (`operators.beginOperatorReset`), belong to that command.
+const CLI_HANDLER_MAPS = new Set(['defaultHandlers', 'defaultOperatorHandlers'])
+// runCli's bindings once a public command has been selected: a name and definition were given,
+// and it is not the internal guard command.
+const CLI_SELECTED_COMMAND = new Map([['commandName', true], ['definition', true], ['internal', false]])
+// executeOutcome writes an outcome only when it carries both an artifact and a destination, a
+// guard reachability alone cannot see. Its codes go to a command only if that command's own
+// reachable code builds such an outcome.
+const CLI_OUTPUT_PUBLISHER = 'executeOutcome'
+
+function commandHandlers(source) {
+    const declaration = source?.statements.filter(ts.isVariableStatement)
+        .flatMap(statement => [...statement.declarationList.declarations])
+        .find(candidate => ts.isIdentifier(candidate.name) && candidate.name.text === 'commands')
+    let rows = declaration?.initializer
+    while (rows && (ts.isAsExpression(rows) || ts.isSatisfiesExpression(rows) || ts.isParenthesizedExpression(rows))) rows = rows.expression
+    if (!rows || !ts.isArrayLiteralExpression(rows)) return []
+    return rows.elements.flatMap(row => ts.isObjectLiteralExpression(row) ? row.properties.flatMap(property =>
+        ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === 'handler'
+            && ts.isStringLiteral(property.initializer) ? [property.initializer.text] : []) : [])
+}
+
+function testsCode(node) {
+    const parent = node.parent
+    if (ts.isBinaryExpression(parent) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken].includes(parent.operatorToken.kind)) return true
+    if (ts.isCaseClause(parent) || ts.isArrayLiteralExpression(parent) || ts.isComputedPropertyName(parent)) return true
+    return ts.isCallExpression(parent) && ts.isPropertyAccessExpression(parent.expression)
+        && ['includes', 'has', 'get', 'indexOf'].includes(parent.expression.name.text)
+}
+
+function bindingNames(name) {
+    if (ts.isIdentifier(name)) return [name.text]
+    return name.elements.flatMap(element => ts.isOmittedExpression(element) ? [] : bindingNames(element.name))
+}
+
+function unwrapValue(node) {
+    let current = node
+    while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)
+        || ts.isNonNullExpression(current)) current = current.expression
+    return current
+}
+
+function isFunctionValue(node) {
+    const value = unwrapValue(node)
+    return ts.isArrowFunction(value) || ts.isFunctionExpression(value)
+}
+
+const UNDEFINED = Symbol('undefined')
+
+function terminates(statement) {
+    if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true
+    return ts.isBlock(statement) && statement.statements.length > 0 && terminates(statement.statements.at(-1))
+}
+
+function isReference(node) {
+    const parent = node.parent
+    if (!parent) return false
+    if ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)
+        || ts.isPropertyDeclaration(parent) || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)
+        || ts.isEnumMember(parent) || ts.isVariableDeclaration(parent) || ts.isParameter(parent)
+        || ts.isFunctionDeclaration(parent) || ts.isFunctionExpression(parent) || ts.isClassDeclaration(parent)
+        || ts.isClassExpression(parent) || ts.isBindingElement(parent)) && parent.name === node) return false
+    if (ts.isBindingElement(parent) && parent.propertyName === node) return false
+    return !ts.isLabeledStatement(parent) && !ts.isBreakOrContinueStatement(parent)
+}
+
+// Reading only these from an outcome decides control flow or carries payload and prose; diagnostics
+// travel in the outcome itself or its `diagnostics`, so these reads do not pass codes on.
+const INSPECTED_OUTCOME_FIELDS = new Set(['kind', 'status', 'state', 'ok', 'result', 'value', 'reason', 'message'])
+
+const DIAGNOSTIC_CARRIERS = new Set(['diagnostics', 'diagnostic', 'code'])
+
+function withinThrow(node, scope) {
+    for (let current = node; current && current !== scope; current = current.parent) if (ts.isThrowStatement(current)) return true
+    return false
+}
+
+/**
+ * Which codes each public command can emit: the emission sites reachable from runCli once that
+ * command is selected, following references from function to function across modules, and only
+ * through calls whose outcome can reach the command's output.
+ *
+ * It over-approximates where syntax cannot see further. A function handed on as a value counts
+ * wherever it may be called, a top-level factory counts whole even when a command uses one of the
+ * closures it returns, a code is listed where a caller folds it into another diagnostic other than
+ * by inspecting the outcome or quoting it in a thrown error, and branches are pruned only on the
+ * CLI binding's own command dispatch, never on runtime data inside a module.
+ *
+ * It can under-approximate in two shapes, which the CLI reference test guards for the failure paths
+ * it drives: a code that leaves a function other than through its outcome (pushed into an argument
+ * the caller later returns) while the caller only inspects that outcome, and a code held in a
+ * variable that is neither a registry member nor named at a diagnostic constructor or `code` field.
+ */
+function commandDiagnosticsFromSources(parsedSources, resolveSourceImport, sites, known) {
+    const handlers = commandHandlers(parsedSources.get(COMMAND_TABLE_PATH))
+    if (!parsedSources.has(CLI_PATH) || handlers.length === 0) return new Map()
+    const keyOf = (path, name) => `${path}\0${name}`
+    const modules = new Map()
+    for (const [path, source] of parsedSources) {
+        const declarations = new Map()
+        const body = []
+        const exportsOf = new Map()
+        const stars = []
+        const imports = new Map()
+        const declare = (name, node, isExported) => {
+            declarations.set(name, [...(declarations.get(name) ?? []), node])
+            if (isExported) exportsOf.set(name, { path, name })
         }
-        return [name, captured]
-    }))
-    return { items: [...owners.keys()].sort().map((code) => `diagnostic:${code}`), owners, emissions, remedies, commandOwners }
+        for (const statement of source.statements) {
+            if (ts.isImportDeclaration(statement)) {
+                const dependency = ts.isStringLiteral(statement.moduleSpecifier)
+                    ? resolveSourceImport(path, statement.moduleSpecifier.text) : undefined
+                const clause = statement.importClause
+                if (!dependency || !clause || clause.isTypeOnly) continue
+                if (clause.name) imports.set(clause.name.text, { path: dependency, name: 'default' })
+                const named = clause.namedBindings
+                if (named && ts.isNamespaceImport(named)) imports.set(named.name.text, { path: dependency, name: '*' })
+                if (named && ts.isNamedImports(named)) for (const element of named.elements) {
+                    if (!element.isTypeOnly) imports.set(element.name.text, { path: dependency, name: (element.propertyName ?? element.name).text })
+                }
+            } else if (ts.isExportDeclaration(statement)) {
+                if (statement.isTypeOnly) continue
+                const dependency = statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)
+                    ? resolveSourceImport(path, statement.moduleSpecifier.text) : undefined
+                if (statement.moduleSpecifier && !dependency) continue
+                if (!statement.exportClause) stars.push(dependency)
+                else if (ts.isNamedExports(statement.exportClause)) for (const element of statement.exportClause.elements) {
+                    if (!element.isTypeOnly) exportsOf.set(element.name.text, { path: dependency ?? path, name: (element.propertyName ?? element.name).text })
+                }
+            } else if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+                if (statement.name) declare(statement.name.text, statement, exported(statement))
+            } else if (ts.isVariableStatement(statement)) {
+                for (const declaration of statement.declarationList.declarations) {
+                    for (const name of bindingNames(declaration.name)) declare(name, declaration, exported(statement))
+                }
+            } else if (!ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement)
+                && !ts.isModuleDeclaration(statement) && !ts.isExportAssignment(statement)) {
+                body.push(statement)
+            }
+        }
+        modules.set(path, { declarations, body, exportsOf, stars, imports })
+    }
+    const resolveExport = (path, name, seen = new Set()) => {
+        const module = modules.get(path)
+        if (!module || seen.has(keyOf(path, name))) return undefined
+        seen.add(keyOf(path, name))
+        const target = module.exportsOf.get(name)
+        if (target) return target.path === path ? resolveLocal(path, target.name, seen) : resolveExport(target.path, target.name, seen)
+        for (const star of module.stars) {
+            const resolved = resolveExport(star, name, seen)
+            if (resolved) return resolved
+        }
+        return undefined
+    }
+    // A key names one top-level declaration; a namespace import resolves to its module path alone.
+    const resolveLocal = (path, name, seen = new Set()) => {
+        const module = modules.get(path)
+        if (module?.declarations.has(name)) return keyOf(path, name)
+        const imported = module?.imports.get(name)
+        if (!imported) return undefined
+        return imported.name === '*' ? { namespace: imported.path } : resolveExport(imported.path, imported.name, seen)
+    }
+    const allExports = (path) => [...(modules.get(path)?.exportsOf.keys() ?? [])]
+        .map(name => resolveExport(path, name)).filter(key => typeof key === 'string')
+
+    const declarationOf = (path, name) => {
+        const resolved = resolveLocal(path, name)
+        if (typeof resolved !== 'string') return undefined
+        const [owner, local] = resolved.split('\0')
+        const node = modules.get(owner).declarations.get(local)?.[0]
+        return node && ts.isFunctionDeclaration(node) ? node : undefined
+    }
+    // Whether a local holding an outcome passes it on: any use but an inspected field read or text
+    // for a thrown error does, and so does handing it to a function that passes its parameter on.
+    const holderForwards = (path, scope, name, declaration, depth) => {
+        let forwarded = false
+        const visit = (node) => {
+            if (forwarded) return
+            if (ts.isIdentifier(node) && node.text === name && node !== declaration && isReference(node) && !withinThrow(node, scope)) {
+                forwarded = valueForwards(path, node, depth)
+            }
+            ts.forEachChild(node, visit)
+        }
+        visit(scope)
+        return forwarded
+    }
+    // Whether an outcome-valued expression can reach the command's output. Depth bounds the walk
+    // through callee parameters; past it the value is assumed to be passed on.
+    const valueForwards = (path, expression, depth) => {
+        let value = expression
+        while (ts.isAwaitExpression(value.parent) || ts.isParenthesizedExpression(value.parent) || ts.isAsExpression(value.parent)
+            || ts.isNonNullExpression(value.parent) || ts.isConditionalExpression(value.parent) && value.parent.condition !== value) value = value.parent
+        const fields = []
+        let read = value
+        while (ts.isPropertyAccessExpression(read.parent) && read.parent.expression === read) {
+            fields.push(read.parent.name.text)
+            read = read.parent
+        }
+        if (fields.length > 0) {
+            if (INSPECTED_OUTCOME_FIELDS.has(fields[0])) return false
+            // A method on the outcome, such as a continuation's decide(), yields the next outcome.
+            if (ts.isCallExpression(read.parent) && read.parent.expression === read) return valueForwards(path, read.parent, depth)
+            // A leaf inside a nested field is plain data unless the path names the diagnostics channel.
+            if (fields.length > 1) return fields.some(field => DIAGNOSTIC_CARRIERS.has(field))
+            return valueForwards(path, read, depth)
+        }
+        const holder = value.parent
+        if (ts.isVariableDeclaration(holder) && holder.initializer === value && ts.isIdentifier(holder.name)) {
+            let scope = holder.parent
+            while (scope && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent
+            return holderForwards(path, scope, holder.name.text, holder.name, depth)
+        }
+        if (ts.isCallExpression(holder) && holder.expression !== value && ts.isIdentifier(holder.expression) && depth > 0) {
+            const callee = declarationOf(path, holder.expression.text)
+            const parameter = callee?.parameters[holder.arguments.indexOf(value)]
+            if (callee?.body && parameter && ts.isIdentifier(parameter.name)) {
+                return holderForwards(callee.getSourceFile().fileName, callee, parameter.name.text, parameter.name, depth - 1)
+            }
+        }
+        return true
+    }
+    // A function's codes reach the command only through its outcome; a reference that is not a call
+    // hands the function on, which counts as passing its outcome on.
+    const forwardsResult = (path, identifier) => !ts.isCallExpression(identifier.parent) || identifier.parent.expression !== identifier
+        || valueForwards(path, identifier.parent, 2)
+
+    const walk = (path, root, accumulator, command) => {
+        const lazies = new Map()
+        const walked = new Set()
+        const collectLazies = (node) => {
+            if (node !== root) {
+                if (ts.isFunctionDeclaration(node) && node.name) {
+                    lazies.set(node.name.text, [...(lazies.get(node.name.text) ?? []), node])
+                } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isFunctionValue(node.initializer)) {
+                    lazies.set(node.name.text, [...(lazies.get(node.name.text) ?? []), node.initializer])
+                }
+            }
+            ts.forEachChild(node, collectLazies)
+        }
+        collectLazies(root)
+        // Only the CLI binding branches on the selected command, so only its walks evaluate conditions.
+        const atCli = command !== undefined && path === CLI_PATH
+        const localConstants = new Map()
+        const collectConstants = (node) => {
+            if (ts.isVariableDeclarationList(node) && node.flags & ts.NodeFlags.Const) for (const declaration of node.declarations) {
+                if (ts.isIdentifier(declaration.name) && declaration.initializer) localConstants.set(declaration.name.text, unwrapValue(declaration.initializer))
+            }
+            ts.forEachChild(node, collectConstants)
+        }
+        if (atCli) collectConstants(root)
+        const isLazy = (node) => node !== root && (ts.isFunctionDeclaration(node) && node.name !== undefined
+            || ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined && isFunctionValue(node.initializer))
+        const skipped = new Set()
+        const request = (name) => {
+            if (!atCli) return
+            command.requested.add(name)
+            for (const pending of command.members.get(name) ?? []) {
+                if (command.walkedMembers.has(pending)) continue
+                command.walkedMembers.add(pending)
+                pending()
+            }
+        }
+        const reference = (name, site) => {
+            if (site && !forwardsResult(path, site)) return
+            if (lazies.has(name)) {
+                if (walked.has(name)) return
+                walked.add(name)
+                for (const node of lazies.get(name)) ts.isFunctionDeclaration(node) ? ts.forEachChild(node, visit) : visit(node)
+                return
+            }
+            const resolved = resolveLocal(path, name)
+            if (typeof resolved === 'string') accumulator.edges.add(resolved)
+            else if (resolved) for (const key of allExports(resolved.namespace)) accumulator.edges.add(key)
+        }
+        const value = (expression, bound) => {
+            const node = unwrapValue(expression)
+            if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+            if (ts.isIdentifier(node) && bound.has(node.text)) return bound.get(node.text)
+            if (ts.isIdentifier(node) && node.text === 'handler' || ts.isPropertyAccessExpression(node) && node.name.text === 'handler') return command.handler
+            if (ts.isIdentifier(node) && node.text === 'undefined') return UNDEFINED
+            // A local constant chosen by a decided condition, such as one computed only for setup.
+            const constant = ts.isIdentifier(node) ? localConstants.get(node.text) : undefined
+            if (constant && ts.isConditionalExpression(constant)) {
+                const taken = decide(constant.condition, bound)
+                if (taken !== undefined) return value(taken ? constant.whenTrue : constant.whenFalse, bound)
+            }
+            return undefined
+        }
+        // true or false when the selected command decides the condition, undefined otherwise.
+        const decide = (expression, bound = new Map()) => {
+            const node = unwrapValue(expression)
+            if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+                const operand = decide(node.operand, bound)
+                return operand === undefined ? undefined : !operand
+            }
+            if (ts.isIdentifier(node) && bound.size === 0 && CLI_SELECTED_COMMAND.has(node.text)) return CLI_SELECTED_COMMAND.get(node.text)
+            if (ts.isBinaryExpression(node)) {
+                const operator = node.operatorToken.kind
+                if ([ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(operator)) {
+                    const left = value(node.left, bound)
+                    const right = value(node.right, bound)
+                    if (left === undefined || right === undefined) return undefined
+                    return (left === right) === (operator === ts.SyntaxKind.EqualsEqualsEqualsToken)
+                }
+                if (operator === ts.SyntaxKind.AmpersandAmpersandToken || operator === ts.SyntaxKind.BarBarToken) {
+                    const left = decide(node.left, bound)
+                    const right = decide(node.right, bound)
+                    const and = operator === ts.SyntaxKind.AmpersandAmpersandToken
+                    if (left === !and || right === !and) return !and
+                    return left === and && right === and ? and : undefined
+                }
+            }
+            if (ts.isCallExpression(node) && node.arguments.length === 1) {
+                const argument = value(node.arguments[0], bound)
+                if (argument === undefined) return undefined
+                if (ts.isPropertyAccessExpression(node.expression) && ['startsWith', 'endsWith'].includes(node.expression.name.text)) {
+                    const subject = value(node.expression.expression, bound)
+                    return subject === undefined ? undefined : subject[node.expression.name.text](argument)
+                }
+                // A one-line predicate such as isWorkHandler is evaluated with the command bound to its parameter.
+                const resolved = ts.isIdentifier(node.expression) ? resolveLocal(path, node.expression.text) : undefined
+                const [predicatePath, predicateName] = typeof resolved === 'string' ? resolved.split('\0') : []
+                const predicate = predicateName === undefined ? undefined : modules.get(predicatePath).declarations.get(predicateName)?.[0]
+                const returned = predicate && ts.isFunctionDeclaration(predicate) && predicate.parameters.length === 1
+                    && ts.isIdentifier(predicate.parameters[0].name) && predicate.body?.statements.length === 1
+                    && ts.isReturnStatement(predicate.body.statements[0]) ? predicate.body.statements[0].expression : undefined
+                if (returned) return decide(returned, new Map([[predicate.parameters[0].name.text, argument]]))
+            }
+            return undefined
+        }
+        const visit = (node) => {
+            if (ts.isTypeNode(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)
+                || ts.isImportDeclaration(node) || skipped.has(node) || isLazy(node)) return
+            for (const code of sites.get(node) ?? []) if (known.has(code)) accumulator.codes.add(code)
+            if (ts.isObjectLiteralExpression(node)) {
+                const published = (name) => node.properties.some(property => property.name && ts.isIdentifier(property.name) && property.name.text === name
+                    && (ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property) && property.initializer.kind !== ts.SyntaxKind.NullKeyword))
+                if (published('artifact') && published('destination')) accumulator.publishesOutput = true
+            }
+            if (ts.isIdentifier(node)) {
+                if (isReference(node)) reference(node.text, node)
+                return
+            }
+            if (ts.isShorthandPropertyAssignment(node)) {
+                reference(node.name.text)
+                if (node.objectAssignmentInitializer) visit(node.objectAssignmentInitializer)
+                return
+            }
+            if (ts.isPropertyAccessExpression(node)) {
+                const resolved = ts.isIdentifier(node.expression) && !lazies.has(node.expression.text) ? resolveLocal(path, node.expression.text) : undefined
+                if (resolved && typeof resolved !== 'string') {
+                    const key = resolveExport(resolved.namespace, node.name.text)
+                    if (key) accumulator.edges.add(key)
+                } else visit(node.expression)
+                request(node.name.text)
+                return
+            }
+            if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) request(node.argumentExpression.text)
+            if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+                const specifier = node.arguments[0]
+                const dependency = specifier && ts.isStringLiteral(specifier) ? resolveSourceImport(path, specifier.text) : undefined
+                if (dependency) {
+                    const holder = ts.isAwaitExpression(node.parent) ? node.parent.parent : node.parent
+                    const names = ts.isVariableDeclaration(holder) && ts.isObjectBindingPattern(holder.name)
+                        ? holder.name.elements.map(element => (element.propertyName ?? element.name).getText())
+                        : undefined
+                    for (const key of names ? names.map(name => resolveExport(dependency, name)) : allExports(dependency)) {
+                        if (typeof key === 'string') accumulator.edges.add(key)
+                    }
+                }
+            }
+            if (atCli) {
+                // Statements after a branch the command takes and that always returns are not reached.
+                if (ts.isBlock(node)) {
+                    for (const statement of node.statements) {
+                        visit(statement)
+                        if (ts.isIfStatement(statement) && decide(statement.expression) === true && terminates(statement.thenStatement)) break
+                    }
+                    return
+                }
+                if (ts.isIfStatement(node)) {
+                    visit(node.expression)
+                    const taken = decide(node.expression)
+                    if (taken !== false) visit(node.thenStatement)
+                    if (taken !== true && node.elseStatement) visit(node.elseStatement)
+                    return
+                }
+                if (ts.isConditionalExpression(node)) {
+                    visit(node.condition)
+                    const taken = decide(node.condition)
+                    if (taken !== false) visit(node.whenTrue)
+                    if (taken !== true) visit(node.whenFalse)
+                    return
+                }
+                if (ts.isBinaryExpression(node) && [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken].includes(node.operatorToken.kind)) {
+                    visit(node.left)
+                    const left = decide(node.left)
+                    if (left !== (node.operatorToken.kind === ts.SyntaxKind.BarBarToken)) visit(node.right)
+                    return
+                }
+            }
+            ts.forEachChild(node, visit)
+        }
+        if (atCli && ts.isFunctionDeclaration(root) && CLI_HANDLER_MAPS.has(root.name?.text)) {
+            for (const statement of root.body?.statements ?? []) {
+                const value = ts.isReturnStatement(statement) && statement.expression ? unwrapValue(statement.expression) : undefined
+                if (!value || !ts.isObjectLiteralExpression(value)) continue
+                for (const property of value.properties) {
+                    if (ts.isSpreadAssignment(property) || !property.name) continue
+                    const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : undefined
+                    if (name === undefined) continue
+                    skipped.add(property)
+                    command.members.set(name, [...(command.members.get(name) ?? []), () => ts.isShorthandPropertyAssignment(property)
+                        ? reference(property.name.text) : ts.forEachChild(property, visit)])
+                    if (command.requested.has(name)) request(name)
+                }
+            }
+        }
+        if (ts.isVariableDeclaration(root)) {
+            if (root.initializer) visit(root.initializer)
+        } else if (ts.isFunctionDeclaration(root) || ts.isClassDeclaration(root) || ts.isEnumDeclaration(root)) {
+            ts.forEachChild(root, visit)
+        } else visit(root)
+    }
+
+    const rootsOf = (key) => {
+        const [path, name] = key.split('\0')
+        const module = modules.get(path)
+        return name === '' ? module.body : module.declarations.get(name) ?? []
+    }
+    // Code outside the CLI binding never branches on the selected command, so its reach is shared.
+    const shared = new Map()
+    const sharedReach = (key) => {
+        if (!shared.has(key)) {
+            const accumulator = { codes: new Set(), edges: new Set(), publishesOutput: false }
+            for (const root of rootsOf(key)) walk(key.split('\0')[0], root, accumulator, undefined)
+            shared.set(key, accumulator)
+        }
+        return shared.get(key)
+    }
+    const result = new Map()
+    for (const handler of new Set(handlers)) {
+        const command = { handler, requested: new Set(), members: new Map(), walkedMembers: new Set() }
+        const reach = { codes: new Set(), edges: new Set(), publishesOutput: false }
+        const published = { codes: new Set(), edges: reach.edges, publishesOutput: false }
+        const queue = [keyOf(CLI_PATH, CLI_ENTRY)]
+        const seen = new Set()
+        while (queue.length > 0) {
+            const key = queue.pop()
+            if (seen.has(key)) continue
+            seen.add(key)
+            const [path, name] = key.split('\0')
+            queue.push(keyOf(path, ''))
+            if (path === CLI_PATH) {
+                for (const root of rootsOf(key)) walk(path, root, name === CLI_OUTPUT_PUBLISHER ? published : reach, command)
+                queue.push(...reach.edges)
+                reach.edges.clear()
+            } else {
+                const found = sharedReach(key)
+                for (const code of found.codes) reach.codes.add(code)
+                if (found.publishesOutput) reach.publishesOutput = true
+                queue.push(...found.edges)
+            }
+        }
+        if (reach.publishesOutput) for (const code of published.codes) reach.codes.add(code)
+        result.set(handler, reach.codes)
+    }
+    return result
 }
 
 function referenceRefusal(code, message, target = 'references') {

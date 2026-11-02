@@ -111,13 +111,13 @@ describe('maintainer reference boundary', () => {
                 ]],
             ])
 
-            expect([...inventory.commandOwners.get('sync') ?? []]).toEqual(expect.arrayContaining([
-                'packages/cockpit/src/generated-environment/command.ts',
-                'packages/cockpit/src/environment/generated-application.ts',
+            expect([...inventory.commandDiagnostics.get('sync') ?? []]).toEqual(expect.arrayContaining([
+                'SURFACE_STATE_CONFLICT',
+                'TEAM_METADATA_UNAVAILABLE',
             ]))
-            expect([...inventory.commandOwners.get('check') ?? []]).toEqual(expect.arrayContaining([
-                'packages/cockpit/src/team-metadata.ts',
-                'packages/cockpit/src/environment/generated-application.ts',
+            expect([...inventory.commandDiagnostics.get('check') ?? []]).toEqual(expect.arrayContaining([
+                'COCKPIT_VERSION_MISMATCH',
+                'COMPOSE_TOPOLOGY_UNAVAILABLE',
             ]))
 
             for (const [code, owners] of expectedOwners) {

@@ -206,22 +206,20 @@ function renderAdoptSkill(sources: AdoptSkillSources): string {
 
 function inventoryCodes(inventory: DiagnosticInventory): readonly string[] | undefined {
     if (!inventory || !Array.isArray(inventory.items) || !(inventory.owners instanceof Map)
-        || !(inventory.emissions instanceof Map) || !(inventory.commandOwners instanceof Map)
-        || [...inventory.commandOwners].some(([handler, owners]) =>
-            typeof handler !== 'string' || !(owners instanceof Set) || owners.size === 0
-            || [...owners].some(path => typeof path !== 'string' || !/^packages\/cockpit\/src\/[A-Za-z0-9_./-]+\.ts$/.test(path)))) return undefined
+        || !(inventory.commandDiagnostics instanceof Map)) return undefined
     const remedies = inventory.remedies
     const codes = inventory.items.map(item => item.startsWith('diagnostic:') ? item.slice('diagnostic:'.length) : '')
     if (codes.length === 0 || new Set(codes).size !== codes.length || codes.some(name => !/^[A-Z][A-Z0-9_]+$/.test(name))
-        || inventory.owners.size !== codes.length || inventory.emissions.size !== codes.length
+        || inventory.owners.size !== codes.length
         || !(remedies instanceof Map) || remedies.size !== codes.length || codes.some(name => {
             const owners = inventory.owners.get(name)
-            const emissions = inventory.emissions.get(name)
             const fixes = remedies.get(name)
             return !(owners instanceof Set) || owners.size === 0 || [...owners].some(path => typeof path !== 'string' || !/^packages\/cockpit\/src\/[A-Za-z0-9_./-]+\.ts$/.test(path))
-                || !(emissions instanceof Set) || [...emissions].some(path => typeof path !== 'string' || !owners.has(path))
                 || !(fixes instanceof Set) || [...fixes].some(fix => typeof fix !== 'string' || fix.length === 0 || /[\r\n]/.test(fix))
         })) return undefined
+    const known = new Set(codes)
+    if ([...inventory.commandDiagnostics].some(([handler, emitted]) => typeof handler !== 'string' || !(emitted instanceof Set)
+        || [...emitted].some(name => !known.has(name)))) return undefined
     return [...codes].sort()
 }
 
@@ -239,6 +237,8 @@ const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to f
 const CLI_DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes '
     + 'and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. '
     + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
+    + 'Each command lists the codes its code path can produce, derived from the source, so a list can name a code that needs a failure your setup never meets.\n\n'
+const EVERY_COMMAND_GUIDE = 'Every command can produce these codes, so they are listed once, here, and not under each command:\n\n'
 
 const headingAnchor = (heading: string) => heading.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
 
@@ -378,15 +378,14 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
                 ...(other.length > 0 ? [`| ${guided.length > 0 ? 'Other diagnostics' : 'Diagnostic'} |\n| --- |\n` + other.map(([name]) => `| ${name} |\n`).join('')] : []),
             ].join('\n')
         }
+        const emittedBy = (handler: string) => codes.filter(name => input.diagnostics.commandDiagnostics.get(handler)?.has(name) === true)
+        const everyCommand = emittedBy(commands[0]!.handler).filter(name => commands.every(command => emittedBy(command.handler).includes(name)))
         const cli = documentHeading('CLI reference')
             + 'This generated reference is for users looking up an exact command, flag, exit code or diagnostic. '
             + 'It is generated from the CLI, so it matches this version; `cockpit <command> --help` shows the same flags.\n\n'
-            + CLI_DIAGNOSTIC_GUIDE
+            + CLI_DIAGNOSTIC_GUIDE + (everyCommand.length > 0 ? EVERY_COMMAND_GUIDE + commandDiagnostics(everyCommand) + '\n' : '')
             + commands.map(command => {
-            const commandOwners = input.diagnostics.commandOwners.get(command.handler)
-            const ownedDiagnostics = commandOwners
-                ? codes.filter(name => [...input.diagnostics.emissions.get(name)!].some(owner => commandOwners.has(owner)))
-                : []
+            const ownedDiagnostics = emittedBy(command.handler).filter(name => !everyCommand.includes(name))
             return `## cockpit ${command.name}\n\n${command.summary}.\n\n`
                 + ('experimental' in command && command.experimental ? 'Status: experimental. This interface may change before a stable release.\n\n' : '')
                 + ('config' in command.options ? 'Reads `cockpit.toml` from `--config`.\n\n' : 'Does not read `cockpit.toml`.\n\n')

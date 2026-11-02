@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { diagnosticInventory } from '../../../../scripts/docs-lint.mjs'
+import { runCli } from '../cli.js'
 import { commands } from '../command-table.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from '../environment/executable.js'
@@ -97,9 +98,8 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 function input(troubleshooting = prose) {
     return { skills, troubleshooting, diagnostics: { items: ['diagnostic:SYNTHETIC_FAILURE'],
         owners: new Map([['SYNTHETIC_FAILURE', new Set(['packages/cockpit/src/document/command.ts'])]]),
-        emissions: new Map([['SYNTHETIC_FAILURE', new Set(['packages/cockpit/src/document/command.ts'])]]),
         remedies: new Map([['SYNTHETIC_FAILURE', new Set(['repair the synthetic input'])]]),
-        commandOwners: new Map([['document', new Set(['packages/cockpit/src/document/command.ts'])]]) },
+        commandDiagnostics: new Map([['document', new Set(['SYNTHETIC_FAILURE'])]]) },
         capabilities, guideCosts: [], adoptSkill }
 }
 
@@ -360,11 +360,12 @@ describe('reference generation', () => {
         const documentOwner = 'packages/cockpit/src/document/command.ts'
         const syncOwner = 'packages/cockpit/src/generated-environment/command.ts'
         const owned = (path: string) => new Set([path])
-        const diagnostics = { items: ['diagnostic:BARE_FAILURE', 'diagnostic:FIXED_FAILURE', 'diagnostic:GUIDED_FAILURE', 'diagnostic:OTHER_FAILURE'],
-            owners: new Map([['BARE_FAILURE', owned(documentOwner)], ['FIXED_FAILURE', owned(documentOwner)], ['GUIDED_FAILURE', owned(documentOwner)], ['OTHER_FAILURE', owned(syncOwner)]]),
-            emissions: new Map([['BARE_FAILURE', owned(documentOwner)], ['FIXED_FAILURE', owned(documentOwner)], ['GUIDED_FAILURE', owned(documentOwner)], ['OTHER_FAILURE', owned(syncOwner)]]),
-            remedies: new Map([['BARE_FAILURE', new Set<string>()], ['FIXED_FAILURE', new Set(['repair the input'])], ['GUIDED_FAILURE', new Set<string>()], ['OTHER_FAILURE', new Set<string>()]]),
-            commandOwners: new Map([['document', owned(documentOwner)], ['sync', owned(syncOwner)]]) }
+        const emitted = (handler: string) => new Set(['SHARED_FAILURE',
+            ...handler === 'document' ? ['BARE_FAILURE', 'FIXED_FAILURE', 'GUIDED_FAILURE'] : handler === 'sync' ? ['OTHER_FAILURE'] : []])
+        const diagnostics = { items: ['diagnostic:BARE_FAILURE', 'diagnostic:FIXED_FAILURE', 'diagnostic:GUIDED_FAILURE', 'diagnostic:OTHER_FAILURE', 'diagnostic:SHARED_FAILURE'],
+            owners: new Map([['BARE_FAILURE', owned(documentOwner)], ['FIXED_FAILURE', owned(documentOwner)], ['GUIDED_FAILURE', owned(documentOwner)], ['OTHER_FAILURE', owned(syncOwner)], ['SHARED_FAILURE', owned(syncOwner)]]),
+            remedies: new Map([['BARE_FAILURE', new Set<string>()], ['FIXED_FAILURE', new Set(['repair the input'])], ['GUIDED_FAILURE', new Set<string>()], ['OTHER_FAILURE', new Set<string>()], ['SHARED_FAILURE', new Set<string>()]]),
+            commandDiagnostics: new Map(commands.map(command => [command.handler, emitted(command.handler)])) }
         const troubleshooting = `# Troubleshooting\n\n\`OTHER_FAILURE\` is named before any section.\n\n## Guided recovery, step one\n\n\`GUIDED_FAILURE\` means the guide applies.\n\n${begin}\nold index\n${end}\n`
         const rendered = renderReferences({ ...input(troubleshooting), diagnostics })
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
@@ -379,29 +380,90 @@ describe('reference generation', () => {
         const syncSection = cli.slice(cli.indexOf('## cockpit sync'), cli.indexOf('## cockpit check'))
         expect(syncSection).toContain('| Diagnostic |\n| --- |\n| `OTHER_FAILURE` |\n')
         expect(syncSection).not.toContain('What to do')
+        // A code every command emits is listed once, before the commands, and not under each one.
+        expect(cli.slice(0, cli.indexOf('\n## cockpit '))).toContain('| Diagnostic |\n| --- |\n| `SHARED_FAILURE` |\n')
+        expect(cli.match(/`SHARED_FAILURE`/g)).toHaveLength(1)
         // The troubleshooting index is the full lookup table and keeps one row per code.
         expect(rendered.troubleshooting.bytes).toContain('| `GUIDED_FAILURE` | see the message |')
     })
 
-    it('binds command diagnostics to the source modules reached by the actual CLI handlers', () => {
+    it('lists under each command every code its CLI failure paths emit, and none its dispatch cannot reach', async () => {
         const inventory = diagnosticInventory(process.cwd(), 'HEAD')
-        expect(inventory.commandOwners.has('compare')).toBe(false)
-        expect(inventory.commandOwners.get('sync')).toContain('packages/cockpit/src/generated-environment/command.ts')
-        expect(inventory.commandOwners.get('up')).toContain('packages/cockpit/src/environment/application.ts')
+        expect([...inventory.commandDiagnostics.keys()]).toEqual(commands.map(command => command.handler))
         const rendered = renderReferences({ ...input(), diagnostics: inventory })
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
         if (rendered.kind !== 'complete') return
         const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
-        const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}`), cli.indexOf(`## cockpit ${next}`))
-        expect(section('sync', 'check')).toContain('`SURFACE_STATE_CONFLICT`')
-        expect(section('sync', 'check')).toContain('`TEAM_METADATA_UNAVAILABLE`')
-        expect(section('sync', 'check')).not.toContain('`COCKPIT_VERSION_MISMATCH`')
-        expect(section('check', 'preflight')).toContain('`COCKPIT_VERSION_MISMATCH`')
-        expect(section('up', 'sleep')).toContain('`GUARD_REFUSED`')
-        expect(section('sibling', 'preflight')).not.toContain('`CLAIM_CO_TENANT`')
-        expect(section('sibling', 'preflight')).not.toContain('`DATA_MODE_UNAVAILABLE`')
-        expect(section('sibling', 'preflight')).not.toContain('`TEMPLATE_NOT_FOUND`')
-    })
+        const everyCommand = cli.slice(0, cli.indexOf('\n## cockpit '))
+        const section = (name: string) => {
+            const start = cli.indexOf(`\n## cockpit ${name}\n`)
+            const next = cli.indexOf('\n## cockpit ', start + 1)
+            return cli.slice(start, next === -1 ? undefined : next)
+        }
+        expect(section('sync')).toContain('`SURFACE_STATE_CONFLICT`')
+        expect(section('sync')).toContain('`TEAM_METADATA_UNAVAILABLE`')
+        expect(section('sync')).not.toContain('`COCKPIT_VERSION_MISMATCH`')
+        expect(section('check')).toContain('`COCKPIT_VERSION_MISMATCH`')
+        // Only check inspects the Compose topology; sync shares its module but not that function.
+        expect(section('check')).toContain('`COMPOSE_TOPOLOGY_UNAVAILABLE`')
+        expect(section('sync')).not.toContain('`COMPOSE_TOPOLOGY_UNAVAILABLE`')
+        expect(section('up')).toContain('`LIFECYCLE_EVIDENCE_INVALID`')
+        // The guard and the interactive reset and work-order operators are other commands' paths
+        // through the same dispatch code.
+        expect(section('up')).not.toContain('`GUARD_REFUSED`')
+        expect(section('up')).not.toContain('`RESET_CONFIRMATION_MISMATCH`')
+        expect(section('up')).not.toContain('`WORK_OPERATOR_REQUIRED`')
+        expect(section('document')).toContain('`OUTPUT_EXISTS`')
+        expect(section('sync')).not.toContain('`OUTPUT_EXISTS`')
+        for (const unreachable of ['CLI_COMMAND_REQUIRED', 'CLI_UNKNOWN_COMMAND', 'GUARD_INPUT_UNAVAILABLE']) expect(cli).not.toContain(`\`${unreachable}\``)
+        expect(section('sibling')).not.toContain('`CLAIM_CO_TENANT`')
+        expect(section('sibling')).not.toContain('`DATA_MODE_UNAVAILABLE`')
+        expect(section('sibling')).not.toContain('`TEMPLATE_NOT_FOUND`')
+
+        // Every code a command actually emits on its CLI-level failure paths must be in its table.
+        // No executable is on PATH and the config never exists or never parses, so no run reaches a
+        // runtime, a network or the caller's state.
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-cli-diagnostics-')))
+        roots.push(root)
+        const missing = join(root, 'missing.toml')
+        const invalid = join(root, 'invalid.toml')
+        const existing = join(root, 'existing.md')
+        await writeFile(invalid, 'not = [toml')
+        await writeFile(existing, 'prior')
+        const env = { PATH: '', HOME: root, XDG_STATE_HOME: join(root, 'state'), NO_UPDATE_NOTIFIER: '1' }
+        const createReleaseMetadataTransport = () => { throw new Error('the reference test never reaches a release registry') }
+        const commandRuns: Readonly<Record<string, readonly (readonly string[])[]>> = {
+            document: [['--registry', missing, '--output', existing]],
+            'registry-resolve': [['--registry', missing], ['--registry', missing, '--siblings-root', root], ['--output', existing]],
+            init: [[root, '--target', 'claudecode']],
+            'baseline-record': [['--config', missing, '--interactive']],
+            sibling: [['add', 'synthetic', '--config', missing]],
+            runtime: [['measure', '--config', missing, '--image', 'synthetic']],
+            logs: [['--config', missing, '--service', 'synthetic']],
+            session: [['--config', missing, '--', 'true']],
+        }
+        const unlisted: string[] = []
+        for (const command of commands) {
+            const json = 'json' in command.options
+            const runs = [[], ['--unknown-option'], ['--config', missing], ['--config', invalid], ['--config', missing, '--config', invalid],
+                ...'work-order' in command.options ? [['--config', missing, '--work-order', 'synthetic', '--interactive']] : [],
+                ...commandRuns[command.name] ?? []]
+            for (const run of runs) {
+                let stdout = ''
+                let stderr = ''
+                const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: (text: string) => { stderr += text; return true } } }
+                await runCli([command.name, ...json ? ['--json'] : [], ...run], io, {}, { env, createReleaseMetadataTransport })
+                // session has no JSON mode, so its diagnostics are read from the human rendering.
+                const emitted = json ? (JSON.parse(stdout) as { diagnostics: { code: string }[] }).diagnostics.map(row => row.code)
+                    : [...stderr.matchAll(/^[A-Z]+ ([A-Z][A-Z0-9_]+)\b/gm)].map(match => match[1]!)
+                expect(emitted.length, `${command.name} ${run.join(' ')}`).toBeGreaterThan(0)
+                for (const code of emitted) {
+                    if (!section(command.name).includes(`\`${code}\``) && !everyCommand.includes(`\`${code}\``)) unlisted.push(`${command.name}: ${code}`)
+                }
+            }
+        }
+        expect([...new Set(unlisted)]).toEqual([])
+    }, 120_000)
 
     it.each(['', `${begin}\n${begin}\n${end}`, `${end}\n${begin}`, `${begin}\n${end}\n${end}`, `${begin} inline\n${end}`])('refuses ambiguous or malformed region markers: %s', body => {
         expect(renderReferences(input(body)).kind).toBe('refusal')
