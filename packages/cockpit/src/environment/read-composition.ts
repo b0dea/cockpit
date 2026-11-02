@@ -16,7 +16,7 @@ import {
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, errorCause, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
@@ -263,9 +263,10 @@ async function composeArtifact(root: string, reference: string): Promise<Compose
             source,
             sha256: createHash('sha256').update(bytes).digest('hex'),
         })
-    } catch (error) {
-        // Callers refuse a missing artifact without a cause, so the read failure is raised here with its own.
-        throw new TypeError(`compose artifact ${reference} could not be read: ${errorCause(error)}`)
+    } catch {
+        // Callers refuse an unavailable artifact by a fixed message that baseline revalidation classifies as a
+        // changed config source; a cause here would fall outside that classification.
+        return undefined
     } finally {
         try { await handle?.close() } catch { /* An unreadable artifact carries no authority. */ }
     }

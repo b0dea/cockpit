@@ -848,7 +848,7 @@ async function readPrivateOutput(path: string, maxBytes: number): Promise<Buffer
         // an unavailable authority is refused by the caller.
         return undefined
     } finally {
-        try { await handle?.close() } catch { /* the read already failed; the unclosed descriptor is reported through closeFailed. */ closeFailed = true }
+        try { await handle?.close() } catch { /* A descriptor that cannot be closed voids the read, so its result is discarded. */ closeFailed = true }
     }
     return closeFailed ? undefined : result
 }
