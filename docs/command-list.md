@@ -46,6 +46,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit work recover` (experimental): Inspect or explicitly recover one interrupted work lock.
 - `cockpit work execute` (experimental): Execute one accepted work-order step.
 - `cockpit work record` (experimental): Persist current work-order progress.
+- `cockpit work answer` (experimental): Interactively record a person's answer to an open gap, or their decision.
 - `cockpit work review` (experimental): Review the current accepted work order.
 - `cockpit work sweep` (experimental): Inspect or apply a reversible work-order sweep.
 - `cockpit work reverse` (experimental): Reverse a recorded work-order sweep.
