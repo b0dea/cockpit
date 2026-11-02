@@ -1737,7 +1737,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         const evaluatorExecutable = evaluatorResolution.value
         const observedCli = await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
         if (observedCli.state !== 'available' || JSON.stringify(observedCli.value) !== JSON.stringify(evaluatorExecutable)) {
-            return { kind: 'never-ran', reason: 'Installed native evaluator executable is unavailable or changed' }
+            return { kind: 'never-ran', reason: `the Codex CLI at ${evaluatorExecutable.path} is unavailable or changed since cockpit inspected it` }
         }
         const cli = evaluatorExecutable
         const timeoutMs = config.evaluatorTimeoutSeconds * 1_000
