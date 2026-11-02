@@ -637,7 +637,14 @@ export async function withStateRootPortLock<T>(value: StateNamespace,
 // Another cockpit's namespace that this version cannot read, by its directory path.
 export type SkippedStateNamespace = Readonly<{ path: string; reason: string }>
 
-class InventoryBoundaryError extends Error {}
+// The inventory reports its own failures as written and anything else through errorCause: an
+// unexpected error may quote the entry it was reading, and the reason reaches the caller's output.
+class InventoryRefusal extends Error {}
+class InventoryBoundaryError extends InventoryRefusal {}
+
+function inventoryReason(error: unknown): string {
+    return error instanceof InventoryRefusal ? error.message : errorCause(error)
+}
 
 // The callback only reads coordination records. Revalidate the entire read set before returning:
 // a per-cockpit scan alone misses a replacement made after that cockpit has already been visited.
@@ -670,7 +677,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
         }
         if (status.isSymbolicLink() || (kind === 'directory' ? !status.isDirectory() : !status.isFile())
             || status.uid !== BigInt(process.getuid?.() ?? -1) || (status.mode & 0o022n) !== 0n) {
-            throw new Error('state inventory entry is not safely owned')
+            throw new InventoryRefusal('state inventory entry is not safely owned')
         }
         snapshots.set(path, status)
         return true
@@ -696,7 +703,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                 try {
                     const id = name.replaceAll('_', ':')
                     target = path
-                    if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new Error('state inventory contains an invalid cockpit namespace')
+                    if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new InventoryRefusal('state inventory contains an invalid cockpit namespace')
                     const candidate = namespace(authenticated.root, id as CockpitId)
                     await inspect(candidate.cockpitRoot, 'directory')
                     const records = join(candidate.cockpitRoot, 'records')
@@ -707,10 +714,10 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                             const path = join(coordination, entry)
                             target = path
                             const parsed = parseCoordinationStateEntry(entry)
-                            if (!parsed) throw new Error('coordination store contains an unexpected entry')
+                            if (!parsed) throw new InventoryRefusal('coordination store contains an unexpected entry')
                             await inspect(path, 'file')
                             if (parsed.kind === 'executor' && snapshots.get(path)!.nlink !== 1n) {
-                                throw new Error('coordination executor marker has multiple links')
+                                throw new InventoryRefusal('coordination executor marker has multiple links')
                             }
                             bytes += snapshots.get(path)!.size
                             if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new InventoryBoundaryError('coordination inventory exceeds its aggregate byte boundary')
@@ -720,13 +727,13 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                 } catch (error) {
                     if (name === own || error instanceof InventoryBoundaryError) throw error
                     for (const key of snapshots.keys()) if (!visited.has(key)) snapshots.delete(key)
-                    skipped.push(Object.freeze({ path, reason: (error as Error).message }))
+                    skipped.push(Object.freeze({ path, reason: inventoryReason(error) }))
                 }
             }
         }
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            `state namespace inventory could not be read safely: ${(error as Error).message}`, target,
+            `state namespace inventory could not be read safely: ${inventoryReason(error)}`, target,
             'inspect the named state entry and retry after all coordination writers finish')
     }
     const result = await operation(Object.freeze(namespaces), Object.freeze(skipped))

@@ -54,42 +54,59 @@ function object(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+// A refusal built from `error.message` can carry bytes from package.json: JSON.parse quotes the
+// text where it stopped. Only failures this module raises, whose text is fixed, are reported as
+// written; anything else is reduced to what errorCause admits.
+class MetadataFailure extends Error {}
+
+function failureReason(error: unknown): string {
+    return error instanceof MetadataFailure ? error.message : errorCause(error)
+}
+
+// Where JSON.parse stopped, never the input near it: the parser's own message repeats those bytes.
+function jsonFailure(error: unknown, text: string): string {
+    const position = error instanceof SyntaxError ? Number(/\bposition (\d+)\b/.exec(error.message)?.[1]) : Number.NaN
+    if (!Number.isSafeInteger(position)) return errorCause(error)
+    const before = text.slice(0, position)
+    return `SyntaxError at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
+}
+
 interface RootAuthority {
     readonly root: string
     readonly chain: readonly Readonly<{ path: string; dev: number; ino: number }>[]
 }
 
 async function captureRoot(root: string): Promise<RootAuthority> {
-    if (await realpath(root) !== root) throw new Error('cockpit root is not canonical')
+    if (await realpath(root) !== root) throw new MetadataFailure('cockpit root is not canonical')
     const chain: Array<{ path: string; dev: number; ino: number }> = []
     for (let path = root;; path = dirname(path)) {
         const status = await lstat(path)
-        if (!status.isDirectory() || status.isSymbolicLink()) throw new Error('cockpit root ancestry is redirected')
+        if (!status.isDirectory() || status.isSymbolicLink()) throw new MetadataFailure('cockpit root ancestry is redirected')
         chain.push({ path, dev: status.dev, ino: status.ino })
         if (dirname(path) === path) break
-        if (chain.length >= 64) throw new Error('cockpit root ancestry exceeds the verification bound')
+        if (chain.length >= 64) throw new MetadataFailure('cockpit root ancestry exceeds the verification bound')
     }
     return Object.freeze({ root, chain: Object.freeze(chain) })
 }
 
 async function authenticateRoot(authority: RootAuthority): Promise<void> {
-    if (await realpath(authority.root) !== authority.root) throw new Error('cockpit root was redirected')
+    if (await realpath(authority.root) !== authority.root) throw new MetadataFailure('cockpit root was redirected')
     for (const expected of authority.chain) {
         const status = await lstat(expected.path)
         if (!status.isDirectory() || status.isSymbolicLink() || status.dev !== expected.dev || status.ino !== expected.ino) {
-            throw new Error('cockpit root ancestry changed')
+            throw new MetadataFailure('cockpit root ancestry changed')
         }
     }
 }
 
 async function readOptional(authority: RootAuthority, path: string): Promise<Readonly<{ bytes: string; mode: number; identity: string }> | undefined> {
-    if (dirname(path) !== authority.root) throw new Error('team metadata escaped the cockpit root')
+    if (dirname(path) !== authority.root) throw new MetadataFailure('team metadata escaped the cockpit root')
     await authenticateRoot(authority)
     try {
         const stat = await lstat(path)
-        if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('not a regular file')
+        if (!stat.isFile() || stat.isSymbolicLink()) throw new MetadataFailure('not a regular file')
         const read = await readBoundedInput(path)
-        if (read.kind !== 'complete') throw new Error('file exceeds the input limit')
+        if (read.kind !== 'complete') throw new MetadataFailure('file exceeds the input limit')
         await authenticateRoot(authority)
         return { bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes), mode: stat.mode,
             identity: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${createHash('sha256').update(read.bytes).digest('hex')}` }
@@ -104,7 +121,7 @@ async function readOptional(authority: RootAuthority, path: string): Promise<Rea
 
 async function replaceAuthenticated(authority: RootAuthority, path: string, before: Awaited<ReturnType<typeof readOptional>>, bytes: string): Promise<void> {
     const directory = dirname(path)
-    if (directory !== authority.root) throw new Error('team metadata escaped the cockpit root')
+    if (directory !== authority.root) throw new MetadataFailure('team metadata escaped the cockpit root')
     const temporary = join(directory, `.${path.slice(path.lastIndexOf('/') + 1)}.cockpit-${randomBytes(8).toString('hex')}`)
     let created = false
     try {
@@ -115,7 +132,7 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
         try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
         await authenticateRoot(authority)
         const current = await readOptional(authority, path)
-        if (current?.identity !== before?.identity) throw new Error('file changed before replacement')
+        if (current?.identity !== before?.identity) throw new MetadataFailure('file changed before replacement')
         await authenticateRoot(authority)
         await rename(temporary, path)
         created = false
@@ -124,7 +141,7 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
         try {
             const status = await parent.stat()
             const expected = authority.chain[0]!
-            if (!status.isDirectory() || status.dev !== expected.dev || status.ino !== expected.ino) throw new Error('cockpit root changed before sync')
+            if (!status.isDirectory() || status.dev !== expected.dev || status.ino !== expected.ino) throw new MetadataFailure('cockpit root changed before sync')
             await parent.sync()
         } finally { await parent.close() }
     } finally {
@@ -183,7 +200,7 @@ function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string):
     cause?: string
 }> {
     let parsed: unknown = {}
-    try { parsed = bytes === undefined || bytes.trim() === '' ? {} : JSON.parse(bytes) } catch (error) { return { bytes: '', valid: false, cause: errorCause(error) } }
+    try { parsed = bytes === undefined || bytes.trim() === '' ? {} : JSON.parse(bytes) } catch (error) { return { bytes: '', valid: false, cause: jsonFailure(error, bytes!) } }
     if (!object(parsed)) return { bytes: '', valid: false }
     const slots = packageDependencySlots(parsed)
     const scripts = parsed.scripts === undefined ? {} : parsed.scripts
@@ -365,7 +382,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
             sourceSha256: loaded.result.source.sha256, files })
         return { kind: 'complete', authority: prepared }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${failureReason(error)})`, root)
     }
 }
 
@@ -376,15 +393,15 @@ export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promis
     const { authority, files } = record
     try {
         const loaded = await loadCockpitConfig(record.configPath)
-        if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== record.sourceSha256) throw new Error('configuration changed before metadata replacement')
+        if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== record.sourceSha256) throw new MetadataFailure('configuration changed before metadata replacement')
         await authenticateRoot(authority)
         for (const file of files) {
-            if ((await readOptional(authority, file.path))?.identity !== file.before?.identity) throw new Error('team metadata changed before replacement')
+            if ((await readOptional(authority, file.path))?.identity !== file.before?.identity) throw new MetadataFailure('team metadata changed before replacement')
         }
         for (const file of files) if (file.before?.bytes !== file.bytes) await replaceAuthenticated(authority, file.path, file.before, file.bytes)
         return { kind: 'complete', changed: prepared.changes.length > 0, changes: prepared.changes }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, authority.root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${failureReason(error)})`, authority.root)
     }
 }
 
@@ -398,7 +415,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         let parseCause: string | undefined
         try { parsed = current ? JSON.parse(current.bytes) : undefined } catch (error) {
             parsed = undefined
-            parseCause = errorCause(error)
+            parseCause = jsonFailure(error, current!.bytes)
         }
         if (parseCause) return refuse('TEAM_METADATA_UNAVAILABLE',
             `package.json could not be parsed (${parseCause}); repair it, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
@@ -435,7 +452,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run npx --no cockpit sync --config <your cockpit.toml> to rewrite it', ignorePath)
         return { kind: 'complete', changed: false, changes: Object.freeze([]) }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${failureReason(error)})`, root)
     }
 }
 

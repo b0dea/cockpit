@@ -66,7 +66,7 @@ import {
 import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
 import { resolvedExecutable } from './executable.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
-import { abortStateTransaction, readState, selectStateRoot, SERIALIZED_RECORD_BYTE_LIMIT, transactState, type StateNamespace, type StateRecord } from './state.js'
+import { abortStateTransaction, readState, selectStateRoot, SERIALIZED_RECORD_BYTE_LIMIT, transactState, withStateNamespaceInventory, type StateNamespace, type StateRecord } from './state.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 
 const inventoryIdentityGate = vi.hoisted(() => ({
@@ -87,6 +87,9 @@ const coordinationCommitGate = vi.hoisted(() => ({
     continuation: undefined as Promise<void> | undefined,
 }))
 
+// Stands in for a read that fails with something other than a system error, which can quote what it read.
+const inventoryFault = vi.hoisted(() => ({ paths: [] as string[], message: '' }))
+
 const inventoryReadControl = vi.hoisted(() => ({ paths: [] as string[], opened: [] as string[] }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -100,6 +103,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
             return actual.open(...args)
         },
         lstat: async (...args: unknown[]) => {
+            if (typeof args[0] === 'string' && inventoryFault.paths.includes(args[0])) throw new Error(inventoryFault.message)
             let result: Awaited<ReturnType<typeof actual.lstat>>
             try {
                 result = await actual.lstat(args[0] as string, args[1] as never)
@@ -141,6 +145,7 @@ afterEach(async () => {
     vi.useRealTimers()
     inventoryReadControl.paths = []
     inventoryReadControl.opened = []
+    inventoryFault.paths = []
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -1203,6 +1208,23 @@ describe('active stack inventory', () => {
         }, () => readRootPortInventory(state))
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
         expect(inventoryReadControl.opened).toEqual([paths[0]])
+    })
+
+    it('reports an unexpected inventory failure by class, never by the text it quoted', async () => {
+        const state = await namespace()
+        const cockpits = dirname(state.cockpitRoot)
+        const other = (await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)).cockpitRoot
+        await mkdir(join(other, 'records'), { recursive: true, mode: 0o700 })
+        inventoryFault.message = 'unexpected token near CANARY_SECRET_7f3a'
+
+        inventoryFault.paths = [join(other, 'records')]
+        const skipped = await withStateNamespaceInventory(state, async (_namespaces, unreadable) => unreadable)
+        expect(skipped).toMatchObject({ kind: 'complete', value: [{ path: other, reason: 'Error' }] })
+
+        inventoryFault.paths = [cockpits]
+        const refused = await withStateNamespaceInventory(state, async () => undefined)
+        expect(refused).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, target: cockpits })
+        expect(JSON.stringify([skipped, refused])).not.toContain('CANARY_SECRET_7f3a')
     })
 
     it('treats only an initially absent coordination directory as empty', async () => {

@@ -337,6 +337,27 @@ describe('the supply-chain readiness detector', () => {
         ]))
     })
 
+    // The YAML parser quotes the lines around its failure, and a workflow can hold anything pasted
+    // into it, so each unparseable file carries the canary where parsing stops.
+    it('names where a malformed workflow, action or release file stopped parsing without quoting it', () => {
+        const root = fixture()
+        const broken = 'name: [CANARY_SECRET_7f3a\nkey: value\n'
+        writeWorkflow(root, 'broken', broken)
+        writeCompositeAction(root, 'broken', broken)
+        writeWorkflow(root, 'local', [
+            'name: Local', 'on: push', 'permissions:', '  contents: read', 'jobs:', '  local:',
+            '    runs-on: ubuntu-latest', '    steps:', '      - uses: ./.github/actions/broken', '',
+        ].join('\n'))
+        writeFileSync(join(root, '.github/workflows/release.yml'), broken)
+
+        const diagnostics = inspect(root, PACK_FILES).diagnostics
+        const named = (code: string) => diagnostics.find(row => row.code === code && /parse/.test(row.message))
+        expect(named('WORKFLOW_INVALID')).toMatchObject({ path: '.github/workflows/broken.yml', message: expect.stringMatching(/at line \d+, column \d+/) })
+        expect(named('WORKFLOW_ACTION_LOCAL_INVALID')).toMatchObject({ message: expect.stringMatching(/at line \d+, column \d+/) })
+        expect(named('RELEASE_CONFIG_UNREADABLE')).toMatchObject({ path: '.github/workflows/release.yml', message: expect.stringMatching(/at line \d+, column \d+/) })
+        expect(JSON.stringify(diagnostics)).not.toContain('CANARY_SECRET_7f3a')
+    })
+
     it('refuses linked workflow and action paths before following their targets', () => {
         const actionRoot = fixture()
         const borrowedActions = join(actionRoot, '.borrowed-actions')

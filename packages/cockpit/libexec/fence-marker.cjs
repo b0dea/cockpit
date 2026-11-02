@@ -86,8 +86,11 @@ function replaceApprovedActiveMarker(fence, approved, writer, fields) {
         syncDirectory(path.dirname(fence.markerPath))
         return true
     } catch {
-        // A replacement that did not land leaves the active marker in place, which repair reads as
-        // "attempt may still run"; that is the fail-closed answer.
+        // Before the rename, nothing landed: the active marker stays in place, which repair reads as
+        // "attempt may still run". If only the directory sync failed, the rename has happened and the
+        // replacement is what a reader now sees, but a crash may still bring the old active marker
+        // back. Either way the new status is not known durable, so the caller gets false and must not
+        // report it published; repair then reads whichever marker survives and both are safe to act on.
         return false
     } finally {
         if (fd !== undefined) try { fs.closeSync(fd) } catch { /* the replacement already failed */ }

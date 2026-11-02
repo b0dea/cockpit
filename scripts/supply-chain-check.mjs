@@ -3,7 +3,7 @@ import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, r
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parse } from 'yaml'
+import { parse, YAMLParseError } from 'yaml'
 import { packagedDocumentationPages } from './build-cockpit.mjs'
 
 // Unlike the TypeScript helper this cannot import: system errors keep their first message line;
@@ -16,6 +16,14 @@ function errorCause(error) {
     }
     return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
         : error instanceof RangeError ? 'RangeError' : 'Error'
+}
+
+// A YAML parse message quotes the lines around the failure, and a workflow can hold secrets: name
+// the parser's error code and where it stopped, never the text there.
+function yamlFailure(error) {
+    if (!(error instanceof YAMLParseError)) return errorCause(error)
+    const at = error.linePos?.[0]
+    return at ? `${error.code} at line ${at.line}, column ${at.col}` : error.code
 }
 
 export const mechanism = {
@@ -290,7 +298,7 @@ function workflowDiagnostics(root, rootManifest) {
                 }
             }
         } catch (error) {
-            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local action could not be parsed: ${error instanceof Error ? error.message : reference}`)
+            add('WORKFLOW_ACTION_LOCAL_INVALID', owner, `local action ${reference} could not be parsed (${yamlFailure(error)})`)
         } finally {
             activeActions.delete(manifest)
             visitedActions.add(manifest)
@@ -322,7 +330,7 @@ function workflowDiagnostics(root, rootManifest) {
         let workflow
         try { workflow = parse(readFileSync(absolute, 'utf8')) }
         catch (error) {
-            add('WORKFLOW_INVALID', path, `workflow could not be parsed: ${error instanceof Error ? error.message : path}`)
+            add('WORKFLOW_INVALID', path, `workflow could not be parsed (${yamlFailure(error)})`)
             activeWorkflows.delete(absolute)
             visitedWorkflows.add(absolute)
             return
@@ -421,7 +429,7 @@ function releaseDiagnostics(root) {
     const readYaml = path => {
         try { return parse(readFileSync(resolve(root, path), 'utf8')) }
         catch (error) {
-            diagnostics.push(diagnostic('RELEASE_CONFIG_UNREADABLE', path, `could not be read or parsed: ${error instanceof Error ? error.message : path}`))
+            diagnostics.push(diagnostic('RELEASE_CONFIG_UNREADABLE', path, `could not be read or parsed (${yamlFailure(error)})`))
             return undefined
         }
     }

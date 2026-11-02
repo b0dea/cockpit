@@ -83,6 +83,23 @@ describe('sync --adopt', () => {
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     })
 
+    // The parser quotes the lines around its failure, and cockpit.toml can hold anything the team
+    // pasted into it, so the canary sits where the appended row collides with a static array.
+    it('names where cockpit.toml stopped parsing without quoting it, and moves nothing', async () => {
+        const { root, configPath } = await teamConsumer('adopt-unparseable')
+        const source = await readFile(configPath, 'utf8')
+        await writeFile(configPath, `[surfaces]\nadopted = []\n${source}\n# CANARY_SECRET_7f3a\n`)
+
+        const refused = await runSyncAdoption({ configPath, adopt: ['.claude/settings.json'] }, request => syncGeneratedEnvironment(request))
+
+        expect(refused).toMatchObject({ status: 2, result: null, diagnostics: [expect.objectContaining({
+            code: 'CONFIG_PARSE_INVALID', target: configPath,
+            message: expect.stringMatching(/unparseable \(TOML error at line \d+, column \d+\); nothing was moved/),
+        })] })
+        expect(JSON.stringify(refused)).not.toContain('CANARY_SECRET_7f3a')
+        expect(await readFile(join(root, '.claude/settings.json'), 'utf8')).toBe(TEAM_SETTINGS)
+    })
+
     it('refuses a redirected adopted-copy ancestor without moving the team file or writing outside the cockpit', async () => {
         const { root, configPath } = await teamConsumer('adopt-redirected-copy')
         const outside = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-adopt-outside-')))

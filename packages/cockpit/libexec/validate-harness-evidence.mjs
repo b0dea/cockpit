@@ -1266,6 +1266,24 @@ export function validateEvidenceManifests(manifests, root = process.cwd(), optio
     return { errors, rows: sortRows(validRows) }
 }
 
+class ManifestSyntaxError extends Error {}
+
+// JSON.parse reports the text where it stopped, and a manifest can carry anything: say where
+// parsing stopped and what was expected, never the bytes near it.
+function parseManifestText(bytes) {
+    let text
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch {
+        throw new ManifestSyntaxError('manifest is not valid UTF-8; expected one JSON evidence row')
+    }
+    try { return JSON.parse(text) } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        const position = Number(/\bposition (\d+)\b/.exec(error.message)?.[1])
+        const before = Number.isSafeInteger(position) ? text.slice(0, position) : undefined
+        const where = before === undefined ? '' : ` at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
+        throw new ManifestSyntaxError(`manifest is not valid JSON${where}; expected one JSON evidence row`)
+    }
+}
+
 export function runHarnessEvidenceValidatorCli(paths) {
     if (paths.length === 0) {
         console.error('validate-harness-evidence: no evidence manifests supplied')
@@ -1281,7 +1299,7 @@ export function runHarnessEvidenceValidatorCli(paths) {
                 readErrors.push(...errors.map(error => `${path}: ${error}`))
                 continue
             }
-            rows.push(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)))
+            rows.push(parseManifestText(bytes))
         } catch (error) {
             readErrors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
         }

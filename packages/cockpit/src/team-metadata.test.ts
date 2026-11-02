@@ -208,11 +208,18 @@ purpose = "Synthetic local repository"
             message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
     })
 
-    it('names an unparseable package.json instead of reporting a missing pin', async () => {
+    // The parser quotes the text where it stopped, and a refusal may reach a reader who cannot open
+    // the file, so the canary sits at the failure point and must never come back.
+    it.each([
+        ['at a position', '{\n  "name": "CANARY_SECRET_7f3a",\n}', 'SyntaxError at line 3, column 1'],
+        ['at an unexpected token', '{\n  "name": CANARY_SECRET_7f3a }', 'SyntaxError'],
+    ])('names an unparseable package.json without quoting it, %s', async (_case, text, cause) => {
         const root = await fixture()
-        await writeFile(join(root, 'package.json'), '{ "devDependencies": ')
-        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE',
-            message: expect.stringContaining('package.json could not be parsed (SyntaxError)') })
+        await writeFile(join(root, 'package.json'), text)
+        const refusal = await validateTeamMetadata(join(root, 'cockpit.toml'))
+        expect(refusal).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE', target: join(root, 'package.json'),
+            message: expect.stringContaining(`package.json could not be parsed (${cause}`) })
+        expect(JSON.stringify(refusal)).not.toContain('CANARY_SECRET_7f3a')
     })
 
     it.each(['dependencies', 'optionalDependencies', 'peerDependencies'] as const)(

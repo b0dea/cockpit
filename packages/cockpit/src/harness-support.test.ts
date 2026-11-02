@@ -917,6 +917,23 @@ describe('manifest collection command', () => {
         }
     })
 
+    it.each([
+        ['at a position', '{"harness": "CANARY_SECRET_7f3a",\n}', ' at line 2, column 1'],
+        ['at an unexpected token', '{\n"harness": CANARY_SECRET_7f3a}', ''],
+    ])('names where a malformed manifest stopped parsing without quoting it, %s', (_case, text, where) => {
+        const tmp = mkdtempSync(join(tmpdir(), 'harness-evidence-syntax-'))
+        try {
+            const path = join(tmp, 'broken.json')
+            writeFileSync(path, text)
+            const result = spawnSync(process.execPath, [VALIDATOR, path], { cwd: ROOT, encoding: 'utf8' })
+            expect(result.status).not.toBe(0)
+            expect(result.stderr).toContain(`${path}: manifest is not valid JSON${where}; expected one JSON evidence row`)
+            expect(result.stderr).not.toContain('CANARY_SECRET_7f3a')
+        } finally {
+            rmSync(tmp, { recursive: true, force: true })
+        }
+    })
+
     it('returns rows in stable harness then sandbox/approval order', () => {
         const root = probeEvidenceRoot()
         try {

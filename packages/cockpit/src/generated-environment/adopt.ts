@@ -11,7 +11,7 @@
  */
 import { createHash } from 'node:crypto'
 import { basename, dirname, resolve } from 'node:path'
-import { parse } from 'smol-toml'
+import { parse, TomlError } from 'smol-toml'
 
 import { loadCockpitConfig, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
@@ -46,6 +46,12 @@ export interface SyncAdoptionOutcome {
 }
 
 const OWNERSHIP_PATH = '.cockpit/generated-environment-ownership.json'
+
+// A TOML parse error quotes the lines around the failure, and cockpit.toml can hold secrets that must
+// not reach a refusal: name where parsing stopped, never the text there.
+function tomlFailure(error: unknown): string {
+    return error instanceof TomlError ? `TOML error at line ${error.line}, column ${error.column}` : errorCause(error)
+}
 
 function refused(code: string, message: string, target?: string): SyncAdoptionOutcome {
     return Object.freeze({ status: 2, result: null, diagnostics: Object.freeze([Object.freeze({
@@ -191,7 +197,7 @@ export async function runSyncAdoption(
     const expected = { ...config, surfaces: { ...config.surfaces, adopted: [...config.surfaces.adopted, ...rows] } }
     let candidateConfig
     try { candidateConfig = CockpitConfig.safeParse(parse(nextText)) } catch (error) {
-        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `recording the adoption would leave cockpit.toml unparseable (${error instanceof Error ? error.message.split('\n', 1)[0] : 'unknown'}); nothing was moved. Add the [[surfaces.adopted]] row by hand`, configPath)
+        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `recording the adoption would leave cockpit.toml unparseable (${tomlFailure(error)}); nothing was moved. Add the [[surfaces.adopted]] row by hand`, configPath)
     }
     if (!candidateConfig.success || canonical(candidateConfig.data) !== canonical(expected)) {
         return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'recording the adoption would change more than the [[surfaces.adopted]] rows; nothing was moved. Add the rows by hand', configPath)
