@@ -830,9 +830,9 @@ async function cleanupScratch(scratch: string, node: NodeAuthority, program: Lib
     const cleanup = step(
         node,
         `surface-cleanup-${randomBytes(8).toString('hex')}`,
-        tmpdir(),
+        dirname(scratch),
         program,
-        JSON.stringify({ target: scratch, parent: tmpdir() }),
+        JSON.stringify({ target: scratch, parent: dirname(scratch) }),
         Date.now() + CLEANUP_TIMEOUT_MS,
         1024,
     )
@@ -912,7 +912,9 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
 
     let scratch: string
     try {
-        scratch = await mkdtemp(join(tmpdir(), 'cockpit-surfaces-'))
+        // The cleanup worker compares canonical paths, and the temporary root may be reached
+        // through a symlink (macOS /tmp is /private/tmp), so the scratch is canonical from birth.
+        scratch = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-surfaces-')))
         await chmod(scratch, 0o700)
     } catch (error) {
         return unavailable(diagnostic('SURFACE_SCRATCH_UNAVAILABLE',
