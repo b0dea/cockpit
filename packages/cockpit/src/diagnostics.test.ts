@@ -41,6 +41,14 @@ describe('diagnostic envelope', () => {
             .toBe(`Released this checkout's hold; another holder keeps the stack running (${stackId}).\n`)
         expect(review('sleep', { stackId, change: 'stopped' })).toBe(`Stack stopped (${stackId}).\n`)
         expect(review('down', { stackId, change: 'removed' })).toBe(`Stack removed (${stackId}).\n`)
+        expect(review('reset', { stackId, planDigest: 'd'.repeat(64), targets: [], noop: true }))
+            .toBe(`Nothing to reset (${stackId}).\n`)
+        expect(review('reset', { stackId, planDigest: 'd'.repeat(64), noop: false, targets: [
+            { kind: 'volume', identity: 'demo-1a2b_data', declaration: 'data' },
+            { kind: 'container', identity: 'demo-1a2b-api-1', declaration: 'demo-1a2b-api-1' },
+        ] })).toBe(`Reset would remove 2 targets (${stackId}); plan ${'d'.repeat(64)}:\n`
+            + '  volume demo-1a2b_data (data)\n  container demo-1a2b-api-1\n'
+            + 'Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n')
         // A result outside the known shape prints nothing rather than a guess.
         expect(review('up', { stackId, change: 'invented' })).toBe('')
     })
