@@ -167,7 +167,14 @@ export async function reviewWorkOrderWave(input: WorkOrderReviewInput, dependenc
             const context = Object.freeze({ runId: randomUUID(), kind, subject: input.subject, changedPaths })
             const captured = snapshotJson(await dependencies.review(context))
             const response = validateReview(captured as unknown as WorkOrderReviewerResponse, context, input.author)
-            if (!response || reviewers.has(response.reviewer)) return refusal(`Current independent ${kind} review is required`)
+            if (!response) {
+                // An evaluator that could not run says why; that cause is what the person has to fix.
+                const failed = captured as { kind?: unknown; reason?: unknown } | undefined
+                return refusal(failed && ['error', 'abstained', 'never-ran'].includes(failed.kind as string) && typeof failed.reason === 'string'
+                    ? `Independent ${kind} review ${failed.kind === 'never-ran' ? 'did not run' : failed.kind === 'abstained' ? 'abstained' : 'failed'}: ${failed.reason}`
+                    : `Independent ${kind} review returned a response that does not match the current subject and review schema`)
+            }
+            if (reviewers.has(response.reviewer)) return refusal(`Independent ${kind} review came from a reviewer who already reviewed this subject`)
             reviewers.add(response.reviewer)
             const commands: readonly (readonly string[])[] = response.findings
                 .filter(finding => response.dispositions.some(row => row.findingId === finding.id && row.outcome === 'fixed'))
@@ -191,7 +198,8 @@ export async function reviewWorkOrderWave(input: WorkOrderReviewInput, dependenc
                 })).digest('hex') }))
                 if (!verificationObservationPassed(result)) {
                     failedCommand = command
-                    if (result.kind === 'error') rerunError = result.reason
+                    rerunError = result.kind !== 'executed' ? result.reason
+                        : `${JSON.stringify(argv)} ${result.exitCode !== 0 ? `exited ${result.exitCode}` : 'printed nothing'}`
                     break
                 }
             }

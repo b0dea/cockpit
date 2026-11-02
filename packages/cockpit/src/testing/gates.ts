@@ -11,6 +11,8 @@ export const mechanism = {
 } as const
 
 export const GATE_SELECTOR_OPTION = '--select'
+const SELECTOR_KINDS = Object.freeze(['spec', 'file', 'test', 'route'] as const)
+const SELECTOR_VALUE = '{value}'
 export type GateSelector =
     | Readonly<{ kind: 'spec'; value: string }>
     | Readonly<{ kind: 'file'; value: string }>
@@ -22,6 +24,8 @@ export interface GateStage {
     readonly command: readonly [string, ...string[]]
     readonly requiresStack: boolean
     readonly timeoutSeconds: number
+    // The tool's own arguments for each selection kind; {value} is replaced by the selected value.
+    readonly select?: Readonly<Partial<Record<GateSelector['kind'], readonly string[]>>>
 }
 export interface GateDefinition {
     readonly id: string
@@ -57,12 +61,17 @@ export function createGateRegistry(input: GateDeclarations): GateRegistry {
     if (stageIds.size !== input.stages.length || new Set(input.gates.map(gate => gate.id)).size !== input.gates.length
         || input.stages.some(stage => !NAME.test(stage.id) || !Array.isArray(stage.command) || !stage.command.length
             || stage.command.length > 128 || !stage.command.every(text) || typeof stage.requiresStack !== 'boolean'
-            || !Number.isSafeInteger(stage.timeoutSeconds) || stage.timeoutSeconds < 1 || stage.timeoutSeconds > TESTING_STAGE_TIMEOUT_MAX_SECONDS)
+            || !Number.isSafeInteger(stage.timeoutSeconds) || stage.timeoutSeconds < 1 || stage.timeoutSeconds > TESTING_STAGE_TIMEOUT_MAX_SECONDS
+            || stage.select !== undefined && (typeof stage.select !== 'object' || stage.select === null
+                || Object.entries(stage.select).some(([kind, argv]) => !(SELECTOR_KINDS as readonly string[]).includes(kind) || !Array.isArray(argv)
+                    || !argv.length || argv.length > 32 || !argv.every(text) || !argv.some(value => value.includes(SELECTOR_VALUE)))))
         || input.gates.some(gate => !NAME.test(gate.id) || !['targeted', 'full'].includes(gate.tier) || !text(gate.changes)
             || !Array.isArray(gate.stages) || !gate.stages.length || new Set(gate.stages).size !== gate.stages.length
             || gate.stages.some((id: string) => !stageIds.has(id)))) throw new Error('gate registry contains invalid or duplicate declarations')
     const registry: GateRegistry = Object.freeze({ kind: 'bound', tiers,
-        stages: Object.freeze(input.stages.map(stage => Object.freeze({ ...stage, command: Object.freeze([...stage.command]) as readonly [string, ...string[]] }))),
+        stages: Object.freeze(input.stages.map(stage => Object.freeze({ ...stage, command: Object.freeze([...stage.command]) as readonly [string, ...string[]],
+            ...(stage.select === undefined ? {} : { select: Object.freeze(Object.fromEntries(Object.entries(stage.select)
+                .map(([kind, argv]) => [kind, Object.freeze([...argv as readonly string[]])]))) }) }))),
         gates: Object.freeze(input.gates.map(gate => Object.freeze({ ...gate, stages: Object.freeze([...gate.stages]) }))),
     })
     issuedRegistries.add(registry)
@@ -100,7 +109,7 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     const requested = request.stages ?? gate?.stages ?? []
     if (!gate || !requested.length || requested.some(id => !gate.stages.includes(id))) throw new Error('gate selection is empty or unknown')
     const select = request.select === undefined ? null : Object.freeze({ ...request.select })
-    if (select && (!['spec', 'file', 'test', 'route'].includes(select.kind) || !text(select.value))) throw new Error('gate selection has an invalid selector')
+    if (select && (!(SELECTOR_KINDS as readonly string[]).includes(select.kind) || !text(select.value))) throw new Error('gate selection has an invalid selector')
     const selected = gate.stages.filter(id => requested.includes(id))
     const observations: StageObservation[] = []
     let before: string | undefined
@@ -128,10 +137,15 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     for (const id of selected) {
         const stage = registry.stages.find(stage => stage.id === id)!
         let result: StageResult
+        const selection = select ? stage.select?.[select.kind] : undefined
         if (stage.requiresStack && request.stack?.state !== 'available') {
             result = { kind: 'unavailable', reason: `stack unavailable: ${request.stack?.state === 'unavailable' ? request.stack.reason : 'no current stack observation'}` }
+        } else if (select && !selection) {
+            // Running the whole stage would report a selection that never happened.
+            result = { kind: 'unavailable', reason: `stage ${id} declares no ${select.kind} selection; add testing.stages[].select.${select.kind} with the tool's own arguments` }
         } else {
-            try { result = await deps.runProductTool(Object.freeze({ gate: gate.id, stage: id, command: stage.command, timeoutSeconds: stage.timeoutSeconds, select })) }
+            const command = Object.freeze([...stage.command, ...(selection ?? []).map(value => value.replaceAll(SELECTOR_VALUE, select!.value))]) as readonly [string, ...string[]]
+            try { result = await deps.runProductTool(Object.freeze({ gate: gate.id, stage: id, command, timeoutSeconds: stage.timeoutSeconds, select })) }
             catch (error) { result = { kind: 'unavailable', reason: `product tooling could not run: ${errorReason(error)}` } }
         }
         observations.push(Object.freeze({ ...result, id }))
@@ -180,7 +194,7 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
     const bytes = registry.kind === 'unbound' ? NO_GATE_GUIDE : `# Testing tiers\n\nChoose the narrowest product-owned gate that proves the change.\n\n`
         + '| Tier | Change | Gate and ordered stages |\n| --- | --- | --- |\n' + rows.join('\n') + '\n\n'
         + 'Extend an existing behavior test at the nearest public boundary when it can prove the change; add a test only when no existing test owns that behavior. Each test must fail when that behavior regresses. Do not duplicate proof already supplied by a stronger test.\n\n'
-        + `Run a gate with \`npx --no cockpit test-run --config cockpit.toml --gate <id>\`. Narrow it with \`npx --no cockpit test-run --config cockpit.toml --gate <id> ${GATE_SELECTOR_OPTION} <kind>:<value>\`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.\n\n`
+        + `Run a gate with \`npx --no cockpit test-run --config cockpit.toml --gate <id>\`. Narrow it with \`npx --no cockpit test-run --config cockpit.toml --gate <id> ${GATE_SELECTOR_OPTION} <kind>:<value>\`, where kind is spec, file, test, or route. Each stage receives the value through its declared \`select\` arguments in its own tool's spelling; a stage that declares none for that kind is reported unavailable rather than run unselected.\n\n`
         + 'Use the targeted gate while iterating. When a stage runs the affected or changed-since selection of the product build or test tool, let that tool choose the tests instead of narrowing by hand. If the declared tier is Full, run the complete gate once after implementation and review stabilize, before handing back. A targeted tier ends with its declared targeted gate.\n\n'
         + 'Only the complete declared gate can PASS. Subsets and staged selftest are PARTIAL; unavailable checks are DEGRADED; changed subjects are VOID. Executed failures remain FAIL.\n\n'
         + 'All selected stages run. Stack-dependent stages name an unavailable stack. Generated hooks run no tests; call correctness gates explicitly or through CI.\n'

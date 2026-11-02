@@ -37,6 +37,8 @@ describe('configured durable work application composition', () => {
         await writeFile(target, `#!/usr/bin/env node\nprocess.stdout.write(process.env.PATH === ${JSON.stringify(configuredPath)} ? 'passed\\n' : 'unexpected path\\n')\n`)
         await chmod(target, 0o700)
         await symlink('npm-real', join(tools, 'npm'))
+        const declaration = await readFile(fixture.configPath, 'utf8')
+        await writeFile(fixture.configPath, declaration.replace('requires_stack = false }', 'requires_stack = false, select = { file = ["{value}"] } }'))
         const configured = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath,
             env: Object.freeze({ PATH: configuredPath }) })
         if (configured.kind !== 'complete') throw new Error(configured.reason)
@@ -52,14 +54,14 @@ describe('configured durable work application composition', () => {
         }))
         expect(execution).toMatchObject({ cwd: fixture.root, argv: [target, 'test', '--', 'cache-1'], timeoutMs: 1_800_000 })
 
-        // Consumers write wrappers that parse this exact argv shape to map a selection onto their
-        // build tool's own flags, so the delivery form is a published contract.
+        // A stock runner rejects options it does not know, so the selection arrives only as the
+        // arguments the stage declared for that kind, in the runner's own spelling.
         executionBoundary.steps.length = 0
         await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical',
             select: { kind: 'file', value: 'src/a b.ts' } }, configured.composition))
-            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('PARTIAL') })
+            .resolves.toMatchObject({ kind: 'unsatisfied', reason: expect.stringContaining('PARTIAL'), value: { verdict: 'PARTIAL' } })
         expect(executionBoundary.steps.find(step => step.argv0 === target)?.argv)
-            .toEqual([target, 'test', '--', 'cache-1', '--select', 'file:src/a b.ts'])
+            .toEqual([target, 'test', '--', 'cache-1', 'src/a b.ts'])
     }, 120_000)
 
     it('keeps non-browser work available without an active configured browser lease', async () => {
@@ -173,6 +175,33 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             kind: 'refusal', reason: expect.stringContaining('credential-shaped path'),
         })
 
+    }, 120_000)
+
+    it('executes whichever accepted order is selected and records creation history for an order copied from another', async () => {
+        const fixture = await configuredFixture()
+        // A published order is usually a near-copy of its draft or an earlier order; Git's copy detection
+        // must not hide that the order was added.
+        const copied = (await readFile(join(fixture.root, 'workorders/WO-001.md'), 'utf8')).replaceAll('WO-001', 'WO-008')
+        await writeFile(join(fixture.root, 'workorders/WO-008.md'), copied)
+        await writeFile(join(fixture.root, 'workorders/WO-008.source-audit.json'), await readFile(join(fixture.root, 'workorders/WO-001.source-audit.json')))
+        // Stay within the default WIP cap of three orders.
+        await Promise.all([rm(join(fixture.root, 'workorders/WO-003.md')), rm(join(fixture.root, 'workorders/WO-003.source-audit.json'))])
+        for (const argv of [['add', '--all', 'workorders'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '-m', 'publish copied order']]) {
+            const result = spawnSync('/usr/bin/git', argv, { cwd: fixture.root, encoding: 'utf8' })
+            expect(result.status, result.stderr).toBe(0)
+        }
+        for (const id of ['WO-001', 'WO-008']) {
+            const started = await runWorkApplication({ operation: 'work-accept', workOrderId: id }, fixture.composition)
+            if (started.kind !== 'human-needed') throw new Error(`${id} acceptance unavailable: ${started.kind === 'refusal' ? started.reason : started.kind}`)
+            await expect(started.continuation.decide(`accept ${started.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete' })
+        }
+        for (const id of ['WO-008', 'WO-001']) {
+            const executed = await runWorkApplication({ operation: 'work-execute', workOrderId: id, approach: `reproduce through ${id}` }, fixture.composition)
+            expect(executed, executed.kind === 'refusal' ? executed.reason : executed.kind).toMatchObject({ kind: 'complete', value: { step: 1 } })
+        }
+        await expect(runWorkApplication({ operation: 'work-metrics' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'complete', value: { metrics: { history: { observedOrders: 2 } } },
+        })
     }, 120_000)
 
     it('routes current source-bound work through acceptance, native grading, CAS refusal and the completion sentinel', async () => {
@@ -298,11 +327,12 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         })
         await writeFile(join(fixture.root, '.gate-mutate'), 'mutate')
         await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
-            kind: 'refusal', operation: 'test-run', reason: expect.stringContaining('VOID'),
+            kind: 'unsatisfied', operation: 'test-run', reason: expect.stringContaining('VOID'), value: { verdict: 'VOID', satisfiesGate: false,
+                observations: [expect.objectContaining({ id: 'unit', exitCode: 0 })] },
         })
         await Promise.all([rm(join(fixture.root, '.gate-mutate')), writeFile(join(fixture.root, 'src/cache.ts'), "export function refresh() { return 'fresh' }\n")])
         await expect(runWorkApplication({ operation: 'test-run', gate: 'stacked', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
-            kind: 'refusal', operation: 'test-run', reason: expect.stringContaining('stack unavailable'),
+            kind: 'unsatisfied', operation: 'test-run', reason: expect.stringContaining('stack unavailable'), value: { verdict: 'DEGRADED' },
         })
         const firstAuditPath = join(fixture.root, 'workorders/WO-001.source-audit.json'); const firstAudit = await readFile(firstAuditPath)
         const decodedAudit = JSON.parse(firstAudit.toString('utf8')) as { sources: unknown; gaps: unknown }
@@ -373,6 +403,14 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(runWorkApplication({ operation: 'work-status', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
             kind: 'complete', value: { orders: [{ layers: { source: [expect.objectContaining({ freshness: 'current' })] } }] },
         })
+        // The documented place for progress events is coordination state, so recording one keeps step proof current.
+        await mkdir(join(fixture.root, 'workorders/events'))
+        await writeFile(join(fixture.root, 'workorders/events/progress.json'), JSON.stringify({ kind: 'heartbeat' }))
+        await expect(runWorkApplication({ operation: 'work-record', workOrderId: 'WO-001', eventFile: 'workorders/events/progress.json' }, fixture.composition))
+            .resolves.toMatchObject({ kind: 'complete', operation: 'work-record' })
+        await expect(runWorkApplication({ operation: 'work-resume' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'complete', operation: 'work-resume', value: { step: 2, replay: false },
+        })
         const afterHeartbeat = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath, env: fixture.environment })
         if (afterHeartbeat.kind !== 'complete') throw new Error(afterHeartbeat.reason)
         await expect(runWorkApplication({ operation: 'work-resume' }, afterHeartbeat.composition)).resolves.toMatchObject({ kind: 'complete', operation: 'work-resume' })
@@ -380,11 +418,12 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             kind: 'refusal', operation: 'work-review', reason: expect.stringContaining('current checked proof for every step'),
         })
         await expect(readFile(join(fixture.root, '.native-calls'))).rejects.toMatchObject({ code: 'ENOENT' })
-        await writeFile(join(fixture.root, '.verification-overflow'), 'overflow')
+        await writeFile(join(fixture.root, '.verification-fail'), 'fail')
         await expect(runWorkApplication({ operation: 'work-execute', workOrderId: 'WO-001', approach: 'bounded failure control' }, fixture.composition)).resolves.toMatchObject({
-            kind: 'refusal', operation: 'work-execute', reason: expect.stringContaining('Declared verification'),
+            kind: 'unsatisfied', operation: 'work-execute', reason: 'Declared verification failed with exit 1',
+            value: { kind: 'paused', verification: { exitCode: 1, stdout: 'cache-1 failed: stale value\n' } },
         })
-        await rm(join(fixture.root, '.verification-overflow'))
+        await rm(join(fixture.root, '.verification-fail'))
         await expect(runWorkApplication({ operation: 'work-execute', workOrderId: 'WO-001', approach: 'current checked proof for final step' }, fixture.composition))
             .resolves.toMatchObject({ kind: 'complete', operation: 'work-execute' })
         await expect(runWorkApplication({ operation: 'work-resume' }, fixture.composition)).resolves.toMatchObject({
@@ -415,8 +454,9 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             expect(executed, executed.kind === 'refusal' ? executed.reason : executed.kind)
                 .toMatchObject({ kind: 'complete', operation: 'work-execute' })
         }
-        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition))
-            .resolves.toMatchObject({ kind: 'refusal', operation: 'work-grade', reason: expect.stringContaining('review is required') })
+        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'refusal', operation: 'work-grade', reason: expect.stringContaining('simplification review did not run: the Codex CLI (codex) is not on PATH'),
+        })
         await expect(runWorkApplication({ operation: 'browser-drive' }, optionalCapabilities.composition))
             .resolves.toMatchObject({ kind: 'refusal', operation: 'browser-drive', reason: expect.stringContaining('browser application projection is unavailable') })
         await rename(unavailableCodexPath, codexPath)
@@ -476,12 +516,18 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(readdir(join(fixture.root, '.cockpit/actors'))).resolves.toEqual([])
 
         await writeFile(join(fixture.root, '.native-mode'), 'complete')
-        await writeFile(join(fixture.root, '.verification-overflow'), 'overflow')
-        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-003' }, fixture.composition))
-            .resolves.toMatchObject({ kind: 'refusal' })
+        await writeFile(join(fixture.root, '.verification-fail'), 'fail')
+        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-003' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'unsatisfied', operation: 'work-grade', reason: expect.stringContaining('AC1 failed after execution'),
+            value: { criteria: expect.arrayContaining([expect.objectContaining({ criterion: 'AC1', outcome: 'failed after execution',
+                reasons: [expect.stringContaining('failed with exit 1')] })]), verification: expect.arrayContaining([expect.objectContaining({ criterion: 'AC1', exitCode: 1 })]) },
+        })
+        const failedManifest = JSON.parse(await readFile(join(fixture.root, '.cockpit/work-orders/WO-003/current.json'), 'utf8')) as { generation: number }
+        await expect(readFile(join(fixture.root, '.cockpit/work-orders/WO-003', `generation-${String(failedManifest.generation).padStart(8, '0')}`, 'grade.json'), 'utf8'))
+            .resolves.toContain('failed after execution')
         await expect(readdir(join(fixture.root, '.cockpit/actors'))).resolves.toEqual([])
 
-        await rm(join(fixture.root, '.verification-overflow'))
+        await rm(join(fixture.root, '.verification-fail'))
         await writeFile(join(fixture.root, '.native-mode'), 'replay')
         await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-003' }, fixture.composition))
             .resolves.toMatchObject({ kind: 'refusal' })
@@ -544,7 +590,7 @@ describe('product test stages', () => {
     it('stops a stage at its declared timeout and names the field to raise', async () => {
         const { run } = await productStage("sleep 5\nprintf 'passed\\n'", { stageFields: 'timeout_seconds = 1' })
         const started = Date.now()
-        await expect(run()).resolves.toMatchObject({ kind: 'refusal',
+        await expect(run()).resolves.toMatchObject({ kind: 'unsatisfied',
             reason: expect.stringContaining('unit: timed out after 1 seconds; raise testing.stages[].timeout_seconds') })
         expect(Date.now() - started).toBeLessThan(4_500)
     }, 120_000)
@@ -554,7 +600,8 @@ describe('product test stages', () => {
         await expect(passing.run()).resolves.toMatchObject({ kind: 'complete', value: { verdict: 'PASS',
             observations: [expect.objectContaining({ id: 'unit', exitCode: 0, outputBytes: 200_000 })] } })
         const failing = await productStage('/usr/bin/yes x | /usr/bin/head -c 200000\nexit 3')
-        await expect(failing.run()).resolves.toMatchObject({ kind: 'refusal', reason: expect.stringMatching(/^FAIL/) })
+        await expect(failing.run()).resolves.toMatchObject({ kind: 'unsatisfied', reason: expect.stringMatching(/^FAIL/),
+            value: { verdict: 'FAIL', observations: [expect.objectContaining({ id: 'unit', exitCode: 3 })] } })
     }, 120_000)
 
     it('passes build-tool variables such as HOME to a stage and strips every other parent variable', async () => {

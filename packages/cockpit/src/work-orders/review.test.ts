@@ -136,13 +136,19 @@ describe('work-order review gate', () => {
         const failed = await harness()
         failed.rerun(async () => ({ kind: 'executed', exitCode: 1, stdout: 'failed', stderr: '', truncated: false }))
         const failure = await reviewWorkOrderWave({ subject: failed.subject, author: 'fixture-author', changedPaths: ['src/cache.ts'] }, failed.dependencies)
-        expect(failure.kind).toBe('refusal')
+        expect(failure).toMatchObject({ kind: 'refusal', reason: expect.stringContaining('exited 1') })
         assert(failure.kind === 'refusal' && failure.bytes && failure.reviews)
         const failedReceipt = { argv: failed.subject.verification[0].argv,
             result: { kind: 'executed', exitCode: 1, stdout: 'failed', stderr: '', truncated: false } }
         expect(failure.reviews[1].reruns).toMatchObject([failedReceipt])
         expect(JSON.parse(failure.bytes).reviews[1].reruns).toEqual(failure.reviews[1].reruns)
 
+
+        // An evaluator that could not run names why; that cause is what the person has to fix.
+        const unavailable = await harness()
+        unavailable.response(() => ({ kind: 'never-ran', reason: 'the Codex CLI exited with status 1: Invalid schema for response_format' }))
+        await expect(reviewWorkOrderWave({ subject: unavailable.subject, author: 'fixture-author', changedPaths: ['src/cache.ts'] }, unavailable.dependencies))
+            .resolves.toMatchObject({ kind: 'refusal', reason: 'Independent simplification review did not run: the Codex CLI exited with status 1: Invalid schema for response_format' })
 
         const corrupt = await harness()
         corrupt.readback('different')

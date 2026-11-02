@@ -40,6 +40,9 @@ export type WorkApplicationOutcome =
     | Readonly<{ kind: 'complete'; operation: WorkApplicationRequest['operation']; value: unknown }>
     | Readonly<{ kind: 'human-needed'; operation: 'work-accept' | 'work-renew'; continuation: WorkApplicationContinuation }>
     | Readonly<{ kind: 'refusal'; operation: WorkApplicationRequest['operation'] | 'invalid'; reason: string }>
+    // The operation ran and produced a result that does not meet its bar (a gate short of PASS, a grade
+    // with an unmet criterion, a step whose verification failed); the result is the evidence to act on.
+    | Readonly<{ kind: 'unsatisfied'; operation: 'test-run' | 'work-grade' | 'work-execute'; value: unknown; reason: string }>
 
 interface OperationShape { readonly required: readonly string[]; readonly optional?: readonly string[] }
 const operationKeys: Readonly<Record<WorkApplicationRequest['operation'], OperationShape>> = Object.freeze({
@@ -102,6 +105,8 @@ export function captureWorkApplicationRequest(value: unknown): WorkApplicationRe
 }
 const refusal = (operation: WorkApplicationOutcome['operation'], reason: string): WorkApplicationOutcome => Object.freeze({ kind: 'refusal', operation, reason })
 const complete = (operation: WorkApplicationRequest['operation'], value: unknown): WorkApplicationOutcome => Object.freeze({ kind: 'complete', operation, value })
+const unsatisfied = (operation: 'test-run' | 'work-grade' | 'work-execute', value: unknown, reason: string): WorkApplicationOutcome =>
+    Object.freeze({ kind: 'unsatisfied', operation, value, reason })
 
 export async function runWorkApplication(request: WorkApplicationRequest, composition: WorkApplicationComposition): Promise<WorkApplicationOutcome> {
     const captured = captureWorkApplicationRequest(request)
@@ -150,7 +155,10 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
             }
             return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest: started.digest, prompt: started.prompt, decide }) })
         }
-        if (operation === 'work-execute') { const prepared = await composition.execution(captured.workOrderId, captured.approach); const result = await executeWorkOrderStep(prepared.input, prepared.dependencies); return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.reason) }
+        if (operation === 'work-execute') {
+            const prepared = await composition.execution(captured.workOrderId, captured.approach); const result = await executeWorkOrderStep(prepared.input, prepared.dependencies)
+            return result.kind === 'complete' ? complete(operation, result) : result.kind === 'paused' ? unsatisfied(operation, result, result.reason) : refusal(operation, result.reason)
+        }
         if (operation === 'work-record') { const prepared = await composition.record(captured.workOrderId, captured.eventFile); const result = await persistWorkOrderProgress(prepared.contract, composition.policy,
             prepared.stateBytes, prepared.event, prepared.writer, prepared.store); return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.message) }
         if (operation === 'work-sweep') {
@@ -167,10 +175,19 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         if (operation.startsWith('browser-')) { const browserRequest = captured as Extract<WorkApplicationRequest, { operation: `browser-${string}` }>; const kind = operation === 'browser-accessibility' ? 'accessibility' : operation === 'browser-screenshot' ? 'screenshot' : 'drive'; const result = await executeBrowserCommand(await composition.browser(kind, operation === 'browser-debugger', browserRequest.role)); if (result.kind === 'refusal') return refusal(operation, result.reason); if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) } return complete(operation, result) }
         if (operation === 'test-run') { const prepared = await composition.gate(captured); const run = await runGate(prepared.registry, prepared.request, prepared.dependencies); return run.satisfiesGate
             ? complete(operation, run)
-            : refusal(operation, `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`) }
+            : unsatisfied(operation, run, `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`) }
         if (operation === 'work-review') { const prepared = await composition.review(captured.workOrderId); const result = await reviewWorkOrderWave(prepared.input, prepared.dependencies)
             return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.reason) }
-        if (operation === 'work-grade') { const prepared = await composition.grading(captured.workOrderId); const result = await completeWorkOrder(prepared.input, prepared.dependencies); return result.completed ? complete(operation, result) : refusal(operation, result.reason) }
+        if (operation === 'work-grade') {
+            const prepared = await composition.grading(captured.workOrderId); const result = await completeWorkOrder(prepared.input, prepared.dependencies)
+            if (result.completed) return complete(operation, result)
+            if (!result.grade) return refusal(operation, result.reason)
+            const grade = result.grade
+            return unsatisfied(operation, { workOrderId: grade.workOrderId, runId: grade.runId,
+                criteria: grade.criteria.map(({ criterion, outcome, reasons }) => ({ criterion, outcome, reasons })),
+                verification: grade.verification.map(({ criterion, argv, result: observed }) => ({ criterion, argv,
+                    ...(observed.kind === 'executed' ? { exitCode: observed.exitCode } : { unavailable: observed.reason }) })) }, result.reason)
+        }
         return refusal(operation, 'Unsupported work application operation')
     } catch (error) { return refusal(operation, error instanceof Error ? error.message : String(error)) }
 }

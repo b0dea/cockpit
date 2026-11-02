@@ -14,7 +14,8 @@ import type { ProjectionPlannerInput } from '../surfaces/projection.js'
 
 const registry = () => createGateRegistry({
     stages: [
-        { id: 'unit', command: ['product-tool', 'unit'], requiresStack: false, timeoutSeconds: 60 },
+        { id: 'unit', command: ['product-tool', 'unit'], requiresStack: false, timeoutSeconds: 60,
+            select: { spec: ['--spec', '{value}'], file: ['{value}'], test: ['-t', '{value}'], route: ['--route={value}'] } },
         { id: 'browser', command: ['product-tool', 'drive'], requiresStack: true, timeoutSeconds: 60 },
     ],
     gates: [
@@ -39,10 +40,12 @@ const guideInput = (): ProjectionPlannerInput => ({
 })
 
 describe('product-owned gates', () => {
-    it('passes one typed select value to product tooling without interpreting its text as shell', async () => {
+    it('delivers a selection as the stage\'s declared arguments, never as shell text, and never runs a stage unselected', async () => {
         expect(GATE_SELECTOR_OPTION).toBe('--select')
+        const value = 'name with spaces; $(false)'
+        const expected = { spec: ['--spec', value], file: [value], test: ['-t', value], route: [`--route=${value}`] }
         for (const kind of ['spec', 'file', 'test', 'route'] as const) {
-            const select: GateSelector = { kind, value: 'name with spaces; $(false)' }
+            const select: GateSelector = { kind, value }
             const calls: ProductGateInvocation[] = []
             const result = await runGate(registry(), { gate: 'focused', select }, {
                 ...dependencies(), runProductTool: async invocation => {
@@ -50,9 +53,17 @@ describe('product-owned gates', () => {
                     return { kind: 'executed', exitCode: 0, signal: null, outputBytes: 1, assertion: 'passed' }
                 },
             })
-            expect(calls).toEqual([{ gate: 'focused', stage: 'unit', command: ['product-tool', 'unit'], timeoutSeconds: 60, select }])
+            expect(calls).toEqual([{ gate: 'focused', stage: 'unit', command: ['product-tool', 'unit', ...expected[kind]], timeoutSeconds: 60, select }])
             expect(result.verdict).toBe('PARTIAL')
         }
+        const calls: string[] = []
+        const unselectable = await runGate(registry(), { gate: 'release', select: { kind: 'test', value }, stack: { state: 'available' } }, {
+            ...dependencies(), runProductTool: async invocation => { calls.push(invocation.stage); return dependencies().runProductTool(invocation) },
+        })
+        expect(calls).toEqual(['unit'])
+        expect(unselectable.verdict).toBe('DEGRADED')
+        expect(unselectable.observations).toContainEqual({ id: 'browser', kind: 'unavailable',
+            reason: "stage browser declares no test selection; add testing.stages[].select.test with the tool's own arguments" })
     })
 
     it('continues after disagreement and names every unavailable selected prerequisite', async () => {

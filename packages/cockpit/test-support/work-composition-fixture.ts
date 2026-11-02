@@ -18,6 +18,28 @@ if (argv.length === 1 && argv[0] === '--version') { process.stdout.write('codex-
 if (argv.length === 2 && argv[0] === 'exec' && argv[1] === '--help') {
   process.stdout.write('--ephemeral --ignore-user-config --sandbox --cd --json --output-schema --output-last-message\\n'); process.exit(0)
 }
+// OpenAI structured outputs reject a schema unless every object lists all its properties as required
+// and forbids others; the real CLI then exits 1 with the API's 400 as an error event, as this does.
+const strictViolation = (node, path) => {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return path + ' is not a schema object'
+  const extra = Object.keys(node).find(key => !['type', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'description'].includes(key))
+  if (extra) return path + ' uses unsupported keyword ' + extra
+  const types = [].concat(node.type ?? [])
+  if (!types.length && !Array.isArray(node.enum)) return path + ' declares no type'
+  if (types.includes('object')) {
+    if (!node.properties || typeof node.properties !== 'object') return path + ".properties' is required for object schemas"
+    if (node.additionalProperties !== false) return path + ".additionalProperties' must be false"
+    const keys = Object.keys(node.properties)
+    if (!Array.isArray(node.required) || node.required.length !== keys.length || keys.some(key => !node.required.includes(key))) return path + ".required' must list every property"
+    for (const key of keys) { const found = strictViolation(node.properties[key], path + '.properties.' + key); if (found) return found }
+  }
+  if (types.includes('array')) return node.items ? strictViolation(node.items, path + '.items') : path + ".items' is required for array schemas"
+  return undefined
+}
+const violation = strictViolation(JSON.parse(fs.readFileSync(argv[argv.indexOf('--output-schema') + 1], 'utf8')), "'schema")
+if (violation) {
+  process.stdout.write(JSON.stringify({ type: 'error', message: "Invalid schema for response_format 'codex_output_schema': " + violation }) + '\\n'); process.exit(1)
+}
 const match = /request JSON at (.+) with SHA-256 ([a-f0-9]{64});/.exec(argv.at(-1))
 if (!match) process.exit(31)
 const bytes = fs.readFileSync(match[1]); if (crypto.createHash('sha256').update(bytes).digest('hex') !== match[2]) process.exit(32)
@@ -79,7 +101,7 @@ purpose = "Synthetic root declaration"
         declaration = stringifyToml(CockpitConfig.parse(external))
     }
     await writeFile(configPath, declaration)
-    await writeFile(join(root, '.gitignore'), '.native-calls\n.native-mode\n.native-expect-artifact\n.verification-overflow\n.gate-mutate\n.completion-observations\n.completion-artifact-race\n.execution-hold\n.execution-started\n.identity-inventory-unavailable\n.identity-inventory-malformed\n.identity-worktree-malformed\n.identity-inventory-change\n.identity-inventory-count\n.repository-status-malformed\n')
+    await writeFile(join(root, '.gitignore'), '.native-calls\n.native-mode\n.native-expect-artifact\n.verification-fail\n.gate-mutate\n.completion-observations\n.completion-artifact-race\n.execution-hold\n.execution-started\n.identity-inventory-unavailable\n.identity-inventory-malformed\n.identity-worktree-malformed\n.identity-inventory-change\n.identity-inventory-count\n.repository-status-malformed\n')
     await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
     await writeFile(join(applicationRoot, 'package-lock.json'), '{}\n')
     await mkdir(join(applicationRoot, 'src'))
@@ -143,7 +165,7 @@ if (fs.existsSync('.completion-artifact-race') && argv[0] === 'status' && argv.i
 }
 const result = spawnSync('/usr/bin/git', argv, { stdio: 'inherit' }); process.exit(result.status ?? 1)
 `)
-    await writeFile(join(tools, 'npm'), "#!/bin/sh\nif [ -f .verification-overflow ]; then /usr/bin/yes x | /usr/bin/head -c 70000; exit 0; fi\nif [ -f .gate-mutate ]; then printf \"export function refresh() { return 'changed' }\\n\" > src/cache.ts; fi\nif [ -f .execution-hold ]; then : > .execution-started; while [ -f .execution-hold ]; do sleep 0.05; done; fi\nprintf 'passed\\n'\n")
+    await writeFile(join(tools, 'npm'), "#!/bin/sh\nif [ -f .verification-fail ]; then printf 'cache-1 failed: stale value\\n'; exit 1; fi\nif [ -f .gate-mutate ]; then printf \"export function refresh() { return 'changed' }\\n\" > src/cache.ts; fi\nif [ -f .execution-hold ]; then : > .execution-started; while [ -f .execution-hold ]; do sleep 0.05; done; fi\nprintf 'passed\\n'\n")
     await writeFile(join(tools, 'codex'), nativeFixture)
     await symlink(process.execPath, join(tools, 'node'))
     await Promise.all(['git', 'npm', 'codex'].map(name => chmod(join(tools, name), 0o700)))

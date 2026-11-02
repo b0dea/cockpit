@@ -45,6 +45,15 @@ describe('diagnostic envelope', () => {
         expect(review('up', { stackId, change: 'invented' })).toBe('')
     })
 
+    it('prints the result of a work, browser or test command, including one that did not meet its bar', () => {
+        const review = (command: string, status: number, result: unknown) => renderHumanDiagnostics([], { command, outcome: { status, result } })
+        expect(review('test-run', 0, { verdict: 'PASS', satisfiesGate: true })).toBe('satisfiesGate: true\nverdict: PASS\n')
+        expect(review('work-grade', 2, { criteria: [{ criterion: 'AC1', outcome: 'failed after execution' }] }))
+            .toBe('criteria:\n  -\n    criterion: AC1\n    outcome: failed after execution\n')
+        expect(review('browser-drive', 0, { kind: 'complete' })).toBe('kind: complete\n')
+        expect(review('sync', 2, { dryRun: true, changes: [] })).toBe('')
+    })
+
     it.each(['constructor', 'toString'])('treats inherited object keys such as %s as unregistered diagnostics', (code) => {
         expect(renderHumanDiagnostics([{ severity: 'error', code, message: 'synthetic failure' }]))
             .toBe(`ERROR ${code}: synthetic failure\n`)

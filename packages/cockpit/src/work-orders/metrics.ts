@@ -123,7 +123,7 @@ export function collectWorkOrderMetrics(input: WorkOrderMetricsInput): WorkOrder
 }
 
 export function renderWorkOrderMetrics(metrics: WorkOrderMetrics): string {
-    const show = (value: number | undefined) => value === undefined ? 'undefined' : String(value)
+    const show = (value: number | undefined) => value === undefined ? 'unavailable' : String(value)
     return [
         ...metrics.counts.map((metric) => `${metric.name}: ${show(metric.value)}; writer=${metric.writer}`),
         ...metrics.ratios.map((metric) => `${metric.name}: ${show(metric.value)} (${show(metric.numerator)}/${show(metric.denominator)}); ${metric.definition}; writer=${metric.writer}`),

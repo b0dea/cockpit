@@ -5,7 +5,7 @@ import { workOrderFixture } from '../test-support/work-order.js'
 import { acceptWorkOrder, beginWorkOrderAcceptance, intakeWorkOrder, routeWorkOrder, validateWorkOrderPolicy } from '../work-orders/intake.js'
 import { reviewWorkOrderWave, type WorkOrderReviewDependencies } from '../work-orders/review.js'
 import { completeWorkOrder, type CompletionDependencies, type CompletionRecord, type CompletionReview } from './completion.js'
-import { checkGradeCurrency, CRITERION_OUTCOMES, verifyWorkOrder, type CriterionAssessment, type GraderContext, type GraderResponse, type VerificationObservation } from './verifier.js'
+import { checkGradeCurrency, CRITERION_OUTCOMES, isIssuedWorkOrderGrade, verifyWorkOrder, type CriterionAssessment, type GraderContext, type GraderResponse, type VerificationObservation } from './verifier.js'
 
 function harness() {
     const parsed = parseWorkOrder(Buffer.from(workOrderFixture().replaceAll('[ ]', '[x]')))
@@ -94,6 +94,8 @@ function alterClaim(h: Harness, fn: (claim: CriterionAssessment) => CriterionAss
 describe('production grading and completion', () => {
     it('reruns every declared command and persists current grade evidence before completion', async () => {
         const h = harness()
+        // A long run keeps only the tail of its output; its exit status still decides the criterion.
+        h.run(async argv => ({ kind: 'executed', exitCode: 0, stdout: `${argv.at(-1)}: fresh value observed`, stderr: '', truncated: true }))
         const grade = await verifyWorkOrder(h.input, h.deps)
         expect(grade.criteria.map(row => row.outcome)).toEqual(Array(3).fill(CRITERION_OUTCOMES[0]))
         h.order.length = 0
@@ -128,7 +130,6 @@ describe('production grading and completion', () => {
         ['grader error', h => { h.deps.grade = async () => ({ kind: 'error', reason: 'grader transport failed' }) }],
         ['grader abstention', h => { h.deps.grade = async () => ({ kind: 'abstained', reason: 'unable to establish semantic support' }) }],
         ['grader never ran', h => { h.deps.grade = async () => ({ kind: 'never-ran', reason: 'launch refused' }) }],
-        ['truncated output', h => h.run(async () => ({ kind: 'executed', exitCode: 0, stdout: 'fresh', stderr: '', truncated: true }))],
         ['silent output', h => h.run(async () => ({ kind: 'executed', exitCode: 0, stdout: '', stderr: '', truncated: false }))],
         ['verification failure', h => h.run(async () => ({ kind: 'executed', exitCode: 1, stdout: 'stale', stderr: '', truncated: false }))],
         ['verification error', h => h.run(async () => ({ kind: 'error', reason: 'executor disconnected' }))],
@@ -149,7 +150,14 @@ describe('production grading and completion', () => {
         const result = await completeWorkOrder(h.input, h.deps)
         expect(result.completed).toBe(false)
         expect(h.sentinel()).toBeUndefined()
-        expect(h.writes).toEqual([])
+        if (result.completed) throw new Error('Unexpected completion')
+        // Self grading and an unauthenticated grader are refused before any assessment exists, so nothing is kept.
+        if (!result.grade || !isIssuedWorkOrderGrade(result.grade)) { expect(h.writes).toEqual([]); return }
+        // The failed grade is the engineer's next input, so it is kept and its reason names each unmet criterion.
+        expect(h.writes).toEqual(['grade', 'read-grade'])
+        const unmet = result.grade.criteria.filter(row => row.outcome !== CRITERION_OUTCOMES[0])
+        for (const row of unmet) expect(result.reason).toContain(`${row.criterion} ${row.outcome}`)
+        expect(JSON.parse(h.storedGrade()!).grade.criteria).toEqual(expect.arrayContaining(unmet.map(row => expect.objectContaining({ criterion: row.criterion, outcome: row.outcome }))))
     })
 
     it.each(['during grading', 'during reviews', 'after grade persistence'])('refuses artifact drift %s', async when => {

@@ -439,6 +439,20 @@ else process.exit(64)
             message: expect.stringContaining(`Codex has not trusted the guard hook in ${join(candidate.checkout, '.codex/hooks.json')}`) }))
     })
 
+    it('warns from doctor when the cockpit has work orders but the Codex CLI that grades them is not on PATH', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+        const warning = expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_UNAVAILABLE', target: 'workorders' })
+
+        expect((await doctor()).diagnostics).not.toContainEqual(warning)
+        await mkdir(join(candidate.checkout, 'workorders'))
+        expect((await doctor()).diagnostics).toContainEqual(warning)
+        await writeFile(join(candidate.root, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+        expect((await doctor()).diagnostics).not.toContainEqual(warning)
+    })
+
     it('preserves a lifecycle owner refusal before observing Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true })
         const history = lifecycleHistoryAddress(candidate.namespace, candidate.stack)

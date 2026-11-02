@@ -15,6 +15,7 @@ import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandK
 import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
 import { observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
 import { isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
+import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { decodeLifecycleRecord } from '../environment/application.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
 import { resolveExecutablePath } from '../environment/executable.js'
@@ -26,10 +27,9 @@ import { createReadCommandAdapters } from '../environment/read-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily } from '../environment/ports.js'
 import { readState } from '../environment/state.js'
 import type { CompletionDependencies, CompletionRecord, CompletionWriter } from '../grading/completion.js'
-import { prepareWorkOrderVerification, type GraderContext, type GraderResponse, type GradingInput, type PreparedWorkOrderVerification,
+import { CRITERION_OUTCOMES, prepareWorkOrderVerification, type GraderContext, type GraderResponse, type GradingInput, type PreparedWorkOrderVerification,
     type VerificationObservation, type WorkOrderSubjectDependencies } from '../grading/verifier.js'
 import type { GateDependencies, GateRegistry, GateRequest, ProductGateInvocation } from '../testing/gates.js'
-import { GATE_SELECTOR_OPTION } from '../testing/gates.js'
 import { parseWorkOrder, type ParsedWorkOrder, type WorkOrderFinding } from './contract.js'
 import type { WorkOrderExecutionDependencies, WorkOrderExecutionInput } from './executor.js'
 import {
@@ -90,6 +90,8 @@ export interface WorkApplicationAuthorities {
     readonly resolveEvaluator?: () => Promise<EvaluatorAuthority>
     readonly changedPaths?: readonly string[]
     readonly executableDirectories?: readonly string[]
+    // The non-secret variables a declared verification command receives besides PATH.
+    readonly declaredEnvironment?: Readonly<Record<string, string>>
 }
 
 export interface WorkApplicationComposition {
@@ -233,7 +235,13 @@ const MAX_PRIVATE_BYTES = 8 * 1_048_576
 const MAX_REPOSITORY_PATHS = 4_096
 const MAX_REPOSITORY_FILE_BYTES = 8 * 1_048_576
 const MAX_REPOSITORY_AGGREGATE_BYTES = 64 * 1_048_576
+const VERIFICATION_TIMEOUT_FIELD = 'workorders.verification_timeout_seconds'
+const EVALUATOR_MISSING = 'the Codex CLI (codex) is not on PATH, and work-review and work-grade run it as the independent evaluator'
+const EVALUATOR_INSTALL = 'install it with npm install -g @openai/codex and sign in with codex login'
 const DEFAULT_EXECUTABLE_DIRECTORIES = Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])
+// The Codex CLI's --json stream carries every command it ran and that command's output; the first event
+// names the thread, so the head of the stream is kept and a larger stream fails naming this bound.
+const EVALUATOR_STDOUT_LIMIT_BYTES = 8 * 1_048_576
 const digest = (value: Uint8Array | string): string => createHash('sha256').update(value).digest('hex')
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
@@ -493,9 +501,13 @@ async function executable(directories: readonly string[], name: string): Promise
     return Object.freeze({ state: 'unavailable', reason: unavailableReason })
 }
 
-// A product test stage is judged by its exit status: it may outlive the probe default, overflow the
-// capture limit (only the tail is kept) and needs the non-secret variables build tools resolve caches from.
-type BoundedExecutionMode = Readonly<{ kind: 'probe' }> | Readonly<{ kind: 'exit-status'; env: Readonly<Record<string, string>> }>
+// Every caller sees the same outcome classes: a process that ran reports its exit status, a timeout says
+// so, and only evidence that cannot be tied to the issued step is called unauthenticated. A probe parses
+// its output, so it refuses a truncated or non-UTF-8 capture. A declared command (a product test stage or
+// a work-order verification row) is judged by its exit status: it runs for its declared timeout, keeps
+// the tail of long output and receives the non-secret variables build tools resolve caches from.
+type BoundedExecutionMode = Readonly<{ kind: 'probe' }>
+    | Readonly<{ kind: 'declared'; env: Readonly<Record<string, string>>; timeoutField: string }>
 
 async function executeBounded(root: string, argv: readonly string[], directories = DEFAULT_EXECUTABLE_DIRECTORIES, timeoutMs = 30_000,
     mode: BoundedExecutionMode = { kind: 'probe' }): Promise<VerificationObservation & Readonly<{ observedBytes?: number }>> {
@@ -516,28 +528,73 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const filesystemCheck: FilesystemCheck = Object.freeze({ path: root, expected: 'directory' })
     const stepArgv: readonly [string, ...string[]] = Object.freeze([resolved.path, ...argv.slice(1)])
     const step: ExecutionStep = Object.freeze({ id: `work-${randomUUID()}`, argv: stepArgv, argv0: resolved.path,
-        cwd: root, env: Object.freeze({ ...(mode.kind === 'exit-status' ? mode.env : {}), PATH: directories.join(delimiter) }), timeoutMs,
+        cwd: root, env: Object.freeze({ ...(mode.kind === 'declared' ? mode.env : {}), PATH: directories.join(delimiter) }), timeoutMs,
         spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
-        ...(mode.kind === 'exit-status' ? { outputOverflow: 'retain-tail' as const } : {}),
+        ...(mode.kind === 'declared' ? { outputOverflow: 'retain-tail' as const } : {}),
         paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ owner: 'work-application' }), expected: Object.freeze([]),
         consumedFiles: Object.freeze([consumedFile]), filesystemChecks: Object.freeze([filesystemCheck]), compensation: Object.freeze([]) })
     const result = authenticatedExecutionOutcome(await executeProbe(step), step)
-    if (!result) return { kind: 'error', reason: 'Bounded execution could not be authenticated' }
+    if (!result) return { kind: 'error', reason: `the outcome of ${argv[0]} could not be authenticated as the issued step` }
     if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
-        return { kind: 'error', reason: `timed out after ${timeoutMs / 1_000} seconds` }
+        return { kind: 'error', reason: `timed out after ${timeoutMs / 1_000} seconds${mode.kind === 'declared' ? `; raise ${mode.timeoutField}` : ''}` }
     }
-    const exited = result.kind === 'complete'
-        || mode.kind === 'exit-status' && result.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && result.receipt !== undefined
-    if (!exited) return { kind: 'error', reason: `Bounded execution was refused: ${result.code}` }
+    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED) return { kind: 'unavailable', reason: `${argv[0]} could not be started` }
+    // A non-zero exit carries a receipt only when the process started and its termination was confirmed.
+    const exited = result.kind === 'complete' || result.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && result.receipt !== undefined
+    if (!exited) return { kind: 'error', reason: `${argv[0]} did not run to completion: ${result.code}` }
     const truncated = result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
         || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes
-    if (truncated && mode.kind === 'probe') return { kind: 'error', reason: 'Bounded execution output was truncated' }
-    // A kept tail can start inside a multi-byte character, so only an exit-status run decodes leniently.
+    if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the 64 KiB probe capture` }
+    // A kept tail can start inside a multi-byte character, so only a declared run decodes leniently.
     const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' }).decode(bytes)
-    try {
-        return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout: decode(result.stdout), stderr: decode(result.stderr), truncated,
-            ...(mode.kind === 'exit-status' ? { observedBytes: result.execution.stdoutObservedBytes + result.execution.stderrObservedBytes } : {}) })
-    } catch { return { kind: 'error', reason: 'Bounded execution returned invalid UTF-8' } }
+    let stdout: string; let stderr: string
+    try { stdout = decode(result.stdout); stderr = decode(result.stderr) }
+    catch (error) { return { kind: 'error', reason: `${argv[0]} returned invalid UTF-8: ${error instanceof Error ? error.message : String(error)}` } }
+    return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout, stderr, truncated,
+        observedBytes: result.execution.stdoutObservedBytes + result.execution.stderrObservedBytes })
+}
+
+// The Codex CLI passes --output-schema to OpenAI structured outputs, which rejects any object that does
+// not list every property as required and forbid the rest; an open { type: 'object' } fails the whole run
+// with HTTP 400. An optional field is therefore a required one whose type admits null.
+const closedObject = (properties: Readonly<Record<string, unknown>>) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties })
+const oneOf = (values: readonly string[]) => ({ type: 'string', enum: [...values] })
+const schemaText = { type: 'string' } as const
+const schemaOffset = { type: 'integer' } as const
+
+function evaluatorOutputSchema(role: 'grader' | 'simplification' | 'code-spec' | 'security'): string {
+    return JSON.stringify(role === 'grader' ? closedObject({
+        kind: oneOf(['assessment']), runId: schemaText, integrity: oneOf(['clean', 'contaminated']),
+        criteria: { type: 'array', items: closedObject({
+            criterion: schemaText, criterionDigest: schemaText, outcome: oneOf(CRITERION_OUTCOMES),
+            verificationDigests: { type: 'array', items: schemaText },
+            verificationEvidence: { type: 'array', items: closedObject({
+                digest: schemaText, stream: oneOf(['stdout', 'stderr']), start: schemaOffset, end: schemaOffset, quote: schemaText }) },
+            evidence: { type: 'array', items: closedObject({
+                path: schemaText, digest: schemaText, start: schemaOffset, end: schemaOffset, quote: schemaText, symbol: { type: ['string', 'null'] } }) },
+            observation: schemaText, alternative: schemaText }) },
+    }) : closedObject({
+        kind: oneOf(['review']), runId: schemaText, contractDigest: schemaText, artifactDigest: schemaText,
+        findings: { type: 'array', items: closedObject({ id: schemaText, severity: oneOf(['blocking', 'advisory']), summary: schemaText,
+            affectedVerification: { type: 'array', items: { type: 'array', items: schemaText } } }) },
+        dispositions: { type: 'array', items: closedObject({ findingId: schemaText, outcome: oneOf(['fixed', 'accepted-risk']), reason: schemaText }) },
+        evidence: schemaText,
+    }))
+}
+
+// The Codex CLI reports why a run failed (an API rejection, a missing login) as a JSON event on stdout;
+// without one, the end of stderr is the best available cause.
+function evaluatorFailureCause(stdout: Buffer, stderr: Buffer): string {
+    let cause: string | undefined
+    for (const line of stdout.toString('utf8').split('\n')) {
+        try {
+            const event = JSON.parse(line) as { type?: unknown; message?: unknown; error?: { message?: unknown } }
+            if (event.type === 'error' && typeof event.message === 'string') cause = event.message
+            else if (event.type === 'turn.failed' && typeof event.error?.message === 'string') cause = event.error.message
+        } catch { continue }
+    }
+    const text = (cause ?? stderr.toString('utf8')).trim()
+    return text ? text.slice(-2_048) : 'no error event or stderr output'
 }
 
 function admitRepositoryPath(root: string, identity: string, path: string, sensitivePaths: ReadonlySet<string>,
@@ -616,6 +673,17 @@ function statusPath(record: string, spaces: number): string {
     const path = record.slice(offset)
     if (!path) throw new Error('repository status path is missing')
     return path
+}
+
+// Work-order coordination files change as the work is tracked, not as the product changes, so they never
+// make proof stale: the orders and programme ledgers themselves, cockpit's private state, and the progress
+// event files work-record reads (otherwise each recorded event would stale every earlier step's proof).
+const PROGRESS_EVENT_DIRECTORY = 'workorders/events/'
+
+function coordinationPaths(orders: readonly OrderObservation[]): ReadonlySet<string> {
+    return new Set([...orders.flatMap(row => [row.path,
+        ...(row.contract.frontmatter.programme ? [`workorders/programmes/${row.contract.frontmatter.programme}.json`] : [])]),
+    '.cockpit/actors/', '.cockpit/transactions/', '.cockpit/work-orders/', PROGRESS_EVENT_DIRECTORY])
 }
 
 function excludedRepositoryPath(path: string, excluded: ReadonlySet<string>): boolean {
@@ -1395,9 +1463,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         await recovered()
         if (!exactSource(config.source)) throw new Error('configuration source changed after admission')
         const orders = inventory(root)
-        const excluded = new Set([...orders.flatMap(row => [row.path,
-            ...(row.contract.frontmatter.programme ? [`workorders/programmes/${row.contract.frontmatter.programme}.json`] : [])]),
-        '.cockpit/actors/', '.cockpit/transactions/', '.cockpit/work-orders/'])
+        const excluded = coordinationPaths(orders)
         const repositories: WorkOrderRepository[] = []
         for (const repository of declaredRepositories) {
             if (!isAbsolute(repository.root) || repository.root !== root && repository.root !== siblingsRoot && !repository.root.startsWith(`${siblingsRoot}${sep}`)
@@ -1585,8 +1651,11 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             }
         }), prepared.identityObservation.commonDirectory))
     }
+    // No --follow: a published order is usually a near-copy of its draft or of an earlier order, which
+    // --follow reports as a copy rather than an addition, so the order would never have a creation time.
+    // The order's path is fixed by its identity, so its first addition at that path is its creation.
     const creationTimestamp = async (path: string): Promise<number | undefined> => {
-        const observed = await executeBounded(root, ['git', 'log', '--follow', '--diff-filter=A', '--format=%ct', '--reverse', '--', path],
+        const observed = await executeBounded(root, ['git', 'log', '--no-renames', '--diff-filter=A', '--format=%ct', '--reverse', '--', path],
             authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES)
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.stderr) return undefined
         const rows = observed.stdout.trim().split('\n').filter(Boolean)
@@ -1640,22 +1709,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         })
     }
 
-    const actorSchema = (role: 'grader' | 'simplification' | 'code-spec' | 'security'): string => JSON.stringify(role === 'grader' ? {
-        type: 'object', additionalProperties: false, required: ['kind', 'runId', 'integrity', 'criteria'], properties: {
-            kind: { const: 'assessment' }, runId: { type: 'string' }, integrity: { enum: ['clean', 'contaminated'] },
-            criteria: { type: 'array', items: { type: 'object', additionalProperties: false,
-                required: ['criterion', 'criterionDigest', 'outcome', 'verificationDigests', 'verificationEvidence', 'evidence', 'observation', 'alternative'],
-                properties: { criterion: { type: 'string' }, criterionDigest: { type: 'string' }, outcome: { type: 'string' },
-                    verificationDigests: { type: 'array', items: { type: 'string' } }, verificationEvidence: { type: 'array', items: { type: 'object' } },
-                    evidence: { type: 'array', items: { type: 'object' } }, observation: { type: 'string' }, alternative: { type: 'string' } } } },
-        },
-    } : {
-        type: 'object', additionalProperties: false, required: ['kind', 'runId', 'contractDigest', 'artifactDigest', 'findings', 'dispositions', 'evidence'],
-        properties: { kind: { const: 'review' }, runId: { type: 'string' }, contractDigest: { type: 'string' }, artifactDigest: { type: 'string' },
-            findings: { type: 'array', items: { type: 'object' } }, dispositions: { type: 'array', items: { type: 'object' } }, evidence: { type: 'string' } },
-    })
     const nativeActor = async (role: 'grader' | 'simplification' | 'code-spec' | 'security', context: GraderContext | WorkOrderReviewerContext,
-        actorIdentity: string, deadline: number): Promise<GraderResponse | WorkOrderReviewerResponse> => {
+        actorIdentity: string): Promise<GraderResponse | WorkOrderReviewerResponse> => {
         let evaluator: EvaluatorAuthority
         try { evaluator = await resolveEvaluator() }
         catch (error) { return { kind: 'never-ran', reason: error instanceof Error ? error.message : String(error) } }
@@ -1672,7 +1727,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             ? Object.freeze({ state: 'available' as const, value: evaluator.executable })
             : await executable(executableDirectories, 'codex')
         if (evaluatorResolution.state !== 'available') {
-            return { kind: 'never-ran', reason: 'Installed native evaluator executable is unavailable or changed' }
+            return { kind: 'never-ran', reason: `${EVALUATOR_MISSING} (${evaluatorResolution.reason}); ${EVALUATOR_INSTALL}` }
         }
         const evaluatorExecutable = evaluatorResolution.value
         const observedCli = await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
@@ -1680,9 +1735,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             return { kind: 'never-ran', reason: 'Installed native evaluator executable is unavailable or changed' }
         }
         const cli = evaluatorExecutable
-        const remaining = deadline - Date.now()
-        if (remaining <= 0) return { kind: 'never-ran', reason: 'Independent evaluation deadline expired' }
-        const instruction = role === 'grader' ? evaluator.bytes : [
+        const timeoutMs = config.evaluatorTimeoutSeconds * 1_000
+        // The shipped instructions carry notes to cockpit's maintainers that are not addressed to the grader.
+        const instruction = role === 'grader' ? stripDevelopmentMarkers(evaluator.bytes) : [
             `Perform the independent ${role} review of context.subject and only the declared changedPaths.`,
             'Do not grade acceptance criteria and do not claim that verification reruns have already occurred.',
             'Return only the review response schema with exact current contractDigest and artifactDigest, bounded findings, dispositions, and evidence.',
@@ -1701,7 +1756,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 throw new Error('independent evaluator staging is not a private canonical directory')
             }
             await writeFile(requestPath, requestBytes, { flag: 'wx', mode: 0o600 })
-            await writeFile(schemaPath, actorSchema(role), { flag: 'wx', mode: 0o600 })
+            await writeFile(schemaPath, evaluatorOutputSchema(role), { flag: 'wx', mode: 0o600 })
             const requestDigest = digest(readFileSync(requestPath))
             const prompt = `Read exactly the request JSON at ${requestPath} with SHA-256 ${requestDigest}; follow its fixed evaluator instruction and return only the required schema.`
             const argv = [cli.path, 'exec', '--ephemeral', '--ignore-user-config', '--sandbox', 'read-only', '--cd', root, '--json', '--output-schema', schemaPath,
@@ -1717,13 +1772,22 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             if (evaluator.environment?.HOME) env.HOME = evaluator.environment.HOME
             if (evaluator.environment?.CODEX_HOME) env.CODEX_HOME = evaluator.environment.CODEX_HOME
             const step: ExecutionStep = Object.freeze({ id: `independent-${role}-${randomUUID()}`, argv: Object.freeze(argv), argv0: cli.path, cwd: root, env: Object.freeze(env),
-                timeoutMs: remaining, spawnNotAfter: new Date(deadline).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
+                timeoutMs, spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: EVALUATOR_STDOUT_LIMIT_BYTES, stderrLimitBytes: 65_536,
                 paths: Object.freeze([responsePath]), ports: Object.freeze([]), labels: Object.freeze({ owner: 'independent-evaluator', role, requestDigest }), expected: Object.freeze([]),
                 consumedFiles: consumed, filesystemChecks, compensation: Object.freeze([]) })
             const outcome = authenticatedExecutionOutcome(await executeProbe(step), step)
-            if (!outcome || outcome.kind !== 'complete' || outcome.execution.exitCode !== 0
-                || outcome.execution.stdoutObservedBytes !== outcome.execution.stdoutRetainedBytes
-                || outcome.execution.stderrObservedBytes !== outcome.execution.stderrRetainedBytes) return { kind: 'error', reason: 'Independent evaluator execution did not complete with bounded authenticated output' }
+            if (!outcome) return { kind: 'error', reason: 'the Codex CLI outcome could not be authenticated as the issued evaluator run' }
+            if (outcome.kind === 'refusal') {
+                if (outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
+                    return { kind: 'never-ran', reason: `the Codex CLI timed out after ${config.evaluatorTimeoutSeconds} seconds; raise workorders.evaluator_timeout_seconds` }
+                }
+                if (outcome.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT || outcome.code === ENVIRONMENT_CODES.EXECUTION_STDERR_LIMIT) {
+                    return { kind: 'error', reason: `the Codex CLI output exceeded its ${outcome.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT ? EVALUATOR_STDOUT_LIMIT_BYTES : 65_536}-byte capture` }
+                }
+                return { kind: 'never-ran', reason: outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
+                    ? `the Codex CLI exited with status ${outcome.execution.exitCode}: ${evaluatorFailureCause(outcome.stdout, outcome.stderr)}`
+                    : `the Codex CLI did not run to completion: ${outcome.code}` }
+            }
             let threadId: string | undefined
             for (const line of new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).split('\n').filter(Boolean)) {
                 const event = JSON.parse(line) as Record<string, unknown>
@@ -1746,12 +1810,21 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             }
             if (response.runId !== context.runId || nativeActorBindings.has(actorIdentity)) return { kind: 'error', reason: 'Independent evaluator response identity is stale or replayed' }
             nativeActorBindings.set(actorIdentity, Object.freeze({ role, runId: context.runId, threadId }))
-            if (role === 'grader') return Object.freeze({ ...response, grader: actorIdentity }) as unknown as GraderResponse
+            if (role === 'grader') {
+                // The output schema spells an absent symbol as null; the verifier's evidence has no symbol then.
+                const criteria = Array.isArray(response.criteria) ? response.criteria.map(row => !row || typeof row !== 'object' || !Array.isArray((row as { evidence?: unknown }).evidence) ? row
+                    : { ...row, evidence: (row as { evidence: unknown[] }).evidence.map(item => item && typeof item === 'object' && (item as { symbol?: unknown }).symbol === null
+                        ? Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'symbol')) : item) }) : response.criteria
+                return Object.freeze({ ...response, criteria, grader: actorIdentity }) as unknown as GraderResponse
+            }
             return Object.freeze({ ...response, reviewer: actorIdentity }) as unknown as WorkOrderReviewerResponse
         } catch (error) { return { kind: 'error', reason: `Independent evaluator failed: ${error instanceof Error ? error.message : String(error)}` } }
         finally { await rm(runRoot, { recursive: true }) }
     }
 
+    // Declared verification is the product's own test command, so it runs like a product test stage.
+    const runDeclaredVerification = (argv: readonly string[]) => executeBounded(root, argv, authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
+        config.verificationTimeoutSeconds * 1_000, { kind: 'declared', env: authorities.declaredEnvironment ?? {}, timeoutField: VERIFICATION_TIMEOUT_FIELD })
     const status = async (): Promise<WorkOrderStatusInput> => statusInput(await observe())
     const acceptance = async (id: string): Promise<PreparedAcceptance> => {
         const snapshot = await observe(); const row = order(snapshot.orders, id); const prior = currentManifest(id)
@@ -1799,7 +1872,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         const stateBytes = generationFile(id, manifest, 'state.json'); if (!stateBytes) throw new Error('execution state is missing')
         return Object.freeze({ input: Object.freeze({ accepted: currentAcceptance(row), policy: config.workOrderPolicy,
             status: statusInput(snapshot), stateBytes, writer: { actor: authorities.actors.author, at: new Date().toISOString() }, approach }),
-            dependencies: Object.freeze({ store: stateStore(id, row), execute: (argv: readonly string[]) => executeBounded(root, argv, authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES) }) })
+            dependencies: Object.freeze({ store: stateStore(id, row), execute: runDeclaredVerification }) })
     }
     const record = async (id: string, eventFile: string): Promise<PreparedProgress> => {
         const snapshot = await observe(); const row = order(snapshot.orders, id); currentAcceptance(row)
@@ -1963,15 +2036,15 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             ...(request.select ? { select: request.select } : {}), staged: request.mode === 'staged', ...(stack ? { stack } : {}) }), dependencies })
     }
     const grading = async (id: string): Promise<Readonly<{ input: GradingInput; dependencies: CompletionDependencies }>> => {
-        const snapshot = await observe(); const row = order(snapshot.orders, id); const accepted = currentAcceptance(row); const deadline = Date.now() + 300_000; const grader = `codex:grader:${randomUUID()}`
+        const snapshot = await observe(); const row = order(snapshot.orders, id); const accepted = currentAcceptance(row); const grader = `codex:grader:${randomUUID()}`
         const base = { readWorkOrder: async () => { const current = order((await observe()).orders, id); if (current.contract.digest !== row.contract.digest) throw new Error('work order changed during independent grading'); return current.contract },
-            readArtifact: async (path: string) => readSourceArtifact(path, 1_048_576), runVerification: async (argv: readonly string[]) => executeBounded(root, argv, authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES, Math.max(1, deadline - Date.now())),
-            grade: async (context: GraderContext) => nativeActor('grader', context, grader, deadline) as Promise<GraderResponse> }
+            readArtifact: async (path: string) => readSourceArtifact(path, 1_048_576), runVerification: runDeclaredVerification,
+            grade: async (context: GraderContext) => nativeActor('grader', context, grader) as Promise<GraderResponse> }
         const dependencies: CompletionDependencies = { ...base, reviews: async (subject: PreparedWorkOrderVerification) => {
             requireCompletedExecution(await observe(), id)
             const reviewStore = { write: async (bytes: string) => { await commitGeneration(id, row.path, row.contract.digest, { 'reviews.json': bytes }) }, read: async () => { const manifest = currentManifest(id); return manifest ? generationFile(id, manifest, 'reviews.json')?.toString('utf8') ?? null : null } }
             const reviewed = await reviewWorkOrderWave({ subject, author: authorities.actors.author, changedPaths: authorities.changedPaths ?? row.contract.authority }, { ...base,
-                review: async context => nativeActor(context.kind, context, `codex:${context.kind}:${randomUUID()}`, deadline) as Promise<WorkOrderReviewerResponse>, rerun: async argv => executeBounded(root, argv, authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES, Math.max(1, deadline - Date.now())), store: reviewStore })
+                review: async context => nativeActor(context.kind, context, `codex:${context.kind}:${randomUUID()}`) as Promise<WorkOrderReviewerResponse>, rerun: runDeclaredVerification, store: reviewStore })
             if (reviewed.kind === 'refusal') throw new Error(reviewed.reason); return reviewed.reviews
         }, withCompletionLock: async <T>(_id: string, action: (writer: CompletionWriter) => Promise<T>): Promise<T> => withLock(id, async () => action({
             writeGrade: async bytes => { await commitGeneration(id, row.path, row.contract.digest, { 'grade.json': bytes }) }, readGrade: async () => { const manifest = currentManifest(id); return manifest ? generationFile(id, manifest, 'grade.json')?.toString('utf8') ?? null : null },
@@ -2056,7 +2129,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     }
     const reviewing = async (id: string): Promise<PreparedReview> => {
         const snapshot = await observe(); const row = order(snapshot.orders, id); const accepted = currentAcceptance(row)
-        const deadline = Date.now() + 300_000; const grader = `codex:grader:${randomUUID()}`
+        const grader = `codex:grader:${randomUUID()}`
         const subjectDependencies: WorkOrderSubjectDependencies = Object.freeze({
             readWorkOrder: async () => { const current = order((await observe()).orders, id); if (current.contract.digest !== row.contract.digest) throw new Error('work order changed during independent review'); return current.contract },
             readArtifact: async (path: string) => readSourceArtifact(path, 1_048_576),
@@ -2068,8 +2141,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             read: async () => { const manifest = currentManifest(id); return manifest ? generationFile(id, manifest, 'reviews.json')?.toString('utf8') ?? null : null },
         })
         const dependencies: WorkOrderReviewDependencies = Object.freeze({ ...subjectDependencies,
-            review: async (context: WorkOrderReviewerContext) => nativeActor(context.kind, context, `codex:${context.kind}:${randomUUID()}`, deadline) as Promise<WorkOrderReviewerResponse>,
-            rerun: async (argv: readonly string[]) => executeBounded(root, argv, authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES, Math.max(1, deadline - Date.now())), store })
+            review: async (context: WorkOrderReviewerContext) => nativeActor(context.kind, context, `codex:${context.kind}:${randomUUID()}`) as Promise<WorkOrderReviewerResponse>,
+            rerun: runDeclaredVerification, store })
         return Object.freeze({ input: Object.freeze({ subject, author: authorities.actors.author,
             changedPaths: authorities.changedPaths ?? row.contract.authority }), dependencies })
     }
@@ -2108,12 +2181,12 @@ function captureConfiguredInput(value: unknown): Readonly<{ configPath: string; 
 }
 
 // Build tools resolve their caches and locale from these; none carries a credential. Every other parent
-// variable stays out, because a product stage runs arbitrary repository code and the parent environment
-// of an agent session routinely holds tokens.
-const PRODUCT_STAGE_ENVIRONMENT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const
+// variable stays out, because a product stage or verification command runs arbitrary repository code and
+// the parent environment of an agent session routinely holds tokens.
+const DECLARED_COMMAND_ENVIRONMENT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const
 
-function productStageEnvironment(environment: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(PRODUCT_STAGE_ENVIRONMENT.flatMap(name => {
+function declaredCommandEnvironment(environment: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(DECLARED_COMMAND_ENVIRONMENT.flatMap(name => {
         const value = environment[name]
         return typeof value === 'string' && value.length > 0 && !value.includes('\0') && Buffer.byteLength(value) <= 4_096 ? [[name, value]] : []
     })))
@@ -2126,10 +2199,7 @@ function productGateDependencies(root: string, source: SourceProvenance,
         subject: async () => {
             if (!exactSource(source)) throw new Error('configuration source changed during product gate')
             const observed = []
-            const orders = inventory(root)
-            const excluded = new Set([...orders.flatMap(row => [row.path,
-                ...(row.contract.frontmatter.programme ? [`workorders/programmes/${row.contract.frontmatter.programme}.json`] : [])]),
-            '.cockpit/actors/', '.cockpit/transactions/', '.cockpit/work-orders/'])
+            const excluded = coordinationPaths(inventory(root))
             for (const repository of repositories) {
                 observed.push(await observeRepositorySubject(repository, repository.root === root ? excluded : new Set(),
                     executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES, repository.sensitivePaths, repository.forbiddenTargets))
@@ -2137,14 +2207,9 @@ function productGateDependencies(root: string, source: SourceProvenance,
             return digest(JSON.stringify({ source: digest(readBounded(root, relative(root, source.path))), repositories: observed }))
         },
         runProductTool: async (invocation: ProductGateInvocation) => {
-            const argv = [...invocation.command]
-            if (invocation.select) argv.push(GATE_SELECTOR_OPTION, `${invocation.select.kind}:${invocation.select.value}`)
-            const observed = await executeBounded(root, argv, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
-                invocation.timeoutSeconds * 1_000, { kind: 'exit-status', env: stageEnvironment })
-            if (observed.kind !== 'executed') {
-                return Object.freeze({ kind: 'unavailable' as const, reason: observed.reason.startsWith('timed out')
-                    ? `${observed.reason}; raise testing.stages[].timeout_seconds` : observed.reason })
-            }
+            const observed = await executeBounded(root, invocation.command, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
+                invocation.timeoutSeconds * 1_000, { kind: 'declared', env: stageEnvironment, timeoutField: 'testing.stages[].timeout_seconds' })
+            if (observed.kind !== 'executed') return Object.freeze({ kind: 'unavailable' as const, reason: observed.reason })
             return Object.freeze({ kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
                 assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const })
         },
@@ -2186,20 +2251,24 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             return Object.freeze({ kind: 'refusal', reason: 'Generated work application authority does not match the selected configuration' })
         }
         const executableDirectories = executableDirectoriesFromEnvironment(captured.env)
+        const declaredEnvironment = declaredCommandEnvironment(captured.env)
         const resolveEvaluator = async (): Promise<EvaluatorAuthority> => {
             const evaluatorResolution = await executable(executableDirectories, 'codex')
-            if (evaluatorResolution.state !== 'available') throw new Error('installed native evaluator executable is unavailable')
+            if (evaluatorResolution.state !== 'available') throw new Error(`${EVALUATOR_MISSING} (${evaluatorResolution.reason}); ${EVALUATOR_INSTALL}`)
             const evaluatorExecutable = evaluatorResolution.value
             const version = await executeBounded(config.cockpitRoot, [evaluatorExecutable.path, '--version'], executableDirectories)
             const help = await executeBounded(config.cockpitRoot, [evaluatorExecutable.path, 'exec', '--help'], executableDirectories)
             const observedEvaluator = await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
-            if (version.kind !== 'executed' || version.exitCode !== 0 || !version.stdout.trim()
-                || help.kind !== 'executed' || help.exitCode !== 0
-                || ['--ephemeral', '--ignore-user-config', '--sandbox', '--cd', '--json', '--output-schema', '--output-last-message']
-                    .some(flag => !help.stdout.includes(flag))
-                || observedEvaluator.state !== 'available'
-                || JSON.stringify(observedEvaluator.value) !== JSON.stringify(evaluatorExecutable)) {
-                throw new Error('installed native evaluator capability or executable identity is unavailable')
+            if (observedEvaluator.state !== 'available' || JSON.stringify(observedEvaluator.value) !== JSON.stringify(evaluatorExecutable)) {
+                throw new Error(`the Codex CLI at ${evaluatorExecutable.path} changed while cockpit inspected it`)
+            }
+            if (version.kind !== 'executed' || version.exitCode !== 0 || !version.stdout.trim()) {
+                throw new Error(`the Codex CLI at ${evaluatorExecutable.path} did not report its version: ${version.kind === 'executed' ? `exit ${version.exitCode}` : version.reason}`)
+            }
+            const missingFlags = ['--ephemeral', '--ignore-user-config', '--sandbox', '--cd', '--json', '--output-schema', '--output-last-message']
+                .filter(flag => help.kind !== 'executed' || help.exitCode !== 0 || !help.stdout.includes(flag))
+            if (missingFlags.length) {
+                throw new Error(`the Codex CLI ${version.stdout.trim()} at ${evaluatorExecutable.path} does not offer codex exec ${missingFlags.join(' ')}; update it, then rerun`)
             }
             return Object.freeze({ path: authority.evaluator.path, bytes: authority.evaluator.bytes, sha256: authority.evaluator.sha256,
                 restriction: authority.evaluator.restriction, executableDirectories, executable: evaluatorExecutable, environment: captured.env })
@@ -2315,12 +2384,12 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
         }
         const composition = createWorkApplicationComposition(config, {
             actors: Object.freeze({ operator: `operator-${config.cockpitName}`, author: `author-${config.cockpitName}` }),
-            installedSkills, executableDirectories,
+            installedSkills, executableDirectories, declaredEnvironment,
             resolveEvaluator,
             ...(config.browser ? { resolveBrowser } : {}),
             testing: Object.freeze({ registry: authority.testing.registry,
                 dependencies: productGateDependencies(config.cockpitRoot, config.source, gateRepositories,
-                    productStageEnvironment(captured.env), executableDirectories), runtime: gateRuntime }),
+                    declaredEnvironment, executableDirectories), runtime: gateRuntime }),
         })
         return Object.freeze({ kind: 'complete', composition })
     } catch (error) {

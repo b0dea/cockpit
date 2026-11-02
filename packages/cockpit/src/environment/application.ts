@@ -4332,6 +4332,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly discoverReleaseFreshness?: () => Promise<ReleaseFreshness>
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
+    /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
+    readonly inspectEvaluator?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Other cockpits' state namespaces this version skipped; read after load has selected this cockpit's state root. */
     readonly readUnreadableState?: () => Promise<readonly SkippedStateNamespace[]>
 }
@@ -4979,10 +4981,11 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
-    const [outcome, guardHosts, unconfirmed, testingGate, hookTrust] = await Promise.all([doctorHealth(input, adapters, config),
-        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([])])
+    const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator] = await Promise.all([doctorHealth(input, adapters, config),
+        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([]),
+        adapters.inspectEvaluator?.() ?? Object.freeze([])])
     const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
-    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...unreadableState ? [unreadableState] : []]
+    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...unreadableState ? [unreadableState] : []]
     return warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
 }

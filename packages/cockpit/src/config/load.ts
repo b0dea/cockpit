@@ -101,6 +101,8 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly source: SourceProvenance
     readonly siblings: readonly Readonly<{ slug: string; dir: string; environmentFiles: readonly Readonly<{ template: string; instance: string }>[] }>[]
     readonly workOrderPolicy: ValidatedWorkOrderPolicy
+    readonly verificationTimeoutSeconds: number
+    readonly evaluatorTimeoutSeconds: number
     readonly generatedHostPaths: readonly string[]
     readonly browser?: ReturnType<typeof projectBrowserConfig>
     readonly testing?: ReturnType<typeof projectTestingConfig>
@@ -162,6 +164,8 @@ function projectTestingConfig(declaredTesting: NonNullable<CockpitConfig['testin
                 command: Object.freeze([...stage.command]) as readonly [string, ...string[]],
                 requiresStack: stage.requires_stack,
                 timeoutSeconds: stage.timeout_seconds,
+                ...(stage.select === undefined ? {} : { select: Object.freeze(Object.fromEntries(Object.entries(stage.select)
+                    .map(([kind, argv]) => [kind, Object.freeze([...argv])]))) }),
             }))),
             gates: Object.freeze(declaredTesting.gates.map((gate) => Object.freeze({
                 id: gate.id,
@@ -203,6 +207,8 @@ export function projectWorkEnvironmentConfig(
             environmentFiles: Object.freeze((environment_files ?? []).map(row => Object.freeze({ template: row.template, instance: row.instance }))),
         }))),
         workOrderPolicy: policy.policy,
+        verificationTimeoutSeconds: loaded.config.workorders.verification_timeout_seconds,
+        evaluatorTimeoutSeconds: loaded.config.workorders.evaluator_timeout_seconds,
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
         ...(testing === undefined ? {} : { testing }),

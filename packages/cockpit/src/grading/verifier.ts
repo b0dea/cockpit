@@ -5,7 +5,7 @@ import { isCurrentWorkOrderAcceptance, type AcceptedWorkOrder } from '../work-or
 export const mechanism = {
     id: 'work-order-verification',
     module: 'packages/cockpit/src/grading/verifier.ts',
-    exports: ['CRITERION_OUTCOMES', 'checkGradeCurrency', 'checkPreparedWorkOrderCurrency', 'normalizeVerificationObservation', 'prepareWorkOrderVerification', 'verificationObservationPassed', 'verifyPreparedWorkOrder', 'verifyWorkOrder'],
+    exports: ['CRITERION_OUTCOMES', 'checkGradeCurrency', 'isIssuedWorkOrderGrade', 'checkPreparedWorkOrderCurrency', 'normalizeVerificationObservation', 'prepareWorkOrderVerification', 'verificationObservationPassed', 'verifyPreparedWorkOrder', 'verifyWorkOrder'],
 } as const
 
 export const CRITERION_OUTCOMES = Object.freeze([
@@ -98,6 +98,8 @@ const issuedGrades = new WeakMap<WorkOrderGrade, { input: GradingInput; context:
 const issuedSubjects = new WeakMap<PreparedWorkOrderVerification, { input: GradingInput; observed: Awaited<ReturnType<typeof observeSubject>> }>()
 const MAX_ARTIFACT_BYTES = 1_048_576
 const MAX_OUTPUT_BYTES = 65_536
+// A declared command keeps the last 64 KiB of each stream.
+const MAX_CAPTURE_BYTES = 2 * MAX_OUTPUT_BYTES
 
 function gradingDigest(value: unknown): string {
     return createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -141,16 +143,18 @@ async function observeSubject(input: GradingInput, dependencies: WorkOrderSubjec
 export function normalizeVerificationObservation(result: VerificationObservation): VerificationObservation {
     if (result?.kind === 'executed' && Number.isInteger(result.exitCode)
         && typeof result.stdout === 'string' && typeof result.stderr === 'string' && typeof result.truncated === 'boolean') {
-        if (Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) > MAX_OUTPUT_BYTES) return { kind: 'error', reason: 'Verification output exceeded the bounded capture' }
+        if (Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) > MAX_CAPTURE_BYTES) return { kind: 'error', reason: 'Verification output exceeded the bounded capture' }
         return immutable({ kind: 'executed', exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, truncated: result.truncated })
     }
     if ((result?.kind === 'error' || result?.kind === 'unavailable') && text(result.reason)) return immutable({ kind: result.kind, reason: result.reason })
     return { kind: 'error', reason: 'Verification adapter returned a malformed observation' }
 }
 
+// A declared command is judged by its exit status, as a product test stage is: long output keeps its tail,
+// which is where a runner prints its summary, so truncation alone does not undo a pass. Silence still does.
 export function verificationObservationPassed(result: VerificationObservation): boolean {
     const observation = normalizeVerificationObservation(result)
-    return observation.kind === 'executed' && observation.exitCode === 0 && observation.truncated === false
+    return observation.kind === 'executed' && observation.exitCode === 0
         && `${observation.stdout}${observation.stderr}`.trim().length > 0
 }
 
@@ -226,11 +230,11 @@ function gradeCriterion(criterion: WorkOrderCriterion, response: GraderResponse,
     const outcome = (index: 1 | 2 | 3, reason: string): CriterionGrade => ({ criterion: criterion.id, outcome: CRITERION_OUTCOMES[index], reasons: [reason] })
     const records = context.verification.filter(record => record.criterion === criterion.id)
     const failed = records.find(record => record.result.kind === 'executed' && record.result.exitCode !== 0)
-    if (failed) return outcome(2, `Declared verification failed: ${JSON.stringify(failed.argv)}`)
+    if (failed && failed.result.kind === 'executed') return outcome(2, `Declared verification ${JSON.stringify(failed.argv)} failed with exit ${failed.result.exitCode}`)
     const unavailable = records.find(record => record.result.kind !== 'executed')
     if (unavailable) return outcome(3, unavailable.result.kind === 'executed' ? 'Verification did not run' : unavailable.result.reason)
-    if (records.some(record => record.result.kind === 'executed' && (record.result.truncated || !(record.result.stdout + record.result.stderr).trim()))) {
-        return outcome(1, 'Verification output is truncated or silent')
+    if (records.some(record => record.result.kind === 'executed' && !(record.result.stdout + record.result.stderr).trim())) {
+        return outcome(1, 'Verification output is silent')
     }
     if (response?.kind !== 'assessment') return outcome(response?.kind === 'never-ran' ? 3 : 1, `Independent grader ${response?.kind ?? 'returned malformed evidence'}: ${response?.reason ?? 'no reason supplied'}`)
     const assessments = response.criteria
@@ -345,6 +349,11 @@ export async function verifyWorkOrder(input: GradingInput, dependencies: Grading
     } catch (error) {
         return refusedGrade(input, '', runId, `Current grading evidence could not be established: ${errorMessage(error)}`)
     }
+}
+
+// A refused grade (the subject changed, or grading could not start) carries no assessment to keep.
+export function isIssuedWorkOrderGrade(grade: WorkOrderGrade): boolean {
+    return issuedGrades.has(grade)
 }
 
 export async function checkGradeCurrency(grade: WorkOrderGrade, dependencies: GradingDependencies): Promise<string | undefined> {

@@ -29,8 +29,12 @@ export interface WorkOrderExecutionDependencies {
 }
 export type WorkOrderExecutionResult =
     | Readonly<{ kind: 'complete'; step: number; replay: boolean }>
-    | Readonly<{ kind: 'paused'; step: number; reason: string }>
+    | Readonly<{ kind: 'paused'; step: number; reason: string; verification?: VerificationTail }>
     | Readonly<{ kind: 'refusal'; reason: string }>
+
+// What the failing command printed last, so the agent sees the failure without rerunning it.
+type VerificationTail = Readonly<{ argv: readonly string[]; exitCode: number; stdout: string; stderr: string }>
+const TAIL_CHARACTERS = 4_096
 
 function boundedText(value: unknown, maximum = 4_096): value is string {
     return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maximum
@@ -67,8 +71,9 @@ export async function executeWorkOrderStep(
     }
     const loaded = readWorkOrderState(input.accepted.contract, input.stateBytes)
     if (loaded.kind === 'refusal') return { kind: 'refusal', reason: loaded.message }
-    const status = { ...input.status, orders: input.status.orders.map(row => isParsedWorkOrder(row.contract) && row.contract.frontmatter.id === input.accepted.contract.frontmatter.id
-        ? { contract: input.accepted.contract, state: input.stateBytes } : row) }
+    // Only the selected order is resumed: several accepted orders may be active within the WIP cap.
+    const status = { ...input.status, orders: input.status.orders.flatMap(row => isParsedWorkOrder(row.contract) && row.contract.frontmatter.id === input.accepted.contract.frontmatter.id
+        ? [{ contract: input.accepted.contract, state: input.stateBytes }] : []) }
     const next = resumeWorkOrder(status, input.policy)
     if (next.kind !== 'ready') return { kind: 'refusal', reason: next.message }
     if (next.contract !== input.accepted.contract || next.state.contractDigest !== input.accepted.binding.digest
@@ -101,12 +106,12 @@ export async function executeWorkOrderStep(
     if (!passed) {
         const failed = await persist(reservedInput, { kind: 'attempt', step: next.step, approach: input.approach, outcome: 'failed' }, dependencies)
         if (failed.kind === 'refusal') return failed
-        let reason: string
-        if (observation.kind !== 'executed') reason = `Declared verification ${observation.kind}: ${observation.reason}`
-        else if (observation.exitCode !== 0) reason = `Declared verification failed with exit ${observation.exitCode}`
-        else if (observation.truncated) reason = 'Declared verification output was truncated'
-        else reason = 'Declared verification produced no usable stdout or stderr'
-        return { kind: 'paused', step: next.step, reason }
+        if (observation.kind !== 'executed') return { kind: 'paused', step: next.step, reason: `Declared verification ${observation.kind}: ${observation.reason}` }
+        const verification = Object.freeze({ argv: Object.freeze([...next.argv]), exitCode: observation.exitCode,
+            stdout: observation.stdout.slice(-TAIL_CHARACTERS), stderr: observation.stderr.slice(-TAIL_CHARACTERS) })
+        return { kind: 'paused', step: next.step, verification, reason: observation.exitCode !== 0
+            ? `Declared verification failed with exit ${observation.exitCode}`
+            : 'Declared verification produced no usable stdout or stderr' }
     }
     const settled = await persist(reservedInput, {
         kind: 'settle-execution', step: next.step, approach: input.approach,

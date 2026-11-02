@@ -142,6 +142,8 @@ describe('accepted execution boundary', () => {
             h.persist(next)
             return true
         })
+        // A long suite keeps only the tail of its output; its exit status still decides the step.
+        h.execute(async argv => { h.calls.push([...argv]); return { kind: 'executed', exitCode: 0, stdout: '...12 passed', stderr: '', truncated: true } })
         await expect(executeWorkOrderStep(h.input(), h.dependencies)).resolves.toEqual({ kind: 'complete', step: 1, replay: false })
         expect(writes).toBe(2)
         expect(h.calls).toHaveLength(1)
@@ -234,9 +236,8 @@ describe('accepted execution boundary', () => {
         { observation: { kind: 'error' as const, reason: 'executor disconnected' }, reason: 'Declared verification error: executor disconnected' },
         { observation: { kind: 'unavailable' as const, reason: 'runtime absent' }, reason: 'Declared verification unavailable: runtime absent' },
         { observation: { kind: 'executed' as const, exitCode: 1, stdout: 'failure details', stderr: '', truncated: false }, reason: 'Declared verification failed with exit 1' },
-        { observation: { kind: 'executed' as const, exitCode: 0, stdout: 'partial', stderr: '', truncated: true }, reason: 'Declared verification output was truncated' },
         { observation: { kind: 'executed' as const, exitCode: 0, stdout: '  ', stderr: '\n', truncated: false }, reason: 'Declared verification produced no usable stdout or stderr' },
-        { observation: { kind: 'executed' as const, exitCode: 0, stdout: 'x'.repeat(40_000), stderr: 'y'.repeat(40_000), truncated: false }, reason: 'Declared verification error: Verification output exceeded the bounded capture' },
+        { observation: { kind: 'executed' as const, exitCode: 0, stdout: 'x'.repeat(70_000), stderr: 'y'.repeat(70_000), truncated: false }, reason: 'Declared verification error: Verification output exceeded the bounded capture' },
     ])('records non-passing execution observation $observation.kind as a failed attempt', async ({ observation, reason }) => {
         const h = harness()
         h.execute(async () => observation)

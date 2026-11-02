@@ -1,4 +1,5 @@
-import { dirname, resolve } from 'node:path'
+import { lstat } from 'node:fs/promises'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -20,7 +21,7 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import {
     observeExternalDependencies,
     observeExternalDependency,
@@ -606,6 +607,28 @@ async function checkoutProjection(
     }, consumeSetupCheckoutProjection)
 }
 
+// Work orders exist once workorders/ does, and from then on work-review and work-grade run the Codex CLI
+// as the independent evaluator whichever agent tool did the work; doctor names a missing one before a
+// grade fails on it.
+async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>): Promise<readonly EnvironmentDiagnostic[]> {
+    try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return Object.freeze([]) }
+    catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([])
+        throw error
+    }
+    for (const directory of (env.PATH ?? '').split(delimiter)) {
+        if (directory && isAbsolute(directory) && (await resolveExecutablePath(join(directory, 'codex'))).state === 'available') return Object.freeze([])
+    }
+    return Object.freeze([Object.freeze({
+        severity: 'warning' as const,
+        // A literal, so the diagnostic inventory captures the fix beside the code.
+        code: 'EVALUATOR_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
+        message: 'this cockpit has work orders, but the Codex CLI (codex) is not on PATH, and work-review and work-grade run it as the independent evaluator',
+        target: 'workorders',
+        fix: 'install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml>',
+    })])
+}
+
 export function createHealthCommandAdapters(
     rawInput: HealthCommandCompositionInput,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
@@ -775,12 +798,14 @@ export function createHealthCommandAdapters(
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
     const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), env: input.env })
         : undefined
+    const inspectEvaluator = input ? () => inspectWorkEvaluator(dirname(input.configPath), input.env) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
         if (!selectedNamespace) return Object.freeze([])
         const inventory = await readRootPortInventory(selectedNamespace)
         return inventory.kind === 'complete' ? inventory.skipped : Object.freeze([])
     }
-    return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), readUnreadableState,
+    return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
+        ...(inspectEvaluator ? { inspectEvaluator } : {}), readUnreadableState,
         execute: (step: ExecutionStep) => execute(step) })
 }

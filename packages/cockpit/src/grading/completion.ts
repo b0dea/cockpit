@@ -3,7 +3,7 @@ import {
     isIssuedWorkOrderReviewSet, REQUIRED_GRADE_REVIEWS, type CompletionReview,
 } from '../work-orders/review.js'
 import {
-    checkGradeCurrency, checkPreparedWorkOrderCurrency, prepareWorkOrderVerification, verifyPreparedWorkOrder,
+    CRITERION_OUTCOMES, checkGradeCurrency, checkPreparedWorkOrderCurrency, isIssuedWorkOrderGrade, prepareWorkOrderVerification, verifyPreparedWorkOrder,
     type GradingDependencies, type GradingInput, type PreparedWorkOrderVerification, type WorkOrderGrade,
 } from './verifier.js'
 
@@ -62,6 +62,18 @@ export async function completeWorkOrder(input: GradingInput, dependencies: Compl
             if (reviewCurrency) return { completed: false, reason: reviewCurrency }
             const verifiedGrade = await verifyPreparedWorkOrder(subject, dependencies)
             grade = verifiedGrade
+            if (!isIssuedWorkOrderGrade(verifiedGrade)) {
+                return { completed: false, reason: verifiedGrade.criteria[0]?.reasons[0] ?? 'Grading did not produce an issued grade', grade: verifiedGrade }
+            }
+            const unmet = verifiedGrade.criteria.filter(criterion => criterion.outcome !== CRITERION_OUTCOMES[0])
+            if (unmet.length) {
+                // A failed grade is a result the engineer acts on, so it is kept and each criterion named.
+                const bytes = JSON.stringify({ grade: verifiedGrade, reviews })
+                await writer.writeGrade(bytes)
+                if (await writer.readGrade() !== bytes) return { completed: false, reason: 'The persisted grade does not match current grading and review evidence', grade: verifiedGrade }
+                return { completed: false, grade: verifiedGrade, reason: `Grade did not pass: ${unmet.map(criterion =>
+                    `${criterion.criterion} ${criterion.outcome}${criterion.reasons.length ? ` (${criterion.reasons.join('; ')})` : ''}`).join('; ')}` }
+            }
             const currency = await checkGradeCurrency(verifiedGrade, dependencies)
             if (currency) return { completed: false, reason: currency, grade: verifiedGrade }
             const bytes = JSON.stringify({ grade: verifiedGrade, reviews })

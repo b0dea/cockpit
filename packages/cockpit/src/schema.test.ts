@@ -732,6 +732,11 @@ describe('work and browser declarations', () => {
         expect(Testing.safeParse({ ...testing, native_hooks: { install: 'explicit-native' } }).success).toBe(false)
         expect(Testing.safeParse({ ...testing, native_hooks: { install: 'explicit-native' }, native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) } }).success).toBe(true)
         expect(Testing.safeParse({ ...testing, extra: true }).success).toBe(false)
+        const selecting = (select: unknown) => ({ ...testing, stages: [{ ...testing.stages[0], select }] })
+        expect(Testing.safeParse(selecting({ file: ['{value}'], test: ['-t', '{value}'] })).success).toBe(true)
+        // A selection that never places the value would run the stage unselected under a selected verdict.
+        expect(Testing.safeParse(selecting({ test: ['-t'] })).success).toBe(false)
+        expect(Testing.safeParse(selecting({ suite: ['{value}'] })).success).toBe(false)
     })
 })
 

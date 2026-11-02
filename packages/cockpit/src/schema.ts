@@ -822,6 +822,14 @@ export const Mcp = z
     })
     .strict()
 
+// A whole product suite under a build tool runs for minutes, not seconds; the ceiling still bounds
+// a hung stage so a gate always returns a verdict. Work-order verification runs the same suites.
+const TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS = 1_800
+export const TESTING_STAGE_TIMEOUT_MAX_SECONDS = 7_200
+// One independent review or grading run of the Codex CLI reads the change and reruns checks; minutes
+// are normal, and each of the four runs gets its own budget rather than sharing one.
+const EVALUATOR_TIMEOUT_DEFAULT_SECONDS = 900
+
 export const Workorders = z
     .object({
         // Consumers may lower the repeated-failure limit, never raise it.
@@ -829,6 +837,10 @@ export const Workorders = z
         // Consumer values may lower these framework maxima, but cannot raise them.
         wip_cap: z.number().int().min(1).max(3).default(3),
         programme_wip_cap: z.number().int().min(1).max(1).default(1),
+        verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
+            .describe('Seconds one declared work-order verification command may run before it is stopped and reported as not run.'),
+        evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
+            .describe('Seconds one independent review or grading run of the evaluator may take before it is stopped.'),
     })
     .strict()
 
@@ -952,12 +964,18 @@ export const Browser = z.object({
     }
 })
 
-// A whole product suite under a build tool runs for minutes, not seconds; the ceiling still bounds
-// a hung stage so a gate always returns a verdict.
-const TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS = 1_800
-export const TESTING_STAGE_TIMEOUT_MAX_SECONDS = 7_200
 const TestingName = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const TestingCommand = z.array(z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value))).min(1).max(128)
+// Stock runners reject an unknown option, so a selection reaches a stage only through arguments the
+// stage declares in its tool's own spelling, such as ["-t", "{value}"] for vitest or ["-k", "{value}"] for pytest.
+const TestingSelectArguments = z.array(z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value))).min(1).max(32)
+    .refine((values) => values.some((value) => value.includes('{value}')), 'a selection must place {value} in at least one argument')
+const TestingSelect = z.object({
+    spec: TestingSelectArguments.optional(),
+    file: TestingSelectArguments.optional(),
+    test: TestingSelectArguments.optional(),
+    route: TestingSelectArguments.optional(),
+}).strict()
 export const Testing = z.object({
     stages: z.array(z.object({
         id: TestingName,
@@ -965,6 +983,8 @@ export const Testing = z.object({
         requires_stack: z.boolean(),
         timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds the stage may run before it is stopped and the gate reports DEGRADED.'),
+        select: TestingSelect.optional()
+            .describe('Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value.'),
     }).strict()).min(1).max(128),
     gates: z.array(z.object({
         id: TestingName,
