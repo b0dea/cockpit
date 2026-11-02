@@ -454,11 +454,7 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             expect(executed, executed.kind === 'refusal' ? executed.reason : executed.kind)
                 .toMatchObject({ kind: 'complete', operation: 'work-execute' })
         }
-        // Only the fixture's tools and the system directories, so a Codex CLI installed on this machine cannot stand in.
-        const withoutEvaluator = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath,
-            env: { ...fixture.environment, PATH: `${join(fixture.root, 'tools')}${delimiter}/usr/bin${delimiter}/bin` } })
-        if (withoutEvaluator.kind !== 'complete') throw new Error(withoutEvaluator.reason)
-        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, withoutEvaluator.composition)).resolves.toMatchObject({
+        await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition)).resolves.toMatchObject({
             kind: 'refusal', operation: 'work-grade', reason: expect.stringContaining('simplification review did not run: the Codex CLI (codex) is not on PATH'),
         })
         await expect(runWorkApplication({ operation: 'browser-drive' }, optionalCapabilities.composition))
