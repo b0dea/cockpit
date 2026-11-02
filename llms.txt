@@ -11,7 +11,8 @@
 ## Reference
 
 - [CLI reference](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/cli-reference.md): every command, flag, exit code and diagnostic
-- [Configuration reference](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/configuration-reference.md): every `cockpit.toml` field, the defaults and the JSON Schema
+- [Configuration essentials](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/configuration-essentials.md): the `cockpit.toml` tables a typical cockpit sets, with minimal snippets
+- [Configuration reference](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/configuration-reference.md): every `cockpit.toml` field with its type, default and constraints, and a link to the JSON Schema
 - [Concepts](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/concepts.md): the terms the commands and diagnostics use
 
 ## Contributing

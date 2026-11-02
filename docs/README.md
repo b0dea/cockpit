@@ -28,9 +28,12 @@ contributor pages live separately under docs/contributing/.
 
 ## Reference
 
-The first four pages are generated from the source and change with it. Troubleshooting combines
-hand-written recovery guidance with a generated diagnostic index.
+The command list, CLI reference, configuration reference and capability matrix are generated from
+the source and change with it. Troubleshooting combines hand-written recovery guidance with a
+generated diagnostic index.
 
+- [Configuration essentials](configuration-essentials.md): the tables a typical `cockpit.toml`
+  sets, each linked to its full reference entry.
 - [Command list](command-list.md)
 - [CLI reference](cli-reference.md)
 - [Configuration reference](configuration-reference.md)

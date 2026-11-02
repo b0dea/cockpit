@@ -17,7 +17,9 @@ work on a throwaway example first, follow the [tutorial](tutorial.md).
 
 Every route ends with a cockpit directory of its own beside the product's repositories, holding
 <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. [Where the cockpit lives](concepts.md#where-the-cockpit-lives)
-explains why a product repository is not the default.
+explains why a product repository is not the default, and
+[Configuration essentials](configuration-essentials.md) walks through the tables a typical
+`cockpit.toml` sets.
 
 A hand-written configuration needs no `init`: its first `sync` adds the `cockpit:*` scripts,
 package pin and marked `.gitignore` region `init` would (preview with `sync --dry-run`). It refuses

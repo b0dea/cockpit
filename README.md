@@ -192,7 +192,7 @@ their subcommands. Every command and flag is in the [CLI reference](docs/cli-ref
 | Set it up for your own product | [Getting started](docs/getting-started.md) |
 | Move an existing setup over gradually | [Incremental adoption](docs/adoption.md) |
 | Look up a term | [Concepts](docs/concepts.md) |
-| Look up a command or a config field | [CLI reference](docs/cli-reference.md), [Configuration reference](docs/configuration-reference.md) |
+| Look up a command or a config field | [Configuration essentials](docs/configuration-essentials.md), [CLI reference](docs/cli-reference.md), [Configuration reference](docs/configuration-reference.md) |
 | Fix a diagnostic | [Troubleshooting](docs/troubleshooting.md) |
 | Extend overlays, guards or harnesses | [Harness surfaces](docs/harness-surfaces.md#ownership-and-extension), [Architecture](docs/architecture.md) |
 | Get a quick answer | [FAQ](docs/faq.md) |
