@@ -1935,7 +1935,7 @@ function nativeSources(
     if (mcp.result.servers.length > 0) {
         const transports = mcp.result.harnesses.flatMap(row => row.servers)
         const servers = Object.fromEntries(mcp.result.servers.map(model => transports.find(server => server.name === model.name)!).map(server => [server.name, {
-            type: 'stdio', command: server.command, args: server.args, cwd: server.cwd, disabled: !server.enabled,
+            type: 'stdio', command: server.command, args: server.args, disabled: !server.enabled,
         }]))
         const targets = Object.fromEntries(mcp.result.harnesses.flatMap(row => {
             const removed = mcp.result.servers.filter(server => !row.servers.some(transport => transport.name === server.name))

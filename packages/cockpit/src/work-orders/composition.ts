@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { parseDocument } from 'yaml'
 import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
-import { ENVIRONMENT_CODES, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
@@ -2185,13 +2185,8 @@ function captureConfiguredInput(value: unknown): Readonly<{ configPath: string; 
     } catch { return undefined }
 }
 
-// Build tools resolve their caches and locale from these; none carries a credential. Every other parent
-// variable stays out, because a product stage or verification command runs arbitrary repository code and
-// the parent environment of an agent session routinely holds tokens.
-const DECLARED_COMMAND_ENVIRONMENT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const
-
 function declaredCommandEnvironment(environment: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(DECLARED_COMMAND_ENVIRONMENT.flatMap(name => {
+    return Object.freeze(Object.fromEntries(INHERITED_TOOL_ENVIRONMENT.flatMap(name => {
         const value = environment[name]
         return typeof value === 'string' && value.length > 0 && !value.includes('\0') && Buffer.byteLength(value) <= 4_096 ? [[name, value]] : []
     })))

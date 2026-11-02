@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import { parseDocument } from 'yaml'
 
-import { snapshotJson } from '../environment/contract.js'
+import { INHERITED_TOOL_ENVIRONMENT, snapshotJson } from '../environment/contract.js'
 import { reservedPathSegment, SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
 import { harnessFact } from './harness-registry.js'
 
@@ -67,7 +67,7 @@ export interface McpCollection {
     readonly servers: readonly McpServer[]
     readonly wrappers: readonly { readonly path: string; readonly bytes: string; readonly sha256: string }[]
     readonly harnesses: readonly { readonly target: SurfaceTarget; readonly servers: readonly {
-        readonly name: string; readonly command: string; readonly args: readonly string[]; readonly cwd: string; readonly enabled: boolean
+        readonly name: string; readonly command: string; readonly args: readonly string[]; readonly enabled: boolean
     }[] }[]
 }
 
@@ -87,14 +87,22 @@ function quote(value: string): string {
     return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-function wrapper(server: McpServer): string {
+// The wrapper finds the server's directory from its own location, so the committed bytes are the
+// same in every clone. Each harness starts it from the directory the agent was launched in, which
+// is the cockpit root (the guard hooks require the same).
+function wrapper(server: McpServer, cockpitDirectory: string): string {
+    const inherited = ['PATH', ...INHERITED_TOOL_ENVIRONMENT].filter(name => !server.envNames.includes(name))
     return [
         '#!/bin/sh',
         'set -eu',
-        `cd ${quote(server.cwd)}`,
+        'cd "$(dirname -- "$0")/../.."',
+        `cd ${quote(relative(cockpitDirectory, server.cwd) || '.')}`,
         `executable=$(command -v ${quote(server.command)}) || { printf '%s\\n' 'MCP_EXECUTABLE_UNAVAILABLE' >&2; exit 2; }`,
         '[ -f "$executable" ] && [ -x "$executable" ] || { printf \'%s\\n\' \'MCP_EXECUTABLE_UNAVAILABLE\' >&2; exit 2; }',
-        `exec /usr/bin/env -i ${server.envNames.map(name => `${name}="\${${name}?required environment name ${name} is unset}"`).join(' ')} "$executable"${server.args.map(arg => ` ${quote(arg)}`).join('')}`,
+        // `npx`, `uvx` and most npm servers are `#!/usr/bin/env node` scripts: without PATH they
+        // cannot start. The rest of the inherited set carries caches and locale, never a credential.
+        `exec /usr/bin/env -i ${inherited.map(name => `\${${name}+"${name}=$${name}"}`).join(' ')}`
+            + `${server.envNames.map(name => ` ${name}="\${${name}?required environment name ${name} is unset}"`).join('')} "$executable"${server.args.map(arg => ` ${quote(arg)}`).join('')}`,
         '',
     ].join('\n')
 }
@@ -136,14 +144,13 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
         code: 'MCP_APPROVAL_UNKNOWN', server: name, message: 'The shared approval list names an undeclared MCP server',
     })
     const wrappers = servers.map(server => {
-        const bytes = wrapper(server)
+        const bytes = wrapper(server, parsed.data.cockpitDirectory)
         return { path: `.cockpit/mcp/${createHash('sha256').update(server.name).digest('hex')}.sh`, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
     })
     const result = {
         servers, wrappers,
         harnesses: parsed.data.targets.map(target => ({ target, servers: servers.map((server, index) => ({
-            name: server.name, command: '/bin/sh', args: [resolve(parsed.data.cockpitDirectory, wrappers[index]!.path)],
-            cwd: parsed.data.cockpitDirectory, enabled: server.enabled,
+            name: server.name, command: '/bin/sh', args: [wrappers[index]!.path], enabled: server.enabled,
         })) })),
     }
     const outcome = snapshotJson({ kind: 'complete', result, diagnostics })

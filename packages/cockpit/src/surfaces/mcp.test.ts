@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -50,22 +50,35 @@ it('keeps case-distinct identities on distinct wrapper paths', () => {
     expect(new Set(outcome.result.wrappers.map(row => row.path.toLowerCase())).size).toBe(2)
 })
 
-it('launches a non-executable wrapper with only the named environment', () => {
-    const root = mkdtempSync(join(tmpdir(), 'mcp-wrapper-'))
+it('launches a wrapper from any clone of the cockpit into its sibling with PATH and only the named environment', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'mcp-wrapper-'))
     try {
-        const outcome = collectMcpDeclarations({ cockpitDirectory: root, declarations: [{ ...declaration, command: '/usr/bin/printenv', args: [], cwd: root }], approved: ['synthetic'], targets })
+        const collect = (parent: string) => collectMcpDeclarations({ cockpitDirectory: join(parent, 'cockpit'),
+            declarations: [{ ...declaration, command: 'bin/server', args: [], cwd: join(parent, 'service') }], approved: ['synthetic'], targets })
+        const outcome = collect(workspace)
         expect(outcome.kind).toBe('complete')
         if (outcome.kind !== 'complete') return
+        const elsewhere = collect('/another/clone')
+        if (elsewhere.kind !== 'complete') throw new Error('expected a second clone to collect')
+        // Only these reach committed files; the server model keeps machine paths for this run.
+        expect({ wrappers: elsewhere.result.wrappers, harnesses: elsewhere.result.harnesses })
+            .toEqual({ wrappers: outcome.result.wrappers, harnesses: outcome.result.harnesses })
         const wrapper = outcome.result.wrappers[0]!
-        const path = join(root, wrapper.path)
-        mkdirSync(dirname(path), { recursive: true })
-        writeFileSync(path, wrapper.bytes, { mode: 0o600 })
+        const root = join(workspace, 'cockpit')
+        mkdirSync(join(root, dirname(wrapper.path)), { recursive: true })
+        writeFileSync(join(root, wrapper.path), wrapper.bytes, { mode: 0o600 })
+        // A `#!/usr/bin/env` server, like `npx`, resolves its interpreter through PATH.
+        mkdirSync(join(workspace, 'service/bin'), { recursive: true })
+        writeFileSync(join(workspace, 'service/bin/server'), '#!/usr/bin/env sh\npwd -P\nenv | sort\n', { mode: 0o700 })
         const server = outcome.result.harnesses[0]!.servers[0]!
-        const child = spawnSync(server.command, [...server.args], { cwd: server.cwd, env: { SYNTHETIC_TOKEN: 'synthetic-runtime-value', UNDECLARED: 'excluded' }, encoding: 'utf8' })
-        expect(child.status).toBe(0)
-        expect(child.stdout).toBe('SYNTHETIC_TOKEN=synthetic-runtime-value\n')
+        const child = spawnSync(server.command, [...server.args], { cwd: root, encoding: 'utf8',
+            env: { PATH: '/usr/bin:/bin', HOME: '/synthetic/home', SYNTHETIC_TOKEN: 'synthetic-runtime-value', UNDECLARED: 'excluded' } })
+        expect(child.stderr).toBe('')
+        expect(child.stdout.split('\n').filter(line => line !== '' && !line.startsWith('PWD=') && !line.startsWith('SHLVL=') && !line.startsWith('_='))).toEqual([
+            realpathSync(join(workspace, 'service')), 'HOME=/synthetic/home', 'PATH=/usr/bin:/bin', 'SYNTHETIC_TOKEN=synthetic-runtime-value',
+        ])
         expect(JSON.stringify(outcome)).not.toContain('synthetic-runtime-value')
-    } finally { rmSync(root, { recursive: true, force: true }) }
+    } finally { rmSync(workspace, { recursive: true, force: true }) }
 })
 
 it.each([

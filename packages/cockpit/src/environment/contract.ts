@@ -16,7 +16,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/contract.ts',
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
-        'REFUSAL_CODES', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT',
+        'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT',
         'isCanonicalTimestamp', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
         'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
@@ -131,6 +131,10 @@ export type HolderId = BrandedIdentity<'HolderId'>
 
 export const OBSERVATION_LIFECYCLE_STAGES = ['bootstrap', 'steady'] as const
 export const SETUP_ACTION_KINDS = ['clone', 'wire-remote', 'report'] as const
+// Build tools and tool servers resolve their caches and locale from these; none carries a credential.
+// Every other parent variable stays out of product test stages, verification commands and MCP servers,
+// because they run repository code and the environment of an agent session routinely holds tokens.
+export const INHERITED_TOOL_ENVIRONMENT = Object.freeze(['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const)
 export const OBSERVATION_PRODUCER_BYTE_LIMIT = 256
 export const OBSERVATION_REASON_BYTE_LIMIT = 1_024
 export const ENVIRONMENT_CODES = Object.freeze({
