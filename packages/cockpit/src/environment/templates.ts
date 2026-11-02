@@ -720,12 +720,12 @@ function revalidatePlan(
             !parent.symbolicLink &&
             parent.directory &&
             sameNode(root.identity, plan.rootIdentity) &&
-            source.identity.dev === plan.sourceIdentity.dev &&
-            source.identity.ino === plan.sourceIdentity.ino &&
             sameNode(parent.identity, plan.destinationParentIdentity) &&
             isContained(plan.canonicalRoot, realpathSync(plan.source)) &&
             isContained(plan.canonicalRoot, realpathSync(dirname(plan.destination)))
         if (!structurallySafe) return ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT
+        // A regular template replaced inside the root is a changed precondition like an in-place
+        // rewrite, whatever inode it lands on: ext4 often reuses the one just freed, APFS does not.
         return identitiesMatch(source.identity, plan.sourceIdentity)
             ? undefined
             : ENVIRONMENT_CODES.ENVIRONMENT_SEED_PRECONDITION_CHANGED

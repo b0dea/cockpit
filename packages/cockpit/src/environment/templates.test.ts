@@ -684,7 +684,7 @@ describe('environment instance seeding', () => {
 
         await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
             kind: 'refusal',
-            code: 'TEMPLATE_PATH_OUTSIDE_ROOT',
+            code: 'ENVIRONMENT_SEED_PRECONDITION_CHANGED',
         })
         expect(existsSync(join(root, '.env'))).toBe(false)
     })
