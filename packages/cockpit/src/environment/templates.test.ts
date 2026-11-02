@@ -70,7 +70,6 @@ describe('external dependency template fragments', () => {
                 runtime_service: 'api',
                 supplier: { sibling: 'web', template: '.env.example' },
             }],
-            normalize_empty: true,
             placeholder: 'cockpit:absent:mailer',
             nonempty_variables: ['MAILER_TOKEN'],
             shadow_files: [{ sibling: 'web', instance: '.env', probe: { location: 'in-stack', service: 'api', cwd: '.', argv: ['node', 'probe.mjs'], timeout_seconds: 5, provenance: { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'product loader' } } }],
@@ -96,7 +95,7 @@ describe('external dependency template fragments', () => {
 
     it('refuses missing pins, mismatched suppliers, live endpoints, and duplicate variables', () => {
         const base = {
-            id: 'mailer', normalize_empty: true, placeholder: 'cockpit:absent:mailer',
+            id: 'mailer', placeholder: 'cockpit:absent:mailer',
             endpoints: [{ variable: 'MAILER_URL', sink: 'http://mailer-stub:4010', runtime_service: 'api', supplier: { sibling: 'web', template: '.env.example' } }],
         }
         expect(externalDependencyTemplateFragments({ ...base, endpoints: [] })).toMatchObject({ kind: 'refusal' })

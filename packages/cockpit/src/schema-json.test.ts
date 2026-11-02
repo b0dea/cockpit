@@ -748,7 +748,6 @@ describe('the published cockpit schema', () => {
         const testingProperties = object(object(properties.testing).properties)
 
         expect(workorders.wip_cap).toMatchObject({ type: 'integer', minimum: 1, maximum: 3, default: 3 })
-        expect(workorders.programme_wip_cap).toMatchObject({ type: 'integer', minimum: 1, maximum: 1, default: 1 })
         expect(object(browserProperties.artifacts).additionalProperties).toBe(false)
         expect(object(testingProperties.native_hooks).additionalProperties).toBe(false)
         expect(schema['x-cockpit-runtime-checks']).toContainEqual({ path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' })
@@ -845,6 +844,7 @@ describe('the published cockpit schema', () => {
                 { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
                 { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },
                 { path: 'browser', rule: 'matches_environment_addressing_authentication_and_client_cap' },
+                { path: 'browser.images', rule: 'runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor' },
                 { path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' },
                 { path: 'sibling[].environment_files[]', rule: 'template_and_instance_differ' },
                 ...rowDerivationRuntimeChecks,
@@ -867,6 +867,7 @@ describe('the published cockpit schema', () => {
                 { path: 'environment.posture_requirements[].requirement', rule: 'unique' },
                 { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },
                 { path: 'browser', rule: 'matches_environment_addressing_authentication_and_client_cap' },
+                { path: 'browser.images', rule: 'runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor' },
                 { path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' },
                 ...surfaceRuntimeChecks,
                 ...generatedRuntimeChecks,

@@ -12,7 +12,7 @@ import {
     type SourceProvenance,
     snapshotJson,
 } from '../environment/contract.js'
-import { validateWorkOrderPolicy, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
+import { validateWorkOrderPolicy, WORK_ORDER_WIP_MAXIMA, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
 import { CockpitConfig, runtimeDeclarationSha256 } from '../schema.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
@@ -189,7 +189,7 @@ export function projectWorkEnvironmentConfig(
     const policy = validateWorkOrderPolicy({
         cockpitCap: loaded.config.workorders.wip_cap,
         attemptCap: loaded.config.workorders.attempt_cap,
-        programmeCap: loaded.config.workorders.programme_wip_cap,
+        programmeCap: WORK_ORDER_WIP_MAXIMA.programme,
     })
     if (policy.kind !== 'policy') return undefined
     const declaredBrowser = loaded.config.browser

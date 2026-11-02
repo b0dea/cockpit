@@ -65,7 +65,7 @@ function vendor(posture: 'bypassed' | 'stubbed' | 'substituted' | 'vendor-sandbo
         provenance: { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared' as const, reason: 'fixture' },
         endpoints: [{ variable: 'MAILER_URL', sink: 'http://app:4010/api', runtime_service: 'app', supplier: { sibling: 'web', template: '.env.example' } }],
         loader_probe: probe('loader'), route_probe: route, egress_probe: probe('egress'),
-        normalize_empty: true as const, placeholder: 'cockpit:absent:mailer',
+        placeholder: 'cockpit:absent:mailer',
         shadow_files: [{ sibling: 'web', instance: '.env', probe: probe('shadow') }],
         callback_reachability: { reachable: false, alternative: 'recorded local capture', reason: 'no public callback route' },
         ...(posture === 'vendor-sandbox' ? { expiry: { expires_on: '2026-12-31', reason: 'fixed synthetic account window', probe: probe('expiry') } } : {}),
@@ -78,12 +78,12 @@ function protocolVendor(controlMode = 'callback-controls') {
         ...vendor(),
         callback_reachability: { reachable: true, alternative: 'local receiver', reason: 'synthetic route' },
         callback: {
-            feature_flag: 'LOCAL_CALLBACKS', enable: operation(['node', 'verifier.mjs', 'callback-enable']), timestamp_source: operation(['node', 'verifier.mjs', 'callback-timestamp']),
-            fresh_window_seconds: 60, fixture: { path: 'fixtures/callback.bin', sha256: createHash('sha256').update('{"event":"created","value":1}\n').digest('hex'), immutable_raw_bytes: true as const },
+            enable: operation(['node', 'verifier.mjs', 'callback-enable']), timestamp_source: operation(['node', 'verifier.mjs', 'callback-timestamp']),
+            fresh_window_seconds: 60, fixture: { path: 'fixtures/callback.bin', sha256: createHash('sha256').update('{"event":"created","value":1}\n').digest('hex') },
             sign: operation(['node', 'verifier.mjs', 'callback-sign']), dispatch: operation(['node', 'verifier.mjs', 'callback-dispatch']),
-            order: ['enable', 'timestamp', 'sign', 'dispatch'] as const, verifier_source: 'src/callback-verifier.ts', tamper_probe: operation(['node', 'verifier.mjs', controlMode]),
+            tamper_probe: operation(['node', 'verifier.mjs', controlMode]),
         },
-        tls: { generate_at_start: operation(['node', 'verifier.mjs', 'tls-generate']), append_trust_probe: operation(['node', 'verifier.mjs', 'tls-trust']), hostname_probe: operation(['node', 'verifier.mjs', 'tls-hostname']), verification: 'required' as const },
+        tls: { generate_at_start: operation(['node', 'verifier.mjs', 'tls-generate']), append_trust_probe: operation(['node', 'verifier.mjs', 'tls-trust']), hostname_probe: operation(['node', 'verifier.mjs', 'tls-hostname']) },
     }
 }
 

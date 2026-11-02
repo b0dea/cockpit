@@ -304,7 +304,7 @@ contract and the independent grading, not the thinking: reuse the planning skill
 
 0. **Is this a work order?** Ask whether anyone besides you must certify the result, or whether the work
    must carry on in a later session or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
-   overhead costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
+   overhead costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders; the configured `workorders.wip_cap` bounds them, and a programme holds at most one. With no
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** When preparing an intent descriptor, draft contract or source audit, follow the
    examples in the *Declare work and the files it may change* section of

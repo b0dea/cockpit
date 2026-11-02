@@ -703,8 +703,8 @@ proves the roles work, not only that a sign-in succeeded.
   run fails its own precondition. Unset fields rather than writing null.
 - Seed the settled state a test needs. Default column values can read as work in flight and
   disable the interface.
-- Every mode keeps the schema's indexes and constraints (`constraints_and_indexes = true` is
-  required), so an empty stack still rejects the rows production would reject.
+- Every mode keeps the schema's indexes and constraints, so an empty stack still rejects the rows
+  production would reject. cockpit cannot check this; the mode's operations and probes must.
 - Print every restore gap before applying the restore. A silent omission looks like a complete local
   copy even though the missing table or object can change product behavior.
 - Before a seed writer runs, assert that every database and service target is local. A development

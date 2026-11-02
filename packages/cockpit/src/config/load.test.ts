@@ -50,7 +50,6 @@ const workEnvironmentConfig = `${validConfig.replace(
 [workorders]
 attempt_cap = 1
 wip_cap = 2
-programme_wip_cap = 1
 
 [environment]
 addressing = "port"

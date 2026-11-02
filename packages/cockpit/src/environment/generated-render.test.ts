@@ -161,7 +161,7 @@ describe('generated browser runner rendering', () => {
         const service = declaration.services[0]!
         const vendors = declaration.vendors.map(({ tls: _tls, ...vendor }) => vendor)
         const rendered = renderGeneratedEnvironment({
-            declaration: { ...declaration, vendors, services: [{ ...service, role: 'one-shot' as const, one_shot_failure: 'park' as const,
+            declaration: { ...declaration, vendors, services: [{ ...service, role: 'one-shot' as const,
                 command: ['/usr/bin/env'],
                 health: { ...service.health, probe: { ...service.health.probe,
                     argv: ['/bin/sh', '-c', 'printf "%s" "$PAYLOAD"'] } } }] },

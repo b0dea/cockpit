@@ -625,7 +625,6 @@ function buildAttributions(
     }
     for (const [target, value, field] of [
         ['cockpit.siblings_root', defaults.cockpit.siblings_root, 'the sibling checkout root'],
-        ['cockpit.guide', defaults.cockpit.guide, 'the root guide filename'],
         ['cockpit.guide_cap', defaults.cockpit.guide_cap, 'the root guide line cap'],
         ['ports.step', defaults.ports.step, 'the stack port step'],
         ['ports.count', defaults.ports.count, 'the available stack count'],
@@ -637,7 +636,6 @@ function buildAttributions(
         ['mcp.approved', defaults.mcp.approved, 'approved MCP servers'],
         ['workorders.attempt_cap', defaults.workorders.attempt_cap, 'the work-order attempt cap'],
         ['workorders.wip_cap', defaults.workorders.wip_cap, 'the work-order WIP cap'],
-        ['workorders.programme_wip_cap', defaults.workorders.programme_wip_cap, 'the programme work-order WIP cap'],
     ] as const) {
         attributions.push({ target, value, from: 'default', because: defaultReason(field, source) })
     }

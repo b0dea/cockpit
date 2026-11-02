@@ -25,6 +25,9 @@ export const mechanism = {
         'ResettableVolumeId',
         'GeneratedHostPath',
         'parseBrowserNetworkExposure',
+        'BROWSER_DRIVER_VERSION',
+        'SIBLING_DEFAULT_GUIDES',
+        'browserDriversCompatible',
         'SafeUrlPath',
         'EntrypointDerivative',
         'InstallPolicy',
@@ -271,7 +274,6 @@ export const GeneratedService = z.object({
     id: DeclarationId,
     sibling: DeclarationId,
     role: z.enum(['service', 'one-shot']).default('service'),
-    one_shot_failure: z.literal('park').optional(),
     profiles: z.array(DeclarationId).max(64).default([]),
     resources: z.object({
         memory_mb: z.number().int().min(6).max(Math.floor(Number.MAX_SAFE_INTEGER / 1_048_576)),
@@ -348,23 +350,21 @@ const VendorDeclaration = z.object({
         local_service: DeclarationId,
     }).strict().optional(),
     loader_probe: OverlayOperation, route_probe: OverlayOperation, egress_probe: OverlayOperation,
-    normalize_empty: z.literal(true),
     placeholder: z.string().max(256).regex(/^cockpit:absent:[a-z0-9-]+$/),
     shadow_files: z.array(z.object({ sibling: DeclarationId, instance: SafeRelativePath, probe: OverlayOperation }).strict()).max(64).optional(),
     expiry: z.object({ expires_on: z.string().date(), reason: DeclarationReason, probe: OverlayOperation }).strict().optional(),
     callback_reachability: z.object({ reachable: z.boolean(), alternative: DeclarationReason, reason: DeclarationReason }).strict(),
+    // Steps run in the fixed order enable, timestamp, sign, dispatch, then the tamper probe.
     callback: z.object({
-        feature_flag: EnvironmentName,
         enable: OverlayOperation,
         timestamp_source: OverlayOperation,
         fresh_window_seconds: z.number().int().min(1).max(3600),
-        fixture: z.object({ path: SafeRelativePath, sha256: z.string().regex(/^[a-f0-9]{64}$/), immutable_raw_bytes: z.literal(true) }).strict(),
+        // The digest is checked before each step that reads the fixture, so its raw bytes cannot drift.
+        fixture: z.object({ path: SafeRelativePath, sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
         sign: OverlayOperation, dispatch: OverlayOperation,
-        order: z.tuple([z.literal('enable'), z.literal('timestamp'), z.literal('sign'), z.literal('dispatch')]),
-        verifier_source: SafeRelativePath,
         tamper_probe: OverlayOperation,
     }).strict().optional(),
-    tls: z.object({ generate_at_start: OverlayOperation, append_trust_probe: OverlayOperation, hostname_probe: OverlayOperation, verification: z.literal('required') }).strict().optional(),
+    tls: z.object({ generate_at_start: OverlayOperation, append_trust_probe: OverlayOperation, hostname_probe: OverlayOperation }).strict().optional(),
     stub: z.object({ validates: z.array(DeclarationReason).min(1).max(256), rejection_probe: OverlayOperation, outage_probe: OverlayOperation }).strict().optional(),
 }).strict()
 
@@ -390,12 +390,13 @@ export const GeneratedEnvironment = z.object({
     data: z.object({
         volume: DeclarationId,
         default_mode: DataMode,
-        modes: z.array(z.object({ mode: DataMode, operations: z.array(DataOperation).min(1).max(256), probes: z.array(OverlayOperation).min(1).max(64), constraints_and_indexes: z.literal(true), provenance: Provenance }).strict()).min(1).max(3),
+        modes: z.array(z.object({ mode: DataMode, operations: z.array(DataOperation).min(1).max(256), probes: z.array(OverlayOperation).min(1).max(64), provenance: Provenance }).strict()).min(1).max(3),
+        // Fixture determinism (stable keys, seeds) belongs to the product's writer: a seed it reads
+        // goes in the fixture operation's argv, which reaches the product and its digest.
         fixtures: z.object({
-            writer: z.literal('product-models'), stable_key: DeclarationReason, random_seed: z.string().min(1).max(256).optional(),
-            sweep_scope: DeclarationReason, persona_source: SafeRelativePath, identity_owner: z.enum(['product', 'identity-provider']),
+            persona_source: SafeRelativePath,
             persona_outputs: z.array(z.object({ path: SafeRelativePath, format: z.enum(['json', 'typescript']), reason: DeclarationReason }).strict()).max(64),
-            volume_tag: DeclarationId, default_small: z.literal(true), pagination_warning: DeclarationReason, provenance: Provenance,
+            volume_tag: DeclarationId, pagination_warning: DeclarationReason, provenance: Provenance,
             volume_operations: z.array(OverlayOperation).min(1).max(256), volume_probes: z.array(OverlayOperation).min(1).max(64),
         }).strict().optional(),
         restore: z.object({
@@ -407,7 +408,7 @@ export const GeneratedEnvironment = z.object({
     // A structural subject without an entry is rendered as undecided rather than refused, so a
     // small stack does not have to invent a decision record to load.
     decisions: z.object({
-        path: z.literal(DECISIONS_PATH).default(DECISIONS_PATH), ownership: z.literal('whole-file').default('whole-file'),
+        path: z.literal(DECISIONS_PATH).default(DECISIONS_PATH),
         entries: DecisionEntries.default([]),
     }).strict().prefault({}),
 }).strict().superRefine((declaration, ctx) => {
@@ -438,7 +439,6 @@ export const GeneratedEnvironment = z.object({
         unique(service.ports.map((port) => port.name), [...path, 'ports'])
         unique(service.mounts.map((mount) => mount.target), [...path, 'mounts'])
         unique(service.dependencies.map((dependency) => dependency.service), [...path, 'dependencies'])
-        if ((service.role === 'one-shot') !== (service.one_shot_failure === 'park')) ctx.addIssue({ code: 'custom', path: [...path, 'one_shot_failure'], message: 'only one-shot services require parked failure' })
         for (const dependency of service.dependencies) {
             if (!serviceIds.has(dependency.service) || dependency.service === service.id) ctx.addIssue({ code: 'custom', path: [...path, 'dependencies'], message: 'dependency must name another declared service' })
         }
@@ -656,6 +656,10 @@ export function deriveSiblingVariable(slug: string): string {
     return SiblingVariable.safeParse(candidate).success ? candidate : `SIBLING_${candidate}`
 }
 
+// Most repositories publish one or both of these, so an absent default guide is not an error; any
+// other declared name is one the row chose, and an absent one is a typo that would link nothing.
+export const SIBLING_DEFAULT_GUIDES: readonly string[] = Object.freeze(['CLAUDE.md', 'AGENTS.md'])
+
 export const Sibling = z
     .object({
         // Also the projection filename prefix (`.sibling-<slug>-CLAUDE.md`), which is why it
@@ -690,7 +694,7 @@ export const Sibling = z
         // to the live files — never copies, which are stale the moment the sibling edits its
         // own guide and report nothing. Defaulted rather than required: most repositories use
         // one or both of these, and one that does not is a row that says so.
-        guides: z.array(SafeRelativePath).default(['CLAUDE.md', 'AGENTS.md']),
+        guides: z.array(SafeRelativePath).default([...SIBLING_DEFAULT_GUIDES]),
         // Setup writes this repository only when the declaration and its command-line approval agree.
         instruction_pointer: z.boolean().default(false),
         // Printed when the checkout is missing, so it says what the absence costs.
@@ -843,7 +847,6 @@ export const Workorders = z
         attempt_cap: z.number().int().min(1).max(2).default(2),
         // Consumer values may lower these framework maxima, but cannot raise them.
         wip_cap: z.number().int().min(1).max(3).default(3),
-        programme_wip_cap: z.number().int().min(1).max(1).default(1),
         verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds one declared work-order verification command may run before it is stopped and reported as not run.'),
         evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
@@ -851,9 +854,19 @@ export const Workorders = z
     })
     .strict()
 
+// An exact semantic version, pre-release included: an MCP image can bundle a Playwright alpha.
+export const BROWSER_DRIVER_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/
+const BrowserDriverVersion = z.string().max(128).regex(BROWSER_DRIVER_VERSION)
+
+/** Playwright refuses a client and server whose major.minor differ, so only that much must agree. */
+export function browserDriversCompatible(left: string, right: string): boolean {
+    const release = (version: string) => version.split('-', 1)[0]!.split('.').slice(0, 2).join('.')
+    return release(left) === release(right)
+}
+
 const BrowserImage = z.object({
     reference: z.string().regex(/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/),
-    driver_version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    driver_version: BrowserDriverVersion,
 }).strict()
 
 const BrowserArtifactRoots = z.object({
@@ -894,7 +907,7 @@ export const Browser = z.object({
         manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         lockfile: GeneratedHostPath,
         sha256: z.string().regex(/^[a-f0-9]{64}$/),
-        driver_version: z.string().regex(/^\d+\.\d+\.\d+$/),
+        driver_version: BrowserDriverVersion,
     }).strict(),
     endpoint: z.string().url().optional(),
     max_clients: z.number().int().min(1).max(64),
@@ -937,9 +950,12 @@ export const Browser = z.object({
     if ((browser.project.manifest === undefined) !== (browser.project.manifest_sha256 === undefined)) {
         ctx.addIssue({ code: 'custom', path: ['project'], message: 'browser project manifest path and digest must be declared together' })
     }
-    if (browser.images.runner.driver_version !== browser.project.driver_version
-        || browser.images.mcp.driver_version !== browser.project.driver_version) {
-        ctx.addIssue({ code: 'custom', path: ['images'], message: 'browser image and project driver versions must match' })
+    // The runner installs the project's lockfile, so the two pin one driver exactly.
+    if (browser.images.runner.driver_version !== browser.project.driver_version) {
+        ctx.addIssue({ code: 'custom', path: ['images', 'runner', 'driver_version'], message: 'browser runner image and project driver versions must match exactly' })
+    }
+    if (!browserDriversCompatible(browser.images.mcp.driver_version, browser.project.driver_version)) {
+        ctx.addIssue({ code: 'custom', path: ['images', 'mcp', 'driver_version'], message: 'browser MCP image driver must share major.minor with the project driver' })
     }
     if (browser.proxy.server_port === browser.proxy.proxy_port) {
         ctx.addIssue({ code: 'custom', path: ['proxy', 'proxy_port'], message: 'browser server and proxy ports must differ' })
@@ -1028,7 +1044,6 @@ export const CockpitMeta = z
         // Resolved from the MAIN checkout, never from the cwd's parent — a nested linked
         // checkout must still find the declared sibling root.
         siblings_root: z.string().default('..'),
-        guide: z.string().default('AGENTS.md'),
         // preflight FAILS over it. A cap that only warns is a cap that is always slightly
         // exceeded; adherence falls as the guide grows.
         guide_cap: z.number().int().positive().default(200),

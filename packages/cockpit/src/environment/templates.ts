@@ -72,7 +72,7 @@ function localSink(value: unknown): value is string {
 
 export function externalDependencyTemplateFragments(declaration: unknown): ExternalDependencyTemplateFragments {
     if (!isRecord(declaration) || typeof declaration.id !== 'string' || !DECLARATION_ID.test(declaration.id)
-        || declaration.normalize_empty !== true || typeof declaration.placeholder !== 'string' || !PLACEHOLDER.test(declaration.placeholder)
+        || typeof declaration.placeholder !== 'string' || !PLACEHOLDER.test(declaration.placeholder)
         || !Array.isArray(declaration.endpoints) || declaration.endpoints.length === 0) {
         return Object.freeze({ kind: 'refusal', reason: 'external dependency endpoint declaration is incomplete' })
     }

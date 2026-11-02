@@ -492,9 +492,16 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             await mkdir(join(fixture.root, 'docs'))
             await writeFile(join(fixture.root, 'docs/CONVENTIONS.md'), 'Synthetic product conventions.\n')
             const declaration = await readFile(fixture.configPath, 'utf8')
-            await writeFile(fixture.configPath, declaration
+            const declare = (guides: string) => writeFile(fixture.configPath, declaration
                 .replace('dir = "app"', 'dir = "."')
-                .replace('guides = ["AGENTS.md"]', 'guides = ["CLAUDE.md", "AGENTS.md", "docs/CONVENTIONS.md"]'))
+                .replace('guides = ["AGENTS.md"]', `guides = ${guides}`))
+            // A misspelled guide links nothing, so it is refused rather than skipped like an absent default.
+            await declare('["CLAUDE.md", "AGENTS.md", "docs/CONVENTONS.md"]')
+            for (const result of [await syncGeneratedEnvironment({ configPath: fixture.configPath }), await checkGeneratedEnvironment({ configPath: fixture.configPath })]) {
+                expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                    code: 'SIBLING_GUIDE_MISSING', target: 'sibling.app.guides', message: expect.stringContaining('docs/CONVENTONS.md') })] })
+            }
+            await declare('["CLAUDE.md", "AGENTS.md", "docs/CONVENTIONS.md"]')
 
             const first = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(first, JSON.stringify(first.diagnostics)).toMatchObject({ kind: 'complete' })

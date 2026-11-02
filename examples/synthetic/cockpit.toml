@@ -202,7 +202,6 @@ default_mode = "seeded"
 
 [[environment.generated.data.modes]]
 mode = "empty"
-constraints_and_indexes = true
 
 [[environment.generated.data.modes.operations]]
 id = "empty-schema"
@@ -251,7 +250,6 @@ reason = "Synthetic declaration"
 
 [[environment.generated.data.modes]]
 mode = "seeded"
-constraints_and_indexes = true
 
 [[environment.generated.data.modes.operations]]
 id = "seeded-schema"
@@ -352,7 +350,6 @@ reason = "Synthetic declaration"
 
 [[environment.generated.data.modes]]
 mode = "restored"
-constraints_and_indexes = true
 
 [[environment.generated.data.modes.operations]]
 id = "restored-schema"
@@ -464,14 +461,8 @@ kind = "declared"
 reason = "Synthetic declaration"
 
 [environment.generated.data.fixtures]
-writer = "product-models"
-stable_key = "synthetic-stable-key"
-random_seed = "synthetic-seed"
-sweep_scope = "synthetic fixture rows"
 persona_source = "fixtures/personas.json"
-identity_owner = "product"
 volume_tag = "synthetic-data"
-default_small = true
 pagination_warning = "Small defaults do not exercise pagination"
 
 [[environment.generated.data.fixtures.persona_outputs]]
@@ -542,7 +533,6 @@ id = "messages"
 posture = "stubbed"
 reason = "Use a local protocol stub"
 nonempty_variables = [ "MESSAGES_TOKEN" ]
-normalize_empty = true
 placeholder = "cockpit:absent:messages"
 
 [environment.generated.vendors.provenance]
@@ -610,7 +600,6 @@ alternative = "Use replayed callback fixtures"
 reason = "The synthetic sender cannot dial the local stack"
 
 [environment.generated.vendors.tls]
-verification = "required"
 
 [environment.generated.vendors.tls.generate_at_start]
 location = "in-stack"
@@ -682,7 +671,6 @@ reason = "Synthetic declaration"
 
 [environment.generated.decisions]
 path = "docs/cockpit/environment-decisions.md"
-ownership = "whole-file"
 
 [[environment.generated.decisions.entries]]
 id = "service-app"

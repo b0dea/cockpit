@@ -83,6 +83,7 @@ import {
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
 import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
+import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
@@ -675,6 +676,18 @@ function guideCapExceeded(cost: Readonly<{ target: string; value: number; cap: n
             severity: 'error' as const, code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, target: 'cockpit.guide_cap',
             message: `the instructions ${cost.target} loads at start are ${cost.value} lines, over cockpit.guide_cap ${cost.cap}; the count includes each linked sibling guide`,
             fix: 'shorten the root or linked sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
+        })]) })
+}
+
+// The projection skips an absent guide, so a misspelled name otherwise links nothing and says nothing.
+function siblingGuideMissing(slug: string, guide: string, sourcePath: string): RefusalOutcome {
+    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: Object.freeze([Object.freeze({
+            severity: 'error' as const,
+            code: 'SIBLING_GUIDE_MISSING' as const satisfies typeof ENVIRONMENT_CODES.SIBLING_GUIDE_MISSING,
+            target: `sibling.${slug}.guides`,
+            message: `sibling ${slug} declares the guide ${guide}, but ${sourcePath} does not exist, so no harness would load it`,
+            fix: 'correct or remove the guide name in that sibling\'s guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
         })]) })
 }
 
@@ -2467,6 +2480,10 @@ async function prepareSurfaces(
         ? { kind: 'complete' as const, observations: Object.freeze([]) as readonly GuideObservation[], missing: Object.freeze([]) as readonly string[] }
         : await observeSiblingGuides({ allowedRoots: selected.map(row => siblingRoots.get(row.slug)!), requests: guideRequests })
     if (observedGuides.kind !== 'complete') return refuse(observedGuides.diagnostic.code, observedGuides.diagnostic.message, observedGuides.diagnostic.target)
+    for (const sibling of selected) for (const guide of projectionGuides(sibling)) {
+        const sourcePath = resolve(siblingRoots.get(sibling.slug)!, guide)
+        if (!SIBLING_DEFAULT_GUIDES.includes(guide) && observedGuides.missing.includes(sourcePath)) return siblingGuideMissing(sibling.slug, guide, sourcePath)
+    }
     const projectionInput: ProjectionPlannerInput = {
         canonicalMainCheckout: prepared.root,
         siblingsRoot: config.cockpit.siblings_root,

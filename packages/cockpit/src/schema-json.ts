@@ -119,6 +119,7 @@ export function renderCockpitSchema(): string {
         { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
         { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },
         { path: 'browser', rule: 'matches_environment_addressing_authentication_and_client_cap' },
+        { path: 'browser.images', rule: 'runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor' },
         { path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' },
         { path: 'sibling[].environment_files[]', rule: 'template_and_instance_differ' },
         { path: 'sibling[].derives.generated', rule: 'row_owned_relations_and_exact_port_defaults' },
@@ -154,6 +155,7 @@ export function renderCockpitSchema(): string {
         { path: 'environment.posture_requirements[].requirement', rule: 'unique' },
         { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },
         { path: 'browser', rule: 'matches_environment_addressing_authentication_and_client_cap' },
+        { path: 'browser.images', rule: 'runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor' },
         { path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' },
         { path: 'surfaces.overlays[].name', rule: 'unique' },
         { path: 'surfaces.overlays[].sources[].path', rule: 'unique' },
@@ -221,12 +223,6 @@ export function renderCockpitSchema(): string {
             node.oneOf = [
                 { properties: { purpose: { enum: ['dependencies'] } }, required: ['install_policy'] },
                 { properties: { purpose: { enum: ['product-data'] } }, not: { required: ['install_policy'] } },
-            ]
-        }
-        if (fields?.role && fields.one_shot_failure) {
-            node.oneOf = [
-                { properties: { role: { enum: ['one-shot'] } }, required: ['role', 'one_shot_failure'] },
-                { properties: { role: { enum: ['service'] } }, not: { required: ['one_shot_failure'] } },
             ]
         }
         if (fields?.kind && fields.source && fields.target && fields.source_type) {

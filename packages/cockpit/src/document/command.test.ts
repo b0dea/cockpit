@@ -56,7 +56,6 @@ function sourceInput(source: string, mode: 'root' | 'registry') {
 
 const schemaDefaultTargets = [
     'cockpit.siblings_root',
-    'cockpit.guide',
     'cockpit.guide_cap',
     'ports.step',
     'ports.count',
@@ -68,7 +67,6 @@ const schemaDefaultTargets = [
     'mcp.approved',
     'workorders.attempt_cap',
     'workorders.wip_cap',
-    'workorders.programme_wip_cap',
 ] as const
 
 afterEach(() => {
@@ -774,7 +772,7 @@ describe('document round trip inventory', () => {
                     deny: [],
                 })
                 expect(draft.mcp).toEqual({ approved: [] })
-                expect(draft.workorders).toEqual({ attempt_cap: 2, wip_cap: 3, programme_wip_cap: 1 })
+                expect(draft.workorders).toEqual({ attempt_cap: 2, wip_cap: 3 })
 
                 const defaults = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_DEFAULT')
                 for (const target of schemaDefaultTargets) {

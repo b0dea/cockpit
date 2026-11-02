@@ -2,7 +2,7 @@ import { lstatSync, realpathSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
-import { GeneratedHostPath, parseBrowserNetworkExposure } from '../schema.js'
+import { BROWSER_DRIVER_VERSION, browserDriversCompatible, GeneratedHostPath, parseBrowserNetworkExposure } from '../schema.js'
 import { authenticateObservationPostureContext, type PreflightContext } from '../environment/posture-observation.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from '../environment/ports.js'
 import { authenticateStateNamespace, type StateNamespace } from '../environment/state.js'
@@ -111,10 +111,14 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         || input.project.manifest === undefined && input.project.manifestSha256 !== undefined) {
         throw new TypeError('browser project lockfile identity is invalid')
     }
-    if (!/^\d+\.\d+\.\d+$/.test(input.project.driverVersion)) throw new TypeError('browser project driver version must be exact')
+    if (!BROWSER_DRIVER_VERSION.test(input.project.driverVersion)) throw new TypeError('browser project driver version must be exact')
     for (const image of [input.images.runner, input.images.mcp]) {
         if (!/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(image.reference)) throw new TypeError('browser images must be digest-pinned')
-        if (image.driverVersion !== input.project.driverVersion) throw new TypeError('browser image driver differs from project lock identity')
+    }
+    if (input.images.runner.driverVersion !== input.project.driverVersion) throw new TypeError('browser runner image driver differs from project lock identity')
+    if (typeof input.images.mcp.driverVersion !== 'string' || !BROWSER_DRIVER_VERSION.test(input.images.mcp.driverVersion)
+        || !browserDriversCompatible(input.images.mcp.driverVersion, input.project.driverVersion)) {
+        throw new TypeError('browser MCP image driver does not share major.minor with the project driver')
     }
     const engine = input.engine ?? 'chromium'
     if (!['chromium', 'firefox', 'webkit'].includes(engine)) throw new TypeError('browser engine must be chromium, firefox or webkit')

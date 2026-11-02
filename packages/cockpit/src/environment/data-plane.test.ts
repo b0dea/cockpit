@@ -48,13 +48,12 @@ const environment = {
                 id: kind, kind, operation: overlay, prerequisites: index === 0 ? [mode === 'restored' ? freshVolumeOverlay : overlay] : [],
                 after: kinds.slice(0, index), fresh_volume_only: mode === 'restored', provenance,
             })),
-            probes: [overlay], constraints_and_indexes: true, provenance,
+            probes: [overlay], provenance,
         })),
         fixtures: {
-            writer: 'product-models', stable_key: 'synthetic-key', random_seed: 'stable', sweep_scope: 'synthetic fixture domain',
-            persona_source: 'fixtures/personas.json', identity_owner: 'product',
+            persona_source: 'fixtures/personas.json',
             persona_outputs: [{ path: 'fixtures/personas.generated.ts', format: 'typescript', reason: 'Synthetic importer cannot read JSON' }],
-            volume_tag: 'synthetic-volume', default_small: true, pagination_warning: 'Default fixtures do not cover large lists',
+            volume_tag: 'synthetic-volume', pagination_warning: 'Default fixtures do not cover large lists',
             volume_operations: [overlay], volume_probes: [overlay], provenance,
         },
         restore: {
@@ -63,7 +62,7 @@ const environment = {
         },
     },
     vendors: [],
-    decisions: { path: 'docs/cockpit/environment-decisions.md', ownership: 'whole-file', entries: structuralDecisions },
+    decisions: { path: 'docs/cockpit/environment-decisions.md', entries: structuralDecisions },
 }
 
 const cockpitId = `cockpit:data-plane-a1:${'a'.repeat(64)}` as CockpitId
@@ -152,8 +151,7 @@ describe('data mode execution', () => {
 
         expect(result).toMatchObject({
             kind: 'complete', mode: 'seeded',
-            stableKeySha256: createHash('sha256').update('synthetic-key').digest('hex'),
-            randomSeedSha256: createHash('sha256').update('stable').digest('hex'),
+            fixtureProvenanceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
             applied: [
                 'data:seeded:schema:prerequisite:0', 'data:seeded:schema', 'data:seeded:sweep',
                 'data:seeded:fixtures', 'data:seeded:probe:0',
@@ -161,8 +159,6 @@ describe('data mode execution', () => {
         })
         expect(isDataModeCompletion(result)).toBe(true)
         expect(isDataModeCompletion({ ...result })).toBe(false)
-        expect(result).not.toHaveProperty('stableKey')
-        expect(result).not.toHaveProperty('randomSeed')
         expect(result).not.toHaveProperty('fixtureProvenance')
 
         const stored = await readState(state.paths.dataOutcome(stackId))
@@ -240,7 +236,7 @@ describe('data mode execution', () => {
     it('rejects caller data that differs from the authenticated generated declaration', async () => {
         const state = await namespace()
         const changed = structuredClone(environment)
-        changed.data.fixtures.stable_key = 'caller-selected-key'
+        changed.data.fixtures.pagination_warning = 'caller-selected warning'
         expect(planDataMode({
             environment: changed, mode: 'seeded', checkoutRoot: process.cwd(), includeFixtureVolume: false,
             namespace: state, stackId, holderId: holderA, configuration: await configuration(environment), generation, observedAt,

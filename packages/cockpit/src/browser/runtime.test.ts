@@ -173,7 +173,9 @@ describe('shared browser runtime', () => {
     it('rejects unpinned images, drifted drivers and invalid client caps', async () => {
         const { input } = await fixture()
         await expect(attempt({ ...input, images: { ...input.images, runner: { ...input.images.runner, reference: 'synthetic.invalid/runner:latest' } } })).rejects.toThrow('pinned')
-        await expect(attempt({ ...input, images: { ...input.images, mcp: { ...input.images.mcp, driverVersion: '1.2.4' } } })).rejects.toThrow('driver')
+        await expect(attempt({ ...input, images: { ...input.images, runner: { ...input.images.runner, driverVersion: '1.2.4' } } })).rejects.toThrow('driver')
+        await expect(attempt({ ...input, images: { ...input.images, mcp: { ...input.images.mcp, driverVersion: '1.3.0-alpha' } } })).rejects.toThrow('driver')
+        await expect(attempt({ ...input, images: { ...input.images, mcp: { ...input.images.mcp, driverVersion: '1.2.0-alpha-1760000000000' } } })).resolves.toBeDefined()
         await expect(attempt({ ...input, project: { ...input.project, sha256: '' } })).rejects.toThrow('lock')
         for (const maxClients of [0, -1, 1.5, Number.NaN, 65]) await expect(attempt({ ...input, maxClients })).rejects.toThrow('cap')
     })

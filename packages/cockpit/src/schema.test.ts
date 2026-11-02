@@ -118,24 +118,24 @@ const generatedConfig = {
             data: {
                 volume: 'product-data',
                 default_mode: 'seeded',
-                modes: ['empty', 'seeded', 'restored'].map((mode) => ({ mode, operations: (mode === 'empty' ? ['schema'] : mode === 'seeded' ? ['schema', 'sweep', 'fixtures'] : ['schema', 'restore', 'rewrite']).map((kind, index, kinds) => ({ id: kind, kind, operation, prerequisites: [], after: kinds.slice(0, index), fresh_volume_only: mode === 'restored', provenance })), probes: [operation], constraints_and_indexes: true, provenance })),
-                fixtures: { writer: 'product-models', stable_key: 'synthetic-key', random_seed: 'stable', sweep_scope: 'synthetic fixture domain', persona_source: 'fixtures/personas.json', identity_owner: 'product', persona_outputs: [{ path: 'fixtures/personas.generated.ts', format: 'typescript', reason: 'Synthetic importer cannot read JSON' }], volume_tag: 'synthetic-volume', default_small: true, pagination_warning: 'Default fixtures do not cover large lists', volume_operations: [operation], volume_probes: [operation], provenance },
+                modes: ['empty', 'seeded', 'restored'].map((mode) => ({ mode, operations: (mode === 'empty' ? ['schema'] : mode === 'seeded' ? ['schema', 'sweep', 'fixtures'] : ['schema', 'restore', 'rewrite']).map((kind, index, kinds) => ({ id: kind, kind, operation, prerequisites: [], after: kinds.slice(0, index), fresh_volume_only: mode === 'restored', provenance })), probes: [operation], provenance })),
+                fixtures: { persona_source: 'fixtures/personas.json', persona_outputs: [{ path: 'fixtures/personas.generated.ts', format: 'typescript', reason: 'Synthetic importer cannot read JSON' }], volume_tag: 'synthetic-volume', pagination_warning: 'Default fixtures do not cover large lists', volume_operations: [operation], volume_probes: [operation], provenance },
                 restore: { rewrites: [{ category: 'object-store', operation, reason: 'Use local synthetic storage' }], untouched: ['identities', 'third-party-ids', 'personal-data', 'timer-state'], provenance },
             },
             vendors: ['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture, index) => ({
                 id: posture, posture, reason: 'Synthetic vendor posture', provenance,
                 endpoints: [{ variable: `SYNTHETIC_ENDPOINT_${index}`, sink: 'http://app:3000/sink', runtime_service: 'app', supplier: { sibling: 'app', template: '.env.example' } }],
                 loader_probe: operation, route_probe: operation, egress_probe: operation,
-                normalize_empty: true, placeholder: `cockpit:absent:${posture}`,
+                placeholder: `cockpit:absent:${posture}`,
                 callback_reachability: { reachable: false, alternative: 'Synthetic local replay', reason: 'Synthetic sender cannot reach this stack' },
                 ...(posture === 'vendor-sandbox' ? { expiry: { expires_on: '2027-01-01', reason: 'Synthetic trial expiry', probe: operation } } : {}),
                 ...(posture === 'stubbed' ? {
                     stub: { validates: ['synthetic envelope'], rejection_probe: operation, outage_probe: operation },
-                    callback: { feature_flag: 'ALLOW_SYNTHETIC_CALLBACK', enable: operation, timestamp_source: operation, fresh_window_seconds: 60, fixture: { path: 'fixtures/callback.raw', sha256: 'b'.repeat(64), immutable_raw_bytes: true }, sign: operation, dispatch: operation, order: ['enable', 'timestamp', 'sign', 'dispatch'], verifier_source: 'src/callback-verifier.ts', tamper_probe: operation },
-                    tls: { generate_at_start: operation, append_trust_probe: operation, hostname_probe: operation, verification: 'required' },
+                    callback: { enable: operation, timestamp_source: operation, fresh_window_seconds: 60, fixture: { path: 'fixtures/callback.raw', sha256: 'b'.repeat(64) }, sign: operation, dispatch: operation, tamper_probe: operation },
+                    tls: { generate_at_start: operation, append_trust_probe: operation, hostname_probe: operation },
                 } : {}),
             })),
-            decisions: { path: 'docs/cockpit/environment-decisions.md', ownership: 'whole-file', entries: [...structuralDecisions, ...['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture) => ({ id: posture, subject: 'vendor', subject_id: posture, decided_on: '2026-09-26', decision: posture, rejected: ['Undeclared live endpoint'], reason: 'Explicit local behavior', reviewer: 'consumer-maintainer', provenance }))] },
+            decisions: { path: 'docs/cockpit/environment-decisions.md', entries: [...structuralDecisions, ...['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture) => ({ id: posture, subject: 'vendor', subject_id: posture, decided_on: '2026-09-26', decision: posture, rejected: ['Undeclared live endpoint'], reason: 'Explicit local behavior', reviewer: 'consumer-maintainer', provenance }))] },
         },
     },
 }
@@ -327,9 +327,6 @@ describe('generated environment declarations', () => {
         ['missing stub controls', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.vendors[1], 'stub') }],
         ['host operation with service', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.probe.location = 'host' }],
         ['inferred unconfirmed provenance', (config: typeof generatedConfig) => { config.environment.generated.services[0].provenance.kind = 'inferred' }],
-        ['changed callback order', (config: typeof generatedConfig) => { Reflect.set(config.environment.generated.vendors[1].callback!.order, 0, 'dispatch') }],
-        ['unverified TLS', (config: typeof generatedConfig) => { config.environment.generated.vendors[1].tls!.verification = 'disabled' }],
-        ['wrong decision-log ownership', (config: typeof generatedConfig) => { config.environment.generated.decisions.ownership = 'shared' }],
         ['open-ended decision subject', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries[0].subject = 'structure' }],
     ])('rejects %s through runtime and editor schemas', (_name, mutate) => {
         const config = structuredClone(generatedConfig)
@@ -619,14 +616,27 @@ describe('work and browser declarations', () => {
     })
 
     it('keeps WIP and attempt controls lower-only', () => {
-        expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3, programme_wip_cap: 1,
+        expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3,
             verification_timeout_seconds: 1_800, evaluator_timeout_seconds: 900 })
         for (const field of ['verification_timeout_seconds', 'evaluator_timeout_seconds']) {
             for (const value of [0, 7_201, 1.5]) expect(Workorders.safeParse({ [field]: value }).success, `${field}=${value}`).toBe(false)
         }
-        expect(Workorders.parse({ wip_cap: 1, programme_wip_cap: 1 })).toMatchObject({ wip_cap: 1, programme_wip_cap: 1 })
+        expect(Workorders.parse({ wip_cap: 1 })).toMatchObject({ wip_cap: 1 })
         for (const value of [0, 4, 1.5]) expect(Workorders.safeParse({ wip_cap: value }).success).toBe(false)
-        for (const value of [0, 2, 1.5]) expect(Workorders.safeParse({ programme_wip_cap: value }).success).toBe(false)
+        // The programme cap has one legal value, so it is policy rather than configuration.
+        expect(Workorders.safeParse({ programme_wip_cap: 1 }).success).toBe(false)
+    })
+
+    it('pins the runner to the project driver exactly and lets an MCP pre-release share its major.minor', () => {
+        const drivers = (runner: string, mcp: string, project: string) => Browser.safeParse({ ...browser,
+            images: { runner: { ...browser.images.runner, driver_version: runner }, mcp: { ...browser.images.mcp, driver_version: mcp } },
+            project: { ...browser.project, driver_version: project } }).success
+        expect(drivers('1.64.0', '1.64.0-alpha-2026-10-20', '1.64.0')).toBe(true)
+        expect(drivers('1.64.0-beta.1', '1.64.0-beta.1', '1.64.0-beta.1')).toBe(true)
+        expect(drivers('1.64.0', '1.65.0-alpha', '1.64.0')).toBe(false)
+        expect(drivers('1.64.1', '1.64.0', '1.64.0')).toBe(false)
+        for (const malformed of ['1.64', '1.64.0-', '1.64.0-alpha..1', '01.64.0', '1.64.0-01', '^1.64.0', '1.64.0+build'])
+            expect(drivers('1.64.0', malformed, '1.64.0'), malformed).toBe(false)
     })
 
     it('selects supported browser engines and refuses TLS endpoints without TLS termination', () => {

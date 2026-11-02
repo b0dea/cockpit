@@ -87,8 +87,6 @@ interface PlannedContract {
     readonly issuedAtMs: number
     readonly dataVolume: string
     readonly fixtures?: Readonly<{
-        stableKey: string
-        randomSeed?: string
         provenance: Provenance
         volume: NonNullable<DataModePlan['fixtureVolume']>
     }>
@@ -115,8 +113,6 @@ export type DataModeExecutionResult =
           readonly mode: DataMode
           readonly applied: readonly string[]
           // The fixture identity fields are present exactly when fixtures are declared.
-          readonly stableKeySha256?: string
-          readonly randomSeedSha256?: string
           readonly fixtureProvenanceSha256?: string
           readonly fixtureVolume?: DataModePlan['fixtureVolume']
           readonly restore: Readonly<{ rewired: readonly string[]; untouched: readonly string[] }>
@@ -448,8 +444,6 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         generation: input.generation, observedAt: input.observedAt, issuedAtMs: Date.now(),
         dataVolume: data.volume,
         ...(fixtures && fixtureVolume ? { fixtures: Object.freeze({
-            stableKey: fixtures.stable_key,
-            ...(fixtures.random_seed === undefined ? {} : { randomSeed: fixtures.random_seed }),
             provenance: Object.freeze({ ...fixtures.provenance }),
             volume: fixtureVolume,
         }) } : {}),
@@ -490,16 +484,12 @@ function persistedOutcome(value: unknown, mode: DataMode): DataModeExecutionResu
         const keys = Object.keys(candidate).sort().join('\0')
         const restoreValid = exactRecord(candidate.restore, ['rewired', 'untouched'])
             && boundedStrings(candidate.restore.rewired) && boundedStrings(candidate.restore.untouched)
-        if (candidate.stableKeySha256 === undefined) {
+        if (candidate.fixtureProvenanceSha256 === undefined) {
             return keys === ['applied', 'kind', 'mode', 'restore'].sort().join('\0') && restoreValid
                 ? snapshot as unknown as DataModeExecutionResult
                 : undefined
         }
-        const expected = (candidate.randomSeedSha256 === undefined
-            ? ['applied', 'fixtureProvenanceSha256', 'fixtureVolume', 'kind', 'mode', 'restore', 'stableKeySha256']
-            : ['applied', 'fixtureProvenanceSha256', 'fixtureVolume', 'kind', 'mode', 'randomSeedSha256', 'restore', 'stableKeySha256']).sort().join('\0')
-        return keys === expected && typeof candidate.stableKeySha256 === 'string' && sha256Identity.test(candidate.stableKeySha256)
-            && (candidate.randomSeedSha256 === undefined || typeof candidate.randomSeedSha256 === 'string' && sha256Identity.test(candidate.randomSeedSha256))
+        return keys === ['applied', 'fixtureProvenanceSha256', 'fixtureVolume', 'kind', 'mode', 'restore'].sort().join('\0')
             && typeof candidate.fixtureProvenanceSha256 === 'string' && sha256Identity.test(candidate.fixtureProvenanceSha256)
             && exactRecord(candidate.fixtureVolume, ['included', 'tag', 'warning'])
             && typeof candidate.fixtureVolume.included === 'boolean' && typeof candidate.fixtureVolume.tag === 'string'
@@ -820,8 +810,6 @@ export async function executeDataMode(
         kind: 'complete' as const, mode: contract.mode,
         applied: Object.freeze(contract.steps.map(({ id }) => id)),
         ...(contract.fixtures === undefined ? {} : {
-            stableKeySha256: createHash('sha256').update(contract.fixtures.stableKey).digest('hex'),
-            ...(contract.fixtures.randomSeed === undefined ? {} : { randomSeedSha256: createHash('sha256').update(contract.fixtures.randomSeed).digest('hex') }),
             fixtureProvenanceSha256: createHash('sha256').update(JSON.stringify(contract.fixtures.provenance)).digest('hex'),
             fixtureVolume: contract.fixtures.volume,
         }),

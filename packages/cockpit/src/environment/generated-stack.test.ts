@@ -538,7 +538,6 @@ describe('generated environment rendering', () => {
         const job = structuredClone(generated.services[0]!)
         job.id = 'job'
         job.role = 'one-shot'
-        job.one_shot_failure = 'park'
         job.profiles = []
         job.command = ['node', '-e', 'process.exit(7)']
         job.ports = []
