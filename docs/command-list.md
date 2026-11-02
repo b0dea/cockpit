@@ -38,22 +38,22 @@ This generated index is for users choosing the command that owns their next oper
 ## Test and grade
 
 - `cockpit test-run`: Run a declared product test gate and report which tests it selected.
-- `cockpit work intake` (experimental): Prepare a work order from its source document.
-- `cockpit work status` (experimental): Report current work-order state.
-- `cockpit work accept` (experimental): Interactively accept the exact current work order.
-- `cockpit work renew` (experimental): Interactively renew a changed work-order contract.
-- `cockpit work resume` (experimental): Resume the next executable step of the single active work order.
-- `cockpit work recover` (experimental): Inspect or explicitly recover one interrupted work lock.
-- `cockpit work execute` (experimental): Execute one accepted work-order step.
-- `cockpit work record` (experimental): Persist current work-order progress.
-- `cockpit work answer` (experimental): Interactively record a person's answer to an open gap, or their decision.
-- `cockpit work review` (experimental): Review the current accepted work order.
-- `cockpit work sweep` (experimental): Inspect or apply a reversible work-order sweep.
-- `cockpit work reverse` (experimental): Reverse a recorded work-order sweep.
-- `cockpit work programme-mint` (experimental): Mint the next declared programme work order.
-- `cockpit work metrics` (experimental): Report work-order metrics.
-- `cockpit work grade` (experimental): Independently grade the current accepted work order.
-- `cockpit browser drive` (experimental): Drive the declared application browser surfaces.
-- `cockpit browser accessibility` (experimental): Collect accessibility observations from the application.
-- `cockpit browser screenshot` (experimental): Capture the declared application surfaces.
-- `cockpit browser debugger` (experimental): Prepare an explicitly requested browser debugger.
+- `cockpit work intake`: Prepare a work order from its source document.
+- `cockpit work status`: Report current work-order state.
+- `cockpit work accept`: Interactively accept the exact current work order.
+- `cockpit work renew`: Interactively renew a changed work-order contract.
+- `cockpit work resume`: Resume the next executable step of the single active work order.
+- `cockpit work recover`: Inspect or explicitly recover one interrupted work lock.
+- `cockpit work execute`: Execute one accepted work-order step.
+- `cockpit work record`: Persist current work-order progress.
+- `cockpit work answer`: Interactively record a person's answer to an open gap, or their decision.
+- `cockpit work review`: Review the current accepted work order.
+- `cockpit work sweep`: Inspect or apply a reversible work-order sweep.
+- `cockpit work reverse`: Reverse a recorded work-order sweep.
+- `cockpit work programme-mint`: Mint the next declared programme work order.
+- `cockpit work metrics`: Report work-order metrics.
+- `cockpit work grade`: Independently grade the current accepted work order.
+- `cockpit browser drive`: Drive the declared application browser surfaces.
+- `cockpit browser accessibility`: Collect accessibility observations from the application.
+- `cockpit browser screenshot`: Capture the declared application surfaces.
+- `cockpit browser debugger`: Prepare an explicitly requested browser debugger.

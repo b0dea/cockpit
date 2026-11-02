@@ -78,7 +78,7 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `a6fc4d05449106307f89fb9f503200caa0c74f609afbb4335e095c45686fa7af`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `9df314793c38f13713f18857aa1083fdbda8c12c32b5a546998536ea578a1afc`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
 

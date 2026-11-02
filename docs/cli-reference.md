@@ -3545,8 +3545,6 @@ Reads `cockpit.toml` from `--config`.
 
 Prepare a work order from its source document.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -3789,8 +3787,6 @@ Reads `cockpit.toml` from `--config`.
 
 Report current work-order state.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -4030,8 +4026,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit work accept
 
 Interactively accept the exact current work order.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -4275,8 +4269,6 @@ Reads `cockpit.toml` from `--config`.
 
 Interactively renew a changed work-order contract.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -4519,8 +4511,6 @@ Reads `cockpit.toml` from `--config`.
 
 Resume the next executable step of the single active work order.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -4759,8 +4749,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit work recover
 
 Inspect or explicitly recover one interrupted work lock.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -5003,8 +4991,6 @@ Reads `cockpit.toml` from `--config`.
 
 Execute one accepted work-order step.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -5246,8 +5232,6 @@ Reads `cockpit.toml` from `--config`.
 
 Persist current work-order progress.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -5488,8 +5472,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit work answer
 
 Interactively record a person's answer to an open gap, or their decision.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -5734,8 +5716,6 @@ Reads `cockpit.toml` from `--config`.
 
 Review the current accepted work order.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -5975,8 +5955,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit work sweep
 
 Inspect or apply a reversible work-order sweep.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -6218,8 +6196,6 @@ Reads `cockpit.toml` from `--config`.
 
 Reverse a recorded work-order sweep.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -6459,8 +6435,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit work programme-mint
 
 Mint the next declared programme work order.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -6704,8 +6678,6 @@ Reads `cockpit.toml` from `--config`.
 
 Report work-order metrics.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -6944,8 +6916,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit work grade
 
 Independently grade the current accepted work order.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -7187,8 +7157,6 @@ Reads `cockpit.toml` from `--config`.
 
 Drive the declared application browser surfaces.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -7428,8 +7396,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit browser accessibility
 
 Collect accessibility observations from the application.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -7671,8 +7637,6 @@ Reads `cockpit.toml` from `--config`.
 
 Capture the declared application surfaces.
 
-Status: experimental. This interface may change before a stable release.
-
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
@@ -7912,8 +7876,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit browser debugger
 
 Prepare an explicitly requested browser debugger.
-
-Status: experimental. This interface may change before a stable release.
 
 Reads `cockpit.toml` from `--config`.
 
