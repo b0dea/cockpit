@@ -257,7 +257,7 @@ export function consumeLoadedConfigProjection(projection: LoadedConfigProjection
         const loaded = issuedConfigProjections.get(projection)
         issuedConfigProjections.delete(projection)
         return loaded
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the projection malformed; the caller refuses it.
         return undefined
     }
 }
@@ -427,7 +427,7 @@ export async function loadCockpitConfig(
     let source: string
     try {
         source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch {
+    } catch { // Fatal decoding throws only for invalid UTF-8, which the refusal names.
         return refusal(ENVIRONMENT_CODES.CONFIG_ENCODING_INVALID, 'cockpit configuration is not valid UTF-8', path)
     }
 

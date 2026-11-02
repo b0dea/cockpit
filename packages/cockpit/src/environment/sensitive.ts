@@ -27,7 +27,7 @@ function redactStructured(value: unknown, key = '', depth = 0): unknown {
 export function redactSensitiveMessage(message: string): string | undefined {
     let parsed: unknown
     try { parsed = JSON.parse(message) }
-    catch {
+    catch { // A message that is not JSON is plain text, redacted below.
         if (/[\r\n]/.test(message)) {
             const lines = message.split(/(\r?\n|\r)/).map((line, index) => index % 2 ? line : redactSensitiveMessage(line))
             return lines.some(line => line === undefined) ? undefined : lines.join('')
@@ -41,5 +41,5 @@ export function redactSensitiveMessage(message: string): string | undefined {
     }
     if (typeof parsed === 'string') return redactSensitiveText(parsed)
     try { return JSON.stringify(redactStructured(parsed)) }
-    catch { return undefined }
+    catch { return undefined } // Fails closed: a structure that cannot be redacted is withheld, and its error text could quote the secret.
 }

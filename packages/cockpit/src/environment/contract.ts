@@ -95,7 +95,7 @@ function snapshotJsonValue(value: unknown, state: JsonTraversal, depth: number):
             Object.defineProperty(result, key, { enumerable: true, value: item })
         }
         return Object.freeze(result)
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the value unsnapshottable; the caller refuses it.
         return undefined
     } finally {
         ancestors.delete(value)

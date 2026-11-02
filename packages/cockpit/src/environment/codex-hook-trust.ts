@@ -51,7 +51,7 @@ function sorted(value: unknown): unknown {
 /** The hooks Codex discovers in a hooks.json, keyed and hashed as Codex 0.165.0 does, or why not. */
 function codexHooks(bytes: string): readonly CodexHook[] | string {
     let parsed: unknown
-    try { parsed = JSON.parse(bytes) } catch { return 'its hooks.json is not JSON' }
+    try { parsed = JSON.parse(bytes) } catch { return 'its hooks.json is not JSON' } // Parser text would quote the file.
     if (!record(parsed) || !record(parsed.hooks)) return 'its hooks.json has no hooks object'
     const hooks: CodexHook[] = []
     for (const [event, groups] of Object.entries(parsed.hooks)) {

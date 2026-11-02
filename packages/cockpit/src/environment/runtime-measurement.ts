@@ -96,7 +96,7 @@ async function readDocker(execute: RuntimeMeasureDependencies['execute'], step: 
         // Docker's final line ending is transport framing; trimming would rewrite endpoint identity.
         stdout = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).replace(/\r?\n$/, '')
         stderr = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr).trim()
-    } catch { return { kind: 'failed', detail: 'docker wrote output that is not UTF-8' } }
+    } catch { return { kind: 'failed', detail: 'docker wrote output that is not UTF-8' } } // Fatal decoding throws only for invalid UTF-8, which the detail names.
     if (outcome.kind !== 'complete') {
         return { kind: 'failed', detail: `${outcome.code}${stderr ? `: ${stderr.split('\n', 1)[0]!.slice(0, 256)}` : ''}` }
     }

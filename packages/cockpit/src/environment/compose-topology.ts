@@ -177,7 +177,7 @@ function longPort(value: Record<string, unknown>): ComposePublishedPort | undefi
 
 function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | undefined {
     let parsed: unknown
-    try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(stdout)) } catch { return undefined }
+    try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(stdout)) } catch { return undefined } // The caller refuses output that is not UTF-8 JSON; parser text would quote it.
     const services = record(record(parsed)?.services)
     if (!services) return undefined
     const names = Object.keys(services).sort()
@@ -338,7 +338,7 @@ export async function redirectedBindSources(binds: readonly string[], declared: 
         if (owner === undefined) continue
         let inside: boolean
         try { inside = contains(await canonicalPath(owner), await canonicalPath(bind)) }
-        catch { inside = false }
+        catch { inside = false } // A bind that cannot be resolved cannot be shown to sit inside its holder, so it is reported redirected and refused.
         if (!inside) redirected.push(Object.freeze({ bind, holder: owner }))
     }
     return Object.freeze(redirected.sort((left, right) => left.bind.localeCompare(right.bind)))

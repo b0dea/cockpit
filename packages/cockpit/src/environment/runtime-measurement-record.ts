@@ -62,7 +62,7 @@ export async function readLocalRuntimeMeasurements(stateRoot: string): Promise<L
     let value: unknown
     try {
         value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-    } catch {
+    } catch { // Parser text would quote the file; the reason names the two ways it fails.
         return Object.freeze({ kind: 'unreadable', path, reason: 'the file is not UTF-8 JSON' })
     }
     const parsed = MeasurementFile.safeParse(value)

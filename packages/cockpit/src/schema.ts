@@ -980,7 +980,7 @@ export const Browser = z.object({
             const spelling = /^ws:\/\/([^/?#]+)(\/[^?#]*)$/.exec(browser.endpoint)
             if (!spelling || spelling[2] !== endpoint.pathname || endpoint.protocol !== 'ws:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash
                 || !browser.proxy.allowed_hosts.includes(spelling[1]!)) throw new TypeError()
-        } catch { ctx.addIssue({ code: 'custom', path: ['endpoint'], message: 'browser endpoint must use an allowed credential-free ws:// authority; TLS termination is unavailable' }) }
+        } catch { /* The issue names the rule; URL parser text adds nothing. */ ctx.addIssue({ code: 'custom', path: ['endpoint'], message: 'browser endpoint must use an allowed credential-free ws:// authority; TLS termination is unavailable' }) }
     }
     const workers = browser.authentication.states.map((state) => state.worker)
     const paths = browser.authentication.states.map((state) => state.path)
@@ -1075,7 +1075,7 @@ function hasYamlOnlyMarkdownFrontmatter(path: string, bytes: string): boolean {
         if (document.errors.length > 0 || document.warnings.length > 0) return false
         document.toJS({ maxAliasCount: 0 })
         return true
-    } catch { return false }
+    } catch { return false } // The caller reports front matter that is not plain YAML; parser text would quote the file.
 }
 
 export const SurfaceSource = z.object({
