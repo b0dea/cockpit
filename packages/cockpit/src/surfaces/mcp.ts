@@ -210,7 +210,7 @@ export function parseMcpDeclarationFile(input: unknown): McpParseOutcome {
     const { bytes, source, workingDirectory } = parsed.data
     if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) return refuse('MCP_DECLARATION_INVALID', 'MCP source digest does not match declaration bytes')
     let value: unknown
-    try { value = JSON.parse(bytes) } catch { return refuse('MCP_DECLARATION_INVALID', 'MCP declaration is not valid JSON') }
+    try { value = JSON.parse(bytes) } catch { /* unparseable input is malformed; the caller refuses it. */ return refuse('MCP_DECLARATION_INVALID', 'MCP declaration is not valid JSON') }
     const file = NativeFile.safeParse(value)
     if (!file.success) return refuse('MCP_DECLARATION_INVALID', 'MCP declaration contains unsupported command, environment or transport fields')
     const declarations: McpDeclaration[] = []

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, open, readlink, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 
-import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type GuardSurfaceTarget, type HarnessRegistryRow } from './harness-registry.js'
 
@@ -322,13 +322,13 @@ async function captureRootAuthority(declared: string): Promise<RootAuthority | P
                 handle,
             }
         }
-    } catch {
-        failure = diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `declared sibling root could not be observed: ${declared}`, { target: declared })
+    } catch (error) {
+        failure = diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `declared sibling root could not be observed: ${declared}: ${errorCause(error)}`, { target: declared })
     }
     try {
         await handle?.close()
-    } catch {
-        return diagnostic('PROJECTION_GUIDE_CLOSE_FAILED', `sibling root authority descriptor close failed: ${declared}`, { target: declared })
+    } catch (error) {
+        return diagnostic('PROJECTION_GUIDE_CLOSE_FAILED', `sibling root authority descriptor close failed: ${declared}: ${errorCause(error)}`, { target: declared })
     }
     return failure ?? diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `declared sibling root observation produced no result: ${declared}`, { target: declared })
 }
@@ -343,6 +343,7 @@ async function rootAuthorityStable(root: RootAuthority): Promise<boolean> {
             && root.declaredIdentity === declared.identity && root.canonical === canonical
             && root.directoryIdentity === inodeIdentity(directory) && root.directoryIdentity === inodeIdentity(direct)
     } catch {
+        // an unobservable root is no longer stable; the caller reports the change.
         return false
     }
 }
@@ -355,8 +356,8 @@ async function finishRootObservation(
     for (const root of roots) {
         try {
             await root.handle.close()
-        } catch {
-            closeFailure ??= diagnostic('PROJECTION_GUIDE_CLOSE_FAILED', `sibling root authority descriptor close failed: ${root.declared}`, { target: root.declared })
+        } catch (error) {
+            closeFailure ??= diagnostic('PROJECTION_GUIDE_CLOSE_FAILED', `sibling root authority descriptor close failed: ${root.declared}: ${errorCause(error)}`, { target: root.declared })
         }
     }
     return closeFailure ? observedOutcome({ kind: 'refusal', diagnostic: closeFailure }) : outcome
@@ -399,11 +400,11 @@ async function readGuide(
     let result: GuideObservation | ProjectionDiagnostic | undefined
     try {
         handle = await open(request.sourcePath, 'r')
-    } catch {
+    } catch (error) {
         if (!await rootAuthorityStable(requestRoot)) {
             return diagnostic('PROJECTION_GUIDE_CHANGED', `declared sibling root changed before guide open: ${request.root}`, { target: request.root })
         }
-        return diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `guide content could not be opened: ${request.sourcePath}`, { target: request.sourcePath })
+        return diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `guide content could not be opened: ${request.sourcePath}: ${errorCause(error)}`, { target: request.sourcePath })
     }
     try {
         const before = await handle.stat({ bigint: true })
@@ -456,6 +457,7 @@ async function readGuide(
                 try {
                     content = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, offset))
                 } catch {
+                    // undecodable bytes are malformed input the caller refuses.
                     result = diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `guide is not valid UTF-8: ${request.sourcePath}`, { target: request.sourcePath })
                 }
                 if (content !== undefined) {
@@ -473,13 +475,13 @@ async function readGuide(
                 }
             }
         }
-    } catch {
-        result = diagnostic('PROJECTION_GUIDE_READ_FAILED', `guide descriptor read failed: ${request.sourcePath}`, { target: request.sourcePath })
+    } catch (error) {
+        result = diagnostic('PROJECTION_GUIDE_READ_FAILED', `guide descriptor read failed: ${request.sourcePath}: ${errorCause(error)}`, { target: request.sourcePath })
     }
     try {
         await handle.close()
-    } catch {
-        return diagnostic('PROJECTION_GUIDE_CLOSE_FAILED', `guide descriptor close failed: ${request.sourcePath}`, { target: request.sourcePath })
+    } catch (error) {
+        return diagnostic('PROJECTION_GUIDE_CLOSE_FAILED', `guide descriptor close failed: ${request.sourcePath}: ${errorCause(error)}`, { target: request.sourcePath })
     }
     return result ?? diagnostic('PROJECTION_GUIDE_READ_FAILED', `guide descriptor read produced no bounded result: ${request.sourcePath}`, { target: request.sourcePath })
 }

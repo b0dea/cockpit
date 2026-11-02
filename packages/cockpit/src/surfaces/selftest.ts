@@ -284,7 +284,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
             Object.freeze({ name: 'Codex', nativeDiagnostics: true }),
         ] as const),
     })
-    } catch { return undefined }
+    } catch { /* a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses. */ return undefined }
 }
 
 function sameHarness(left: SelftestHarnessRef, right: SelftestHarnessRef): boolean {
@@ -306,7 +306,7 @@ function specificationCellKey(value: unknown): string | undefined {
         }
         if (row.capability !== 'instruction-loading' && row.capability !== 'guard-firing') return undefined
         return cellKey({ harness: row.harness as SelftestHarnessRef, capability: row.capability })
-    } catch { return undefined }
+    } catch { /* a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses. */ return undefined }
 }
 
 function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): boolean {
@@ -331,7 +331,7 @@ function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): b
         && (cell.capability === 'skill-parity'
             ? validSample && probe.sample!.skill === cell.skill
             : probe.sample === null)
-    } catch { return false }
+    } catch { /* a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses. */ return false }
 }
 
 function harnessLabel(harness: SelftestHarnessRef): string {

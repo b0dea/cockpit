@@ -30,7 +30,7 @@ export function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): reado
         return Array.isArray(skills) && skills.every(name => typeof name === 'string')
             ? Object.freeze([...skills]) as readonly string[]
             : undefined
-    } catch { return undefined }
+    } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
 }
 
 export function coreSurfaceDeclarations(

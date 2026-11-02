@@ -158,7 +158,7 @@ function refusal(code: SurfaceDiagnostic['code'], message: string, target?: stri
 }
 
 function parseJson(value: string): unknown | undefined {
-    try { return JSON.parse(value) } catch { return undefined }
+    try { return JSON.parse(value) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
 }
 
 function sortedUniqueStrings(value: JsonSnapshot | undefined, allowed?: ReadonlySet<string>): value is JsonSnapshot & readonly string[] {
@@ -346,7 +346,7 @@ function rootObject(original: string): RootObject | undefined {
         const keyEnd = stringEnd(bytes, index)
         if (keyEnd === undefined) return undefined
         let key: unknown
-        try { key = JSON.parse(bytes.slice(index, keyEnd)) } catch { return undefined }
+        try { key = JSON.parse(bytes.slice(index, keyEnd)) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
         if (typeof key !== 'string' || keys.has(key)) return undefined
         keys.add(key)
         index = keyEnd
@@ -628,6 +628,7 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
             || Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set || !descriptor.enumerable)) return undefined
         return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
     } catch {
+        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
     }
 }
@@ -729,6 +730,7 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
         issuedManifests.set(manifest, Object.freeze({ root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath }))
         return manifest
     } catch {
+        // an unauthenticatable manifest is refused by the caller.
         return undefined
     }
 }
@@ -832,6 +834,7 @@ function captureNativeBytes(input: unknown): Uint8Array | undefined {
         Uint8Array.prototype.set.call(bytes, input)
         return bytes
     } catch {
+        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
     }
 }
@@ -861,7 +864,7 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
                 if (entry.kind === 'file') state = rawSha256 === entry.sha256 ? 'unchanged' : 'modified'
                 else if (entry.kind === 'shared-region') {
                     let text: string | undefined
-                    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { state = 'unknown' }
+                    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { /* undecodable bytes are malformed input the caller refuses. */ state = 'unknown' }
                     if (text !== undefined && entry.region.format === 'markdown-delimited') {
                         const region = markdownOwnedBytes(text, entry.region.begin, entry.region.end)
                         const owner = region && markdownOwner(region.bytes)

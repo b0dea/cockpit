@@ -391,6 +391,7 @@ function outputText(bytes: Buffer): string | undefined {
     try {
         return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     } catch {
+        // undecodable bytes are malformed input the caller refuses.
         return undefined
     }
 }
@@ -496,6 +497,7 @@ function parseWorkerReceipt(bytes: Buffer, target: GeneratorTarget, requested: r
             warnings,
         })
     } catch {
+        // unparseable input is malformed; the caller refuses it.
         return undefined
     }
 }
@@ -520,6 +522,7 @@ function parseReadReceipt(bytes: Buffer): readonly ReadFileReceipt[] | undefined
         }
         return Object.freeze(files)
     } catch {
+        // unparseable input is malformed; the caller refuses it.
         return undefined
     }
 }
@@ -567,6 +570,7 @@ async function directoryIdentity(path: string): Promise<DirectoryIdentity | unde
         return status.isDirectory() && !status.isSymbolicLink()
             ? Object.freeze({ dev: status.dev, ino: status.ino }) : undefined
     } catch {
+        // an unobservable directory has no identity; the caller refuses.
         return undefined
     }
 }
@@ -577,6 +581,7 @@ function canonicalReceipt(bytes: Buffer): boolean {
     try {
         return `${JSON.stringify(JSON.parse(text))}\n` === text
     } catch {
+        // unparseable input is malformed; the caller refuses it.
         return false
     }
 }
@@ -603,9 +608,10 @@ async function readPrivateReceipt(path: string, summary: ReceiptSummary): Promis
             || sha256(bytes) !== summary.sha256 || !canonicalReceipt(bytes)) return undefined
         return bytes
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     } finally {
-        try { await handle?.close() } catch { return undefined }
+        try { await handle?.close() } catch { /* an unavailable authority is refused by the caller. */ return undefined }
     }
 }
 
@@ -648,6 +654,7 @@ function receiptSummaries(
         }
         return summaries
     } catch {
+        // unparseable input is malformed; the caller refuses it.
         return undefined
     }
 }
@@ -816,6 +823,7 @@ async function runEstatePass(
             }
             let content: string
             try { content = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(file.bytesBase64, 'base64')) } catch {
+                // undecodable bytes are malformed input the caller refuses.
                 failure = diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output is not valid UTF-8', 'artifact', `${job.generatorTarget}:${path}`)
                 break
             }

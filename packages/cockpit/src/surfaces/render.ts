@@ -203,7 +203,7 @@ export function composeHookSettings(values: readonly unknown[]): HookSettingsCom
 function hookJson(contributions: readonly Contribution[]): string | undefined {
     const values: unknown[] = []
     for (const contribution of contributions) {
-        try { values.push(JSON.parse(contribution.bytes)) } catch { return undefined }
+        try { values.push(JSON.parse(contribution.bytes)) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
     }
     const composed = composeHookSettings(values)
     return composed.kind === 'complete' ? `${JSON.stringify(composed.value, null, 2)}\n` : undefined
@@ -294,7 +294,7 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
         const merged = mergeNamedObject(first, additions)
         if (merged) merged[key] = members
         return merged ? path === '.codex/config.toml' ? stringifyToml(merged) : `${JSON.stringify(merged, null, 2)}\n` : undefined
-    } catch { return undefined }
+    } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
 }
 
 export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
@@ -662,7 +662,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         if (openCodeLines.length > 0) {
             const current = byKey.get('instructions')
             let instructions: unknown = []
-            if (current) try { instructions = JSON.parse(current.valueBytes) } catch { return refuse('SURFACE_INPUT_INVALID', 'OpenCode instructions are malformed') }
+            if (current) try { instructions = JSON.parse(current.valueBytes) } catch { /* unparseable input is malformed; the caller refuses it. */ return refuse('SURFACE_INPUT_INVALID', 'OpenCode instructions are malformed') }
             if (!Array.isArray(instructions) || instructions.some(value => typeof value !== 'string')) return refuse('SURFACE_PATH_CONFLICT', 'OpenCode instructions are not a string array')
             const values = [...new Set([...instructions, ...openCodeLines.map(row => row.bytes)])]
             byKey.set('instructions', { key: 'instructions', valueBytes: JSON.stringify(values) })

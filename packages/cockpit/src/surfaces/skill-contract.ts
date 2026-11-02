@@ -188,7 +188,7 @@ function captureInput(input: unknown): CapturedInput | undefined {
         authority = snapshotJson(JSON.parse(captured.collection.bytes))
         const json = parseDocument(captured.collection.bytes, { uniqueKeys: true })
         if (json.errors.length > 0 || json.warnings.length > 0) return undefined
-    } catch { return undefined }
+    } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
     if (!object(authority) || !exact(authority, ['skills', 'metric', 'caps', 'displacement'])
         || !Array.isArray(authority.skills) || !sameStrings(authority.skills, ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']) || authority.metric !== 'frontmatter_bytes'
         || authority.displacement !== captured.terminal.path || !object(authority.caps) || !exact(authority.caps, SURFACE_TARGETS)) return undefined
