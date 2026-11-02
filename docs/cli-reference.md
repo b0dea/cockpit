@@ -63,6 +63,7 @@ Does not read `cockpit.toml`.
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -295,6 +296,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -547,6 +549,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -601,6 +604,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -655,6 +659,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -713,6 +718,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -768,6 +774,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -912,6 +919,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -966,6 +974,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |
@@ -1024,6 +1033,7 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 
 | Other diagnostics |
 | --- |

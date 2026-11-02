@@ -78,7 +78,7 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `07a81addaa90efeb0ca05a3967c1c530fa88ac88c4f4ab29054fe8c897c9e350`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `fa732f98941ee18e52fbef8df72204b8f6c9bafff8114600e6a91fc99157af59`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
 
@@ -92,7 +92,7 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
   "properties": {
     "unconfirmed": {
       "minItems": 1,
-      "maxItems": 11,
+      "maxItems": 12,
       "type": "array",
       "items": {
         "type": "string",
@@ -107,6 +107,7 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
           "environment.compose_files",
           "environment.machine",
           "environment.posture",
+          "testing",
           "guards"
         ]
       }

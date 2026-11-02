@@ -579,6 +579,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `TEMPLATE_NOT_FOUND` | see the message |
 | `TEMPLATE_NOT_TRACKED` | see the message |
 | `TEMPLATE_PATH_OUTSIDE_ROOT` | see the message |
+| `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `UPGRADE_AUTH_FAILED` | see the message |
 | `UPGRADE_DISCOVERY_INVALID` | see the message |
 | `UPGRADE_NETWORK_FAILED` | see the message |
