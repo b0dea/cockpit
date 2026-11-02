@@ -4428,7 +4428,7 @@ async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>
         code: 'TESTING_GATE_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.TESTING_GATE_UNDECLARED,
         message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
         target: 'testing',
-        fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; npx --no cockpit init proposes them from the test entry points it finds',
+        fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
     })])
 }
 
