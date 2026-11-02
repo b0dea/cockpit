@@ -707,7 +707,7 @@ describe('the published cockpit schema', () => {
         expect(CockpitConfig.safeParse(config).success).toBe(false)
     })
 
-    it('declares closed config objects while preserving the open ports base-name record', () => {
+    it('declares closed config objects and holds every record key to the loader\'s key pattern', () => {
         const schema = object(JSON.parse(renderCockpitSchema()))
         const properties = object(schema.properties)
         const sibling = object(object(properties.sibling).items)
@@ -734,9 +734,21 @@ describe('the published cockpit schema', () => {
             expect(closed.additionalProperties).toBe(false)
         }
 
-        const bases = object(object(properties.ports).properties).bases
-        expect(object(bases).additionalProperties).toMatchObject({ type: 'integer' })
-        expect(CockpitConfig.safeParse(validConfig).success).toBe(true)
+        // Draft 4 has no propertyNames, so each record carries its key pattern as its only pattern property.
+        const validators = [schema, JSON.parse(readFileSync(new URL('../cockpit.schema.json', import.meta.url), 'utf8'))].map(compileDraft04Schema)
+        const digest = 'a'.repeat(64)
+        for (const [config, accepted] of [
+            [validConfig, true],
+            [{ ...validConfig, ports: { bases: { web_port: 3000 } } }, false],
+            [{ ...validConfig, mcp: { approved: { 'notes-server': digest } } }, true],
+            [{ ...validConfig, mcp: { approved: { [`n${'a'.repeat(127)}`]: digest } } }, true],
+            [{ ...validConfig, mcp: { approved: { [`n${'a'.repeat(128)}`]: digest } } }, false],
+            [{ ...validConfig, mcp: { approved: { '-notes': digest } } }, false],
+            [{ ...validConfig, mcp: { approved: { 'notes server': digest } } }, false],
+        ] as Array<[Record<string, unknown>, boolean]>) {
+            expect(CockpitConfig.safeParse(config).success, JSON.stringify(config.mcp ?? config.ports)).toBe(accepted)
+            for (const validate of validators) expect(validate(config), JSON.stringify(config.mcp ?? config.ports)).toBe(accepted)
+        }
     })
 
     it('publishes bounded work, browser, testing and hook contracts with runtime-only relations named', () => {

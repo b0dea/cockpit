@@ -1674,10 +1674,13 @@
                   },
                   "port_defaults": {
                     "type": "object",
-                    "additionalProperties": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 65535
+                    "additionalProperties": false,
+                    "patternProperties": {
+                      "^(?=[\\s\\S]{0,128}$)(?:^[A-Z][A-Z0-9_]*$)": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
                     }
                   },
                   "entrypoints": {
@@ -2449,10 +2452,13 @@
         },
         "bases": {
           "type": "object",
-          "additionalProperties": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Z][A-Z0-9_]*$": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
           }
         }
       },
@@ -2666,9 +2672,12 @@
         "approved": {
           "default": {},
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$"
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?=[\\s\\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
           }
         }
       },

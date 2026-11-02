@@ -14,6 +14,22 @@ export function renderCockpitSchema(): string {
     const schema = z.toJSONSchema(CockpitConfig, {
         io: 'input',
         target: 'draft-04',
+        // Draft 4 has no propertyNames, and Zod drops a record's key schema there, so an editor
+        // accepted any key the loader refuses. Every key must match one pattern property instead.
+        override: ({ zodSchema, jsonSchema }) => {
+            const def = zodSchema._zod.def
+            if (def.type !== 'record') return
+            const { type, pattern, maxLength, ...rest } = z.toJSONSchema(def.keyType, { io: 'input', target: 'draft-7' }) as JsonSchema
+            delete rest.$schema
+            const value = jsonSchema.additionalProperties
+            if (type !== 'string' || typeof pattern !== 'string' || Object.keys(rest).length > 0 || maxLength !== undefined && typeof maxLength !== 'number'
+                || value === undefined || typeof value === 'boolean') {
+                throw new Error(`record key schema ${JSON.stringify({ type, pattern, maxLength, ...rest })} has no draft-04 rendering`)
+            }
+            const key = maxLength === undefined ? pattern : `^(?=[\\s\\S]{0,${maxLength}}$)(?:${pattern})`
+            jsonSchema.patternProperties = { [key]: value }
+            jsonSchema.additionalProperties = false
+        },
     }) as JsonSchema
     const properties = schema.properties as Record<string, JsonSchema>
     const sibling = properties.sibling.items as JsonSchema
