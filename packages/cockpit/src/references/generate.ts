@@ -240,7 +240,11 @@ const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to f
 const CLI_DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes '
     + 'and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. '
     + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
-    + 'Each command lists the codes its code path can produce, derived from the source, so a list can name a code that needs a failure your setup never meets.\n\n'
+    // The attribution counts a shared factory whole: the health and lifecycle adapter factories
+    // build several commands' adapters, so a command that uses one adapter inherits the others' codes.
+    + 'Each command lists the codes its code path can produce, derived from the source rather than observed, and the lists err towards too many. '
+    + 'A list can name a code that needs a failure your setup never meets, and, where commands are built from the same shared parts, a code only a related command raises. '
+    + 'A code a command prints that its list does not name is a defect in this page.\n\n'
 const EVERY_COMMAND_GUIDE = 'Every command can produce these codes, so they are listed once, here, and not under each command:\n\n'
 
 const headingAnchor = (heading: string) => heading.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
