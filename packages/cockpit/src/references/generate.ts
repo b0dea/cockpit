@@ -234,18 +234,21 @@ const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to f
     + `where they give different fixes it says "${VARYING_REMEDY}", and otherwise "${NO_FIXED_REMEDY}". `
     + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
 
-// The per-command tables in the CLI reference send the reader somewhere useful: a fix that never
-// changes, or the hand-written troubleshooting section that covers the code. Repeating "see the
-// message" on nearly every row told the reader nothing, so codes without either get no such column.
-const CLI_DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes '
-    + 'and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. '
+// Each command lists only its codes, and one table at the end of the page says what to do about
+// those with somewhere useful to send the reader: a fix that never changes, or the hand-written
+// troubleshooting section that covers the code. Repeating each row under every command that can
+// raise it made the page thousands of lines of the same rows, and "see the message" on a code
+// with neither told the reader nothing, so such codes get no row.
+const CLI_DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. Each command lists the codes it can produce; '
+    + '[What to do](#what-to-do), at the end of this page, repeats a fix that never changes and links the [Troubleshooting](troubleshooting.md) section that covers the code. '
+    + 'A code with no row there has its guidance in its message. '
     + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
     // The attribution counts a shared factory whole: the health and lifecycle adapter factories
     // build several commands' adapters, so a command that uses one adapter inherits the others' codes.
     + 'Each command lists the codes its code path can produce, derived from the source rather than observed, and the lists err towards too many. '
     + 'A list can name a code that needs a failure your setup never meets, and, where commands are built from the same shared parts, a code only a related command raises. '
     + 'A code a command prints that its list does not name is a defect in this page.\n\n'
-const EVERY_COMMAND_GUIDE = 'Every command can produce these codes, so they are listed once, here, and not under each command:\n\n'
+const EVERY_COMMAND_GUIDE = 'Every command can produce these codes, so they are listed once, here, and not under each command: '
 
 const headingAnchor = (heading: string) => heading.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
 
@@ -610,21 +613,14 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             const anchor = sections.get(name)
             return [...(remedy.kind === 'fixed' ? [cell(remedy.fix)] : []), ...(anchor === undefined ? [] : [`[Troubleshooting](troubleshooting.md#${anchor})`])].join('; ')
         }
-        const commandDiagnostics = (names: readonly string[]) => {
-            const rows = names.map(name => [code(name), guidance(name)] as const)
-            const guided = rows.filter(([, text]) => text !== '')
-            const other = rows.filter(([, text]) => text === '')
-            return [
-                ...(guided.length > 0 ? [DIAGNOSTIC_HEADER + guided.map(([name, text]) => `| ${name} | ${text} |\n`).join('')] : []),
-                ...(other.length > 0 ? [`| ${guided.length > 0 ? 'Other diagnostics' : 'Diagnostic'} |\n| --- |\n` + other.map(([name]) => `| ${name} |\n`).join('')] : []),
-            ].join('\n')
-        }
+        const codeList = (names: readonly string[]) => names.map(code).join(', ')
         const emittedBy = (handler: string) => codes.filter(name => input.diagnostics.commandDiagnostics.get(handler)?.has(name) === true)
+        const listed = new Set(commands.flatMap(command => emittedBy(command.handler)))
         const everyCommand = emittedBy(commands[0]!.handler).filter(name => commands.every(command => emittedBy(command.handler).includes(name)))
         const cli = documentHeading('CLI reference')
             + 'This generated reference is for users looking up an exact command, flag, exit code or diagnostic. '
             + 'It is generated from the CLI, so it matches this version; `cockpit <command> --help` shows the same flags.\n\n'
-            + CLI_DIAGNOSTIC_GUIDE + (everyCommand.length > 0 ? EVERY_COMMAND_GUIDE + commandDiagnostics(everyCommand) + '\n' : '')
+            + CLI_DIAGNOSTIC_GUIDE + (everyCommand.length > 0 ? EVERY_COMMAND_GUIDE + codeList(everyCommand) + '.\n\n' : '')
             + commands.map(command => {
             const ownedDiagnostics = emittedBy(command.handler).filter(name => !everyCommand.includes(name))
             return `## cockpit ${command.name}\n\n${command.summary}.\n\n`
@@ -633,9 +629,11 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
                 + '| Flag | Type | Default |\n| --- | --- | --- |\n' + Object.entries(command.options).map(([flag, option]) =>
                     `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
                 + '\n| Exit | Meaning |\n| --- | --- |\n' + exits
-                + (ownedDiagnostics.length > 0 ? '\n' + commandDiagnostics(ownedDiagnostics)
+                + (ownedDiagnostics.length > 0 ? `\nDiagnostics ([what to do](#what-to-do)): ${codeList(ownedDiagnostics)}.\n`
                     : '\nNo diagnostic codes are listed for this command; its messages name what failed and how to fix it.\n')
         }).join('\n')
+            + '\n## What to do\n\n' + DIAGNOSTIC_HEADER + codes.filter(name => listed.has(name) && guidance(name) !== '')
+                .map(name => `| ${code(name)} | ${guidance(name)} |\n`).join('')
         const sourcePath = (path: string) => {
             if (!committed) return path
             const source = committed.sourceAssets.find(asset => asset.installedPath === path)
