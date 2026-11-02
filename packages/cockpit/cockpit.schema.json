@@ -1819,12 +1819,15 @@
                   },
                   "port_defaults": {
                     "type": "object",
-                    "additionalProperties": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 65535
-                    },
-                    "description": "Default host port for each of the service's host variables."
+                    "additionalProperties": false,
+                    "description": "Default host port for each of the service's host variables.",
+                    "patternProperties": {
+                      "^(?=[\\s\\S]{0,128}$)(?:^[A-Z][A-Z0-9_]*$)": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
+                    }
                   },
                   "entrypoints": {
                     "maxItems": 256,
@@ -2651,12 +2654,15 @@
         },
         "bases": {
           "type": "object",
-          "additionalProperties": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
-          },
-          "description": "Base host port for each port variable; stack n publishes base plus n times step."
+          "additionalProperties": false,
+          "description": "Base host port for each port variable; stack n publishes base plus n times step.",
+          "patternProperties": {
+            "^[A-Z][A-Z0-9_]*$": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
         }
       },
       "required": [
@@ -2885,9 +2891,12 @@
           "default": {},
           "description": "Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$"
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?=[\\s\\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
           }
         }
       },
