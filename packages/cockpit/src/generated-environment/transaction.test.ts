@@ -137,9 +137,11 @@ describe('anchored file relocation', () => {
 
         expect(writerCode).toBe(0)
         expect(relocated).toMatchObject({ kind: 'refusal', recovery: 'indeterminate' })
-        expect(await readFile(sourcePath)).toEqual(bytes)
+        // Compared by digest: toEqual on an 8 MiB Buffer materialises Object.entries of both sides and
+        // enumerates them with for-in, which exhausts a 2 GB heap on a 7 GB hosted runner.
+        expect(digest(await readFile(sourcePath))).toBe(digest(bytes))
         expect(await readFile(destinationPath, 'utf8')).toBe(replacement)
-        expect(await readFile(displacedPath)).toEqual(bytes)
+        expect(digest(await readFile(displacedPath))).toBe(digest(bytes))
     })
 
     it('preserves a destination replacement made between link and first identity observation', async () => {
