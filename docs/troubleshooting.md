@@ -267,12 +267,12 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | depends on what failed; see the message |
 | `CONFIG_CHANGED_DURING_EXECUTION` | depends on what failed; see the message |
-| `CONFIG_ENCODING_INVALID` | see the message |
-| `CONFIG_NOT_FOUND` | see the message |
-| `CONFIG_PARSE_INVALID` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
+| `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
+| `CONFIG_NOT_FOUND` | depends on what failed; see the message |
+| `CONFIG_PARSE_INVALID` | depends on what failed; see the message |
+| `CONFIG_SCHEMA_INVALID` | depends on what failed; see the message |
 | `CONFIG_STALE` | see the message |
-| `CONFIG_UNREADABLE` | see the message |
+| `CONFIG_UNREADABLE` | depends on what failed; see the message |
 | `DATA_MODE_UNAVAILABLE` | see the message |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `DEPENDENCY_RUNTIME_INCOMPATIBLE` | see the message |
@@ -601,7 +601,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `TEMPLATE_NOT_TRACKED` | see the message |
 | `TEMPLATE_PATH_OUTSIDE_ROOT` | see the message |
 | `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `TEST_GATE_UNSATISFIED` | read result.verdict and result.observations: fix the product for FAIL, restore what a DEGRADED stage names, rerun a VOID gate once the tree is unchanged, and run the complete gate without --select for PASS |
+| `TEST_GATE_UNSATISFIED` | the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged |
 | `UPGRADE_AUTH_FAILED` | see the message |
 | `UPGRADE_DISCOVERY_INVALID` | see the message |
 | `UPGRADE_NETWORK_FAILED` | see the message |
