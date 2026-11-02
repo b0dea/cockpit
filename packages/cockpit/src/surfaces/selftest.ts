@@ -14,7 +14,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/surfaces/selftest.ts',
     exports: [
         'planSurfaceSelftest', 'surfaceSelftestExpectation', 'surfaceSelftestHumanNeeded', 'surfaceSelftestReviews',
-        'draftSurfaceSelftestSpecifications', 'unfilledSurfaceSelftestSpecifications',
+        'draftSurfaceSelftestSpecifications', 'unfilledSurfaceSelftestSpecifications', 'surfaceSelftestCellLabel',
     ],
 } as const
 
@@ -51,8 +51,15 @@ export interface SelftestExpectation {
     ]
 }
 
+/**
+ * A probe row exists only for a built-in tool. cockpit runs a probe through an executable it found
+ * on PATH and the person approved by digest; a custom harness has no such executable, only a module
+ * cockpit loads to render files, and running a worker command cockpit built around that module would
+ * be cockpit vouching for itself. So a custom cell never gets a row: selftest records it
+ * human_needed, and a row written for one is refused rather than accepted and ignored.
+ */
 export interface SelftestProbeSpecification {
-    readonly harness: SelftestHarnessRef
+    readonly harness: BuiltinHarnessRef
     readonly capability: SelftestCapability
     readonly invocation: readonly [string, ...string[]]
     readonly versionCommand: readonly [string, ...string[]]
@@ -78,12 +85,17 @@ export type SelftestProbeSpecificationDraft = Omit<SelftestProbeSpecification, '
 
 export interface PlannedSelftestProbe extends SelftestProbeSpecification {
     readonly cell: SelftestCellKey
-    readonly customInput?: GeneratedCustomSurfaceSelftestInput
     readonly entries: readonly SurfaceDesiredEntry[]
 }
 
 export type SurfaceSelftestPlanResult =
-    | Readonly<{ kind: 'complete'; expectation: SelftestExpectation; probes: readonly PlannedSelftestProbe[] }>
+    | Readonly<{
+        kind: 'complete'
+        expectation: SelftestExpectation
+        probes: readonly PlannedSelftestProbe[]
+        /** Custom cells: no probe can run for them, so each is recorded human_needed. */
+        unprobeable: readonly SelftestCellKey[]
+    }>
     | Readonly<{ kind: 'refusal'; code: 'SELFTEST_SOURCE_INVALID'; reason: string }>
 
 export type SelftestHumanNeededRecord = Readonly<{
@@ -303,9 +315,7 @@ function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): b
         'brokenCode', 'candidateCode', 'capability', 'harness', 'helpCommand', 'invocation',
         'sample', 'unavailableCode', 'versionCommand',
     ].sort().join('\0')) return false
-    const harnessKeys = probe.harness.kind === 'builtin' ? ['kind', 'name', 'target']
-        : ['declarationSha256', 'export', 'id', 'kind', 'module', 'sourceSha256']
-    if (Object.keys(probe.harness).sort().join('\0') !== harnessKeys.sort().join('\0')) return false
+    if (probe.harness.kind !== 'builtin' || Object.keys(probe.harness).sort().join('\0') !== 'kind\0name\0target') return false
     const commands = [probe.invocation, probe.versionCommand, probe.helpCommand]
     const sample = probe.sample
     const validSample = sample !== null && Object.keys(sample).sort().join('\0') === 'features\0skill'
@@ -317,9 +327,7 @@ function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): b
         && probe.invocation.filter((value) => value === '{control}').length === 1
         && [probe.candidateCode, probe.brokenCode, probe.unavailableCode].every((code) => CODE.test(code))
         && probe.unavailableCode === `${probe.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`
-        && (cell.harness.kind === 'custom'
-            ? commands.every((command) => command[0] === '{node}')
-            : commands.every((command) => command[0] === '{executable}'))
+        && commands.every((command) => command[0] === '{executable}')
         && (cell.capability === 'skill-parity'
             ? validSample && probe.sample!.skill === cell.skill
             : probe.sample === null)
@@ -330,30 +338,40 @@ function harnessLabel(harness: SelftestHarnessRef): string {
     return harness.kind === 'builtin' ? harness.name : harness.id
 }
 
+/** `<harness> <capability>[ <skill>]`, the name a person sees for a cell. */
+export function surfaceSelftestCellLabel(cell: SelftestCellKey): string {
+    return `${harnessLabel(cell.harness)} ${cell.capability}${cell.capability === 'skill-parity' ? ` ${cell.skill}` : ''}`
+}
+
+function builtinCell(cell: SelftestCellKey): cell is SelftestCellKey & Readonly<{ harness: BuiltinHarnessRef }> {
+    return cell.harness.kind === 'builtin'
+}
+
 /**
- * One row per expected cell, with everything the generated manifest determines filled in and the
+ * One row per built-in cell, with everything the generated manifest determines filled in and the
  * probe itself left null. The version and help commands are the identity probes every built-in tool
  * answers with `--version` and `--help`; they run before the controls and are shown for approval.
+ * Custom cells get no row (see SelftestProbeSpecification) and are returned as `unprobeable`.
  */
 export function draftSurfaceSelftestSpecifications(
     projection: GeneratedSurfaceSelftestProjection,
-): readonly SelftestProbeSpecificationDraft[] | undefined {
+): Readonly<{ specifications: readonly SelftestProbeSpecificationDraft[]; unprobeable: readonly SelftestCellKey[] }> | undefined {
     const expectation = surfaceSelftestExpectation(projection)
     if (!expectation) return undefined
-    return Object.freeze(expectation.cells.map((cell) => {
-        const executable = cell.harness.kind === 'custom' ? '{node}' : '{executable}'
-        return Object.freeze({
+    return Object.freeze({
+        specifications: Object.freeze(expectation.cells.filter(builtinCell).map((cell) => Object.freeze({
             harness: cell.harness,
             capability: cell.capability,
             invocation: null,
-            versionCommand: Object.freeze([executable, '--version'] as const),
-            helpCommand: Object.freeze([executable, '--help'] as const),
+            versionCommand: Object.freeze(['{executable}', '--version'] as const),
+            helpCommand: Object.freeze(['{executable}', '--help'] as const),
             candidateCode: null,
             brokenCode: null,
             unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
             sample: cell.capability === 'skill-parity' ? Object.freeze({ skill: cell.skill, features: null }) : null,
-        })
-    }))
+        }))),
+        unprobeable: Object.freeze(expectation.cells.filter((cell) => !builtinCell(cell))),
+    })
 }
 
 /** Names each row whose person-supplied fields are still null, as `<harness> <capability>[ <skill>]: <fields>`. */
@@ -382,7 +400,18 @@ export function planSurfaceSelftest(
     const expectation = capturedProjection ? surfaceSelftestExpectation(capturedProjection) : undefined
     if (!expectation) return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'generated selftest projection is invalid' })
     const capturedSpecifications = snapshotGeneratedJson(specifications) as unknown as readonly SelftestProbeSpecification[] | undefined
-    if (!capturedSpecifications || capturedSpecifications.length !== expectation.cells.length || capturedSpecifications.length > 256) {
+    if (!capturedSpecifications) return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications are malformed' })
+    const customRows = capturedSpecifications.flatMap((row) => {
+        const harness = (row as { harness?: unknown } | null)?.harness as SelftestHarnessRef | null | undefined
+        return harness !== null && typeof harness === 'object' && harness.kind === 'custom'
+            ? [`${typeof harness.id === 'string' ? harness.id : 'unknown harness'} ${String(row.capability)}`] : []
+    })
+    if (customRows.length > 0) return Object.freeze({
+        kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
+        reason: `probe specification rows for custom harnesses cannot run and would be ignored, so they are refused: ${customRows.slice(0, 5).join('; ')}${customRows.length > 5 ? `; and ${customRows.length - 5} more` : ''}; selftest records custom cells human_needed without a row, so delete these rows`,
+    })
+    const probeCells = expectation.cells.filter(builtinCell)
+    if (capturedSpecifications.length !== probeCells.length || capturedSpecifications.length > 256) {
         return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications do not exactly cover expected cells' })
     }
     const byCell = new Map<string, SelftestProbeSpecification>()
@@ -393,7 +422,7 @@ export function planSurfaceSelftest(
         byCell.set(key, specification)
     }
     const probes: PlannedSelftestProbe[] = []
-    for (const cell of expectation.cells) {
+    for (const cell of probeCells) {
         const specification = byCell.get(cellKey(cell))
         if (!specification || !validProbe(specification, cell)) {
             return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specification is malformed or does not match source authority' })
@@ -401,23 +430,16 @@ export function planSurfaceSelftest(
         if (specification.sample && !expectation.shippedSkills.includes(specification.sample.skill)) {
             return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'skill parity sample is not a shipped skill' })
         }
-        const customHarness = cell.harness.kind === 'custom' ? cell.harness : undefined
-        const customInput = customHarness
-            ? capturedProjection!.custom.find((row) => row.harness === customHarness.id && FEATURE_CAPABILITY[row.feature] === cell.capability)
-            : undefined
-        if (customHarness && !customInput) {
-            return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'custom probe has no authenticated producer input' })
-        }
         probes.push(Object.freeze({
             ...specification,
             cell,
-            ...(customInput ? { customInput } : {}),
-            entries: Object.freeze(capturedProjection!.entries.filter((entry) => entry.harnesses.includes(
-                cell.harness.kind === 'builtin' ? cell.harness.target : cell.harness.id,
-            ))),
+            entries: Object.freeze(capturedProjection!.entries.filter((entry) => entry.harnesses.includes(cell.harness.target))),
         }))
     }
-    return Object.freeze({ kind: 'complete', expectation, probes: Object.freeze(probes) })
+    return Object.freeze({
+        kind: 'complete', expectation, probes: Object.freeze(probes),
+        unprobeable: Object.freeze(expectation.cells.filter((cell) => !builtinCell(cell))),
+    })
 }
 
 export function surfaceSelftestHumanNeeded(

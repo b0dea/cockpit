@@ -29,6 +29,7 @@ import {
     draftSurfaceSelftestSpecifications,
     planSurfaceSelftest,
     unfilledSurfaceSelftestSpecifications,
+    surfaceSelftestCellLabel,
     surfaceSelftestHumanNeeded,
     surfaceSelftestReviews,
     type PlannedSelftestProbe,
@@ -110,6 +111,9 @@ const STREAM_BYTES = 65_536
 const PROBE_TIMEOUT_MS = 30_000
 const EVIDENCE_EXPIRY_MS = 300_000
 const BUILTIN_EXECUTABLES = Object.freeze({ claudecode: 'claude', codexcli: 'codex', opencode: 'opencode' } as const)
+// Why a custom cell has no probe row; see SelftestProbeSpecification.
+const UNPROBEABLE_REASON = 'selftest runs only built-in tools it found on PATH and you approved by digest, and a custom harness has no such executable'
+const UNPROBEABLE_ACTION = 'measure the capability by hand with a candidate and a deliberately broken control and record it in cockpit.toml'
 
 // A signed-in tool locates its stored sign-in through HOME, so a probe given PATH alone reports
 // every cell as not signed in. The allowlist carries no credential; every other variable, tokens
@@ -313,7 +317,7 @@ async function run(
 }
 
 function publicCommand(command: readonly string[], executable: string, control?: string): readonly [string, ...string[]] {
-    return command.map((value) => value === '{executable}' || value === '{node}' ? executable
+    return command.map((value) => value === '{executable}' ? executable
         : value === '{control}' && control !== undefined ? control : value) as [string, ...string[]]
 }
 
@@ -423,12 +427,8 @@ async function runEvidenceProbe(
     adapters: SurfaceSelftestCommandAdapters,
     approvedExecutables: OperatorExecutableIdentities,
 ): Promise<SelftestEvidenceRecord | ReturnType<typeof surfaceSelftestHumanNeeded> | undefined> {
-    const harnessName = probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id
+    const harnessName = probe.harness.name
     const observedAt = new Date().toISOString()
-    if (probe.harness.kind === 'custom') return surfaceSelftestHumanNeeded(
-        expectation, probe.cell, 'enforcement_probe_required', observedAt,
-        `Run an operator-approved exact ${harnessName} ${probe.capability} probe with candidate and broken controls; generated module checks do not authorize constructed worker commands`,
-    )
     const resolution = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env)
     if (resolution.state === 'unavailable') return surfaceSelftestHumanNeeded(
         expectation,
@@ -553,7 +553,13 @@ export async function runSurfaceSelftestApplication(
         const record = await runEvidenceProbe(
             root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables,
         )
-        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id}`)
+        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}`)
+        records.push(record)
+    }
+    for (const cell of plan.unprobeable) {
+        const record = surfaceSelftestHumanNeeded(plan.expectation, cell, 'enforcement_probe_required', new Date().toISOString(),
+            `${UNPROBEABLE_REASON}; ${UNPROBEABLE_ACTION} for ${surfaceSelftestCellLabel(cell)}`)
+        if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `could not record ${surfaceSelftestCellLabel(cell)} as human_needed`)
         records.push(record)
     }
     const reviews = surfaceSelftestReviews(plan.expectation, [])
@@ -626,7 +632,7 @@ export async function runConfiguredSurfaceSelftestApplication(
         sourceSha256: checked.result.application.sourceSha256,
         generatedManifestSha256: checked.result.application.surfaceSelftest.manifestSha256,
         commandVectors: Object.freeze(plan.probes.map((probe) => Object.freeze({
-            harness: probe.harness.kind === 'builtin' ? probe.harness.name : probe.harness.id,
+            harness: probe.harness.name,
             capability: probe.capability,
             skill: probe.sample?.skill ?? null,
             invocation: Object.freeze([...probe.invocation]) as readonly [string, ...string[]],
@@ -696,12 +702,20 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
         return refused(checked.diagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`).join('; ')
             || 'generated environment check refused configured selftest source')
     }
-    const specifications = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest)
-    if (!specifications) return refused('generated selftest projection is invalid')
+    const draft = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest)
+    if (!draft) return refused('generated selftest projection is invalid')
+    const { specifications, unprobeable } = draft
     const destination = resolve(input.writeProbeSpecificationsPath)
     const unfilled = unfilledSurfaceSelftestSpecifications(specifications)
     return {
-        status: 0, diagnostics: [],
+        status: 0,
+        diagnostics: unprobeable.map((cell) => ({
+            severity: 'warning' as const,
+            code: 'SELFTEST_CUSTOM_PROBE_UNSUPPORTED' satisfies typeof ENVIRONMENT_CODES.SELFTEST_CUSTOM_PROBE_UNSUPPORTED,
+            message: `no row written for ${surfaceSelftestCellLabel(cell)}: ${UNPROBEABLE_REASON}, so selftest records this cell human_needed with enforcement_probe_required`,
+            target: surfaceSelftestCellLabel(cell),
+            fix: 'measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it',
+        })),
         artifact: `${JSON.stringify({
             schema: PROBE_SPECIFICATIONS_SCHEMA,
             sourceSha256: checked.result.application.sourceSha256,

@@ -103,18 +103,18 @@ capabilities = [${capabilities.join(', ')}]
         await writeFile(configPath, baseDeclaration + customDeclaration)
         const outcome = await syncGeneratedEnvironment({ configPath })
         if (outcome.kind !== 'complete') throw new Error(outcome.diagnostics.map((row) => row.message).join('; '))
-        return { root, application: outcome.result.application }
+        return { root, configPath, application: outcome.result.application }
     }
 
     function specifications(application: Awaited<ReturnType<typeof issuedApplication>>['application']): readonly SelftestProbeSpecification[] {
         const expectation = surfaceSelftestExpectation(application.surfaceSelftest)
         if (!expectation) throw new Error('selftest expectation unavailable')
-        return expectation.cells.map((cell) => ({
+        return expectation.cells.flatMap((cell) => cell.harness.kind !== 'builtin' ? [] : [{
             harness: cell.harness,
             capability: cell.capability,
-            invocation: [cell.harness.kind === 'custom' ? '{node}' : '{executable}', '--probe', cell.capability, '{control}'],
-            versionCommand: [cell.harness.kind === 'custom' ? '{node}' : '{executable}', '--version'],
-            helpCommand: [cell.harness.kind === 'custom' ? '{node}' : '{executable}', '--help'],
+            invocation: ['{executable}', '--probe', cell.capability, '{control}'],
+            versionCommand: ['{executable}', '--version'],
+            helpCommand: ['{executable}', '--help'],
             candidateCode: cell.capability === 'guard-firing' ? 'GUARD_FIRED'
                 : cell.capability === 'skill-parity' ? 'SKILL_PARITY_CANARY' : 'INSTRUCTION_CANARY',
             brokenCode: 'BROKEN_CONTROL_REJECTED',
@@ -122,7 +122,7 @@ capabilities = [${capabilities.join(', ')}]
             sample: cell.capability === 'skill-parity'
                 ? { skill: cell.skill, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] }
                 : null,
-        }))
+        }])
     }
 
     // With `signIn`, each tool behaves like a signed-in CLI: it reads its sign-in from a file under

@@ -70,7 +70,7 @@ function overlappingCustomGuards(duplicate = true): GeneratedSurfaceSelftestProj
 
 function specifications(source: GeneratedSurfaceSelftestProjection): readonly SelftestProbeSpecification[] {
     const expectation = surfaceSelftestExpectation(source)!
-    return expectation.cells.map((cell) => ({
+    return expectation.cells.flatMap((cell) => cell.harness.kind !== 'builtin' ? [] : [{
         harness: cell.harness,
         capability: cell.capability,
         invocation: ['{executable}', '--probe', cell.capability, '{control}'],
@@ -83,7 +83,7 @@ function specifications(source: GeneratedSurfaceSelftestProjection): readonly Se
         sample: cell.capability === 'skill-parity'
             ? { skill: cell.skill, features: ['name', 'trigger', 'body-load', 'tools', 'non-goals'] }
             : null,
-    }))
+    }])
 }
 
 describe('surface selftest planning', () => {
