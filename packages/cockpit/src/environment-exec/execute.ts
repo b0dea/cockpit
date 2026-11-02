@@ -630,8 +630,8 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         const result = (): InternalStepExecution => {
             const expired = fenced?.spawnExpired() === true
             const started = runningProcess.pid !== undefined && !expired
-            const retainedStdout = Buffer.concat(stdout).subarray(0, step.stdoutLimitBytes)
-            const retainedStderr = Buffer.concat(stderr).subarray(0, step.stderrLimitBytes)
+            const retainedStdout = retainedOutput(stdout, step.stdoutLimitBytes)
+            const retainedStderr = retainedOutput(stderr, step.stderrLimitBytes)
             const processSignal = closed?.signal ?? null
             const processFailure = failure ?? (expired ? ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED : closed?.code === 0 && processSignal === null
                 ? undefined : ENVIRONMENT_CODES.EXECUTION_STEP_FAILED)
@@ -723,21 +723,27 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         if (signal?.aborted) abort()
         // A tail-retaining step keeps running past its limit and keeps only the newest bytes, because a
         // long tool's verdict is its exit status and its final lines name the failure; memory stays bounded.
+        // A long follow delivers many small chunks, so each one only appends and drops whole chunks that
+        // the rest already covers; the single copy and cut happen when the outcome is built.
+        const retainTail = (buffers: Buffer[], chunk: Buffer, retained: number, limit: number): number => {
+            buffers.push(chunk)
+            let total = retained + chunk.byteLength
+            while (buffers.length > 1 && total - buffers[0]!.byteLength >= limit) total -= buffers.shift()!.byteLength
+            return total
+        }
         // The cut can land inside a UTF-8 character; its leftover continuation bytes decode to U+FFFD
         // or fail a strict decoder, and they carry nothing, so the tail starts at the next character.
-        const retainTail = (buffers: Buffer[], chunk: Buffer, limit: number): number => {
-            buffers.push(chunk)
+        const retainedOutput = (buffers: Buffer[], limit: number): Buffer => {
             const joined = Buffer.concat(buffers)
+            if (step.outputOverflow !== 'retain-tail') return joined.subarray(0, limit)
             let start = Math.max(0, joined.byteLength - limit)
             for (let skipped = 0; start > 0 && skipped < 3 && start < joined.byteLength && (joined[start]! & 0xc0) === 0x80; skipped += 1) start += 1
-            const tail = joined.subarray(start)
-            buffers.splice(0, buffers.length, tail)
-            return tail.byteLength
+            return joined.subarray(start)
         }
         runningProcess.stdout?.on('data', (chunk: Buffer) => {
             stdoutBytes += chunk.length
             if (step.outputOverflow === 'retain-tail') {
-                stdoutRetainedBytes = retainTail(stdout, chunk, step.stdoutLimitBytes)
+                stdoutRetainedBytes = retainTail(stdout, chunk, stdoutRetainedBytes, step.stdoutLimitBytes)
                 return
             }
             if (stdoutRetainedBytes < step.stdoutLimitBytes) {
@@ -750,7 +756,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         runningProcess.stderr?.on('data', (chunk: Buffer) => {
             stderrBytes += chunk.length
             if (step.outputOverflow === 'retain-tail') {
-                stderrRetainedBytes = retainTail(stderr, chunk, step.stderrLimitBytes)
+                stderrRetainedBytes = retainTail(stderr, chunk, stderrRetainedBytes, step.stderrLimitBytes)
                 return
             }
             if (stderrRetainedBytes < step.stderrLimitBytes) {
