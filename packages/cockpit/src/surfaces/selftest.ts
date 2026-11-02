@@ -12,7 +12,10 @@ import { classifySurfaceOwnership, type SurfaceDesiredEntry } from './ownership.
 export const mechanism = {
     id: 'surface-selftest-planning',
     module: 'packages/cockpit/src/surfaces/selftest.ts',
-    exports: ['planSurfaceSelftest', 'surfaceSelftestExpectation', 'surfaceSelftestHumanNeeded', 'surfaceSelftestReviews'],
+    exports: [
+        'planSurfaceSelftest', 'surfaceSelftestExpectation', 'surfaceSelftestHumanNeeded', 'surfaceSelftestReviews',
+        'draftSurfaceSelftestSpecifications', 'unfilledSurfaceSelftestSpecifications',
+    ],
 } as const
 
 export type SelftestCapability = 'instruction-loading' | 'guard-firing' | 'skill-parity'
@@ -59,6 +62,19 @@ export interface SelftestProbeSpecification {
     readonly unavailableCode: string
     readonly sample: Readonly<{ skill: string; features: readonly ('name' | 'trigger' | 'body-load' | 'tools' | 'non-goals')[] }> | null
 }
+
+/**
+ * A specification row as cockpit can write it. The fields left null are the probe itself: the
+ * arguments that make a tool load a control file and the lines it prints for an accepted and a
+ * rejected control. Nothing in the generated manifest says what those are for a given tool and
+ * version, so a person supplies them and approves the whole file before anything in it runs.
+ */
+export type SelftestProbeSpecificationDraft = Omit<SelftestProbeSpecification, 'invocation' | 'candidateCode' | 'brokenCode' | 'sample'> & Readonly<{
+    invocation: null
+    candidateCode: null
+    brokenCode: null
+    sample: Readonly<{ skill: string; features: null }> | null
+}>
 
 export interface PlannedSelftestProbe extends SelftestProbeSpecification {
     readonly cell: SelftestCellKey
@@ -308,6 +324,54 @@ function validProbe(probe: SelftestProbeSpecification, cell: SelftestCellKey): b
             ? validSample && probe.sample!.skill === cell.skill
             : probe.sample === null)
     } catch { return false }
+}
+
+function harnessLabel(harness: SelftestHarnessRef): string {
+    return harness.kind === 'builtin' ? harness.name : harness.id
+}
+
+/**
+ * One row per expected cell, with everything the generated manifest determines filled in and the
+ * probe itself left null. The version and help commands are the identity probes every built-in tool
+ * answers with `--version` and `--help`; they run before the controls and are shown for approval.
+ */
+export function draftSurfaceSelftestSpecifications(
+    projection: GeneratedSurfaceSelftestProjection,
+): readonly SelftestProbeSpecificationDraft[] | undefined {
+    const expectation = surfaceSelftestExpectation(projection)
+    if (!expectation) return undefined
+    return Object.freeze(expectation.cells.map((cell) => {
+        const executable = cell.harness.kind === 'custom' ? '{node}' : '{executable}'
+        return Object.freeze({
+            harness: cell.harness,
+            capability: cell.capability,
+            invocation: null,
+            versionCommand: Object.freeze([executable, '--version'] as const),
+            helpCommand: Object.freeze([executable, '--help'] as const),
+            candidateCode: null,
+            brokenCode: null,
+            unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
+            sample: cell.capability === 'skill-parity' ? Object.freeze({ skill: cell.skill, features: null }) : null,
+        })
+    }))
+}
+
+/** Names each row whose person-supplied fields are still null, as `<harness> <capability>[ <skill>]: <fields>`. */
+export function unfilledSurfaceSelftestSpecifications(specifications: readonly unknown[]): readonly string[] {
+    const rows: string[] = []
+    for (const value of specifications) {
+        if (value === null || typeof value !== 'object') continue
+        const row = value as Readonly<Record<string, unknown>>
+        const fields: string[] = ['invocation', 'candidateCode', 'brokenCode'].filter((field) => row[field] === null)
+        const sample = row.sample as Readonly<Record<string, unknown>> | null | undefined
+        if (sample !== null && typeof sample === 'object' && sample.features === null) fields.push('sample.features')
+        if (fields.length === 0) continue
+        const harness = row.harness as SelftestHarnessRef | null | undefined
+        const label = harness !== null && typeof harness === 'object' ? harnessLabel(harness) : 'unknown harness'
+        const skill = sample !== null && typeof sample === 'object' && typeof sample.skill === 'string' ? ` ${sample.skill}` : ''
+        rows.push(`${label} ${String(row.capability)}${skill}: ${fields.join(', ')}`)
+    }
+    return Object.freeze(rows)
 }
 
 export function planSurfaceSelftest(

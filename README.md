@@ -82,9 +82,11 @@ flowchart LR
 | Grok Build | `AGENTS.md`, `.grok/` | none; files are generated but not confirmed to load |
 
 Any other tool that reads `AGENTS.md` gets the same instructions, without skills, hooks or
-permissions. Writing a file is not proof that a tool obeys it: `cockpit selftest` tests the
-controls against the installed tools, and the [capability matrix](docs/capability-matrix.md)
-records what has been measured, with dates and versions.
+permissions. Writing a file is not proof that a tool obeys it: `cockpit selftest` runs probe
+commands you write against the installed tools, with a deliberately broken control beside each
+([how](docs/harness-surfaces.md#skills-and-selftest-evidence)), and the
+[capability matrix](docs/capability-matrix.md) records what has been measured, with dates and
+versions.
 
 ## Quickstart
 

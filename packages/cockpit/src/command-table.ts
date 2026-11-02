@@ -99,6 +99,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     target: 'Agent surface target to initialize',
     var: 'Environment variable mapping for the sibling',
     'work-order': 'Work-order identifier',
+    'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, with the probe fields left for you',
     'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
 })
 
@@ -245,6 +246,7 @@ export const commands: readonly CommandDefinition[] = [
         options: {
             config: { type: 'string' },
             'probe-specifications': { type: 'string' },
+            'write-probe-specifications': { type: 'string' },
             interactive: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },

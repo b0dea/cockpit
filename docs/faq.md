@@ -54,7 +54,9 @@ fails closed on input it cannot read; what differs is whether the tool runs it. 
 - Cursor and Grok Build: no guard. cockpit writes their files but installs no hook, and nobody has
   confirmed those tools load them.
 
-`cockpit selftest` checks the supported tools installed on your machine.
+`cockpit selftest` checks the supported tools installed on your machine, using probe commands you
+write for each tool; [Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence)
+walks through it.
 
 ## Does cockpit change my product code?
 
