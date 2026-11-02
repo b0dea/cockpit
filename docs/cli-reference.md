@@ -45,6 +45,7 @@ Does not read `cockpit.toml`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
+| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
@@ -179,7 +180,6 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_ESTATE_INCOMPLETE` |
 | `DOCUMENT_ESTATE_OBSERVATION_CHANGED` |
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` |
-| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
 | `DOCUMENT_GAP` |
 | `DOCUMENT_INFERRED` |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` |
@@ -248,6 +248,7 @@ Does not read `cockpit.toml`.
 | `INIT_ANSWER_FIELD_UNKNOWN` |
 | `INIT_ANSWER_INVALID` |
 | `INIT_ANSWER_RESET_CONFLICT` |
+| `INIT_ANSWER_RESET_UNAVAILABLE` |
 | `INIT_ANSWER_UNUSED` |
 | `INIT_ARTIFACT_WRITE_FAILED` |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` |
@@ -266,11 +267,13 @@ Does not read `cockpit.toml`.
 | `INIT_ROOT_INVALID` |
 | `INIT_ROOT_OBSERVATION_FAILED` |
 | `INIT_STATE_DURABILITY_INDETERMINATE` |
+| `INIT_STATE_RESTARTED` |
 | `INIT_STATE_STALE` |
 | `INIT_STATE_UNAUTHENTICATED` |
 | `INIT_TARGET_CHANGED` |
 | `INIT_TERMINAL_REQUIRED` |
 | `INIT_UNAVAILABLE` |
+| `INIT_VERIFICATION_INCOMPLETE` |
 | `INSTALL_LOCKFILE_CHANGED` |
 | `INSTALL_LOCK_HELD` |
 | `INSTALL_LOCK_INVALID` |
@@ -334,6 +337,7 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
@@ -350,7 +354,6 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` |
 | `DOCUMENT_ESTATE_GAPS_INVALID` |
 | `DOCUMENT_ESTATE_INCOMPLETE` |
-| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
 | `DOCUMENT_GAP` |
 | `DOCUMENT_INFERRED` |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` |

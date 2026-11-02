@@ -282,7 +282,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `DIRECTORY_GRANTS_UNAVAILABLE` | see the message |
 | `DOCUMENT_ANSWER_UNCONFIRMED` | see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | see the message |
+| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | depends on what failed; see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_STALE` | see the message |
 | `DOCUMENT_CONFIGURATION_APPLICABILITY_INVALID` | see the message |
 | `DOCUMENT_CONFIGURATION_INVALID` | see the message |
@@ -292,7 +292,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `DOCUMENT_ESTATE_INCOMPLETE` | see the message |
 | `DOCUMENT_ESTATE_OBSERVATION_CHANGED` | see the message |
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
-| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
+| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
 | `DOCUMENT_GAP` | depends on what failed; see the message |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_INFERRED` | see the message |
@@ -397,6 +397,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `INIT_ANSWER_FIELD_UNKNOWN` | see the message |
 | `INIT_ANSWER_INVALID` | see the message |
 | `INIT_ANSWER_RESET_CONFLICT` | see the message |
+| `INIT_ANSWER_RESET_UNAVAILABLE` | see the message |
 | `INIT_ANSWER_UNUSED` | see the message |
 | `INIT_ARTIFACT_WRITE_FAILED` | see the message |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` | see the message |
@@ -416,11 +417,13 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `INIT_ROOT_INVALID` | see the message |
 | `INIT_ROOT_OBSERVATION_FAILED` | see the message |
 | `INIT_STATE_DURABILITY_INDETERMINATE` | see the message |
+| `INIT_STATE_RESTARTED` | see the message |
 | `INIT_STATE_STALE` | see the message |
 | `INIT_STATE_UNAUTHENTICATED` | see the message |
 | `INIT_TARGET_CHANGED` | see the message |
 | `INIT_TERMINAL_REQUIRED` | see the message |
 | `INIT_UNAVAILABLE` | see the message |
+| `INIT_VERIFICATION_INCOMPLETE` | see the message |
 | `INSTALL_LOAD_PROBE_FAILED` | see the message |
 | `INSTALL_LOCKFILE_CHANGED` | see the message |
 | `INSTALL_LOCK_HELD` | see the message |
