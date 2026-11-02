@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { createConnection } from 'node:net'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -118,8 +118,8 @@ function environmentCode(code: string): code is EnvironmentDiagnostic['code'] {
     return (Object.values(ENVIRONMENT_CODES) as readonly string[]).includes(code)
 }
 
-function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string): readonly EnvironmentDiagnostic[] {
-    return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target })])
+function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string, fix?: string): readonly EnvironmentDiagnostic[] {
+    return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) })])
 }
 
 function runtimeUnavailable(reason: string, target: string): readonly EnvironmentDiagnostic[] {
@@ -241,6 +241,7 @@ interface LifecycleRuntimeReadiness {
     readonly lifecycle: RuntimeLifecycleProjection
     readonly hostObservations: readonly import('./contract.js').EnvironmentObservation[]
     readonly runtimeObservations: readonly import('./contract.js').EnvironmentObservation[]
+    readonly inputs: Readonly<Record<string, string>>
 }
 
 interface CompositionBinding {
@@ -986,13 +987,15 @@ export function createLifecycleCommandAdapters(
             }, execute)
             : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
                 ?? Object.freeze({ kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' })
-        if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId))
+        if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId, 'fix' in observed ? observed.fix : undefined))
         const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(context.namespace.root))
         const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
         if (measured.kind !== 'admitted' && !certifiedProbe) return refuse?.(ownerDiagnostics(measured.code, measured.reason, context.stackId))
         const measurementObservation = measured.kind === 'admitted'
             ? observeRuntimeMeasurement(measured, context.stackId) : undefined
         let artifacts: readonly ComposeArtifact[] | undefined
+        // A generated Compose file is rendered from cockpit.toml, so only a compose-first stack adds its own files.
+        let inputs: Readonly<Record<string, string>> = Object.freeze({ [basename(context.source.path)]: context.runtimeSha256 })
         let activeProfiles = input.activeProfiles ?? []
         let expectedMountSources: readonly string[]
         if (generated && generatedApplication) {
@@ -1029,6 +1032,7 @@ export function createLifecycleCommandAdapters(
                 `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
                 COMPOSE_OWNERSHIP_FILE))
             artifacts = Object.freeze([...declared, override])
+            inputs = Object.freeze({ ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])) })
             expectedMountSources = Object.freeze([...new Set([
                 ...currentBinding.config.sibling
                     .filter((sibling) => sibling.mount === 'always')
@@ -1135,6 +1139,7 @@ export function createLifecycleCommandAdapters(
             hostObservations,
             runtimeObservations: Object.freeze(measurementObservation
                 ? [measurementObservation, ...topology.observations] : [...topology.observations]),
+            inputs,
         })
         issuedRuntimeReadiness.add(readiness)
         return use(readiness)

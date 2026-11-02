@@ -5,7 +5,7 @@ import { composeProjectDirectory } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, MAX_STEP_TIMEOUT_MS, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
-import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
+import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, observedVersionCore, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
@@ -37,7 +37,7 @@ export interface LogRequest {
 }
 
 export type LogPlan = { kind: 'planned'; step: ExecutionStep }
-    | { kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE | typeof ENVIRONMENT_CODES.RUNTIME_UNMEASURED; reason: string }
+    | { kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE | typeof ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE; reason: string }
 
 const SERVICE = /^[a-z0-9][a-z0-9_.-]*$/
 const RELATIVE_SINCE = /^\d+(?:\.\d+)?[smhd]$/
@@ -117,11 +117,11 @@ export function planLogs(
     ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>,
 ): LogPlan {
     const input = logRequest(snapshotJson(rawInput))
-    if (input === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request must be readable JSON data' }
+    if (input === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request must be readable JSON data' }
     if (input.runtime !== 'docker-compose') return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime does not expose a measured log adapter' }
     if (!STACK_ID.test(input.stackId) || !SHA256.test(input.configSha256) || !SERVICE.test(input.projectName) || !SERVICE.test(input.service) || !input.services.includes(input.service) || input.services.some((service) => !SERVICE.test(service)) || !(RELATIVE_SINCE.test(input.since) || validInstant(input.since)) || !isAbsolute(input.cwd)
         || !isResolvedDockerExecutable(input.executable)
-        || !SHA256.test(input.batchId) || !SERVICE.test(input.containerId) || !/^\d+\.\d+\.\d+$/.test(input.runtimeVersion) || !/^\d+\.\d+\.\d+$/.test(input.composeVersion)
+        || !SHA256.test(input.batchId) || !SERVICE.test(input.containerId) || observedVersionCore(input.runtimeVersion) === undefined || observedVersionCore(input.composeVersion) === undefined
         || (input.restartBatches !== undefined && (input.restartBatches.length !== 2 || input.restartBatches.some((batch) => !SHA256.test(batch)) || input.restartBatches[0] === input.restartBatches[1]))
         || !Number.isInteger(input.tail) || input.tail < 1 || input.tail > 10_000
         || !Number.isInteger(input.timeoutMs) || input.timeoutMs <= 0 || input.timeoutMs > 300_000
@@ -129,25 +129,25 @@ export function planLogs(
         || input.composeFiles.length === 0
         || Object.entries(input.env).some(([name, value]) => name.startsWith('COMPOSE_') || name.includes('\0') || value.includes('\0')
             || name.startsWith('DOCKER_') && !localDockerSelection(name, value))) {
-        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request must be resolved and bounded' }
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request must be resolved and bounded' }
     }
     if (generatedComposeAuthority !== undefined && ownComposeAuthority !== undefined) {
-        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request has conflicting compose authority' }
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request has conflicting compose authority' }
     }
     let suppliedPortProjection: PortLeaseProjection | undefined
     try {
         const descriptor = ownComposeAuthority === undefined
             ? undefined : Object.getOwnPropertyDescriptor(ownComposeAuthority, 'portLeaseProjection')
         if (descriptor && !('value' in descriptor)) {
-            return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'compose-first log port authority is malformed' }
+            return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
         }
         suppliedPortProjection = descriptor?.value as PortLeaseProjection | undefined
     } catch {
-        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'compose-first log port authority is malformed' }
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
     }
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
     if (suppliedPortProjection !== undefined && portProjection === undefined) {
-        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'compose-first log port authority is malformed' }
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
     }
     const projectedPorts = portProjection ? Object.values(portProjection.lease.ports) : []
     const composeBoundary = createRuntimeAdapter({
@@ -156,7 +156,7 @@ export function planLogs(
         composeFiles: input.composeFiles, projectName: input.projectName, env: input.env, ports: projectedPorts,
         labels: generatedComposeAuthority ? { configSha256: input.configSha256 } : {}, timeoutMs: input.timeoutMs,
     }, generatedComposeAuthority ? { generatedComposeAuthority } : ownComposeAuthority)
-    if (composeBoundary.kind === 'refusal') return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: composeBoundary.diagnostics[0].message }
+    if (composeBoundary.kind === 'refusal') return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: composeBoundary.diagnostics[0].message }
     const argv = [input.executable.canonicalPath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', String(input.tail), ...(input.follow ? ['--follow'] : []), input.containerId] as [string, ...string[]]
     const step: ExecutionStep = Object.freeze({
         id: `runtime:logs:${input.projectName}:${input.service}`, argv: Object.freeze(argv) as readonly [string, ...string[]], argv0: input.executable.invocationPath, cwd: input.cwd,
@@ -173,7 +173,7 @@ export function planLogs(
         filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
     })
     const resolvedStep = snapshotExecutionStep(step)
-    if (resolvedStep === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request did not produce a valid execution plan' }
+    if (resolvedStep === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request did not produce a valid execution plan' }
     const plan = Object.freeze({ kind: 'planned' as const, step: resolvedStep })
     issuedLogPlans.add(plan)
     return plan
@@ -481,7 +481,7 @@ function ownedLogPlan(value: unknown): Extract<LogPlan, { kind: 'planned' }> | u
     if (plan.kind !== 'planned' || labels === undefined || !STACK_ID.test(labels.stackId ?? '')
         || !SHA256.test(labels.configSha256 ?? '') || !SHA256.test(labels.batchId ?? '')
         || !SERVICE.test(labels.containerId ?? '') || !SERVICE.test(labels.service ?? '')
-        || !(RELATIVE_SINCE.test(labels.since ?? '') || validInstant(labels.since ?? '')) || !/^\d+\.\d+\.\d+$/.test(labels.runtimeVersion ?? '')
+        || !(RELATIVE_SINCE.test(labels.since ?? '') || validInstant(labels.since ?? '')) || observedVersionCore(labels.runtimeVersion ?? '') === undefined
         || !SHA256.test(labels.executableSha256 ?? '')
         || ((labels.restartBeforeBatch === undefined) !== (labels.restartAfterBatch === undefined))
         || (labels.restartBeforeBatch !== undefined && (!SHA256.test(labels.restartBeforeBatch)
@@ -489,29 +489,35 @@ function ownedLogPlan(value: unknown): Extract<LogPlan, { kind: 'planned' }> | u
     return plan
 }
 
+// Collection failures are about the log read itself, never the runtime measurement, so they name what
+// failed instead of sending the reader to measure a runtime that is already measured.
+function unreadable(reason: string) {
+    return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason, records: Object.freeze([]) }
+}
+
 export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, execute: (step: ExecutionStep, options: { signal?: AbortSignal }) => Promise<LogExecution>, signal?: AbortSignal, restart?: RestartWindow) {
     const resolvedPlan = ownedLogPlan(plan)
-    if (resolvedPlan === undefined || !issuedLogPlans.has(plan)) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+    if (resolvedPlan === undefined || !issuedLogPlans.has(plan)) return unreadable('the log plan was not issued by cockpit')
     const resolvedRestart = restart === undefined ? undefined : ownedRestartWindow(restart)
-    if (restart !== undefined && resolvedRestart === undefined) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+    if (restart !== undefined && resolvedRestart === undefined) return unreadable('the restart window is malformed')
     let rawOutcome: unknown
-    try { rawOutcome = await execute(resolvedPlan.step, { signal }) } catch {
-        return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+    try { rawOutcome = await execute(resolvedPlan.step, { signal }) } catch (error) {
+        return unreadable(`the log read could not run: ${error instanceof Error ? error.message : String(error)}`)
     }
     const outcome = authenticatedExecutionOutcome(rawOutcome, resolvedPlan.step)
     const authority = resolvedPlan.step.labels
     const restartBatches = authority.restartBeforeBatch === undefined ? undefined : [authority.restartBeforeBatch, authority.restartAfterBatch] as const
-    if (outcome === undefined) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+    if (outcome === undefined) return unreadable('the log read returned an outcome cockpit did not issue')
     const cancelled = outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_ABORTED
     // A follow that reaches its budget has ended, as it does when the container stops: what it read is the result.
     const followEnded = outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT
         && resolvedPlan.step.argv.includes('--follow')
-    if (outcome.kind === 'refusal' && !cancelled && !followEnded) return { kind: 'unavailable' as const, code: outcome.code, records: Object.freeze([]) }
+    if (outcome.kind === 'refusal' && !cancelled && !followEnded) return { kind: 'unavailable' as const, code: outcome.code, reason: `the log read failed (${outcome.code})`, records: Object.freeze([]) }
     if (cancelled && !outcome.execution.started) return { kind: 'cancelled' as const, records: Object.freeze([]), truncated: false }
     if (!outcome.receipt || outcome.receipt.stepId !== resolvedPlan.step.id
         || !validInstant(outcome.receipt.startedAt) || !validInstant(outcome.receipt.finishedAt)
         || instantMs(outcome.receipt.startedAt) > instantMs(outcome.receipt.finishedAt)) {
-        return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+        return unreadable('the log read has no valid execution receipt')
     }
     const records: LogRecord[] = []
     const truncatedStreamStarts: string[] = []
@@ -525,13 +531,13 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
         const firstNewline = truncated ? output.indexOf(0x0a) : -1
         const whole = !truncated ? output : firstNewline === -1 ? Buffer.alloc(0) : output.subarray(firstNewline + 1)
         let text: string
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(whole) } catch { return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) } }
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(whole) } catch { return unreadable(`the container runtime returned ${stream} that is not UTF-8`) }
         const streamStart = records.length
         for (const line of text.split('\n').filter(Boolean)) {
             const match = line.match(/^(\S+)\s+(.*)$/)
-            if (match === null || !validInstant(match[1])) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+            if (match === null || !validInstant(match[1])) return unreadable(`the container runtime returned a ${stream} line without a valid timestamp`)
             const message = redactSensitiveMessage(match[2])
-            if (message === undefined) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+            if (message === undefined) return unreadable(`a ${stream} record could not be redacted, so none are shown`)
             records.push(Object.freeze({
                 stackId: authority.stackId as StackId, configSha256: authority.configSha256,
                 batchId: authority.batchId, containerId: authority.containerId,
@@ -554,7 +560,7 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
             || before.command.batchId !== restartBatches[0] || after.command.batchId !== restartBatches[1]
             || before.command.batchId === after.command.batchId || instantMs(before.observedAt) > instantMs(outcome.receipt.startedAt)
             || instantMs(outcome.receipt.finishedAt) > instantMs(after.captureStartedAt)) {
-            return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+            return unreadable('the restart evidence does not bracket the log read')
         }
         if (before.stability.processIdentitySha256 !== after.stability.processIdentitySha256) {
             records.push(Object.freeze({
@@ -567,7 +573,7 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
         }
     }
     if (resolvedRestart === undefined && restartBatches !== undefined) {
-        return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
+        return unreadable('the log plan expects restart evidence that was not supplied')
     }
     records.sort((left, right) => compareInstants(left.timestamp, right.timestamp)
         || (left.stream === right.stream ? 0 : left.stream === 'stdout' ? -1 : 1))

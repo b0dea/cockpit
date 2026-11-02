@@ -13,8 +13,9 @@ import { ENVIRONMENT_CODES, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type 
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
-import { observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
+import { measuredBrowserHarnessVersions, observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
 import { isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { decodeLifecycleRecord } from '../environment/application.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
@@ -545,14 +546,12 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const truncated = result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
         || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes
     if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the 64 KiB probe capture` }
-    // A kept tail can start inside a multi-byte character, so only a declared run decodes leniently.
+    // A probe parses its output, so it refuses invalid UTF-8; a declared command's output is evidence to read.
     const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' }).decode(bytes)
-    // A tail cut inside a character decodes its leading continuation bytes to U+FFFD; they carry nothing.
-    const tail = (bytes: Buffer, cut: boolean) => { const text = decode(bytes); return cut ? text.replace(/^\uFFFD+/, '') : text }
     let stdout: string; let stderr: string
     try {
-        stdout = tail(result.stdout, result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes)
-        stderr = tail(result.stderr, result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes)
+        stdout = decode(result.stdout)
+        stderr = decode(result.stderr)
     }
     catch (error) { return { kind: 'error', reason: `${argv[0]} returned invalid UTF-8: ${error instanceof Error ? error.message : String(error)}` } }
     return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout, stderr, truncated,
@@ -2341,13 +2340,20 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             if (!routes.length) throw new Error('browser application routes are missing or ambiguous')
             const skillBytes = browserAuthority.skillTemplate.bytes
             if (digest(skillBytes) !== browserAuthority.skillTemplate.sha256) throw new Error('browser skill template authority is malformed')
+            const harnessRows = config.browser.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
+                ? [Object.freeze({ target: row.target, version: row.version })] : [])
             const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: config.cockpitRoot,
-                harnesses: config.browser.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
-                    ? [Object.freeze({ target: row.target, version: row.version })] : []), mcp, approved: true,
+                harnesses: harnessRows, mcp, approved: true,
                 testPackage: observeBrowserProjectPackage({ runtime, cockpitDirectory: config.cockpitRoot,
                     artifactRoot: runtime.generatedHostPaths[2]! }), skillTemplate: skillBytes })
             const client = [...rendered.clients].sort((left, right) => left.target.localeCompare(right.target))[0]
-            if (!client) throw new Error('authenticated browser project client is unavailable')
+            if (!client) {
+                const measured = measuredBrowserHarnessVersions()
+                const declared = harnessRows.length ? harnessRows.map(row => `${row.target} ${row.version}`).join(', ') : 'no harness cockpit can drive'
+                throw new Error(`authenticated browser project client is unavailable: no browser.harnesses row is at a measured version `
+                    + `(declared: ${declared}; measured: ${Object.entries(measured).map(([target, version]) => `${target} ${version}`).join(', ')}); `
+                    + `set a browser.harnesses row to a measured target and version in ${captured.configPath}, then run ${cockpitCommand('sync', { config: captured.configPath })}`)
+            }
             return Object.freeze({ runtime, client,
                 policy: issueBrowserRoutePolicy(runtime, { origin: originUrl.origin, routes }),
                 ...(runtime.authentication.posture === 'real' ? { state: Object.freeze({

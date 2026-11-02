@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isIP } from 'node:net'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { snapshotJson, type HolderId, type StackId } from '../environment/contract.js'
 import { inspectBrowserDebuggerPreparation, type BrowserDebuggerPreparation } from '../environment/generated-application.js'
@@ -274,10 +274,39 @@ export function isIssuedBrowserCommandReceipt(value: unknown): value is BrowserC
     return value !== null && typeof value === 'object' && issuedReceipts.has(value)
 }
 
+// The artifact root is declared, not shipped, so the first screenshot meets a missing directory.
+// Create it here, at the one place that writes into it, from the nearest existing ancestor, which
+// must be a real directory: the operation re-authenticates the root's identity before it writes.
+function ensureArtifactRoot(root: string): string | undefined {
+    let ancestor = root
+    for (;;) {
+        try {
+            const status = lstatSync(ancestor)
+            if (!status.isDirectory() || status.isSymbolicLink() || realpathSync(ancestor) !== ancestor) {
+                return `Browser screenshot artifact root ${root} lies behind ${ancestor}, which is not a real directory`
+            }
+            break
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return `Browser screenshot artifact root ${root} could not be inspected at ${ancestor}: ${(error as Error).message}`
+            const parent = dirname(ancestor)
+            if (parent === ancestor) return `Browser screenshot artifact root ${root} has no existing ancestor`
+            ancestor = parent
+        }
+    }
+    try { mkdirSync(root, { recursive: true, mode: 0o700 }) } catch (error) {
+        return `Browser screenshot artifact root ${root} could not be created: ${(error as Error).message}`
+    }
+    return undefined
+}
+
 async function run(input: BrowserCommandInput, client: BrowserProjectClient, policy: BrowserRoutePolicy,
     auth: NonNullable<ReturnType<typeof authentication>>, deadline: number,
     authorization: BrowserProjectOperationAuthorization): Promise<BrowserCommandResult> {
     const receipts: BrowserCommandSurfaceReceipt[] = []
+    if (input.kind === 'screenshot') {
+        const unavailable = ensureArtifactRoot(client.artifactRoot)
+        if (unavailable) return refusal(unavailable)
+    }
     for (const surface of policy.surfaces) {
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed before application driving') }
         const output = input.kind === 'screenshot' ? resolve(client.artifactRoot, `screenshot-${randomUUID()}.png`) : undefined

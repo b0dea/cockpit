@@ -1018,7 +1018,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
 
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `the recorded stack runs an earlier version of the services, ports, mounts or images in cockpit.toml, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
+            message: `the recorded stack runs an earlier version of the services, ports, mounts or images: cockpit.toml changed since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
         }] })
         // Follow the recovery exactly as printed: it must remove the old stack and start the new one.
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
@@ -1096,7 +1096,9 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
 
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `the recorded stack runs an earlier version of the services, ports, mounts or images in cockpit.toml, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
+            // A running stack still holds the lease that recorded its [ports]; a sleeping one released it,
+            // so only the runtime declaration, which is cockpit.toml, is known to differ.
+            message: `the recorded stack runs an earlier version of the services, ports, mounts or images: ${sleepFirst ? '' : '[ports] in '}cockpit.toml changed since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
         }] })
         // A running stack still holds its lease on the old port family; down removes it by stack,
         // not by the edited declaration.

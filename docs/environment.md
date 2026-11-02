@@ -293,6 +293,12 @@ releases it. When it was the last hold, the command's own hold takes the running
 `ps` could not confirm, is kept: the `CLAIM_CO_TENANT` refusal names each such holder and its
 process ID, so you can end that command, for example with `kill <pid>`, and retry.
 
+The wrapper passes its process ID and start time to its command in `COCKPIT_SESSION_PROCESS`, so a
+hold that a `sleep` and then an `up` inside the session drop and re-add is still tied to the
+wrapper, and is released the same way once the wrapper is gone. `up` reads that process's start
+time again before recording it, and refuses with `CLI_USAGE_INVALID` when the wrapper has ended or
+the value is malformed.
+
 The command `session` runs gets the stack's addresses in its environment, so an agent started under
 it can reach the stack without rerunning `up --json`:
 

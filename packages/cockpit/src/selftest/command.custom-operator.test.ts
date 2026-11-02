@@ -1,10 +1,12 @@
-import { rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
+import { runCli } from '../cli.js'
 import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { runSelftestOperatorCommand, runSurfaceSelftestCommand } from './command.js'
 
 const roots: string[] = []
@@ -45,9 +47,31 @@ function fixture(enforced = false) {
 }
 
 describe('surface selftest command', () => {
-    it('keeps an instructed custom module pending for an exact operator probe', async () => {
-        const { root, application } = fixture()
+    it('writes no probe row for a custom cell, refuses one added by hand and records the cell pending', async () => {
+        const { root, configPath, application } = fixture()
+        const draftPath = join(root, 'probe-specifications.json')
+        const output: string[] = []
+        const io = { stdout: { write: (chunk: string) => output.push(chunk) > 0 }, stderr: { write: (chunk: string) => output.push(chunk) > 0 } }
+        try {
+            expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', draftPath], io), output.join('')).toBe(0)
+            const draft = JSON.parse(await readFile(draftPath, 'utf8')) as { specifications: { harness: { kind: string } }[] }
+            expect(draft.specifications.length).toBeGreaterThan(0)
+            expect(draft.specifications.filter((row) => row.harness.kind !== 'builtin')).toEqual([])
+            expect(output.join('')).toMatch(/SELFTEST_CUSTOM_PROBE_UNSUPPORTED[^\n]*synthetic-harness instruction-loading/)
+        } finally { await rm(draftPath, { force: true }) }
+
         const bin = await fakeHarnesses(root)
+        const customCell = surfaceSelftestExpectation(application.surfaceSelftest)!.cells.find((cell) => cell.harness.kind === 'custom')!
+        const [template] = specifications(application)
+        const handAdded = { ...template!, harness: customCell.harness, capability: customCell.capability,
+            invocation: ['{node}', '--probe', '{control}'], versionCommand: ['{node}', '--version'], helpCommand: ['{node}', '--help'] }
+        const refused = await runSurfaceSelftestCommand(
+            { application, root, specifications: [...specifications(application), handAdded] as never, env: { PATH: bin } },
+            syntheticExecutableAuthorities(bin),
+        )
+        expect(refused).toMatchObject({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
+            reason: expect.stringContaining('custom harnesses cannot run and would be ignored, so they are refused: synthetic-harness instruction-loading') })
+
         const outcome = await runSurfaceSelftestCommand(
             { application, root, specifications: specifications(application), env: { PATH: bin } },
             syntheticExecutableAuthorities(bin),
@@ -58,7 +82,7 @@ describe('surface selftest command', () => {
         expect(record).toEqual(expect.objectContaining({
             kind: 'human_needed', capability: 'instruction-loading', reason: 'enforcement_probe_required',
             harness: expect.objectContaining({ kind: 'custom', id: 'synthetic-harness' }),
-            operatorAction: expect.stringContaining('operator-approved exact synthetic-harness instruction-loading probe'),
+            operatorAction: expect.stringContaining('record it in cockpit.toml for synthetic-harness instruction-loading'),
         }))
         expect(outcome.evidence.errors).toEqual([])
         expect(outcome.evidence.pending).toContainEqual(record)

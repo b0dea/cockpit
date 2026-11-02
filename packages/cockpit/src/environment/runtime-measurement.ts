@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { selectLocalDockerDaemon } from './docker-daemon.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -61,9 +61,10 @@ const PROBE_STEP_TIMEOUT_MS = 30_000
 // Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
 const PROCESS_STATE_SCRIPT = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
 
-function refused(code: string, message: string, target?: string): RuntimeMeasureOutcome {
+function refused(code: string, message: string, target?: string, fix?: string): RuntimeMeasureOutcome {
     return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }) })]) })
+        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message,
+            ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) })]) })
 }
 
 function dockerStep(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string, args: readonly string[], stdoutLimitBytes = 1_024): ExecutionStep {
@@ -138,7 +139,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         ...(input.env.DOCKER_HOST === undefined ? { DOCKER_CONTEXT: daemon.dockerContext } : { DOCKER_HOST: input.env.DOCKER_HOST }) })
 
     const observed = await observeDockerRuntime({ executable: docker.value, cwd, env: runtimeEnv, timeoutMs: STEP_TIMEOUT_MS }, dependencies.execute)
-    if (observed.kind !== 'complete') return refused(observed.code, observed.reason, 'docker')
+    if (observed.kind !== 'complete') return refused(observed.code, observed.reason, 'docker', observed.fix)
     const identity = observed.runtimeIdentity
     if (identity === null) {
         return refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
@@ -161,9 +162,8 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     }
 
     // The floor is the numeric core; a vendor suffix such as `-desktop.1` is evidence, not a floor.
-    const composeFloor = observedVersionCore(observed.composeVersion)
-    if (composeFloor === undefined) return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-        `Docker Compose reported version ${JSON.stringify(observed.composeVersion.slice(0, 64))}, which has no numeric X.Y.Z core`, 'docker compose version')
+    // A complete observation has already refused a version without one.
+    const composeFloor = observedVersionCore(observed.composeVersion)!
     const measuredOn = new Date().toISOString().slice(0, 10)
     // The probe requires an empty canonical directory and creates its isolated HOME beside it, so
     // both live under one private parent that is removed whatever the verdict.
@@ -235,7 +235,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         `runtime ${identity} on daemon ${JSON.stringify(observed.name)} passed with engine ${row.engineVersion}; recorded with Compose floor ${composeFloor} in ${recorded.path}, shared by every checkout on this machine`,
         ...(recorded.replaced === null ? [] : [`it replaces the measurement from ${recorded.replaced.measuredOn} (engine ${recorded.replaced.engineVersion})`]),
         ...(recorded.discardedUnreadable === null ? [] : [`the previous record was unreadable and was replaced: ${recorded.discardedUnreadable}`]),
-        `cockpit.toml is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,
+        `${basename(configPath)} is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,
     ]
     return Object.freeze({ status: 0, result: Object.freeze({ ...summary, row, recorded: true, path: recorded.path }), destination: null,
         artifact: `${notes.join('\n')}\n`, diagnostics: Object.freeze([]) })

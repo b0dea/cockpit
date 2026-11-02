@@ -110,7 +110,7 @@ exports.webkit = browserType('webkit')
 `
 }
 
-async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 'chromium' | 'firefox' | 'webkit'; local?: boolean; artifactRoot?: string } = {}) {
+async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 'chromium' | 'firefox' | 'webkit'; local?: boolean; artifactRoot?: string; absentArtifactRoot?: boolean } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-command-')))
     roots.push(root)
     const id = cockpitId({ name: 'fixture', mainCheckoutPath: root })
@@ -137,7 +137,7 @@ async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 
     const moduleBytes = playwrightModule({ logPath, serverPath, artifactRoot, outsideRoot, mode: options.mode ?? null })
     const manifest = JSON.stringify({ name: '@playwright/test', version: '1.2.3', main: 'index.js', bin: { playwright: 'cli.js' } })
     await mkdir(join(root, 'node_modules/@playwright/test'), { recursive: true })
-    await mkdir(artifactRoot, { recursive: true })
+    if (!options.absentArtifactRoot) await mkdir(artifactRoot, { recursive: true })
     await writeFile(join(root, 'node_modules/@playwright/test/package.json'), manifest)
     await writeFile(join(root, 'node_modules/@playwright/test/cli.js'), '/* synthetic pinned CLI */')
     await writeFile(join(root, 'node_modules/@playwright/test/index.js'), moduleBytes)
@@ -233,7 +233,7 @@ describe('browser driving commands', () => {
         expect(evidence).toMatchObject({ sha256: digest('synthetic screenshot'), byteLength: 20 })
         expect((await stat(join(screenshot.root, evidence.path))).mode & 0o777).toBe(0o600)
 
-        const nested = await fixture({ artifactRoot: '.browser/cli' })
+        const nested = await fixture({ artifactRoot: '.browser/cli', absentArtifactRoot: true })
         const nestedShot = await executeBrowserCommand({ runtime: nested.runtime, client: nested.client,
             policy: issueBrowserRoutePolicy(nested.runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'screenshot' })
         expect(nestedShot.kind).toBe('complete')

@@ -72,6 +72,7 @@ const controls = vi.hoisted(() => ({
     authenticBaselines: new WeakSet<object>(),
     writes: [] as unknown[],
     executePreparation: false,
+    readinessRefusal: undefined as undefined | readonly Record<string, unknown>[],
 }))
 
 vi.mock('../config/load.js', async (importOriginal) => ({
@@ -105,7 +106,8 @@ vi.mock('./lifecycle-composition.js', () => ({
             ports: { step: 10, count: 1, bases: { APP_PORT: 61000 } },
             entrypointDerivatives: [],
         } })),
-        withRuntimeReadiness: vi.fn(async (_context, use, ports) => {
+        withRuntimeReadiness: vi.fn(async (_context, use, ports, refuse) => {
+            if (controls.readinessRefusal) return refuse?.(controls.readinessRefusal)
             if (controls.executePreparation) await execute({ id: 'runtime:prepare' })
             if (ports) controls.readinessPorts.push(ports)
             // Like the real runtime adapter, every readiness observation mints its own batch id.
@@ -300,6 +302,7 @@ describe('production read command composition', () => {
         controls.authenticBaselines = new WeakSet<object>()
         controls.writes.length = 0
         controls.executePreparation = false
+        controls.readinessRefusal = undefined
     })
 
     it('returns public cancellation while runtime authentication is blocked', async () => {
@@ -334,6 +337,17 @@ describe('production read command composition', () => {
         })
         expect(stepIds).toEqual(['runtime:prepare', 'status:api', 'identity:api', 'inspect:api'])
         expect(options.every(option => option?.signal === controller.signal)).toBe(true)
+    })
+
+    it('reports the runtime readiness refusal itself, such as an unmeasured runtime, instead of a generic observation failure', async () => {
+        const unmeasured = Object.freeze({ severity: 'error', code: 'RUNTIME_UNMEASURED', target: stackId,
+            message: 'runtime orbstack engine 29.8.2 has no passing measurement on this machine' })
+        controls.readinessRefusal = [unmeasured]
+        const adapters = createReadCommandAdapters({ configPath: source.path, env: { PATH: '/synthetic' },
+            sessionId: 'cockpit-cli', timeoutMs: 5_000 }, vi.fn(async () => ({ kind: 'complete' })) as never)
+
+        await expect(runLogs({ configPath: source.path, service: 'api', since: '5m', tail: 100, follow: false, json: true },
+            adapters.logs)).resolves.toEqual({ kind: 'refusal', status: 2, result: null, diagnostics: [unmeasured] })
     })
 
     it('returns public cancellation before observing an already aborted request', async () => {

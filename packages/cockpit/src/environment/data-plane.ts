@@ -337,14 +337,15 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         const execution = snapshotExecutionPlan({ steps: [resolvedStep] })?.steps[0]
         if (!execution) return false
         // Runtime variables must never be attached to a resolver-selected executable or Compose project.
-        if (operation.location === 'in-stack' && (!runtime || !input.runtimeAuthority
+        if ((operation.location === 'in-stack' || input.runtimeAuthority !== undefined) && (!runtime || !input.runtimeAuthority
             || !isDeepStrictEqual(execution, resolveGeneratedDataOperation({ authority: input.runtimeAuthority, operation, context })))) return false
         const declaredArgv = operation.argv
         const declaredCwd = resolve(input.checkoutRoot, operation.cwd)
+        // A host operation declares `node`; the resolver replaces it with the bound Node's path,
+        // which the runtime authority comparison above pins.
         const exactHostCommand = operation.location === 'host'
             && execution.argv.length === declaredArgv.length
-            && execution.argv.every((value, index) => value === declaredArgv[index])
-            && execution.argv0 === declaredArgv[0]
+            && execution.argv.slice(1).every((value, index) => value === declaredArgv[index + 1])
             && execution.cwd === declaredCwd
             && hasBoundExecutable(execution)
         const stackArgv = inStackCommand(operation.cwd, declaredArgv)

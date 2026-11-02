@@ -7,10 +7,11 @@ import { installedPackageMetadata } from './package-metadata.js'
 import { initializeTeamMetadata, prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata } from './team-metadata.js'
 
 const roots: string[] = []
-async function fixture(siblingsRoot = 'repositories'): Promise<string> {
+async function fixture(siblingsRoot = 'repositories', generatedHostPaths: readonly string[] = []): Promise<string> {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-team-metadata-'))); roots.push(root)
     const config = await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
-    await writeFile(join(root, 'cockpit.toml'), config.replace('name = "generated-environment"', `name = "portable"\nsiblings_root = ${JSON.stringify(siblingsRoot)}`))
+    await writeFile(join(root, 'cockpit.toml'), config.replace('name = "generated-environment"', `name = "portable"\nsiblings_root = ${JSON.stringify(siblingsRoot)}`)
+        .replace('[[environment.install_policies]]', `[environment]\ngenerated_host_paths = ${JSON.stringify(generatedHostPaths)}\n\n[[environment.install_policies]]`))
     return root
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
@@ -45,6 +46,21 @@ describe('team metadata', () => {
         devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
         expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=3c9b045f924e82c1\n/node_modules/\n/.cockpit/local/\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
+    })
+
+    it('ignores the declared generated host paths so run output such as screenshots cannot be committed', async () => {
+        const root = await fixture('repositories', ['.browser/cli', '.cockpit/generated/session', 'generated/app.env'])
+        expect(spawnSync('git', ['-C', root, 'init', '--quiet']).status).toBe(0)
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain('!/env/.secrets/.gitignore\n/.browser/cli\n/.cockpit/generated/session\n/generated/app.env\n/repositories/\n# cockpit:ignore:end')
+        await mkdir(join(root, '.browser/cli'), { recursive: true })
+        await writeFile(join(root, '.browser/cli/screenshot.png'), 'png')
+        expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', '.browser/cli/screenshot.png']).status).toBe(0)
+        // A generated host path can be a file bound into a service.
+        await mkdir(join(root, 'generated'), { recursive: true })
+        await writeFile(join(root, 'generated/app.env'), 'KEY=value\n')
+        expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', 'generated/app.env']).status).toBe(0)
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
     })
 
     it('ignores literal sibling directory names without matching nearby directories', async () => {

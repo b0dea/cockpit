@@ -234,10 +234,16 @@ must not do, its review requirements and a line cap. The renderer refuses embedd
 undeclared commands, missing tool equivalents, missing procedures, duplicate names, and skills over
 the always-loaded size limit. Codex also receives its generated skill sidecar.
 
-`selftest` runs each tool against a probe-specification file: one row per cell the generated
-manifest expects evidence for (each built-in tool's instruction loading, guard firing and the
-parity of each shipped skill, plus custom harness cells). The file is tied to the current
-`cockpit.toml` digest and generated manifest, so it goes stale whenever either changes.
+`selftest` runs each tool against a probe-specification file: one row per built-in tool cell the
+generated manifest expects evidence for (each built-in tool's instruction loading, guard firing and
+the parity of each shipped skill). The file is tied to the current `cockpit.toml` digest and
+generated manifest, so it goes stale whenever either changes.
+
+A custom harness cell gets no row. `selftest` runs only a tool it found on `PATH` and you approved
+by digest, and a custom harness has no such executable, so a row for it could only be ignored.
+Writing the file warns `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` for each such cell, `selftest` records
+it `human_needed` with `enforcement_probe_required`, and a custom row added by hand is refused.
+Measure a custom capability yourself and record it as its `state` and `measured_on`.
 
 1. After `sync`, write the file to a new path. It refuses a path that already exists, so a file you
    have filled in is never overwritten:
@@ -250,10 +256,22 @@ parity of each shipped skill, plus custom harness cells). The file is tied to th
    It prints which rows it wrote and where each value came from. The generated manifest decides
    `harness`, `capability`, the skill in `sample` and `unavailableCode`. cockpit fills
    `versionCommand` and `helpCommand` with the tool's `--version` and `--help`.
+
+   After a change to `cockpit.toml` or the generated manifest, your filled file is stale. Write
+   the new file from it so the probes you wrote are kept:
+
+   ```sh
+   npx --no cockpit selftest --config ./cockpit.toml \
+     --write-probe-specifications ./.cockpit/local/probe-specifications-2.json \
+     --probe-specifications ./.cockpit/local/probe-specifications.json
+   ```
+
+   Each complete row whose cell still exists is copied as it was, and the output says how many.
+   Rows for new or changed cells, and rows you left partly `null`, start over with `null`s.
 2. Replace every `null` in the file. Nothing in the manifest says how a given tool version can be
    made to load a control file and report what it did, so these values come from you:
-   - `invocation`: the arguments, starting with the same placeholder as `versionCommand`
-     (`{executable}`, or `{node}` for a custom harness), with exactly one `{control}`. cockpit
+   - `invocation`: the arguments, starting with `{executable}` like `versionCommand`, with
+     exactly one `{control}`. cockpit
      replaces `{control}` with the path of a control file it writes under `.cockpit/local/probes/`:
      the generated file under test, or a deliberately broken copy.
    - `candidateCode` and `brokenCode`: codes you choose (capital letters, digits and underscores,
@@ -282,15 +300,15 @@ parity of each shipped skill, plus custom harness cells). The file is tied to th
    mode, nothing in the file runs.
 
 For each approved built-in tool, `selftest` runs the version and help commands, then the invocation
-with the broken control and with the candidate, and records each event. The probes run with an
-empty environment, so a tool that keeps its sign-in in the environment or a keychain may report
-that it is not signed in; that cell stays `human_needed` with `authentication_required`.
+with the broken control and with the candidate, and records each event. The probes inherit only
+`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TZ`, so a tool that
+keeps its sign-in under `HOME` finds it. No other variable reaches the probe, so a tool signed in
+only through an environment token reports that it is not signed in; that cell stays `human_needed`
+with `authentication_required`.
 
 Some cells stay `human_needed` regardless:
 
-- a custom cell, until you approve an exact probe; a passing check of a custom module does not
-  approve a worker command cockpit built, and a cell stays `human_needed` when cockpit cannot
-  isolate the process;
+- a custom harness cell, which has no probe row (see above);
 - Claude Code and Codex skill reviews, until the official-authoring or native-diagnostics results
   are attached.
 

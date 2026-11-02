@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
 import { runCli } from '../cli.js'
+import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
     runConfiguredSurfaceSelftestCommand,
@@ -75,8 +76,9 @@ describe('surface selftest command', () => {
         expect(executions).toBe(0)
     }, 180_000)
 
-    it('writes a probe specification file that selftest admits once a person fills its probe fields', async () => {
-        const { root, configPath, application, bin } = fixture()
+    it('writes a probe specification file that selftest admits once filled, and carries the filled rows past a config change', async () => {
+        // Its own checkout: this case edits cockpit.toml.
+        const { root, configPath, application, bin } = await prepareFixture()
         const artifactPath = join(root, 'probe-specifications.json')
         const output: string[] = []
         const io = { stdout: { write: (chunk: string) => output.push(chunk) > 0 }, stderr: { write: (chunk: string) => output.push(chunk) > 0 } }
@@ -139,6 +141,26 @@ describe('surface selftest command', () => {
         }))
         expect(outcome.bundle.records).toHaveLength(27)
         expect(outcome.evidence.errors).toEqual([])
+
+        // A config change makes the filled file stale. The new file keeps each complete row whose
+        // cell is unchanged; a row the person left partly null starts over.
+        await writeFile(configPath, `${await readFile(configPath, 'utf8')}\n# a reviewed change\n`)
+        expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        expect(await runConfiguredSurfaceSelftestCommand({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin } },
+            { execute: async () => { throw new Error('a stale file must not run a probe') } })).toMatchObject({
+            kind: 'refusal', reason: expect.stringContaining('written for a different cockpit.toml'),
+            fix: expect.stringContaining('--write-probe-specifications <new file> --probe-specifications <this file>'),
+        })
+        const partial = filled.map((row, index) => index === 0 ? { ...row, candidateCode: null } : row)
+        await writeFile(artifactPath, JSON.stringify({ ...draft, specifications: partial }))
+        const rewrittenPath = join(root, 'probe-specifications-rewritten.json')
+        output.length = 0
+        expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', rewrittenPath,
+            '--probe-specifications', artifactPath], io), output.join('')).toBe(0)
+        const rewritten = JSON.parse(await readFile(rewrittenPath, 'utf8')) as typeof draft & { sourceSha256: string }
+        expect(rewritten.sourceSha256).not.toBe(application.sourceSha256)
+        expect(rewritten.specifications).toEqual([draft.specifications[0], ...filled.slice(1)])
+        expect(output.join('')).toContain(`${filled.length - 1} of ${filled.length} row(s) kept unchanged`)
     }, 180_000)
 
     it('refuses a self-attested probe artifact before any submitted command vector executes', async () => {

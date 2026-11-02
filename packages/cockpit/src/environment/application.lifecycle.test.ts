@@ -232,6 +232,9 @@ import { renderGuardProjectCommand } from './install-policy.js'
 import type { EnvironmentSeedPlan } from './templates.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 
+// The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
+const RUNTIME_INPUTS = Object.freeze({ 'cockpit.toml': 'd'.repeat(64) })
+
 const scratch: string[] = []
 const gitDirectory = mkdtempSync(join(tmpdir(), 'cockpit-application-git-'))
 const gitCanonicalPath = join(gitDirectory, 'git-executable')
@@ -771,7 +774,7 @@ describe('lifecycle application contracts', () => {
             recordRevision: 2, holderCount: 1, holderIds: [context.holderId] }
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => {
                 const stage = await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() })
                 if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
@@ -829,7 +832,7 @@ describe('lifecycle application contracts', () => {
         const executed: string[] = []
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -900,7 +903,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -953,7 +956,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),

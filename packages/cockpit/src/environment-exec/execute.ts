@@ -723,10 +723,14 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         if (signal?.aborted) abort()
         // A tail-retaining step keeps running past its limit and keeps only the newest bytes, because a
         // long tool's verdict is its exit status and its final lines name the failure; memory stays bounded.
+        // The cut can land inside a UTF-8 character; its leftover continuation bytes decode to U+FFFD
+        // or fail a strict decoder, and they carry nothing, so the tail starts at the next character.
         const retainTail = (buffers: Buffer[], chunk: Buffer, limit: number): number => {
             buffers.push(chunk)
             const joined = Buffer.concat(buffers)
-            const tail = joined.subarray(Math.max(0, joined.byteLength - limit))
+            let start = Math.max(0, joined.byteLength - limit)
+            for (let skipped = 0; start > 0 && skipped < 3 && start < joined.byteLength && (joined[start]! & 0xc0) === 0x80; skipped += 1) start += 1
+            const tail = joined.subarray(start)
             buffers.splice(0, buffers.length, tail)
             return tail.byteLength
         }

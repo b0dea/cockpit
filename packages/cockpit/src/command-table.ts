@@ -82,7 +82,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     mode: 'Declared gate execution mode',
     mount: 'How the stack uses the sibling: always, none or profile:<name>',
     output: 'Write the generated artifact to this new file',
-    'probe-specifications': 'Path to the harness probe specifications',
+    'probe-specifications': 'Path to the harness probe specifications; with --write-probe-specifications, the earlier file whose filled rows for unchanged cells carry forward',
     programme: 'Declared programme identifier',
     purpose: 'Short purpose of the sibling repository',
     registry: 'Path to the legacy registry input',

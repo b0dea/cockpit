@@ -49,7 +49,7 @@ import { executeForegroundProcess, executePlan, executeProbe } from './environme
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
-import { observeProcessStart } from './environment/claims.js'
+import { observeProcessStart, type HolderProcess } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
@@ -68,6 +68,8 @@ import {
 } from './environment/setup-observation.js'
 import {
     ENVIRONMENT_CODES,
+    INHERITED_TOOL_ENVIRONMENT,
+    isCanonicalTimestamp,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     type SetupRefusalEvidence,
@@ -515,6 +517,37 @@ function inheritedSessionId(env: Readonly<Record<string, string | undefined>>): 
     return value === undefined ? undefined : SESSION_ID.test(value) ? value : null
 }
 
+const SESSION_PROCESS = /^([1-9][0-9]{0,9})@(\S+)$/
+
+// A `cockpit session` wrapper exports its own pid and start time so that an `up` run inside it,
+// after a `sleep` there dropped the session's hold, ties the hold it re-adds to the wrapper and
+// not to itself. The variable only names a process: the child reads that process's start time
+// again and records the hold only when it matches, so a stale or invented value cannot tie a hold
+// to a process the wrapper is not. A hold carries only its own holder's process, and dead-holder
+// release removes only the holder whose recorded process is gone, so the most a forged value can
+// do is end the forger's own hold early; reaching another session's hold needs its session ID,
+// which already allows `sleep` on it.
+async function sessionChildHolderProcess(
+    env: Readonly<Record<string, string | undefined>>,
+): Promise<{ readonly refusal: CommandOutcome } | { readonly refusal?: never; readonly holderProcess?: HolderProcess }> {
+    const value = env.COCKPIT_SESSION_PROCESS
+    if (value === undefined) return {}
+    if (env.COCKPIT_SESSION_ID === undefined) return { refusal: usageOutcome('CLI_USAGE_INVALID',
+        'COCKPIT_SESSION_PROCESS is set without COCKPIT_SESSION_ID; only a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
+    const match = SESSION_PROCESS.exec(value)
+    const pid = Number(match?.[1])
+    if (!match || pid > 2_147_483_647 || !isCanonicalTimestamp(match[2])) return { refusal: usageOutcome('CLI_USAGE_INVALID',
+        'COCKPIT_SESSION_PROCESS must be <pid>@<start time> as a cockpit session wrapper sets it', 'COCKPIT_SESSION_PROCESS') }
+    const observed = await observeProcessStart(pid, executeProbe)
+    // As for the wrapper's own hold, a start time ps cannot confirm leaves a pid-only hold, which
+    // is kept rather than ever read as dead.
+    if (observed.state === 'unknown') return { holderProcess: { pid } }
+    if (observed.state === 'absent' || observed.startedAt !== match[2]) return { refusal: usageOutcome('CLI_USAGE_INVALID',
+        `the cockpit session that set COCKPIT_SESSION_ID has ended (its process ${pid} is gone); start a new cockpit session or run this outside it`,
+        'COCKPIT_SESSION_PROCESS') }
+    return { holderProcess: { pid, processStartedAt: match[2] } }
+}
+
 function concreteEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
     return Object.freeze(Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)))
 }
@@ -533,11 +566,12 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
     const env = runtime.env ?? process.env
     const inherited = inheritedSessionId(env)
     const ordinarySessionId = inherited === undefined ? 'cockpit-cli' : inherited
-    const lifecycleAdapters = (configPath: string, sessionId: string) => createLifecycleCommandAdapters({
+    const lifecycleAdapters = (configPath: string, sessionId: string, holderProcess?: HolderProcess) => createLifecycleCommandAdapters({
         configPath,
         env,
         sessionId,
         timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
+        ...(holderProcess === undefined ? {} : { holderProcess }),
     }, executeProbe)
     const healthAdapters = (configPath: string) => createHealthCommandAdapters({
         configPath,
@@ -601,12 +635,14 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             createReleaseEvidenceDiscovery,
             installed: { package: installedPackageMetadata.name, version: installedPackageMetadata.version },
         }),
-        up: (input) => {
+        up: async (input) => {
             const sessionId = ordinarySessionId
-            if (sessionId === null) return Promise.resolve(usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            if (sessionId === null) return usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+            const wrapper = await sessionChildHolderProcess(env)
+            if (wrapper.refusal) return wrapper.refusal
             const configPath = resolve(input.configPath)
-            return runUpApplication({ configPath }, lifecycleAdapters(configPath, sessionId))
+            return runUpApplication({ configPath }, lifecycleAdapters(configPath, sessionId, wrapper.holderProcess))
         },
         sleep: (input) => {
             const sessionId = ordinarySessionId
@@ -620,11 +656,12 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
             const configPath = resolve(input.configPath)
             const sessionId = input.sessionId
-            const sessionEnvironment = Object.freeze({ ...env, COCKPIT_SESSION_ID: sessionId })
-            const childEnv = concreteEnvironment(sessionEnvironment)
             // Without its start time the hold is never released for a dead process, because the
             // pid alone may since name another one; the session still runs, with that weaker hold.
             const started = await observeProcessStart(process.pid, executeProbe)
+            const sessionEnvironment = Object.freeze({ ...env, COCKPIT_SESSION_ID: sessionId,
+                COCKPIT_SESSION_PROCESS: started.state === 'present' ? `${process.pid}@${started.startedAt}` : undefined })
+            const childEnv = concreteEnvironment(sessionEnvironment)
             const adapters = createLifecycleCommandAdapters({
                 configPath,
                 env: sessionEnvironment,
@@ -967,23 +1004,28 @@ async function decodeRequest(
         if (draftPath !== undefined) {
             if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
             // Writing the file runs nothing, and --json would print the envelope without creating it.
-            const conflict = values['probe-specifications'] !== undefined ? '--probe-specifications'
-                : values.interactive ? '--interactive' : values.json ? '--json' : undefined
+            const conflict = values.interactive ? '--interactive' : values.json ? '--json' : undefined
             if (conflict) return usageOutcome('CLI_USAGE_INVALID', `--write-probe-specifications only writes the file; drop ${conflict}`, conflict)
-            return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath } }
+            const previous = values['probe-specifications']
+            if (previous !== undefined && previous.length === 0) {
+                return usageOutcome('CLI_USAGE_INVALID', '--probe-specifications requires a non-empty path', '--probe-specifications')
+            }
+            return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath,
+                ...(previous === undefined ? {} : { previousProbeSpecificationsPath: previous }) } }
         }
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID',
             'provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
-            'selftest executable search inputs must be bounded own string or undefined values; supply PATH without accessors and run npx --no cockpit selftest --help to retry')
+            `selftest probe environment inputs must be bounded own string or undefined values; supply ${['PATH', ...INHERITED_TOOL_ENVIRONMENT].join(', ')} without accessors and run npx --no cockpit selftest --help to retry`)
         const env: Record<string, string | undefined> = {}
         try {
             if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
                 || utilTypes.isProxy(runtimeEnv)) return invalidEnvironment()
             const keys = Reflect.ownKeys(runtimeEnv)
             if (keys.length > 4_096) return invalidEnvironment()
+            const inherited = new Set<string>(['PATH', ...INHERITED_TOOL_ENVIRONMENT])
             for (const key of keys) {
-                if (key !== 'PATH') continue
+                if (typeof key !== 'string' || !inherited.has(key)) continue
                 const descriptor = Object.getOwnPropertyDescriptor(runtimeEnv, key)
                 if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
                     || descriptor.value !== undefined && (typeof descriptor.value !== 'string'

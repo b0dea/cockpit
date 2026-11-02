@@ -540,10 +540,21 @@ export type DockerRuntimeObservation =
         composeVersion: string
         observedAt: string
     }>
-    | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE; reason: string }>
+    | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE; reason: string; fix?: string }>
 
 function runtimeVersionUnavailable(reason: string): DockerRuntimeObservation {
     return Object.freeze({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason })
+}
+
+// The runtime answered, so starting it is the wrong remedy: the installed tool prints a version
+// that floors and measurements cannot compare.
+function runtimeVersionUnparseable(tool: string, command: string, printed: string): DockerRuntimeObservation {
+    return Object.freeze({
+        kind: 'unavailable',
+        code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+        reason: `${tool} reported version ${JSON.stringify(printed.slice(0, 64))} from \`${command}\`, which has no numeric X.Y.Z core`,
+        fix: 'install a Docker Engine and Docker Compose release whose `docker version --format {{.Server.Version}}` and `docker compose version --short` print X.Y.Z (a suffix such as -desktop.1 is fine), then retry',
+    })
 }
 
 const issuedDockerRuntimeObservations = new WeakSet<object>()
@@ -726,9 +737,11 @@ export async function observeDockerRuntime(
         } catch { return undefined }
     }
     const server = await readText(versionStep)
-    if (!server || !OBSERVED_VERSION.test(server.value)) return runtimeVersionUnavailable('Docker server version probe failed or returned unauthenticated output')
+    if (!server) return runtimeVersionUnavailable('Docker server version probe failed or returned unauthenticated output')
+    if (!OBSERVED_VERSION.test(server.value)) return runtimeVersionUnparseable('Docker Engine', 'docker version --format {{.Server.Version}}', server.value)
     const compose = await readText(composeStep)
-    if (!compose || !OBSERVED_VERSION.test(compose.value)) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output')
+    if (!compose) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output')
+    if (!OBSERVED_VERSION.test(compose.value)) return runtimeVersionUnparseable('Docker Compose', 'docker compose version --short', compose.value)
     const identityText = await readText(identityStep, 512)
     const fields = identityText === undefined ? undefined : dockerIdentityFields(identityText.value)
     if (!identityText || !fields) return runtimeVersionUnavailable('Docker identity probe (docker info OperatingSystem, Name, OSType) failed or returned unauthenticated output')

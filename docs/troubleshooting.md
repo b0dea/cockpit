@@ -22,7 +22,7 @@ help, for example `cockpit sync --help`.
 | `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `npx --no cockpit sync --config cockpit.toml`. |
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `npx --no cockpit sync --config cockpit.toml`. |
-| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached. | Start it, verify `docker info`, then retry. |
+| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
 | `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
 | `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
@@ -160,9 +160,10 @@ file is not a repair.
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
 digest, generated-manifest digest or specification size failed its check, or the file still has a
-`null` where a probe belongs. For a missing or stale file, write a fresh one with
+`null` where a probe belongs. For a missing file, write a fresh one with
 `npx --no cockpit selftest --config <path> --write-probe-specifications <new file>` and fill in its
-`null` fields; do not edit the stored digests. For a `null`, fill in the rows the message lists.
+`null` fields; for a stale one, add `--probe-specifications <stale file>` to that command so the
+rows you filled for unchanged cells are kept. Do not edit the stored digests. For a `null`, fill in the rows the message lists.
 [Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes each
 field.
 
@@ -226,7 +227,7 @@ another cockpit, such as a directory left by an earlier cockpit build, does not 
 ignore its port leases. Remove it with the same steps once no cockpit uses it.
 
 <!-- cockpit:diagnostic-index:begin -->
-Each diagnostic message names what failed and how to fix it. Where a code always has the same fix, the table repeats it; otherwise it says "see the message". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
+Each diagnostic message names what failed and how to fix it. Where every place that raises a code gives the same fix, the table repeats it; where they give different fixes it says "depends on what failed; see the message", and otherwise "see the message". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
 
 | Diagnostic | What to do |
 | --- | --- |
@@ -243,15 +244,15 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `BOOTSTRAP_ANSWER_RESET_STALE` | see the message |
 | `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` | see the message |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` | see the message |
-| `CLAIM_CO_TENANT` | see the message |
-| `CLAIM_LIVENESS_UNKNOWN` | see the message |
+| `CLAIM_CO_TENANT` | depends on what failed; see the message |
+| `CLAIM_LIVENESS_UNKNOWN` | depends on what failed; see the message |
 | `CLAIM_STATE_UNHEALTHY` | see the message |
 | `CLI_COMMAND_REQUIRED` | see the message |
 | `CLI_INTERNAL_ERROR` | see the message |
 | `CLI_PLATFORM_UNSUPPORTED` | see the message |
 | `CLI_UNKNOWN_COMMAND` | see the message |
 | `CLI_USAGE_INVALID` | see the message |
-| `COCKPIT_REVISION_INVALID` | reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry |
+| `COCKPIT_REVISION_INVALID` | depends on what failed; see the message |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
@@ -261,8 +262,8 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `COMPOSE_PORT_ALL_INTERFACES` | see the message |
 | `COMPOSE_PORT_NOT_LEASED` | see the message |
 | `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` | depends on what failed; see the message |
+| `CONFIG_CHANGED_DURING_EXECUTION` | depends on what failed; see the message |
 | `CONFIG_ENCODING_INVALID` | see the message |
 | `CONFIG_NOT_FOUND` | see the message |
 | `CONFIG_PARSE_INVALID` | see the message |
@@ -290,7 +291,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `DOCUMENT_ESTATE_OBSERVATION_CHANGED` | see the message |
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
-| `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
+| `DOCUMENT_GAP` | depends on what failed; see the message |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_INFERRED` | see the message |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
@@ -320,7 +321,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `EXECUTION_ABORTED` | see the message |
 | `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
 | `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
+| `EXECUTION_PRECONDITION_CHANGED` | depends on what failed; see the message |
 | `EXECUTION_SPAWN_FAILED` | see the message |
 | `EXECUTION_STAGING_CLEANUP_FAILED` | see the message |
 | `EXECUTION_STAGING_FAILED` | see the message |
@@ -336,8 +337,8 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `EXTERNAL_DEPENDENCY_EXPIRED` | see the message |
 | `EXTERNAL_DEPENDENCY_SHADOW_UNAVAILABLE` | see the message |
 | `EXTERNAL_DEPENDENCY_TEMPLATE_MISMATCH` | see the message |
-| `GENERATED_ARTIFACT_DRIFT` | see the message |
-| `GENERATED_ARTIFACT_MISSING` | see the message |
+| `GENERATED_ARTIFACT_DRIFT` | depends on what failed; see the message |
+| `GENERATED_ARTIFACT_MISSING` | depends on what failed; see the message |
 | `GENERATED_COMPENSATION_FAILED` | see the message |
 | `GENERATED_COMPOSE_INVALID` | see the message |
 | `GENERATED_DECISIONS_UNDECIDED` | see the message |
@@ -347,29 +348,30 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `GENERATED_DECISION_SENSITIVE` | see the message |
 | `GENERATED_DECISION_STALE` | see the message |
 | `GENERATED_DECLARATION_INVALID` | see the message |
-| `GENERATED_DECLARATION_MISSING` | see the message |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | see the message |
-| `GENERATED_INPUT_INVALID` | see the message |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` | depends on what failed; see the message |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_INPUT_INVALID` | depends on what failed; see the message |
 | `GENERATED_INSPECTION_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_DRIFT` | see the message |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | see the message |
-| `GENERATED_OWNERSHIP_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_MISSING` | see the message |
+| `GENERATED_OWNERSHIP_INVALID` | depends on what failed; see the message |
+| `GENERATED_OWNERSHIP_MISSING` | depends on what failed; see the message |
 | `GENERATED_PATH_DUPLICATE` | see the message |
 | `GENERATED_PATH_UNOWNED` | see the message |
 | `GENERATED_PATH_UNSAFE` | see the message |
 | `GENERATED_PERSONA_INVALID` | see the message |
 | `GENERATED_PERSONA_SOURCE_UNAVAILABLE` | see the message |
-| `GENERATED_PUBLICATION_FAILED` | see the message |
+| `GENERATED_PUBLICATION_FAILED` | depends on what failed; see the message |
 | `GENERATED_REFERENCE_BOOTSTRAP_INVALID` | see the message |
 | `GENERATED_REFERENCE_OWNERSHIP_INVALID` | see the message |
 | `GENERATED_RENDER_UNAUTHENTICATED` | see the message |
 | `GENERATED_SIBLING_ROOT_INVALID` | see the message |
 | `GENERATED_SOURCE_CHANGED` | see the message |
 | `GENERATED_STALE_APPROVAL_INVALID` | see the message |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended |
-| `GENERATED_STALE_ARTIFACT` | see the message |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | depends on what failed; see the message |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `GENERATED_STALE_ARTIFACT_DRIFT` | see the message |
 | `GENERATED_TEMPLATE_INVALID` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
@@ -385,7 +387,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `GUARD_INPUT_UNAVAILABLE` | see the message |
 | `GUARD_REFUSED` | see the message |
 | `GUARD_TRANSPORT_INVALID` | see the message |
-| `GUIDE_CAP_EXCEEDED` | see the message |
+| `GUIDE_CAP_EXCEEDED` | depends on what failed; see the message |
 | `HARNESS_SURFACE_UNAVAILABLE` | see the message |
 | `INIT_ANSWER_AMBIGUOUS` | see the message |
 | `INIT_ANSWER_CONFLICT` | see the message |
@@ -430,25 +432,25 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
-| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_COLD_START_EXCEEDED` | depends on what failed; see the message |
+| `MACHINE_CPU_BELOW_FLOOR` | depends on what failed; see the message |
+| `MACHINE_DISK_BELOW_FLOOR` | depends on what failed; see the message |
+| `MACHINE_MEMORY_BELOW_FLOOR` | depends on what failed; see the message |
 | `MCP_APPROVAL_UNKNOWN` | see the message |
 | `MCP_COMMAND_CONFLICT` | see the message |
-| `MCP_DECLARATION_INVALID` | see the message |
+| `MCP_DECLARATION_INVALID` | depends on what failed; see the message |
 | `MCP_INPUT_INVALID` | see the message |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed |
+| `MCP_NOT_APPROVED` | depends on what failed; see the message |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` | see the message |
-| `MOUNT_POSTURE_UNAVAILABLE` | see the message |
+| `MOUNT_POSTURE_UNAVAILABLE` | depends on what failed; see the message |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
 | `OUTPUT_WRITE_FAILED` | see the message |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `OVERRIDDEN_CORE_CHANGED` | depends on what failed; see the message |
 | `PORT_EXTERNAL_REGISTRATION_GAP` | see the message |
-| `PORT_FAMILY_COLLISION` | see the message |
+| `PORT_FAMILY_COLLISION` | depends on what failed; see the message |
 | `PORT_FAMILY_OUT_OF_RANGE` | see the message |
-| `PORT_LEASE_EXHAUSTED` | see the message |
-| `PORT_LISTENER_EVIDENCE_INVALID` | see the message |
+| `PORT_LEASE_EXHAUSTED` | depends on what failed; see the message |
+| `PORT_LISTENER_EVIDENCE_INVALID` | depends on what failed; see the message |
 | `PORT_LOCAL_VALUE_CORRECTED` | see the message |
 | `PROJECTION_GRANT_MISMATCH` | see the message |
 | `PROJECTION_GUIDE_CHANGED` | see the message |
@@ -478,7 +480,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `REGISTRY_OPTION_DUPLICATE` | see the message |
 | `REGISTRY_OUTPUT_UNSUPPORTED` | see the message |
 | `REGISTRY_POSITIONAL_UNSUPPORTED` | see the message |
-| `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
+| `REGISTRY_ROW_SKIPPED` | depends on what failed; see the message |
 | `REGISTRY_SIBLINGS_ROOT_REQUIRED` | see the message |
 | `REGISTRY_SOURCE_REQUIRED` | see the message |
 | `REGISTRY_TOO_LARGE` | see the message |
@@ -494,20 +496,21 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `RESTRICTION_TEMPLATE_INVALID` | see the message |
 | `RUNNING_CHECKOUT_MISMATCH` | see the message |
 | `RUNTIME_COMPOSE_REMOTE` | see the message |
-| `RUNTIME_IMAGE_UNAVAILABLE` | see the message |
+| `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again |
 | `RUNTIME_LAUNCHER_UNAVAILABLE` | see the message |
 | `RUNTIME_PROBE_TIMEOUT` | see the message |
-| `RUNTIME_UNAVAILABLE` | see the message |
+| `RUNTIME_UNAVAILABLE` | depends on what failed; see the message |
 | `RUNTIME_UNMEASURED` | see the message |
+| `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
 | `SELFTEST_EXECUTION_INVALID` | see the message |
-| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications |
+| `SELFTEST_SOURCE_INVALID` | depends on what failed; see the message |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
-| `SETUP_CLONE_FAILED` | see the message |
+| `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again |
 | `SETUP_CONFIG_REQUIRED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | see the message |
-| `SETUP_MANUAL_MISSING` | see the message |
+| `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers |
+| `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again |
 | `SETUP_NONE_ABSENT` | see the message |
 | `SETUP_NONE_DIRECTORY` | see the message |
 | `SETUP_NONE_REPOSITORY` | see the message |
@@ -550,8 +553,8 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `STACK_RECORDED_UNDER_EARLIER_NAME` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_FORMAT_UNSUPPORTED` | see the message |
-| `STATE_LOCKED` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
+| `STATE_LOCKED` | depends on what failed; see the message |
+| `STATE_RECORD_MALFORMED` | depends on what failed; see the message |
 | `STATE_ROOT_UNAVAILABLE` | see the message |
 | `STATE_UNSEEDED` | see the message |
 | `SURFACE_ADOPTION_REFUSED` | see the message |
@@ -575,7 +578,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `SURFACE_OWNERSHIP_INVALID` | see the message |
 | `SURFACE_PACKAGE_UNAVAILABLE` | see the message |
 | `SURFACE_PATH_CONFLICT` | see the message |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` | see the message |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | see the message |
 | `SURFACE_SOURCE_UNAVAILABLE` | see the message |
 | `SURFACE_STAGE_VARIANCE` | see the message |

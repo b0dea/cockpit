@@ -23,8 +23,10 @@ describe('health CLI boundary', () => {
         ], capture.io, {}, { env: {} })
 
         expect(status).toBe(2)
+        // The production observation loads the configuration first, so a missing file is named as
+        // missing rather than reported as an unmeasured runtime.
         expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            diagnostics: [{ code: 'RUNTIME_UNMEASURED' }], result: null,
+            diagnostics: [{ code: 'CONFIG_NOT_FOUND', target: '/synthetic/missing-cockpit.toml' }], result: null,
         })
     })
 
@@ -212,7 +214,10 @@ describe('health CLI boundary', () => {
         const decide = vi.fn(async () => ({
             kind: approved ? 'complete' as const : 'refusal' as const,
             status: approved ? 0 as const : 2 as const,
-            diagnostics: Object.freeze([]), result: approved ? Object.freeze({ artifact: 'environment-baseline' }) : null,
+            diagnostics: Object.freeze([]), result: approved ? Object.freeze({
+                artifact: 'environment-baseline', schemaVersion: 1, stackId: `stack:${'1'.repeat(64)}`,
+                version: 2, recordedAt: '2026-09-26T00:00:00.000Z',
+            }) : null,
         }))
         const beginOperatorBaselineRecord = vi.fn(async () => Object.freeze({ preview, decide }))
         const baselineRecord = vi.fn()
@@ -228,6 +233,9 @@ describe('health CLI boundary', () => {
         )
 
         expect(status).toBe(approved ? 0 : 130)
+        // A recorded baseline says so; printing nothing left a person unsure whether anything was written.
+        expect(capture.output().stdout).toBe(approved
+            ? `Recorded environment baseline version 2 (stack:${'1'.repeat(64)}) at 2026-09-26T00:00:00.000Z.\n` : '')
         expect(baselineRecord).not.toHaveBeenCalled()
         expect(beginOperatorBaselineRecord).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml' })
         expect(confirmBaseline).toHaveBeenCalledOnce()

@@ -168,7 +168,14 @@ export function diagnosticInventory(root, candidate) {
 
 export function diagnosticInventoryFromSources(paths, sources) {
     const owners = new Map()
-    const remedies = new Map()
+    // Every place that emits a code, with the literal fixes stated there: a code has one fixed remedy
+    // only when all of them state the same single fix, so the index never repeats one place's fix
+    // for a code another place emits with a different one or with a fix computed at runtime.
+    const fixSites = new Map()
+    const observeFix = (code, site, fixes) => {
+        if (!fixSites.has(code)) fixSites.set(code, new Map())
+        fixSites.get(code).set(site, fixes)
+    }
     const parsedSources = new Map(paths.map((path) => {
         const bytes = sources.get(path)
         if (bytes === undefined) throw new Error(`${path}: authenticated TypeScript source is unavailable`)
@@ -191,7 +198,6 @@ export function diagnosticInventoryFromSources(paths, sources) {
     }
     const addCode = (code, path, site) => {
         if (!owners.has(code)) owners.set(code, new Set())
-        if (!remedies.has(code)) remedies.set(code, new Set())
         owners.get(code).add(path)
         if (site) recordSite(site, code)
     }
@@ -349,16 +355,57 @@ export function diagnosticInventoryFromSources(paths, sources) {
             collect(expression)
             return strings
         }
+        // The codes an expression names: literals, registry members, and both arms of a conditional
+        // or fallback.
+        const diagnosticCodes = (expression) => {
+            const value = unwrapExpression(expression)
+            if (ts.isStringLiteral(value)) return uppercaseDiagnostic(value.text) ? [value.text] : []
+            if (ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression) && environmentCodeBindings.has(value.expression.text)) {
+                const code = environmentCodes.get(value.name.text)
+                return code ? [code] : []
+            }
+            if (ts.isConditionalExpression(value)) return [...diagnosticCodes(value.whenTrue), ...diagnosticCodes(value.whenFalse)]
+            if (ts.isBinaryExpression(value)
+                && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(value.operatorToken.kind)) {
+                return [...diagnosticCodes(value.left), ...diagnosticCodes(value.right)]
+            }
+            return []
+        }
+        const literalFixes = (expression) => expression === undefined ? []
+            : staticStrings(expression).filter(value => value.length > 0 && !/[\r\n]/.test(value))
+        const objectFixes = (object) => {
+            const fix = object.properties.find((property) => ts.isPropertyAssignment(property)
+                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === 'fix')
+            return literalFixes(fix?.initializer)
+        }
+        // A constructor such as refusal(code, message, target, fix) states its fix at the call; one
+        // with no `fix` parameter, or declared out of sight, states none the index can read.
+        const constructorParameters = (callee) => {
+            if (!ts.isIdentifier(callee)) return undefined
+            for (let scope = callee.parent; scope; scope = scope.parent) {
+                if (!ts.isBlock(scope) && !ts.isSourceFile(scope)) continue
+                for (const statement of scope.statements) {
+                    if (ts.isFunctionDeclaration(statement) && statement.name?.text === callee.text) return statement.parameters
+                    if (!ts.isVariableStatement(statement)) continue
+                    const declaration = statement.declarationList.declarations.find(candidate => ts.isIdentifier(candidate.name) && candidate.name.text === callee.text)
+                    const initializer = declaration?.initializer && unwrapExpression(declaration.initializer)
+                    if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) return initializer.parameters
+                }
+            }
+            return undefined
+        }
+        const callFixes = (call) => {
+            const index = constructorParameters(call.expression)?.findIndex(parameter => ts.isIdentifier(parameter.name) && parameter.name.text === 'fix') ?? -1
+            return index === -1 ? [] : literalFixes(call.arguments[index])
+        }
         for (const object of returnedObjects) {
-            const properties = new Map(object.properties.flatMap((property) => ts.isPropertyAssignment(property)
-                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? [[property.name.text, unwrapExpression(property.initializer)]] : []))
-            const codeValue = properties.get('code')
-            const fixValue = properties.get('fix')
-            const codes = codeValue ? staticStrings(codeValue).filter(uppercaseDiagnostic) : []
-            const fixes = fixValue ? staticStrings(fixValue).filter(value => value.length > 0 && !/[\r\n]/.test(value)) : []
-            for (const code of codes) for (const fix of fixes) {
-                addCode(code, path, object)
-                remedies.get(code).add(fix)
+            const code = object.properties.find((property) => ts.isPropertyAssignment(property)
+                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === 'code')
+            if (!code) continue
+            const fixes = objectFixes(object)
+            for (const name of diagnosticCodes(code.initializer)) {
+                addCode(name, path, object)
+                observeFix(name, object, fixes)
             }
         }
         const constructorName = (expression) => {
@@ -369,27 +416,28 @@ export function diagnosticInventoryFromSources(paths, sources) {
         // owned: false records the site for command attribution only, leaving the owner index on
         // its stricter rules.
         const collectDiagnosticExpression = (expression, site, owned = true) => {
-            const emit = (code) => owned ? addCode(code, path, site) : recordSite(site, code)
-            const value = unwrapExpression(expression)
-            if (ts.isStringLiteral(value)) {
-                if (uppercaseDiagnostic(value.text)) emit(value.text)
-            } else if (ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)
-                && environmentCodeBindings.has(value.expression.text)) {
-                const code = environmentCodes.get(value.name.text)
-                if (code) emit(code)
-            } else if (ts.isConditionalExpression(value)) {
-                collectDiagnosticExpression(value.whenTrue, site, owned)
-                collectDiagnosticExpression(value.whenFalse, site, owned)
-            } else if (ts.isBinaryExpression(value)
-                && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(value.operatorToken.kind)) {
-                collectDiagnosticExpression(value.left, site, owned)
-                collectDiagnosticExpression(value.right, site, owned)
-            }
+            for (const code of diagnosticCodes(expression)) owned ? addCode(code, path, site) : recordSite(site, code)
+        }
+        // A registry member that is the code of an object literal or of a constructor call is
+        // observed at that object or call, with the fix stated there.
+        const namedAtEmission = (node) => {
+            let value = node
+            while (ts.isParenthesizedExpression(value.parent) || ts.isAsExpression(value.parent) || ts.isSatisfiesExpression(value.parent)
+                || ts.isNonNullExpression(value.parent) || ts.isConditionalExpression(value.parent) && value.parent.condition !== value
+                || ts.isBinaryExpression(value.parent) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(value.parent.operatorToken.kind)) value = value.parent
+            const holder = value.parent
+            return ts.isPropertyAssignment(holder) && holder.initializer === value && ts.isIdentifier(holder.name) && holder.name.text === 'code'
+                || ts.isCallExpression(holder) && holder.arguments[0] === value
+                    && /(?:diagnostic|refus|fail|error|usageOutcome)/i.test(constructorName(holder.expression))
         }
         const visit = (node) => {
             if (ts.isCallExpression(node) && /(?:diagnostic|refus|fail|error|usageOutcome)/i.test(constructorName(node.expression))) {
                 const first = node.arguments[0]
-                if (first) collectDiagnosticExpression(first, node)
+                if (first) {
+                    collectDiagnosticExpression(first, node)
+                    const fixes = callFixes(node)
+                    for (const code of diagnosticCodes(first)) observeFix(code, node, fixes)
+                }
             }
             const codeProperty = (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
                 && ((ts.isIdentifier(node.name) && node.name.text === 'code') || (ts.isStringLiteral(node.name) && node.name.text === 'code'))
@@ -398,15 +446,21 @@ export function diagnosticInventoryFromSources(paths, sources) {
             // reaches it, so command attribution counts it.
             if (codeProperty && !returnedObjects.has(node.parent) && ts.isPropertyAssignment(node)) {
                 collectDiagnosticExpression(node.initializer, node, false)
+                const fixes = objectFixes(node.parent)
+                for (const code of diagnosticCodes(node.initializer)) observeFix(code, node.parent, fixes)
             }
             if (ts.isParameter(node) && ts.isIdentifier(node.name) && node.name.text === 'code' && node.initializer) {
                 collectDiagnosticExpression(node.initializer, node, false)
+                for (const code of diagnosticCodes(node.initializer)) observeFix(code, node, [])
             }
             // A registry code held in a variable before it reaches a diagnostic, as a process
             // runner's failure code is. Comparisons, case labels, code lists and lookup keys only
             // test or index a code.
             if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && environmentCodeBindings.has(node.expression.text)
-                && environmentCodes.has(node.name.text) && !testsCode(node)) recordSite(node, environmentCodes.get(node.name.text))
+                && environmentCodes.has(node.name.text) && !testsCode(node)) {
+                recordSite(node, environmentCodes.get(node.name.text))
+                if (!namedAtEmission(node)) observeFix(environmentCodes.get(node.name.text), node, [])
+            }
             if (codeProperty && returnedObjects.has(node.parent)) {
                 const value = ts.isShorthandPropertyAssignment(node) ? node.name : node.initializer
                 collectDiagnosticExpression(value, node)
@@ -429,6 +483,14 @@ export function diagnosticInventoryFromSources(paths, sources) {
         }
         visit(source)
     }
+    const remedies = new Map([...owners.keys()].map((code) => {
+        const stated = [...fixSites.get(code)?.values() ?? []]
+        const fixes = new Set(stated.flat())
+        if (fixes.size === 0) return [code, Object.freeze({ kind: 'none' })]
+        return [code, fixes.size === 1 && stated.every(site => site.length === 1)
+            ? Object.freeze({ kind: 'fixed', fix: [...fixes][0] })
+            : Object.freeze({ kind: 'varies' })]
+    }))
     // Computed on first read: the documentation lint reads only the code list, on every run.
     let commandDiagnostics
     return {

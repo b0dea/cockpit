@@ -239,14 +239,21 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
 // `acquire = "none"` rows are local data the cockpit itself may track, except a directory that
 // already holds Git metadata: `sibling add --create` records a new repository as "none" until it
 // has a remote, so for those rows the disk decides.
-async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling'>): Promise<string | undefined> {
+async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling' | 'environment'>): Promise<string | undefined> {
     const siblingsRoot = config.cockpit.siblings_root
     if (/[\0\r\n]/.test(siblingsRoot)) return undefined
     const patterns = ['/node_modules/', '/.cockpit/local/', '/env/.secrets/*', '!/env/.secrets/.gitignore']
-    const inside = (path: string): string | undefined => {
+    const inside = (path: string, kind: 'directory' | 'any' = 'directory'): string | undefined => {
         const local = relative(root, path)
         if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) return undefined
-        return `/${local.split(sep).map((part) => part.replace(/[\\*?\[\] !#]/g, '\\$&')).join('/')}/`
+        return `/${local.split(sep).map((part) => part.replace(/[\\*?\[\] !#]/g, '\\$&')).join('/')}${kind === 'directory' ? '/' : ''}`
+    }
+    // Generated host paths (browser artifact roots among them) hold run output such as screenshots;
+    // left unignored, `git add` commits them. One may be a file bound into a service, which a
+    // trailing-slash pattern would not match.
+    for (const generated of config.environment.generated_host_paths) {
+        const pattern = inside(resolve(root, generated), 'any')
+        if (pattern && !patterns.includes(pattern)) patterns.push(pattern)
     }
     const siblings = resolve(root, siblingsRoot)
     const siblingsPattern = inside(siblings)
