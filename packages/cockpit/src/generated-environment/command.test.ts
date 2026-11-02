@@ -614,7 +614,10 @@ it('admits the npx and installed-path launcher spellings only while they run the
     const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
         .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command) as string
     const bin = join(root, 'node_modules/.bin/cockpit')
-    const decision = (command: string, cwd = root, path = process.env.PATH) => {
+    // npm run puts this repository's own node_modules/.bin, whose cockpit is the same launcher, on
+    // PATH; the bare-name cases must see only the search path each one sets up.
+    const basePath = (process.env.PATH ?? '').split(':').filter(entry => !entry.endsWith('/node_modules/.bin')).join(':')
+    const decision = (command: string, cwd = root, path = basePath) => {
         const result = spawnSync('/bin/sh', ['-c', hook], {
             cwd, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root, PATH: path },
             input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }),
@@ -644,7 +647,7 @@ it('admits the npx and installed-path launcher spellings only while they run the
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
     // Bare cockpit counts only when the command search path finds the installed package.
     expect(decision('cockpit check --config cockpit.toml')).toBe('ask')
-    expect(decision('cockpit check --config cockpit.toml', root, `${dirname(bin)}:${process.env.PATH}`)).toBe('allow')
+    expect(decision('cockpit check --config cockpit.toml', root, `${dirname(bin)}:${basePath}`)).toBe('allow')
     // npx resolves from the directory it runs in; only the root's own resolution is proven.
     expect(decision('npx --no cockpit doctor --config ../cockpit.toml', join(root, 'app'))).toBe('ask')
     // npm applies the root .npmrc, whose script-shell or node-options run other code first, and
