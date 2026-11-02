@@ -288,6 +288,9 @@ describe('runtime logs', () => {
         expect(Object.isFrozen(result.step.argv)).toBe(true)
         expect(result.step).toEqual(expect.objectContaining({ timeoutMs: 7_200_000, stdoutLimitBytes: 4096, outputOverflow: 'retain-tail' }))
         expect(planLogs({ ...input, follow: false })).toMatchObject({ kind: 'planned', step: { timeoutMs: 10_000 } })
+        // Docker Desktop's Compose prints a vendor suffix; the runtime admits it, so logs must too.
+        expect(planLogs({ ...input, composeVersion: '2.29.7-desktop.1' })).toMatchObject({ kind: 'planned' })
+        expect(planLogs({ ...input, composeVersion: 'v2.29.7' })).toMatchObject({ kind: 'unavailable' })
     })
 
     it('reads logs from the local socket or context the lifecycle selected', () => {

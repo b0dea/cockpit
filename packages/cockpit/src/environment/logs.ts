@@ -5,7 +5,7 @@ import { composeProjectDirectory } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, MAX_STEP_TIMEOUT_MS, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
-import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
+import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, observedVersionCore, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
@@ -121,7 +121,7 @@ export function planLogs(
     if (input.runtime !== 'docker-compose') return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime does not expose a measured log adapter' }
     if (!STACK_ID.test(input.stackId) || !SHA256.test(input.configSha256) || !SERVICE.test(input.projectName) || !SERVICE.test(input.service) || !input.services.includes(input.service) || input.services.some((service) => !SERVICE.test(service)) || !(RELATIVE_SINCE.test(input.since) || validInstant(input.since)) || !isAbsolute(input.cwd)
         || !isResolvedDockerExecutable(input.executable)
-        || !SHA256.test(input.batchId) || !SERVICE.test(input.containerId) || !/^\d+\.\d+\.\d+$/.test(input.runtimeVersion) || !/^\d+\.\d+\.\d+$/.test(input.composeVersion)
+        || !SHA256.test(input.batchId) || !SERVICE.test(input.containerId) || observedVersionCore(input.runtimeVersion) === undefined || observedVersionCore(input.composeVersion) === undefined
         || (input.restartBatches !== undefined && (input.restartBatches.length !== 2 || input.restartBatches.some((batch) => !SHA256.test(batch)) || input.restartBatches[0] === input.restartBatches[1]))
         || !Number.isInteger(input.tail) || input.tail < 1 || input.tail > 10_000
         || !Number.isInteger(input.timeoutMs) || input.timeoutMs <= 0 || input.timeoutMs > 300_000
@@ -481,7 +481,7 @@ function ownedLogPlan(value: unknown): Extract<LogPlan, { kind: 'planned' }> | u
     if (plan.kind !== 'planned' || labels === undefined || !STACK_ID.test(labels.stackId ?? '')
         || !SHA256.test(labels.configSha256 ?? '') || !SHA256.test(labels.batchId ?? '')
         || !SERVICE.test(labels.containerId ?? '') || !SERVICE.test(labels.service ?? '')
-        || !(RELATIVE_SINCE.test(labels.since ?? '') || validInstant(labels.since ?? '')) || !/^\d+\.\d+\.\d+$/.test(labels.runtimeVersion ?? '')
+        || !(RELATIVE_SINCE.test(labels.since ?? '') || validInstant(labels.since ?? '')) || observedVersionCore(labels.runtimeVersion ?? '') === undefined
         || !SHA256.test(labels.executableSha256 ?? '')
         || ((labels.restartBeforeBatch === undefined) !== (labels.restartAfterBatch === undefined))
         || (labels.restartBeforeBatch !== undefined && (!SHA256.test(labels.restartBeforeBatch)
