@@ -1993,18 +1993,19 @@ describe('document process contract', () => {
         expect(result.stderr).not.toContain('an explicit registry cannot establish the cockpit name')
     })
 
-    it('emits exactly one JSON value with a null result and no draft or stderr prose', () => {
+    it('emits exactly one JSON value carrying the incomplete draft and no stderr prose', () => {
         const { cockpitRoot } = makeCockpit()
         const result = run(['document', cockpitRoot, '--json'])
         const response = JSON.parse(result.stdout) as {
-            result: unknown
+            result: { document: string } | null
             diagnostics: { code: string }[]
         }
 
         expect(result.status).not.toBe(0)
-        expect(response.result).toBeNull()
+        expect(response.result?.document).toBe(run(['document', cockpitRoot]).stdout)
+        expect(response.result?.document).toContain('INCOMPLETE DRAFT')
         expect(response.diagnostics.some((diagnostic) => diagnostic.code === 'DOCUMENT_GAP')).toBe(true)
-        expect(result.stdout).not.toContain('INCOMPLETE DRAFT')
+        expect(result.stdout.trimEnd().split('\n')).toHaveLength(1)
         expect(result.stderr).toBe('')
     })
 

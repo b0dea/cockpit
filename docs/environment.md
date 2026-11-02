@@ -22,8 +22,8 @@ the limit defined in [`config/load.ts`](../packages/cockpit/src/config/load.ts).
 be read, is not a regular file, is too large, or changes while cockpit reads it is refused with a
 diagnostic. Make the file smaller; raising an output or subprocess limit does not change this one.
 
-`document` can print a visibly incomplete draft when a registry fact is missing; in its JSON result
-that gap is `null`. A skipped registry row produces nothing, because cockpit may no longer know
+`document` can print a visibly incomplete draft when a registry fact is missing. With `--json`, the
+same draft is in `result.document` and each missing fact is a `DOCUMENT_GAP` diagnostic. A skipped registry row produces nothing, because cockpit may no longer know
 which repository it applies to. `registry-resolve` prints shell data you can `source` only when its
 input passed validation.
 

@@ -117,7 +117,7 @@ function interviewDocument(destination: string, fields: readonly string[] = ['si
             const id = `question:${createHash('sha256').update(`${input.configuration?.sourceObservationSha256}:${index}`).digest('hex')}` as const
             // The document owner reports the open question as a blocking gap, as a standalone draft would be invalid.
             return { kind: 'gap-draft', status: 2, diagnostics: [{ severity: 'error', code: 'DOCUMENT_GAP', target: fields[index]!,
-                message: 'runnable command is unknown' }], result: null, artifact: '# incomplete\n', destination,
+                message: 'runnable command is unknown' }], result: { document: '# incomplete\n' }, artifact: '# incomplete\n', destination,
                 question: { id, field: fields[index] as 'sibling', source: 'api/package.json',
                     why: 'runnable command is unknown' } }
         }
