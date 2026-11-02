@@ -753,6 +753,11 @@ data, contact vendors to repair anything, or advance lifecycle progress. Only br
 steps, as [Bring-up order](#bring-up-order) describes. Generated, dependency, data and vendor
 checks each return their own results.
 
+`doctor` exits 0 with a report whenever it can read `cockpit.toml`, whatever the verdict, and exits
+2 when the configuration is missing or invalid. Its human output is one line per area followed by
+the diagnostics; `--json` carries the checks, declarations, override inspection and whether the
+generated files are current. `check --json` shows the generated-file detail.
+
 What the checks compare:
 
 - **Git remotes.** A declared sibling remote is compared with the remote selected by that

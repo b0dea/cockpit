@@ -1516,7 +1516,7 @@ export async function runCli(
         return finish(outcome!.status, outcome!)
     }
     if (outcome!.artifact && !outcome!.destination) io.stdout.write(outcome!.artifact)
-    io.stdout.write(renderHumanDiagnostics([], { command: commandName, outcome: outcome! }))
+    io.stdout.write(renderHumanDiagnostics([], { command: commandName, outcome: outcome! }, outcome!.fixContext))
     io.stderr.write(renderHumanDiagnostics(outcome!.diagnostics, undefined, outcome!.fixContext, usageHint))
     return finish(outcome!.status)
 }

@@ -4337,7 +4337,13 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
 }
 
 interface DoctorFreshness {
-    readonly local: GeneratedEnvironmentCurrentness['outcome']
+    // Only whether the generated files are current. The full check result, with every owned path's
+    // authority, is what `check --json` prints; embedding it made doctor's report hundreds of KB.
+    readonly local: Readonly<{
+        kind: GeneratedEnvironmentCurrentness['outcome']['kind']
+        status: number
+        diagnostics: GeneratedEnvironmentCurrentness['outcome']['diagnostics']
+    }>
     readonly changes: GeneratedEnvironmentCurrentness['changes']
     readonly storedProducer: GeneratedEnvironmentCurrentness['storedProducer']
     readonly installedProducer: GeneratedEnvironmentCurrentness['currentProducer']
@@ -4450,6 +4456,11 @@ async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>
 export type DoctorCommandResult = Readonly<{
     kind: 'complete'
     status: 0
+    diagnostics: readonly EnvironmentDiagnostic[]
+    result: ApplicationDoctorEvaluation
+}> | Readonly<{
+    kind: 'refusal'
+    status: 2
     diagnostics: readonly EnvironmentDiagnostic[]
     result: ApplicationDoctorEvaluation
 }>
@@ -4983,8 +4994,17 @@ export async function runDoctor(
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([])])
     const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
     const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...unreadableState ? [unreadableState] : []]
-    return warnings.length === 0 ? outcome
+    const reported = warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
+    // Doctor reports on a configuration; without one there is nothing to report on, and a zero
+    // exit would let `doctor && ...` proceed past a missing or unparseable cockpit.toml.
+    const loaded = await config
+    if (loaded.kind === 'complete') return reported
+    const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
+    return Object.freeze({
+        ...reported, kind: 'refusal', status: 2,
+        diagnostics: Object.freeze([...loaded.diagnostics.filter(({ code, target }) => !forwarded.has(`${code}\0${target}`)), ...reported.diagnostics]),
+    })
 }
 
 async function doctorHealth(
@@ -4998,7 +5018,8 @@ async function doctorHealth(
         prepareGeneratedEnvironmentCurrentness(input),
         adapters.discoverReleaseFreshness?.() ?? Promise.resolve(Object.freeze({ kind: 'unknown' as const, reason: 'release discovery is not bound' })),
     ]).then(([currentness, release]): DoctorFreshness => Object.freeze({
-        local: currentness.outcome, changes: currentness.changes, storedProducer: currentness.storedProducer,
+        local: Object.freeze({ kind: currentness.outcome.kind, status: currentness.outcome.status, diagnostics: currentness.outcome.diagnostics }),
+        changes: currentness.changes, storedProducer: currentness.storedProducer,
         installedProducer: currentness.currentProducer, release, repair: proposeGeneratedEnvironmentRepair(currentness),
     }))
     let health: HealthEvaluation

@@ -291,6 +291,8 @@ describe('observation application runners', () => {
                 installedProducer: { package: '@b0dea/cockpit', version: cockpitPackageVersion, sourceRevision: 'development' },
                 repair: { fixes: [], refusal: { kind: 'refusal' } },
             } })
+            // The full check envelope lists every owned path; doctor keeps only whether files are current.
+            expect(Object.keys(result.result.freshness.local).sort()).toEqual(['diagnostics', 'kind', 'status'])
         } finally { prepare.mockRestore() }
     })
 

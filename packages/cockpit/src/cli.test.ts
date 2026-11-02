@@ -628,20 +628,38 @@ describe('generated environment process contract', () => {
         expect(createReleaseMetadataTransport).toHaveBeenCalledTimes(1)
         expect(transport).toHaveBeenCalledTimes(1)
     })
-    it('prints the doctor override inspection in human mode', async () => {
+    it('prints doctor as a short report with its findings and the commands that show the detail', async () => {
         const capture = captureIo()
         const surfaceOverrides = {
             kind: 'complete',
             activeOverrides: [{ name: 'review', feature: 'skills', originalSha256: 'a'.repeat(64), recordedSha256: 'a'.repeat(64), overlaySource: 'surfaces/review.json' }],
             changedOverrideOriginals: [],
         }
+        const owned = Array.from({ length: 500 }, (_, index) => ({ path: `.claude/skills/s${index}/SKILL.md`, authority: 'generated' }))
+        const freshness = {
+            local: { kind: 'complete', status: 0, diagnostics: [], result: { paths: owned } },
+            changes: [{ operation: 'write', path: 'compose.generated.yml' }],
+            release: { kind: 'known', package: '@b0dea/cockpit', installedVersion: '1.0.0', latestVersion: '1.2.3', currency: 'different-version' },
+        }
         expect(await runCli(['doctor', '--config', 'cockpit.toml'], capture.io, {
-            doctor: async () => ({ status: 0, diagnostics: [], result: { verdict: 'pass', checks: [], comparisons: [], surfaceOverrides } }),
+            doctor: async () => ({ status: 0,
+                diagnostics: [{ severity: 'warning', code: 'GUARD_HOSTS_UNDECLARED', target: 'guards', message: 'synthetic warning' }],
+                result: { verdict: 'pass', checks: [{ verdict: 'pass' }, { verdict: 'pass' }, { verdict: 'not-applicable' }], comparisons: [], surfaceOverrides, freshness,
+                    declarations: [{ subject: 'runtime', state: 'declared' }, { subject: 'data-modes', state: 'not-declared' }] } }),
         })).toBe(0)
-        expect(capture.output().stdout).toContain('surfaceOverrides:')
-        expect(capture.output().stdout).toContain('activeOverrides:')
-        expect(capture.output().stdout).toContain('name: review')
-        expect(capture.output().stdout).not.toContain('{')
+        const config = resolve('cockpit.toml')
+        expect(capture.output().stdout).toBe([
+            'Doctor: pass. Findings: 1 warning, listed below.',
+            'Checks: 2 pass, 1 not applicable.',
+            'Generated files: 1 change pending.',
+            'Surface overrides: 1 active (review).',
+            'Declared: runtime; not declared: data modes.',
+            'Release: 1.2.3 is published; 1.0.0 is installed.',
+            `Full report: npx --no cockpit doctor --config ${config} --json`,
+            `Generated file detail: npx --no cockpit check --config ${config}`,
+            '',
+        ].join('\n'))
+        expect(capture.output().stderr).toContain('WARNING GUARD_HOSTS_UNDECLARED')
     })
 
     it.each(['sync', 'check'] as const)('routes %s in JSON and human modes', async (command) => {
