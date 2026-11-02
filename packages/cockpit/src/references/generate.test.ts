@@ -485,7 +485,7 @@ describe('reference generation', () => {
                 let stdout = ''
                 let stderr = ''
                 const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: (text: string) => { stderr += text; return true } } }
-                await runCli([command.name, ...json ? ['--json'] : [], ...run], io, {}, { env, createReleaseMetadataTransport })
+                await runCli([...command.name.split(' '), ...json ? ['--json'] : [], ...run], io, {}, { env, createReleaseMetadataTransport })
                 // session has no JSON mode, so its diagnostics are read from the human rendering.
                 const emitted = json ? (JSON.parse(stdout) as { diagnostics: { code: string }[] }).diagnostics.map(row => row.code)
                     : [...stderr.matchAll(/^[A-Z]+ ([A-Z][A-Z0-9_]+)\b/gm)].map(match => match[1]!)

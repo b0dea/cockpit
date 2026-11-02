@@ -9,7 +9,7 @@ import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 export const mechanism = {
     id: 'command-metadata',
     module: 'packages/cockpit/src/command-table.ts',
-    exports: ['commands', 'internalCommands', 'describePublicOption', 'resolveOrdinaryInvocation', 'ordinarySessionCommand', 'isWorkHandler', 'isRecordedAnswerField'],
+    exports: ['commands', 'commandStages', 'commandGroups', 'commandSpelling', 'internalCommands', 'describePublicOption', 'resolveOrdinaryInvocation', 'ordinarySessionCommand', 'isWorkHandler', 'isRecordedAnswerField'],
 } as const
 
 export function isRecordedAnswerField(value: string): boolean {
@@ -42,8 +42,43 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'up'
     | 'upgrade'
 
+export type CommandStage = 'set-up' | 'generate-and-verify' | 'run-the-stack' | 'diagnose' | 'test-and-grade'
+
+/** The order a newcomer meets the commands in, as the README's "Commands at a glance" table names it. */
+export const commandStages: readonly Readonly<{ id: CommandStage; title: string }>[] = Object.freeze([
+    { id: 'set-up', title: 'Set up' },
+    { id: 'generate-and-verify', title: 'Generate and verify' },
+    { id: 'run-the-stack', title: 'Run the stack' },
+    { id: 'diagnose', title: 'Diagnose' },
+    { id: 'test-and-grade', title: 'Test and grade' },
+])
+
+/**
+ * A group is a first command word whose commands are named `<group> <subcommand>`. Each subcommand
+ * keeps its own row, options and handler, so an option one subcommand reads is never accepted and
+ * ignored by another.
+ */
+export const commandGroups: readonly Readonly<{ name: string; summary: string }>[] = Object.freeze([
+    { name: 'work', summary: 'Prepare, accept, execute, review and grade work orders' },
+    { name: 'browser', summary: 'Drive, inspect and capture the declared application in a browser' },
+])
+
+/**
+ * The public command an argv names, and the arguments after it. A group word takes the next word
+ * as its subcommand; `subcommand` is absent when none follows, so the caller can show the group.
+ */
+export function commandSpelling(args: readonly string[]): Readonly<{ name: string | undefined; group?: string; rest: readonly string[] }> {
+    const [first, second, ...rest] = args
+    const group = commandGroups.find(row => row.name === first)
+    if (!group) return { name: first, rest: second === undefined ? [] : [second, ...rest] }
+    if (second === undefined || second.startsWith('-')) return { name: undefined, group: group.name, rest: second === undefined ? [] : [second, ...rest] }
+    return { name: `${group.name} ${second}`, group: group.name, rest }
+}
+
 export interface CommandDefinition {
+    /** The words a person types: one word, or `<group> <subcommand>` for a member of commandGroups. */
     name: string
+    stage: CommandStage
     summary: string
     /** What follows the command name in its help usage line, when it takes more than options. */
     usage?: string
@@ -154,6 +189,7 @@ export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIde
 export const commands: readonly CommandDefinition[] = [
     {
         name: 'init',
+        stage: 'set-up',
         summary: 'Preview, then accept, a first cockpit setup for one agent tool',
         usage: '<root> [options]',
         handler: 'init',
@@ -171,6 +207,7 @@ export const commands: readonly CommandDefinition[] = [
     },
     {
         name: 'document',
+        stage: 'set-up',
         summary: 'Draft cockpit.toml from an existing cockpit, marking every inferred value',
         usage: '[<root>] [options]',
         handler: 'document',
@@ -186,20 +223,8 @@ export const commands: readonly CommandDefinition[] = [
         },
     },
     {
-        name: 'registry-resolve',
-        summary: 'Turn a validated shell registry into data shell scripts can source',
-        handler: 'registry-resolve',
-        visibility: 'public',
-        ordinary: ordinary('registry-resolve', { registry: value('confined-path', true), 'siblings-root': value('confined-path', true), adoption: value('confined-path', true), json: flag }, { configuration: 'none' }),
-        options: {
-            registry: { type: 'string' },
-            'siblings-root': { type: 'string' },
-            adoption: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
         name: 'setup',
+        stage: 'set-up',
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
@@ -211,139 +236,8 @@ export const commands: readonly CommandDefinition[] = [
         },
     },
     {
-        name: 'sync',
-        summary: 'Write the generated stack and agent files from cockpit.toml',
-        handler: 'sync',
-        visibility: 'public',
-        // Adoption rewrites cockpit.toml and moves a team's harness settings, and a real sync rewrites
-        // the guard's own files, so only the dry run is an ordinary agent invocation.
-        ordinary: ordinary('sync', { ...configured, 'dry-run': Object.freeze({ ...flag, required: true as const }) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']), values: Object.freeze([]) }) }),
-        options: {
-            config: { type: 'string' },
-            'dry-run': { type: 'boolean', default: false },
-            adopt: { type: 'string', multiple: true },
-            interactive: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'check',
-        summary: 'Report generated files that no longer match cockpit.toml',
-        handler: 'check',
-        visibility: 'public',
-        ordinary: ordinary('check'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'selftest',
-        summary: 'Test whether agent tools enforce the generated controls',
-        handler: 'selftest',
-        visibility: 'public',
-        ordinary: ordinary('selftest', { ...configured, 'probe-specifications': value('confined-path', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive']), values: Object.freeze([]) }) }),
-        options: {
-            config: { type: 'string' },
-            'probe-specifications': { type: 'string' },
-            'write-probe-specifications': { type: 'string' },
-            interactive: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'upgrade',
-        summary: 'Show the steps to upgrade cockpit without applying them',
-        handler: 'upgrade',
-        visibility: 'public',
-        experimental: true,
-        ordinary: ordinary('upgrade', { ...configured, 'release-evidence': value('confined-path'), 'release-evidence-sha256': value('sha256') }, {
-            selection: 'release-evidence-pair', forbidden: Object.freeze({ presence: Object.freeze([]), values: Object.freeze([{ option: 'release-evidence-sha256', predicate: 'not-lowercase-sha256' as const }]) }),
-        }),
-        options: {
-            config: { type: 'string' },
-            'release-evidence': { type: 'string' },
-            'release-evidence-sha256': { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'up',
-        summary: 'Start or resume the declared environment',
-        handler: 'up',
-        visibility: 'public',
-        ordinary: ordinary('up'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'sleep',
-        summary: 'Release this checkout and stop the stack if no other holder remains',
-        handler: 'sleep',
-        visibility: 'public',
-        ordinary: ordinary('sleep'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'session',
-        summary: 'Keep the environment available for one command, then release it',
-        usage: '[options] -- <command> [args...]',
-        handler: 'session',
-        visibility: 'public',
-        // The guard admits `session --config <file> -- <command>` only when it admits the inner command.
-        ordinary: unavailable('session wraps an arbitrary foreground command'),
-        options: {
-            config: { type: 'string' },
-        },
-    },
-    {
-        name: 'down',
-        summary: 'Stop and remove the stack (on the active local Docker context)',
-        handler: 'down',
-        visibility: 'public',
-        // down removes only the containers and networks cockpit created; reset, which deletes data, stays out.
-        ordinary: ordinary('down'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'reset',
-        summary: 'Preview a reset, or approve that exact preview interactively (on the active local Docker context)',
-        handler: 'reset',
-        visibility: 'public',
-        ordinary: unavailable('reset requires separate approval'),
-        options: {
-            config: { type: 'string' },
-            interactive: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'runtime',
-        summary: 'Measure the local container runtime (runtime measure) and record the result for this machine',
-        usage: 'measure [options]',
-        handler: 'runtime',
-        visibility: 'public',
-        // The probe runs a disposable stack under its own project, cleans it up, and records the result
-        // only in this machine's ignored state, so an agent can measure before its first `up`.
-        ordinary: ordinary('runtime', { ...configured, image: value('local-image', true) }, {
-            positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['measure']) }),
-        }),
-        options: {
-            config: { type: 'string' },
-            image: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
         name: 'sibling',
+        stage: 'set-up',
         summary: 'Add or remove a repository in cockpit.toml (sibling add, sibling remove)',
         usage: 'add|remove <slug> [options]',
         handler: 'sibling',
@@ -363,7 +257,113 @@ export const commands: readonly CommandDefinition[] = [
         },
     },
     {
+        name: 'registry-resolve',
+        stage: 'set-up',
+        summary: 'Turn a validated shell registry into data shell scripts can source',
+        handler: 'registry-resolve',
+        visibility: 'public',
+        ordinary: ordinary('registry-resolve', { registry: value('confined-path', true), 'siblings-root': value('confined-path', true), adoption: value('confined-path', true), json: flag }, { configuration: 'none' }),
+        options: {
+            registry: { type: 'string' },
+            'siblings-root': { type: 'string' },
+            adoption: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'upgrade',
+        stage: 'set-up',
+        summary: 'Show the steps to upgrade cockpit without applying them',
+        handler: 'upgrade',
+        visibility: 'public',
+        experimental: true,
+        ordinary: ordinary('upgrade', { ...configured, 'release-evidence': value('confined-path'), 'release-evidence-sha256': value('sha256') }, {
+            selection: 'release-evidence-pair', forbidden: Object.freeze({ presence: Object.freeze([]), values: Object.freeze([{ option: 'release-evidence-sha256', predicate: 'not-lowercase-sha256' as const }]) }),
+        }),
+        options: {
+            config: { type: 'string' },
+            'release-evidence': { type: 'string' },
+            'release-evidence-sha256': { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'sync',
+        stage: 'generate-and-verify',
+        summary: 'Write the generated stack and agent files from cockpit.toml',
+        handler: 'sync',
+        visibility: 'public',
+        // Adoption rewrites cockpit.toml and moves a team's harness settings, and a real sync rewrites
+        // the guard's own files, so only the dry run is an ordinary agent invocation.
+        ordinary: ordinary('sync', { ...configured, 'dry-run': Object.freeze({ ...flag, required: true as const }) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']), values: Object.freeze([]) }) }),
+        options: {
+            config: { type: 'string' },
+            'dry-run': { type: 'boolean', default: false },
+            adopt: { type: 'string', multiple: true },
+            interactive: { type: 'boolean', default: false },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'check',
+        stage: 'generate-and-verify',
+        summary: 'Report generated files that no longer match cockpit.toml',
+        handler: 'check',
+        visibility: 'public',
+        ordinary: ordinary('check'),
+        options: {
+            config: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'selftest',
+        stage: 'generate-and-verify',
+        summary: 'Test whether agent tools enforce the generated controls',
+        handler: 'selftest',
+        visibility: 'public',
+        ordinary: ordinary('selftest', { ...configured, 'probe-specifications': value('confined-path', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive']), values: Object.freeze([]) }) }),
+        options: {
+            config: { type: 'string' },
+            'probe-specifications': { type: 'string' },
+            'write-probe-specifications': { type: 'string' },
+            interactive: { type: 'boolean', default: false },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'runtime',
+        stage: 'run-the-stack',
+        summary: 'Measure the local container runtime (runtime measure) and record the result for this machine',
+        usage: 'measure [options]',
+        handler: 'runtime',
+        visibility: 'public',
+        // The probe runs a disposable stack under its own project, cleans it up, and records the result
+        // only in this machine's ignored state, so an agent can measure before its first `up`.
+        ordinary: ordinary('runtime', { ...configured, image: value('local-image', true) }, {
+            positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['measure']) }),
+        }),
+        options: {
+            config: { type: 'string' },
+            image: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'up',
+        stage: 'run-the-stack',
+        summary: 'Start or resume the declared environment',
+        handler: 'up',
+        visibility: 'public',
+        ordinary: ordinary('up'),
+        options: {
+            config: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
         name: 'preflight',
+        stage: 'run-the-stack',
         summary: 'Check that the environment is healthy and ready for work',
         handler: 'preflight',
         visibility: 'public',
@@ -374,18 +374,21 @@ export const commands: readonly CommandDefinition[] = [
         },
     },
     {
-        name: 'doctor',
-        summary: 'Report environment problems without changing anything',
-        handler: 'doctor',
+        name: 'session',
+        stage: 'run-the-stack',
+        summary: 'Keep the environment available for one command, then release it',
+        usage: '[options] -- <command> [args...]',
+        handler: 'session',
         visibility: 'public',
-        ordinary: ordinary('doctor'),
+        // The guard admits `session --config <file> -- <command>` only when it admits the inner command.
+        ordinary: unavailable('session wraps an arbitrary foreground command'),
         options: {
             config: { type: 'string' },
-            json: { type: 'boolean', default: false },
         },
     },
     {
         name: 'logs',
+        stage: 'run-the-stack',
         summary: 'Show recent logs for one declared service',
         handler: 'logs',
         visibility: 'public',
@@ -400,7 +403,58 @@ export const commands: readonly CommandDefinition[] = [
         },
     },
     {
+        name: 'sleep',
+        stage: 'run-the-stack',
+        summary: 'Release this checkout and stop the stack if no other holder remains',
+        handler: 'sleep',
+        visibility: 'public',
+        ordinary: ordinary('sleep'),
+        options: {
+            config: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'down',
+        stage: 'run-the-stack',
+        summary: 'Stop and remove the stack (on the active local Docker context)',
+        handler: 'down',
+        visibility: 'public',
+        // down removes only the containers and networks cockpit created; reset, which deletes data, stays out.
+        ordinary: ordinary('down'),
+        options: {
+            config: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'reset',
+        stage: 'run-the-stack',
+        summary: 'Preview a reset, or approve that exact preview interactively (on the active local Docker context)',
+        handler: 'reset',
+        visibility: 'public',
+        ordinary: unavailable('reset requires separate approval'),
+        options: {
+            config: { type: 'string' },
+            interactive: { type: 'boolean', default: false },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'doctor',
+        stage: 'diagnose',
+        summary: 'Report environment problems without changing anything',
+        handler: 'doctor',
+        visibility: 'public',
+        ordinary: ordinary('doctor'),
+        options: {
+            config: { type: 'string' },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
         name: 'baseline-record',
+        stage: 'diagnose',
         summary: 'Record an explicitly confirmed environment baseline',
         handler: 'baseline-record',
         visibility: 'public',
@@ -412,63 +466,63 @@ export const commands: readonly CommandDefinition[] = [
             json: { type: 'boolean', default: false },
         },
     },
-    { name: 'work-intake', handler: 'work-intake', summary: 'Prepare a work order from its source document', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...workOrderOption, intent: { type: 'string' }, candidate: { type: 'string' } } },
-    { name: 'work-status', handler: 'work-status', summary: 'Report current work-order state', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...workOrderOption } },
-    { name: 'work-accept', handler: 'work-accept', summary: 'Interactively accept the exact current work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
-    { name: 'work-renew', handler: 'work-renew', summary: 'Interactively renew a changed work-order contract', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
-    { name: 'work-resume', handler: 'work-resume', summary: 'Resume the next executable step of the single active work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: workOptions },
-    { name: 'work-recover', handler: 'work-recover', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, lock: { type: 'string' }, apply: { type: 'boolean', default: false } } },
-    { name: 'work-execute', handler: 'work-execute', summary: 'Execute one accepted work-order step', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ ...workOrderOption, approach: { type: 'string' } } } },
-    { name: 'work-record', handler: 'work-record', summary: 'Persist current work-order progress', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' } } },
-    { name: 'work-review', handler: 'work-review', summary: 'Review the current accepted work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...workOrderOption } },
-    { name: 'work-sweep', handler: 'work-sweep', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ apply: { type: 'boolean', default: false } } } },
-    { name: 'work-reverse', handler: 'work-reverse', summary: 'Reverse a recorded work-order sweep', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...workOrderOption } },
-    { name: 'work-programme-mint', handler: 'work-programme-mint', summary: 'Mint the next declared programme work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ programme: { type: 'string' }, item: { type: 'string' }, candidate: { type: 'string' } } } },
-    { name: 'work-metrics', handler: 'work-metrics', summary: 'Report work-order metrics', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: workOptions },
-    { name: 'work-grade', handler: 'work-grade', summary: 'Independently grade the current accepted work order', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...workOrderOption } },
-    { name: 'browser-drive', handler: 'browser-drive', summary: 'Drive the declared application browser surfaces', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser-accessibility', handler: 'browser-accessibility', summary: 'Collect accessibility observations from the application', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser-screenshot', handler: 'browser-screenshot', summary: 'Capture the declared application surfaces', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser-debugger', handler: 'browser-debugger', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public', experimental: true,
-        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'test-run', handler: 'test-run', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
+    { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
         ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
         options: { ...workOptions, ...{ gate: { type: 'string' }, mode: { type: 'string', default: 'canonical' }, select: { type: 'string' } } } },
+    { name: 'work intake', handler: 'work-intake', stage: 'test-and-grade', summary: 'Prepare a work order from its source document', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...workOrderOption, intent: { type: 'string' }, candidate: { type: 'string' } } },
+    { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report current work-order state', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...workOrderOption } },
+    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Interactively accept the exact current work order', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
+    { name: 'work renew', handler: 'work-renew', stage: 'test-and-grade', summary: 'Interactively renew a changed work-order contract', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
+    { name: 'work resume', handler: 'work-resume', stage: 'test-and-grade', summary: 'Resume the next executable step of the single active work order', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: workOptions },
+    { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, lock: { type: 'string' }, apply: { type: 'boolean', default: false } } },
+    { name: 'work execute', handler: 'work-execute', stage: 'test-and-grade', summary: 'Execute one accepted work-order step', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ ...workOrderOption, approach: { type: 'string' } } } },
+    { name: 'work record', handler: 'work-record', stage: 'test-and-grade', summary: 'Persist current work-order progress', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' } } },
+    { name: 'work review', handler: 'work-review', stage: 'test-and-grade', summary: 'Review the current accepted work order', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...workOrderOption } },
+    { name: 'work sweep', handler: 'work-sweep', stage: 'test-and-grade', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ apply: { type: 'boolean', default: false } } } },
+    { name: 'work reverse', handler: 'work-reverse', stage: 'test-and-grade', summary: 'Reverse a recorded work-order sweep', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...workOrderOption } },
+    { name: 'work programme-mint', handler: 'work-programme-mint', stage: 'test-and-grade', summary: 'Mint the next declared programme work order', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ programme: { type: 'string' }, item: { type: 'string' }, candidate: { type: 'string' } } } },
+    { name: 'work metrics', handler: 'work-metrics', stage: 'test-and-grade', summary: 'Report work-order metrics', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: workOptions },
+    { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Independently grade the current accepted work order', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...workOrderOption } },
+    { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ role: { type: 'string' } } } },
+    { name: 'browser accessibility', handler: 'browser-accessibility', stage: 'test-and-grade', summary: 'Collect accessibility observations from the application', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ role: { type: 'string' } } } },
+    { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ role: { type: 'string' } } } },
+    { name: 'browser debugger', handler: 'browser-debugger', stage: 'test-and-grade', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public', experimental: true,
+        ordinary: unavailable('work, browser and test-run commands each have their own approval flow'),
+        options: { ...workOptions, ...{ role: { type: 'string' } } } },
 ] as const satisfies readonly CommandDefinition[]
 
 export interface InternalCommandDefinition {

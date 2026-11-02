@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { parseDocument, visit } from 'yaml'
 
-import { commands } from '../command-table.js'
+import { commandSpelling, commands } from '../command-table.js'
 import { stripDevelopmentMarkers } from './development-markers.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import {
@@ -137,7 +137,7 @@ const DESCRIPTION_MAX_BYTES = 512
 const ENTRY_POINT_MAX_LINES = 32
 const INSTALLED_SET_CAP_MAX_BYTES = 65_536
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const COMMAND = /`cockpit\s+([a-z][a-z-]*)\b/g
+const COMMAND = /`cockpit\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?/g
 const INLINE_NUMBERED_STEP = /^\s*\d+[.)]\s+/m
 const INLINE_FENCE = /^\s*```/m
 const COPIED_DECISION_LOGIC = /(?:\bparse\w*\s+(?:the\s+)?(?:registry|cockpit\.toml)|\bTOML\.parse\b|^\s*\[[a-z][a-z0-9_.-]*\]\s*$|\|\s*(?:tier|mount|data mode|verdict)\s*\|)/im
@@ -316,7 +316,7 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
     if (declaredCommands.some(command => !ALLOWED_COMMANDS.has(command))) {
         return refusal('SKILL_COMMAND_UNDECLARED', 'skill declares a command that is not in the cockpit command table', source.path)
     }
-    const invoked = [...body.matchAll(COMMAND)].map(match => match[1]!)
+    const invoked = [...body.matchAll(COMMAND)].map(match => commandSpelling(match.slice(1).filter(word => word !== undefined)).name ?? match[1]!)
     if (invoked.some(command => !declaredCommands.includes(command) || !ALLOWED_COMMANDS.has(command))) {
         return refusal('SKILL_COMMAND_UNDECLARED', 'skill invokes an undeclared cockpit command', source.path)
     }

@@ -638,7 +638,7 @@ async function checkoutProjection(
     }, consumeSetupCheckoutProjection)
 }
 
-// Work orders exist once workorders/ does, and from then on work-review and work-grade run the Codex CLI
+// Work orders exist once workorders/ does, and from then on work review and work grade run the Codex CLI
 // as the independent evaluator whichever agent tool did the work; doctor names a missing one before a
 // grade fails on it.
 async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>): Promise<readonly EnvironmentDiagnostic[]> {
@@ -647,7 +647,7 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([])
         throw error
     }
-    // work-review searches only canonical PATH directories, so doctor does too.
+    // work review searches only canonical PATH directories, so doctor does too.
     for (const directory of (env.PATH ?? '').split(delimiter)) {
         if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
         let canonical: string
@@ -661,7 +661,7 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'EVALUATOR_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
-        message: 'this cockpit has work orders, but the Codex CLI (codex) is not on PATH, and work-review and work-grade run it as the independent evaluator',
+        message: 'this cockpit has work orders, but the Codex CLI (codex) is not on PATH, and work review and work grade run it as the independent evaluator',
         target: 'workorders',
         fix: 'install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml>',
     })])

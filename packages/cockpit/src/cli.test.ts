@@ -169,7 +169,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'sync', 'check', 'selftest', 'upgrade', 'up', 'sleep', 'down', 'runtime', 'preflight', 'doctor', 'logs'])
+        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor'])
         for (const row of rows) {
             const argv = [row.name, ...(row.name === 'selftest' ? ['--probe-specifications', 'probes.json'] : row.name === 'logs' ? ['--service', 'app']
                 : row.name === 'runtime' ? ['measure', '--image', 'node:22-alpine'] : row.name === 'sync' ? ['--dry-run'] : [])]
@@ -349,7 +349,7 @@ describe('CLI help', () => {
     it('lists the commands for a bare invocation and points usage errors at --help', async () => {
         const bare = await runInProcess([])
         expect(bare.status).toBe(2)
-        expect(bare.stderr).toContain('Commands:')
+        expect(bare.stderr).toContain('Set up:')
         expect(bare.stderr).toContain('CLI_COMMAND_REQUIRED')
 
         const bad = await runInProcess(['check', '--unknown'])
@@ -417,53 +417,95 @@ describe('CLI help', () => {
         expect(result.stderr).toBe('')
     })
 
-    it('renders root help from the command table', () => {
+    it('renders root help by stage, with each command group as one entry', () => {
         const result = run(['--help'])
 
         expect(result.status).toBe(0)
         expect(result.stdout).toBe(
             'Usage: cockpit <command> [options]\n\n' +
-            'Commands:\n' +
-            '  init                   Preview, then accept, a first cockpit setup for one agent tool\n' +
-            '  document               Draft cockpit.toml from an existing cockpit, marking every inferred value\n' +
-            '  registry-resolve       Turn a validated shell registry into data shell scripts can source\n' +
-            '  setup                  Clone or locate the declared sibling repositories and link them\n' +
-            '  sync                   Write the generated stack and agent files from cockpit.toml\n' +
-            '  check                  Report generated files that no longer match cockpit.toml\n' +
-            '  selftest               Test whether agent tools enforce the generated controls\n' +
-            '  upgrade                Show the steps to upgrade cockpit without applying them (experimental)\n' +
-            '  up                     Start or resume the declared environment\n' +
-            '  sleep                  Release this checkout and stop the stack if no other holder remains\n' +
-            '  session                Keep the environment available for one command, then release it\n' +
-            '  down                   Stop and remove the stack (on the active local Docker context)\n' +
-            '  reset                  Preview a reset, or approve that exact preview interactively (on the active local Docker context)\n' +
-            '  runtime                Measure the local container runtime (runtime measure) and record the result for this machine\n' +
-            '  sibling                Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
-            '  preflight              Check that the environment is healthy and ready for work\n' +
-            '  doctor                 Report environment problems without changing anything\n' +
-            '  logs                   Show recent logs for one declared service\n' +
-            '  baseline-record        Record an explicitly confirmed environment baseline (experimental)\n' +
-            '  work-intake            Prepare a work order from its source document (experimental)\n' +
-            '  work-status            Report current work-order state (experimental)\n' +
-            '  work-accept            Interactively accept the exact current work order (experimental)\n' +
-            '  work-renew             Interactively renew a changed work-order contract (experimental)\n' +
-            '  work-resume            Resume the next executable step of the single active work order (experimental)\n' +
-            '  work-recover           Inspect or explicitly recover one interrupted work lock (experimental)\n' +
-            '  work-execute           Execute one accepted work-order step (experimental)\n' +
-            '  work-record            Persist current work-order progress (experimental)\n' +
-            '  work-review            Review the current accepted work order (experimental)\n' +
-            '  work-sweep             Inspect or apply a reversible work-order sweep (experimental)\n' +
-            '  work-reverse           Reverse a recorded work-order sweep (experimental)\n' +
-            '  work-programme-mint    Mint the next declared programme work order (experimental)\n' +
-            '  work-metrics           Report work-order metrics (experimental)\n' +
-            '  work-grade             Independently grade the current accepted work order (experimental)\n' +
-            '  browser-drive          Drive the declared application browser surfaces (experimental)\n' +
-            '  browser-accessibility  Collect accessibility observations from the application (experimental)\n' +
-            '  browser-screenshot     Capture the declared application surfaces (experimental)\n' +
-            '  browser-debugger       Prepare an explicitly requested browser debugger (experimental)\n' +
-            '  test-run               Run a declared product test gate and report which tests it selected\n',
+            'Set up:\n' +
+            '  init              Preview, then accept, a first cockpit setup for one agent tool\n' +
+            '  document          Draft cockpit.toml from an existing cockpit, marking every inferred value\n' +
+            '  setup             Clone or locate the declared sibling repositories and link them\n' +
+            '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
+            '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
+            '  upgrade           Show the steps to upgrade cockpit without applying them (experimental)\n\n' +
+            'Generate and verify:\n' +
+            '  sync              Write the generated stack and agent files from cockpit.toml\n' +
+            '  check             Report generated files that no longer match cockpit.toml\n' +
+            '  selftest          Test whether agent tools enforce the generated controls\n\n' +
+            'Run the stack:\n' +
+            '  runtime           Measure the local container runtime (runtime measure) and record the result for this machine\n' +
+            '  up                Start or resume the declared environment\n' +
+            '  preflight         Check that the environment is healthy and ready for work\n' +
+            '  session           Keep the environment available for one command, then release it\n' +
+            '  logs              Show recent logs for one declared service\n' +
+            '  sleep             Release this checkout and stop the stack if no other holder remains\n' +
+            '  down              Stop and remove the stack (on the active local Docker context)\n' +
+            '  reset             Preview a reset, or approve that exact preview interactively (on the active local Docker context)\n\n' +
+            'Diagnose:\n' +
+            '  doctor            Report environment problems without changing anything\n' +
+            '  baseline-record   Record an explicitly confirmed environment baseline (experimental)\n\n' +
+            'Test and grade:\n' +
+            '  test-run          Run a declared product test gate and report which tests it selected\n' +
+            '  work              Prepare, accept, execute, review and grade work orders (experimental)\n' +
+            '  browser           Drive, inspect and capture the declared application in a browser (experimental)\n\n' +
+            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help' or 'cockpit browser --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
+
+        // The README's "Commands at a glance" table is the same map in prose; each row names the
+        // entries of its stage, in help order, by their first word.
+        const readme = readFileSync(resolve(import.meta.dirname, '../../../README.md'), 'utf8')
+        const table = readme.slice(readme.indexOf('## Commands at a glance'), readme.indexOf('## How cockpit compares'))
+        const documented = [...table.matchAll(/^\| ([A-Z][a-z ]+) \| (.+) \|$/gm)].filter(([, stage]) => stage !== 'Stage')
+            .map(([, stage, cells]) => `${stage}:\n${[...new Set([...cells!.matchAll(/`([a-z][a-z-]*)[^`]*`/g)].map(match => match[1]))].join('\n')}`)
+        const helped = result.stdout.split('\n\n').slice(1, -1)
+            .map(section => section.split('\n').map((line, index) => index === 0 ? line : line.trim().split(' ', 1)[0]).join('\n'))
+        expect(documented).toEqual(helped)
+    })
+
+    it('lists a command group with its subcommands and refuses a group without one', async () => {
+        const work = await runInProcess(['work', '--help'])
+        expect(work.status).toBe(0)
+        expect(work.stdout).toBe('Usage: cockpit work <subcommand> [options]\n\n' +
+            'Prepare, accept, execute, review and grade work orders\n\n' +
+            'Status: experimental. This interface may change before a stable release.\n\n' +
+            'Subcommands:\n' +
+            '  intake          Prepare a work order from its source document\n' +
+            '  status          Report current work-order state\n' +
+            '  accept          Interactively accept the exact current work order\n' +
+            '  renew           Interactively renew a changed work-order contract\n' +
+            '  resume          Resume the next executable step of the single active work order\n' +
+            '  recover         Inspect or explicitly recover one interrupted work lock\n' +
+            '  execute         Execute one accepted work-order step\n' +
+            '  record          Persist current work-order progress\n' +
+            '  review          Review the current accepted work order\n' +
+            '  sweep           Inspect or apply a reversible work-order sweep\n' +
+            '  reverse         Reverse a recorded work-order sweep\n' +
+            '  programme-mint  Mint the next declared programme work order\n' +
+            '  metrics         Report work-order metrics\n' +
+            '  grade           Independently grade the current accepted work order\n\n' +
+            "Run 'cockpit work <subcommand> --help' for its options.\n")
+        const browser = await runInProcess(['browser', '--help'])
+        expect(browser.status).toBe(0)
+        expect(browser.stdout).toContain('Subcommands:\n' +
+            '  drive          Drive the declared application browser surfaces\n' +
+            '  accessibility  Collect accessibility observations from the application\n' +
+            '  screenshot     Capture the declared application surfaces\n' +
+            '  debugger       Prepare an explicitly requested browser debugger\n\n')
+        expect((await runInProcess(['work', 'grade', '--help'])).stdout).toMatch(/^Usage: cockpit work grade \[options\]\n/)
+
+        const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
+        expect(await envelope(['work'])).toMatchObject({ invocation: { verb: 'work', exitCode: 2 }, diagnostics: [{ code: 'CLI_COMMAND_REQUIRED',
+            message: 'work requires a subcommand: intake, status, accept, renew, resume, recover, execute, record, review, sweep, reverse, programme-mint, metrics, grade' }] })
+        expect(await envelope(['work', 'bogus'])).toMatchObject({ invocation: { verb: 'unknown' }, diagnostics: [{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "work bogus"' }] })
+        // There are no hyphenated aliases; the refusal names the spelling that runs.
+        const hyphenated = await runInProcess(['work-grade', '--config', 'cockpit.toml'])
+        expect(hyphenated.status).toBe(2)
+        expect(humanStderr(hyphenated.stderr)).toBe('ERROR CLI_UNKNOWN_COMMAND: unknown command "work-grade"; did you mean "work grade"?\n'
+            + "Run 'npx --no cockpit work grade --help' for usage.\n")
+        expect((await envelope(['browser-drive'])).diagnostics).toMatchObject([{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "browser-drive"; did you mean "browser drive"?' }])
     })
 
     it('reads installed package provenance without invoking Git', () => {
@@ -2227,6 +2269,8 @@ describe('generated sync operator admission', () => {
 
 
 describe('work command routing', () => {
+    // Cases name the handler; a person types the command's words, such as `work intake`.
+    const spelling = (handler: string) => commands.find(command => command.handler === handler)!.name
     it('binds acceptance to one same-process human continuation after terminal admission', async () => {
         const digest = 'a'.repeat(64), prompt = `Accept exact contract ${digest}`
         const decide = vi.fn(async (answer: string) => ({ status: answer === digest ? 0 : 2, result: { accepted: answer === digest }, diagnostics: [] }))
@@ -2234,7 +2278,7 @@ describe('work command routing', () => {
         const confirm = vi.fn(async (candidate: Readonly<{ digest: string; prompt: string }>) => candidate.digest)
         let stdout = '', stderr = ''
         const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) }, confirmWorkOrder: confirm }
-        expect(await runCli(['work-accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
         expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-accept', workOrderId: 'WO-001' } })
         expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
         expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
@@ -2242,7 +2286,7 @@ describe('work command routing', () => {
         expect(stdout).toBe('accepted: true\n')
         expect(humanStderr(stderr)).toBe('')
         begin.mockClear(); decide.mockClear(); confirm.mockClear()
-        expect(await runCli(['work-accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)
         expect(begin).not.toHaveBeenCalled(); expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
     })
 
@@ -2276,10 +2320,11 @@ describe('work command routing', () => {
             let stdout = '', stderr = ''
             const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
             const handler = vi.fn(async () => ({ status: 0, result: { operation }, diagnostics: [] }))
-            const status = await runCli([operation, '--config', 'cockpit.toml', ...args, '--json'], io, { [operation]: handler })
+            const verb = spelling(operation)
+            const status = await runCli([...verb.split(' '), '--config', 'cockpit.toml', ...args, '--json'], io, { [operation]: handler })
             expect(status, operation).toBe(0)
             expect(handler, operation).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request })
-            expect(JSON.parse(stdout)).toMatchObject({ result: { operation }, invocation: { verb: operation, exitCode: 0 } })
+            expect(JSON.parse(stdout)).toMatchObject({ result: { operation }, invocation: { verb, exitCode: 0 } })
             expect(stdout.split('\n')).toHaveLength(2)
             expect(stderr).toBe('')
         }
@@ -2319,7 +2364,7 @@ describe('work command routing', () => {
             let stdout = '', stderr = ''
             const handler = vi.fn(async () => ({ status: 0, result: null, diagnostics: [] }))
             const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
-            expect(await runCli([args[0]!, '--config', 'cockpit.toml', ...args.slice(1), '--json'], io, { [args[0]!]: handler })).toBe(2)
+            expect(await runCli([...spelling(args[0]!).split(' '), '--config', 'cockpit.toml', ...args.slice(1), '--json'], io, { [args[0]!]: handler })).toBe(2)
             expect(handler).not.toHaveBeenCalled()
             expect(JSON.parse(stdout).diagnostics[0].code).not.toBe('CLI_UNKNOWN_COMMAND')
             expect(stderr).toBe('')

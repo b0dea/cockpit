@@ -1046,8 +1046,8 @@ function commandInventory(sources) {
         const row = unwrap(element)
         if (!ts.isObjectLiteralExpression(row)) throw new Error(`${path}: command rows must be object literals`)
         const name = unwrap(commandProperty(row, 'name'))
-        if (!ts.isStringLiteral(name) || !/^[a-z][a-z0-9-]*$/.test(name.text)) {
-            throw new Error(`${path}: command names must be literal kebab-case strings`)
+        if (!ts.isStringLiteral(name) || !/^[a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)?$/.test(name.text)) {
+            throw new Error(`${path}: command names must be literal kebab-case strings, one word or a group word and a subcommand`)
         }
         const command = name.text
         if (seen.has(command)) throw new Error(`${path}: duplicate command ${command}`)
@@ -1480,6 +1480,8 @@ function consumerReferencePaths(root, candidate) {
 
 function namedReferenceAuthority(root, candidate, inventory) {
     const commands = new Set(inventory.filter((item) => item.startsWith('command:')).map((item) => item.slice('command:'.length)))
+    // A group word (`work` in `work intake`) names its subcommand list, which `cockpit work --help` prints.
+    const groups = new Set([...commands].filter((command) => command.includes(' ')).map((command) => command.split(' ', 1)[0]))
     const diagnostics = new Set(inventory.filter((item) => item.startsWith('diagnostic:')).map((item) => item.slice('diagnostic:'.length)))
     const flags = new Set(inventory.filter((item) => item.startsWith('flag:')).map((item) => item.slice(item.lastIndexOf(':') + 1)))
     if (candidatePathExists(root, candidate, 'packages/cockpit/src/cli.ts')) {
@@ -1487,7 +1489,7 @@ function namedReferenceAuthority(root, candidate, inventory) {
             flags.add(match[1])
         }
     }
-    return { commands, diagnostics, flags, identifiers: sourceIdentifiers(root, candidate),
+    return { commands, groups, diagnostics, flags, identifiers: sourceIdentifiers(root, candidate),
         schemaFields: new Set(schemaInventory(root, candidate).map(item => item.slice('schema:'.length))),
         consumerPaths: consumerReferencePaths(root, candidate) }
 }
@@ -1511,7 +1513,7 @@ function inspectWalkedProseReferences(walked, { path, authority, resolvePath, to
         else if (kind === 'consumer') {
             if (value.startsWith('/') || value.includes('\\') || value.split('/').some(part => part === '.' || part === '..') || !authority.consumerPaths?.has(value)) missing(line, value)
         }
-        else if (kind === 'command' ? !authority.commands.has(value)
+        else if (kind === 'command' ? !authority.commands.has(value) && !authority.groups?.has(value)
             : kind === 'flag' ? !authority.flags.has(value)
             : !authority.diagnostics.has(value) && !authority.identifiers.has(value)) missing(line, kind === 'command' ? `cockpit ${value}` : value)
     }
@@ -1528,7 +1530,9 @@ function inspectWalkedProseReferences(walked, { path, authority, resolvePath, to
             const value = remaining.slice(span.start + opening.length, span.end - opening.length)
             const prefix = remaining.slice(0, span.start).trimEnd()
             if (/(?:^|\b)(?:run|use|execute|invoke|try|call|enter|type)\s*$/i.test(prefix) || /^\s*\$\s+/.test(value)) {
-                for (const match of value.matchAll(/\bcockpit\s+([a-z][a-z0-9-]*)\b/g)) check(row.line, 'command', match[1])
+                for (const match of value.matchAll(/\bcockpit\s+([a-z][a-z0-9-]*)(?:\s+([a-z][a-z0-9-]*))?/g)) {
+                    check(row.line, 'command', authority.groups?.has(match[1]) && match[2] !== undefined ? `${match[1]} ${match[2]}` : match[1])
+                }
             }
             if (/^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(value)) check(row.line, 'code', value)
             if (/^--[a-z][a-z0-9-]*$/.test(value)) check(row.line, 'flag', value)
@@ -1539,9 +1543,9 @@ function inspectWalkedProseReferences(walked, { path, authority, resolvePath, to
         }
         for (const comment of row.comments) {
             if (comment.startsWith('cockpit:ref')) {
-                const match = /^cockpit:ref (path|code|flag|command|schema|consumer)=([^\s]+)$/.exec(comment)
+                const match = /^cockpit:ref (?:(path|code|flag|schema|consumer)=([^\s]+)|(command)=([a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)?))$/.exec(comment)
                 if (!match) missing(row.line, `malformed structured reference: ${comment}`)
-                else check(row.line, match[1], match[2])
+                else check(row.line, match[1] ?? match[3], match[2] ?? match[4])
             }
             if (comment.startsWith('cockpit:hazard')) {
                 const match = /^cockpit:hazard expires=([^\s]+)$/.exec(comment)

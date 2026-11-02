@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs, types as utilTypes } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
@@ -491,10 +491,10 @@ function unsatisfiedWorkDiagnostic(operation: 'test-run' | 'work-grade' | 'work-
         fix: 'read result.verdict and result.observations: fix the product for FAIL, restore what a DEGRADED stage names, rerun a VOID gate once the tree is unchanged, and run the complete gate without --select for PASS' }
     if (operation === 'work-grade') return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work-grade --config <your cockpit.toml> --work-order <id>' }
+        fix: 'read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
     return { severity: 'error', message,
         code: 'WORK_EXECUTION_PAUSED' satisfies typeof ENVIRONMENT_CODES.WORK_EXECUTION_PAUSED,
-        fix: 'read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work-execute --config <your cockpit.toml> --work-order <id> --approach <text>' }
+        fix: 'read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work execute --config <your cockpit.toml> --work-order <id> --approach <text>' }
 }
 
 function workCommandOutcome(outcome: WorkApplicationOutcome): CommandOutcome {
@@ -717,12 +717,38 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
 }
 
 
+function commandLines(rows: readonly Readonly<{ name: string; summary: string; experimental?: boolean }>[],
+    width = Math.max(...rows.map(row => row.name.length))): string[] {
+    return rows.map(row => `  ${row.name.padEnd(width)}  ${row.summary}${row.experimental ? ' (experimental)' : ''}`)
+}
+
+function groupMembers(group: string): readonly CommandDefinition[] {
+    return commands.filter(command => command.name.startsWith(`${group} `))
+}
+
+// Grouped by stage, with each group as one entry, so a newcomer reads the entry points rather than
+// every subcommand; `cockpit <group> --help` lists the rest.
 function renderHelp(): string {
-    const commandWidth = Math.max(...commands.map((command) => command.name.length))
-    const commandLines = commands.map(
-        (command) => `  ${command.name.padEnd(commandWidth)}  ${command.summary}${'experimental' in command && command.experimental ? ' (experimental)' : ''}`,
-    )
-    return ['Usage: cockpit <command> [options]', '', 'Commands:', ...commandLines, ''].join('\n')
+    const entries = commands.flatMap(command => {
+        const group = commandGroups.find(row => command.name.startsWith(`${row.name} `))
+        if (!group) return [{ stage: command.stage, name: command.name, summary: command.summary, experimental: command.experimental === true }]
+        if (groupMembers(group.name)[0] !== command) return []
+        return [{ stage: command.stage, name: group.name, summary: group.summary,
+            experimental: groupMembers(group.name).every(member => member.experimental === true) }]
+    })
+    const width = Math.max(...entries.map(entry => entry.name.length))
+    const sections = commandStages.map(stage => [`${stage.title}:`,
+        ...commandLines(entries.filter(entry => entry.stage === stage.id), width)].join('\n'))
+    return ['Usage: cockpit <command> [options]', '', sections.join('\n\n'), '',
+        `Run 'cockpit <command> --help' for its options, and ${commandGroups.map(group => `'cockpit ${group.name} --help'`).join(' or ')} for its subcommands.`, ''].join('\n')
+}
+
+function renderGroupHelp(group: Readonly<{ name: string; summary: string }>): string {
+    const members = groupMembers(group.name)
+    return [`Usage: cockpit ${group.name} <subcommand> [options]`, '', group.summary,
+        ...(members.every(member => member.experimental === true) ? ['', 'Status: experimental. This interface may change before a stable release.'] : []),
+        '', 'Subcommands:', ...commandLines(members.map(member => ({ name: member.name.slice(group.name.length + 1), summary: member.summary }))), '',
+        `Run 'cockpit ${group.name} <subcommand> --help' for its options.`, ''].join('\n')
 }
 
 function renderCommandHelp(definition: CommandDefinition): string {
@@ -1389,10 +1415,10 @@ export async function runCli(
     runtime: CliRuntime = {},
 ): Promise<number> {
     const startedAt = performance.now()
-    const [commandName, ...commandArgs] = args
+    const { name: commandName, group, rest: commandArgs } = commandSpelling(args)
     const internal = internalCommands.find(command => command.name === commandName)
     const definition = commands.find(command => command.name === commandName)
-    const verb = internal?.name ?? definition?.name
+    const verb = internal?.name ?? definition?.name ?? (commandName === undefined ? group : undefined)
         ?? (commandArgs.length === 0 && commandName === '--help' ? 'help'
             : commandArgs.length === 0 && commandName === '--version' ? 'version' : 'unknown')
     let resolvedConfigPath: string | null = null
@@ -1489,12 +1515,22 @@ export async function runCli(
     const operators: OperatorHandlers = { ...defaultOperatorHandlers(runtime), ...handlerOverrides }
     const optionTerminator = commandArgs.indexOf('--')
     const optionArgs = commandArgs.slice(0, optionTerminator === -1 ? commandArgs.length : optionTerminator)
-    if (definition && optionArgs.some(arg => arg === '--help' || arg === '-h')) {
+    const helpRequested = optionArgs.some(arg => arg === '--help' || arg === '-h')
+    if (definition && helpRequested) {
         io.stdout.write(renderCommandHelp(definition))
         return finish(EXIT_CODES.success)
     }
+    const groupDefinition = commandName === undefined ? commandGroups.find(row => row.name === group) : undefined
+    if (groupDefinition && helpRequested) {
+        io.stdout.write(renderGroupHelp(groupDefinition))
+        return finish(EXIT_CODES.success)
+    }
+    // A hyphen where a subcommand's space belongs is the likeliest slip, so name the spelling that runs.
+    const respelled = definition || !commandName ? undefined : commands.find(command => command.name === commandName.replace('-', ' '))
     // Resolved before dispatch: the publication tail below may only forward outcomes, not decide anything.
-    const usageHint = definition ? `Run 'npx --no cockpit ${definition.name} --help' for usage.\n`
+    const helpTarget = definition ?? respelled
+    const usageHint = helpTarget ? `Run 'npx --no cockpit ${helpTarget.name} --help' for usage.\n`
+        : group ? `Run 'npx --no cockpit ${group} --help' for its subcommands.\n`
         : commandName ? `Run 'npx --no -- cockpit --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
@@ -1503,9 +1539,10 @@ export async function runCli(
         : undefined
 
     if (!commandName) {
-        outcome = usageOutcome('CLI_COMMAND_REQUIRED', 'a command is required')
+        outcome = usageOutcome('CLI_COMMAND_REQUIRED', group === undefined ? 'a command is required'
+            : `${group} requires a subcommand: ${groupMembers(group).map(member => member.name.slice(group.length + 1)).join(', ')}`)
     } else if (!definition) {
-        outcome = usageOutcome('CLI_UNKNOWN_COMMAND', `unknown command "${commandName}"`)
+        outcome = usageOutcome('CLI_UNKNOWN_COMMAND', `unknown command "${commandName}"${respelled ? `; did you mean "${respelled.name}"?` : ''}`)
     } else if (definition.handler === 'init' && Object.keys(definition.options).some(name => optionCount(optionArgs, name) > 1)) {
         outcome = usageOutcome('CLI_USAGE_INVALID', 'each init option may be supplied only once')
     } else if (

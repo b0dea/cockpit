@@ -136,21 +136,21 @@ describe('maintainer reference boundary', () => {
             const candidate = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
             const inventory = deriveDocumentationInventory({ root, expectedFixedPoint: fixedPoint, candidate })
             const expectedCommands = [
-                'baseline-record', 'browser-accessibility', 'browser-debugger', 'browser-drive', 'browser-screenshot',
+                'baseline-record', 'browser accessibility', 'browser debugger', 'browser drive', 'browser screenshot',
                 'check', 'doctor', 'document', 'down', 'init', 'logs', 'preflight', 'registry-resolve', 'reset', 'runtime', 'selftest',
-                'session', 'setup', 'sibling', 'sleep', 'sync', 'test-run', 'up', 'upgrade', 'work-accept', 'work-execute', 'work-grade',
-                'work-intake', 'work-metrics', 'work-programme-mint', 'work-record', 'work-recover', 'work-renew', 'work-resume',
-                'work-reverse', 'work-review', 'work-status', 'work-sweep',
+                'session', 'setup', 'sibling', 'sleep', 'sync', 'test-run', 'up', 'upgrade', 'work accept', 'work execute', 'work grade',
+                'work intake', 'work metrics', 'work programme-mint', 'work record', 'work recover', 'work renew', 'work resume',
+                'work reverse', 'work review', 'work status', 'work sweep',
             ].map(name => `command:${name}`).sort()
 
             expect(inventory.errors).toEqual([])
             expect(inventory.navigationItems.filter(item => item.startsWith('command:'))).toEqual(expectedCommands)
             expect(inventory.items).toEqual(expect.arrayContaining([
-                'flag:work-intake:--config',
-                'flag:work-intake:--json',
-                'flag:work-intake:--work-order',
-                'flag:work-review:--work-order',
-                'flag:browser-drive:--role',
+                'flag:work intake:--config',
+                'flag:work intake:--json',
+                'flag:work intake:--work-order',
+                'flag:work review:--work-order',
+                'flag:browser drive:--role',
                 'flag:test-run:--gate',
                 'flag:test-run:--mode',
                 'flag:test-run:--select',

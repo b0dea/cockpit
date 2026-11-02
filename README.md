@@ -60,7 +60,7 @@ flowchart LR
     agents --> tools["Claude Code, Codex, OpenCode"]
     stack --> work(("agent works"))
     tools --> work
-    work -- "work-grade" --> grade["separate evaluator"]
+    work -- "work grade" --> grade["separate evaluator"]
 ```
 
 1. **Generate.** `cockpit sync` writes the Compose file and every agent tool's instructions, skills,
@@ -152,13 +152,14 @@ watch `check` catch it, then read the configuration section by section.
 
 | Stage | Commands |
 |---|---|
-| Set up | `init`, `document`, `setup`, `sibling add` / `sibling remove` |
+| Set up | `init`, `document`, `setup`, `sibling add` / `sibling remove`, `registry-resolve`, `upgrade` *(experimental)* |
 | Generate and verify | `sync`, `check`, `selftest` |
 | Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
-| Diagnose | `doctor` |
-| Test and grade | `test-run`, `work-*` *(experimental)*, `browser-*` *(experimental)* |
+| Diagnose | `doctor`, `baseline-record` *(experimental)* |
+| Test and grade | `test-run`, `work` *(experimental)*, `browser` *(experimental)* |
 
-Every command and flag is in the [CLI reference](docs/cli-reference.md).
+`cockpit --help` lists the same stages; `cockpit work --help` and `cockpit browser --help` list
+their subcommands. Every command and flag is in the [CLI reference](docs/cli-reference.md).
 
 ## How cockpit compares
 

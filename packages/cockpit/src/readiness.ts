@@ -79,7 +79,7 @@ const entries: readonly ReadinessEntry[] = [
         needs: 'Codex runs the guard hook only once a person on this machine has trusted it',
         fix: 'a person trusts the hook from codex in a terminal in the cockpit root' },
     { id: 'work-evaluator', level: 'recommended', appliesTo: BOTH, codes: [C.EVALUATOR_UNAVAILABLE],
-        needs: 'work-review and work-grade run the Codex CLI as the evaluator independent of the agent that did the work',
+        needs: 'work review and work grade run the Codex CLI as the evaluator independent of the agent that did the work',
         fix: 'install the Codex CLI and sign in with codex login' },
 ]
 

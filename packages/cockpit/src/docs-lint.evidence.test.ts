@@ -682,6 +682,17 @@ describe('documentation evidence detectors', () => {
         expect(inspect('Inspect `environment/generated-application.ts`.')).toMatchObject([{ code: 'DOCEV050_NAMED_REFERENCE_MISSING' }])
     })
 
+    it('reads a group word and the word after it as one subcommand reference', () => {
+        const authority = { commands: new Set(['sibling', 'work intake']), groups: new Set(['work']), diagnostics: new Set<string>(),
+            identifiers: new Set<string>(), flags: new Set<string>() }
+        const inspect = (body: string) => inspectProseReferences({ path: 'docs/synthetic.md', body, authority, resolvePath: () => 'missing' })
+        expect(inspect('Run `cockpit work intake --config cockpit.toml`, `cockpit work --help` or `cockpit sibling add api`.\n'
+            + '<!-- cockpit:ref command=work intake --> <!-- cockpit:ref command=work -->')).toEqual([])
+        expect(inspect('Run `cockpit work-intake --config cockpit.toml`.')).toMatchObject([{ code: 'DOCEV050_NAMED_REFERENCE_MISSING', message: 'cockpit work-intake' }])
+        expect(inspect('Run `cockpit work bogus`.')).toMatchObject([{ code: 'DOCEV050_NAMED_REFERENCE_MISSING', message: 'cockpit work bogus' }])
+        expect(inspect('<!-- cockpit:ref command=work bogus -->')).toMatchObject([{ code: 'DOCEV050_NAMED_REFERENCE_MISSING', message: 'cockpit work bogus' }])
+    })
+
     it('derives structured schema references from the committed schema inventory', () => {
         const fixture = createEvidenceFixture('<!-- cockpit:ref schema=cockpit.name --> Read `cockpit.name`.')
         try {

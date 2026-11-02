@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 
 import type { DiagnosticInventory } from '../../../../scripts/diagnostic-inventory.mjs'
-import { commands } from '../command-table.js'
+import { commandStages, commands } from '../command-table.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
 import type { GeneratedSurfaceSelftestProjection } from '../environment/generated-application.js'
 import { executeProbe } from '../environment-exec/execute.js'
@@ -425,7 +425,8 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             + '\n## JSON Schema\n\n```json\n' + renderCockpitSchema().trim() + '\n```\n'
         const list = documentHeading('Command list')
             + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
-            + commands.map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
+            + commandStages.map(stage => `## ${stage.title}\n\n` + commands.filter(command => command.stage === stage.id)
+                .map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')).join('\n')
         const matrix = committed ? renderCapabilityMatrix(committed.cells, committed.sha256, collection.skills)
             : documentHeading('Capability matrix') + MATRIX_STATES + 'This version lists the cells that `cockpit selftest` would test for one configuration. Listing a cell confirms nothing, and a missing test result never counts as confirmation.\n\n'
             + `<!-- Source manifest: ${expectation!.generatedManifestSha256} -->\n\n| Harness | Capability | Skill | Evidence |\n| --- | --- | --- | --- |\n`

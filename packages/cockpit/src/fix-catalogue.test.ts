@@ -244,7 +244,7 @@ describe('printed cockpit commands', () => {
     }, 120_000)
 
     // Shipped skills once printed `logs` without its required --service, work commands without
-    // --config, and a bare `cockpit work-intake` that exits 127 for a dev-dependency install. A text
+    // --config, and a bare `cockpit work intake` that exits 127 for a dev-dependency install. A text
     // rule cannot know each command's required options, so every printed command goes through the
     // real argument parser and decoder, stopping at a stub handler before any work happens.
     it('reach a command handler when copied from any shipped surface, rendered guide or hand-written document', async () => {

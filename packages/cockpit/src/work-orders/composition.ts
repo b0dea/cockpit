@@ -237,7 +237,7 @@ const MAX_REPOSITORY_PATHS = 4_096
 const MAX_REPOSITORY_FILE_BYTES = 8 * 1_048_576
 const MAX_REPOSITORY_AGGREGATE_BYTES = 64 * 1_048_576
 const VERIFICATION_TIMEOUT_FIELD = 'workorders.verification_timeout_seconds'
-const EVALUATOR_MISSING = 'the Codex CLI (codex) is not on PATH, and work-review and work-grade run it as the independent evaluator'
+const EVALUATOR_MISSING = 'the Codex CLI (codex) is not on PATH, and work review and work grade run it as the independent evaluator'
 const EVALUATOR_INSTALL = 'install it with npm install -g @openai/codex and sign in with codex login'
 const DEFAULT_EXECUTABLE_DIRECTORIES = Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])
 // The Codex CLI's --json stream carries every command it ran and that command's output; the first event
@@ -681,7 +681,7 @@ function statusPath(record: string, spaces: number): string {
 
 // Work-order coordination files change as the work is tracked, not as the product changes, so they never
 // make proof stale: the orders and programme ledgers themselves, cockpit's private state, and the progress
-// event files work-record reads (otherwise each recorded event would stale every earlier step's proof).
+// event files work record reads (otherwise each recorded event would stale every earlier step's proof).
 const PROGRESS_EVENT_DIRECTORY = 'workorders/events/'
 
 function coordinationPaths(orders: readonly OrderObservation[]): ReadonlySet<string> {
@@ -1051,7 +1051,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (held.owner.lockId !== id || held.status.dev !== heldClaimant.status.dev || held.status.ino !== heldClaimant.status.ino
             || !held.bytes.equals(heldClaimant.bytes)) return new Error('work-order transaction lock ownership evidence is inconsistent')
         const holder = await probeHolderState(held.owner.pid)
-        return new Error(`work-order transaction lock owner pid ${String(held.owner.pid)} is ${holder}; inspect with npx --no cockpit work-recover --config ${shellQuote(config.source.path)} --lock ${shellQuote(id)} and use --apply only after positive dead-holder evidence`)
+        return new Error(`work-order transaction lock owner pid ${String(held.owner.pid)} is ${holder}; inspect with npx --no cockpit work recover --config ${shellQuote(config.source.path)} --lock ${shellQuote(id)} and use --apply only after positive dead-holder evidence`)
     }
     const withLock = async <T>(id: string, action: () => Promise<T>, expectedCommonDirectory?: string): Promise<T> => {
         const inherited = transactionScope.getStore()
@@ -1604,7 +1604,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             || descriptor.version !== 1 || !['task', 'issue', 'spec', 'decision', 'programme'].includes(descriptor.kind as string)
             || typeof descriptor.reference !== 'string' || typeof descriptor.certification !== 'boolean' || typeof descriptor.crossSession !== 'boolean'
             || descriptor.programme !== null && (typeof descriptor.programme !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(descriptor.programme))) {
-            throw new Error('intent descriptor has an invalid closed JSON shape; required fields prevent ambiguous routing; fix: follow the Intent descriptor section of ./node_modules/@b0dea/cockpit/docs/work-and-browser.md, then rerun npx --no cockpit work-intake with --intent <relative-json-path>')
+            throw new Error('intent descriptor has an invalid closed JSON shape; required fields prevent ambiguous routing; fix: follow the Intent descriptor section of ./node_modules/@b0dea/cockpit/docs/work-and-browser.md, then rerun npx --no cockpit work intake with --intent <relative-json-path>')
         }
         const upstreamPath = descriptor.reference
         const upstream = readBounded(root, upstreamPath, MAX_DOCUMENT_BYTES); const upstreamAgain = readBounded(root, upstreamPath, MAX_DOCUMENT_BYTES)

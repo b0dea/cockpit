@@ -5,13 +5,13 @@ describe('UI driving gate', () => {
     it('requires an activating field and names a satisfying command', () => {
         expect(evaluateUiGate({ receipts: [] })).toEqual({
             kind: 'refusal', reason: 'UI evidence requires an activating browser command',
-            satisfyingCommand: 'npx --no cockpit browser-drive --config cockpit.toml, npx --no cockpit browser-accessibility --config cockpit.toml, or npx --no cockpit browser-screenshot --config cockpit.toml',
+            satisfyingCommand: 'npx --no cockpit browser drive --config cockpit.toml, npx --no cockpit browser accessibility --config cockpit.toml, or npx --no cockpit browser screenshot --config cockpit.toml',
         })
     })
 
     it('refuses suite runners, bare spec paths and structural receipt copies', () => {
         for (const activating of ['npm test', 'tests/ui.spec.ts']) {
-            expect(evaluateUiGate({ activating, receipts: [] })).toMatchObject({ kind: 'refusal', satisfyingCommand: expect.stringContaining('npx --no cockpit browser-drive --config') })
+            expect(evaluateUiGate({ activating, receipts: [] })).toMatchObject({ kind: 'refusal', satisfyingCommand: expect.stringContaining('npx --no cockpit browser drive --config') })
         }
         expect(evaluateUiGate({ activating: 'drive', receipts: [{ kind: 'drive', activation: 'application' }] })).toMatchObject({
             kind: 'refusal', reason: expect.stringContaining('issued'),

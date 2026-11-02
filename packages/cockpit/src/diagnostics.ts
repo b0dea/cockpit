@@ -297,7 +297,7 @@ export function renderHumanDiagnostics(
         if (outcome.result === null || typeof outcome.result !== 'object') return ''
         // Work, browser and test commands return their whole result as the answer, and an unmet gate,
         // grade or step returns one with a failing status: the person needs that evidence either way.
-        if (command !== undefined && /^(?:work-|browser-|test-run$)/.test(command)) return renderHumanValue(outcome.result)
+        if (command !== undefined && /^(?:(?:work|browser) |test-run$)/.test(command)) return renderHumanValue(outcome.result)
         if (outcome.status !== 0) return ''
         if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === true
             && 'changes' in outcome.result && Array.isArray(outcome.result.changes)) {
