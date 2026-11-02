@@ -126,7 +126,7 @@ describe('surface rendering', () => {
         expect(renderSurfaceSet(noSettings)).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
     })
 
-    it('retains the authenticated checkout root of a projected guide', () => {
+    it('records a projected guide by sibling and in-sibling path, never by its machine path or content', () => {
         const value = input()
         const path = '.cockpit/siblings/peer.md'
         const guide = '/workspace/peer/AGENTS.md'
@@ -136,7 +136,7 @@ describe('surface rendering', () => {
             ...value,
             projection: {
                 ...value.projection,
-                links: [{ path, target: '../../../peer/AGENTS.md', sourceGuidePath: guide,
+                links: [{ sibling: 'peer', path, target: '../../../peer/AGENTS.md', sourceGuidePath: guide,
                     sourceContentPath: guide, sourceContentSha256: sha256, sourceContentIdentity: identity }],
                 native: value.projection.native.map(row => ({ ...row, linkPath: path })),
             },
@@ -145,7 +145,7 @@ describe('surface rendering', () => {
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind !== 'complete') return
         expect(result.entries.find(entry => entry.path === path)).toMatchObject({
-            kind: 'symlink', source: { root: '/workspace/peer', path: guide, sha256, identity },
+            kind: 'symlink', source: { sibling: 'peer', path: 'AGENTS.md' },
         })
     })
 

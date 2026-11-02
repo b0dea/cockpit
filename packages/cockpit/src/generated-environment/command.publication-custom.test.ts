@@ -4,7 +4,7 @@ import fsPromises from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { readFile, readdir, rm, symlink, writeFile, mkdir, rename, realpath, lstat, readlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
@@ -402,6 +402,37 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const repairedLedger = await ownership(first.root)
             expect((repairedLedger.entries as readonly { path: string }[]).filter(({ path }) => reconciledPaths.has(path)))
                 .toEqual(reconciledOwnership)
+            expect(JSON.stringify(repairedLedger)).not.toContain(first.root)
+
+            // The guide is the sibling team's file: edits to it, a checkout that replaces it, and a
+            // clone of the whole workspace at another path leave cockpit's link and record current.
+            const ledgerBytes = await readFile(join(first.root, '.cockpit/generated-environment-ownership.json'), 'utf8')
+            await writeFile(join(first.root, 'app/AGENTS.md'), 'Synthetic sibling guide.\nA rule the sibling team added.\n')
+            await writeFile(join(first.root, 'app/AGENTS.md.next'), 'Synthetic sibling guide.\nA rule from a checkout.\n')
+            await rename(join(first.root, 'app/AGENTS.md.next'), join(first.root, 'app/AGENTS.md'))
+            const edited = await checkGeneratedEnvironment({ configPath: first.configPath })
+            expect(edited, JSON.stringify(edited.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(first.root, '.sibling-app-AGENTS.md'), 'utf8')).toContain('A rule from a checkout.')
+            expect(await syncGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(first.root, '.cockpit/generated-environment-ownership.json'), 'utf8')).toBe(ledgerBytes)
+            const clone = `${first.root}-clone`
+            await rename(first.root, clone)
+            try {
+                const cloned = await checkGeneratedEnvironment({ configPath: join(clone, basename(first.configPath)) })
+                expect(cloned, JSON.stringify(cloned.diagnostics)).toMatchObject({ kind: 'complete' })
+            } finally {
+                await rename(clone, first.root)
+            }
+            await rm(join(first.root, '.sibling-app-AGENTS.md'))
+            await writeFile(join(first.root, '.sibling-app-AGENTS.md'), 'Synthetic sibling guide.\nA rule from a checkout.\n')
+            expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_STATE_CONFLICT', target: '.sibling-app-AGENTS.md' })],
+            })
+            await rm(join(first.root, '.sibling-app-AGENTS.md'))
+            await symlink('app/CLAUDE.md', join(first.root, '.sibling-app-AGENTS.md'))
+            expect((await checkGeneratedEnvironment({ configPath: first.configPath })).kind).toBe('refusal')
+            await rm(join(first.root, '.sibling-app-AGENTS.md'))
+            expect(await syncGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'complete' })
 
             const active = await readFile(first.configPath, 'utf8')
             const withoutSurfaces = active

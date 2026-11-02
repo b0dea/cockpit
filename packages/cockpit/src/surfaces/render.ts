@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, relative } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
@@ -15,6 +15,7 @@ import { stripDevelopmentMarkers } from './development-markers.js'
 import {
     captureOpenCodeRootMembers,
     classifySurfaceOwnership,
+    symlinkSource,
     type OpenCodeRootMember,
     type SurfaceDesiredEntry,
     type SurfaceDiagnostic,
@@ -542,9 +543,12 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         const guide = evidence.find(row => row.kind === 'guide' && row.path === link.sourceGuidePath
             && row.sha256 === link.sourceContentSha256 && row.identity === link.sourceContentIdentity)
         if (!guide || guide.kind !== 'guide') return refuse('SURFACE_INPUT_INVALID', 'projection link lost its guide evidence', link.path)
+        const guidePath = relative(guide.root, link.sourceGuidePath as string)
+        if (typeof link.sibling !== 'string' || !symlinkSource({ sibling: link.sibling, path: guidePath })) {
+            return refuse('SURFACE_INPUT_INVALID', 'projection link does not name a guide inside its sibling', link.path)
+        }
         symlinks.push({ kind: 'symlink', path: link.path, harnesses: owners, scope: 'scoped', capability: 'instructed', writer: 'cockpit', schemaVersion: 1,
-            ownership: 'symlink', target: link.target, source: { root: guide.root, path: link.sourceGuidePath as string,
-                sha256: link.sourceContentSha256, identity: link.sourceContentIdentity } })
+            ownership: 'symlink', target: link.target, source: { sibling: link.sibling, path: guidePath } })
     }
     for (const native of captured.projection.native) {
         if (!object(native) || typeof native.target !== 'string' || !configuredSet.has(native.target) || typeof native.path !== 'string'

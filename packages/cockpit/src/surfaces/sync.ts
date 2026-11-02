@@ -6,6 +6,7 @@ import {
     classifySurfaceOwnership,
     removeSharedOwnership,
     renderSharedPostimage,
+    symlinkSource,
     type SurfaceDesiredEntry,
     type SurfaceDiagnostic,
     type SurfacePriorOwnedEntry,
@@ -74,10 +75,7 @@ function priorEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Surfa
     }
     if (value.kind === 'symlink') {
         return exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'target', 'source'])
-            && value.ownership === 'symlink' && typeof value.target === 'string' && object(value.source)
-            && exact(value.source, ['root', 'path', 'sha256', 'identity']) && typeof value.source.root === 'string'
-            && typeof value.source.path === 'string' && typeof value.source.sha256 === 'string' && SHA256.test(value.source.sha256)
-            && typeof value.source.identity === 'string' && value.source.identity.length > 0
+            && value.ownership === 'symlink' && typeof value.target === 'string' && symlinkSource(value.source)
             ? value as unknown as SurfacePriorOwnedEntry : undefined
     }
     if (value.kind !== 'shared-region' || value.ownership !== 'shared-region'

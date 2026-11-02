@@ -2791,11 +2791,12 @@ async function prepareSurfaces(
         }
     }
     for (const entry of adoptedEntries) if (entry.kind === 'symlink') {
-        const offset = relative(entry.source.root, entry.source.path)
-        const destinationTarget = resolve(prepared.root, dirname(entry.path), entry.target)
-        if (offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset) || destinationTarget !== entry.source.path
-            || !evidence.some(row => row.kind === 'guide' && row.root === entry.source.root && row.path === entry.source.path
-                && row.sha256 === entry.source.sha256 && row.identity === entry.source.identity)) {
+        const root = siblingRoots.get(entry.source.sibling)
+        const sourcePath = root === undefined ? undefined : resolve(root, entry.source.path)
+        const offset = root === undefined || sourcePath === undefined ? '..' : relative(root, sourcePath)
+        if (offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset)
+            || resolve(prepared.root, dirname(entry.path), entry.target) !== sourcePath
+            || !evidence.some(row => row.kind === 'guide' && row.root === root && row.path === sourcePath)) {
             return refuse('SURFACE_STATE_CONFLICT', 'a projected symlink target is not bound to its authenticated sibling source', entry.path)
         }
     }
@@ -3287,12 +3288,8 @@ async function classifyOwnedState(
         facts.push(fact)
         if (observed.kind === 'file') observations.push({ path, kind: 'file', bytes: observed.bytes, confinement: 'confined', identity: sourceIdentity(observed.identity) })
         else if (observed.kind === 'symlink' && fact.entry.kind === 'symlink') {
-            const entry = fact.entry
-            const source = await observeSiblingGuides({ allowedRoots: [entry.source.root], requests: [{ slug: 'owned', root: entry.source.root, sourcePath: entry.source.path }] })
-            const guide = source.kind === 'complete' ? source.observations[0] : undefined
-            observations.push({ path, kind: 'symlink', target: observed.target, identity: JSON.stringify(observed.identity),
-                confinement: guide ? 'confined' : 'unknown',
-                ...(guide ? { source: { ...entry.source, sha256: guide.contentSha256, identity: guide.contentIdentity } } : {}) })
+            // The anchored read reported the link itself, inside the cockpit root, without following it.
+            observations.push({ path, kind: 'symlink', target: observed.target, identity: JSON.stringify(observed.identity), confinement: 'confined' })
         } else observations.push({ path, kind: observed.kind, confinement: observed.kind === 'missing' ? 'confined' : 'unknown' })
     }
     return classifyGeneratedPaths(facts, observations)
