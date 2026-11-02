@@ -206,19 +206,30 @@ export function renderCockpitSchema(): string {
     ;(schema['x-cockpit-runtime-checks'] as unknown[]).push(...generatedChecks)
     ;(schema['x-cockpit-editor-limitations'] as unknown[]).push(...generatedChecks)
 
+    // Found by shape, so every table that embeds a provenance carries the rule, wherever it sits.
+    const requireProvenanceEvidence = (node: JsonSchema): void => {
+        const fields = node.properties as Record<string, JsonSchema> | undefined
+        if (fields?.observed_on && fields.kind && fields.source) {
+            node.anyOf = [
+                { properties: { kind: { enum: ['declared'] } } },
+                { properties: { kind: { enum: ['measured'] } }, required: ['observed_on'] },
+                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed', 'observed_on'] },
+            ]
+        }
+        for (const value of Object.values(node)) {
+            if (Array.isArray(value)) for (const entry of value) {
+                if (entry !== null && typeof entry === 'object') requireProvenanceEvidence(entry as JsonSchema)
+            }
+            else if (value !== null && typeof value === 'object') requireProvenanceEvidence(value as JsonSchema)
+        }
+    }
+
     const refineGeneratedSchema = (node: JsonSchema): void => {
         const fields = node.properties as Record<string, JsonSchema> | undefined
         if (fields?.location && fields.argv) {
             node.oneOf = [
                 { properties: { location: { enum: ['host'] } }, not: { required: ['service'] } },
                 { properties: { location: { enum: ['in-stack'] } }, required: ['service'] },
-            ]
-        }
-        if (fields?.observed_on && fields.kind && fields.source) {
-            node.anyOf = [
-                { properties: { kind: { enum: ['declared'] } } },
-                { properties: { kind: { enum: ['measured'] } }, required: ['observed_on'] },
-                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed', 'observed_on'] },
             ]
         }
         if (fields?.image && fields.build && fields.command) {
@@ -264,6 +275,8 @@ export function renderCockpitSchema(): string {
         { required: ['mcp_sources'], properties: { mcp_sources: { minItems: 1 } } },
     ]
     refineGeneratedSchema(siblingProperties.derives)
+
+    requireProvenanceEvidence(schema)
 
     return `${JSON.stringify(schema, null, 2)}\n`
 }

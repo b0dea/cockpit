@@ -212,9 +212,11 @@ function configurationReferenceGaps(page: string, schema: SchemaNode): string[] 
             const matches = rows.filter(row => row[0] === `\`${key}\``)
             if (matches.length !== 1 || !isNode(child)) { gaps.push(`${path}: expected one row in #${id}, found ${matches.length}`); continue }
             const row = matches[0]!.join(' | ')
-            if (required.has(key)) expectText(matches[0]![3]!, 'required', path, 'required')
+            if (required.has(key)) expectText(matches[0]![4]!, 'required', path, 'required')
+            // The field's own sentence belongs in the Meaning cell, not folded into the constraints.
+            if (typeof child.description === 'string' && matches[0]![1] !== child.description) gaps.push(`${path}: Meaning cell does not hold the description`)
             const nested = isTable(child) ? [child] : isTable(child.items) ? [child.items as SchemaNode] : variants(child) ?? (isNode(child.items) ? variants(child.items) : undefined) ?? []
-            const links = [...matches[0]![1]!.matchAll(/\]\(#([^)]+)\)/g)].map(match => match[1]!)
+            const links = [...matches[0]![2]!.matchAll(/\]\(#([^)]+)\)/g)].map(match => match[1]!)
             if (links.length !== nested.length) gaps.push(`${path}: links ${links.length} tables, expected ${nested.length}`)
             nested.forEach((branch, index) => table(branch, links[index] ?? '', path))
             facts(child, row, path)

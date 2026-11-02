@@ -130,8 +130,8 @@ export const SafeUrlPath = z
 
 export const EnvironmentFile = z
     .object({
-        template: SafeRelativePath,
-        instance: SafeRelativePath,
+        template: SafeRelativePath.describe('Tracked template file the instance is created from.'),
+        instance: SafeRelativePath.describe('Machine-local file created from the template and left out of version control.'),
     })
     .strict()
     .refine((file) => file.template !== file.instance, {
@@ -147,10 +147,10 @@ export const MAX_COLD_START_SECONDS = 3_600
 
 export const MachineFloor = z
     .object({
-        runtime_memory_mb: z.number().int().positive(),
-        runtime_cpus: z.number().positive(),
-        free_disk_mb: z.number().int().positive(),
-        cold_start_seconds: z.number().int().positive().max(MAX_COLD_START_SECONDS),
+        runtime_memory_mb: z.number().int().positive().describe('Least memory in megabytes the container runtime must offer before the stack starts.'),
+        runtime_cpus: z.number().positive().describe('Least number of CPUs the container runtime must offer before the stack starts.'),
+        free_disk_mb: z.number().int().positive().describe('Least free disk space in megabytes the stack needs before it starts.'),
+        cold_start_seconds: z.number().int().positive().max(MAX_COLD_START_SECONDS).describe('Seconds a first start may take; start fails and reports unhealthy beyond it. At most one hour.'),
     })
     .strict()
 
@@ -190,12 +190,12 @@ export function parseBrowserNetworkExposure(
 
 export const EntrypointDerivative = z
     .object({
-        name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
-        kind: z.enum(ENTRYPOINT_KINDS),
-        port: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
-        path: SafeUrlPath,
-        hostname: z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+localhost(?![\s\S])/).optional(),
-        scheme: z.enum(['http', 'https']).optional(),
+        name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Name that identifies this entrypoint in command output.'),
+        kind: z.enum(ENTRYPOINT_KINDS).describe('What the address is used for, such as an application origin or a callback URL.'),
+        port: z.string().regex(/^[A-Z][A-Z0-9_]*$/).describe('Port-base variable from [ports.bases] whose leased port this address uses.'),
+        path: SafeUrlPath.describe('Absolute URL path appended to the origin.'),
+        hostname: z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+localhost(?![\s\S])/).optional().describe('Named local URL host, a subdomain of .localhost; omit to use 127.0.0.1.'),
+        scheme: z.enum(['http', 'https']).optional().describe('URL scheme, http or https; omit to use http.'),
     })
     .strict()
 
@@ -207,13 +207,13 @@ export const GuardCommandArgv = z.array(z.string().regex(new RegExp(GUARD_COMMAN
 
 export const InstallPolicy = z
     .object({
-        toolchain: Toolchain.exclude(['none']),
-        volume: ResettableVolumeId,
-        lockfile: SafeRelativePath,
-        install: CommandArgv,
-        load_probe: CommandArgv,
-        build: GuardCommandArgv.optional(),
-        test: GuardCommandArgv.optional(),
+        toolchain: Toolchain.exclude(['none']).describe('Toolchain whose dependencies this policy installs.'),
+        volume: ResettableVolumeId.describe('Resettable volume that holds the installed dependencies.'),
+        lockfile: SafeRelativePath.describe('Lockfile, relative to the sibling, that this policy applies to.'),
+        install: CommandArgv.describe('Command, as an argument list, that installs the dependencies.'),
+        load_probe: CommandArgv.describe('Command, as an argument list, that proves the installed dependencies load.'),
+        build: GuardCommandArgv.optional().describe('Build command, as an argument list, when the product owns one.'),
+        test: GuardCommandArgv.optional().describe('Test command, as an argument list, when the product owns one.'),
     })
     .strict()
 
@@ -222,9 +222,9 @@ function hasDuplicate(values: readonly string[]): boolean {
 }
 
 const PostureRequirement = z.object({
-    requirement: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/),
-    addressing: AddressingPosture.optional(),
-    authentication: AuthPosture.optional(),
+    requirement: z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/).describe('Name of the posture requirement the product relies on.'),
+    addressing: AddressingPosture.optional().describe('Addressing posture this requirement depends on; set at least one of addressing and authentication.'),
+    authentication: AuthPosture.optional().describe('Authentication posture this requirement depends on; set at least one of addressing and authentication.'),
 }).strict().refine((requirement) => requirement.addressing !== undefined || requirement.authentication !== undefined, {
     message: 'posture requirement must tag addressing or authentication',
 })
@@ -242,11 +242,11 @@ const LocalEndpointUrl = z.string().max(4096).regex(LOCAL_ENDPOINT_URL_RE)
 // declared by the configuration file itself, which the loader checks by path because the
 // schema cannot see the file name.
 export const Provenance = z.object({
-    source: SafeRelativePath.max(4096),
-    observed_on: z.string().date().optional(),
-    kind: z.enum(['declared', 'measured', 'inferred']),
-    reason: DeclarationReason,
-    confirmed: z.boolean().optional(),
+    source: SafeRelativePath.max(4096).describe('File or place the value came from, relative to the repository.'),
+    observed_on: z.string().date().optional().describe('Date the source was looked at; required unless kind is declared.'),
+    kind: z.enum(['declared', 'measured', 'inferred']).describe('How the value was established: declared by this file, measured, or inferred.'),
+    reason: DeclarationReason.describe('Why the value is what it is.'),
+    confirmed: z.boolean().optional().describe('Set to true once a person has confirmed an inferred value; inferred values require it.'),
 }).strict().refine((value) => value.kind !== 'inferred' || value.confirmed === true, {
     path: ['confirmed'], message: 'inferred declarations require explicit confirmation',
 }).refine((value) => value.kind === 'declared' || value.observed_on !== undefined, {
@@ -254,164 +254,164 @@ export const Provenance = z.object({
 })
 
 const OverlayOperation = z.object({
-    location: z.enum(['host', 'in-stack']),
-    service: DeclarationId.optional(),
-    cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]),
-    argv: BoundedArgv,
-    timeout_seconds: z.number().int().min(1).max(3600),
+    location: z.enum(['host', 'in-stack']).describe('Where the command runs: on the host or inside a stack service.'),
+    service: DeclarationId.optional().describe('Stack service the command runs in; required when location is in-stack and not allowed otherwise.'),
+    cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).describe('Working directory for the command, relative to the sibling, or . for its root.'),
+    argv: BoundedArgv.describe('Command to run, as an argument list.'),
+    timeout_seconds: z.number().int().min(1).max(3600).describe('Seconds the command may run before it is stopped.'),
     // Absent means the nearest enclosing declaration's provenance applies.
-    provenance: Provenance.optional(),
+    provenance: Provenance.optional().describe('Where this command came from; omit to use the enclosing declaration\'s provenance.'),
 }).strict().refine((value) => value.location === 'in-stack' ? value.service !== undefined : value.service === undefined, {
     path: ['service'], message: 'only in-stack operations require a service',
 })
 
 const GeneratedHostAlias = z.object({
-    hostname: z.string().regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*$/),
-    address: z.union([z.ipv4(), z.ipv6()]),
+    hostname: z.string().regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*$/).describe('Host name the service resolves to the given address.'),
+    address: z.union([z.ipv4(), z.ipv6()]).describe('IPv4 or IPv6 address the host name resolves to.'),
 }).strict()
 
-const HealthMeasurement = z.object({ duration_seconds: z.number().positive().max(3600), provenance: Provenance }).strict()
+const HealthMeasurement = z.object({ duration_seconds: z.number().positive().max(3600).describe('Measured seconds the service took to become healthy.'), provenance: Provenance.describe('Where the measurement came from.') }).strict()
 
 export const GeneratedService = z.object({
-    id: DeclarationId,
-    sibling: DeclarationId,
-    role: z.enum(['service', 'one-shot']).default('service'),
-    profiles: z.array(DeclarationId).max(64).default([]),
+    id: DeclarationId.describe('Identifier of the generated service.'),
+    sibling: DeclarationId.describe('Sibling checkout the service is built from or mounts.'),
+    role: z.enum(['service', 'one-shot']).default('service').describe('Whether the service stays running or runs once and exits.'),
+    profiles: z.array(DeclarationId).max(64).default([]).describe('Compose profiles the service belongs to; it starts only when one is active.'),
     resources: z.object({
-        memory_mb: z.number().int().min(6).max(Math.floor(Number.MAX_SAFE_INTEGER / 1_048_576)),
+        memory_mb: z.number().int().min(6).max(Math.floor(Number.MAX_SAFE_INTEGER / 1_048_576)).describe('Memory limit in megabytes.'),
         // Bound the default 100 ms CPU quota within its signed 64-bit calculation.
-        cpus: z.number().min(0.01).max(Number(((1n << 63n) - 1n) / 100_000_000_000_000n)),
-        provenance: Provenance,
-    }).strict().optional(),
-    command: BoundedArgv,
+        cpus: z.number().min(0.01).max(Number(((1n << 63n) - 1n) / 100_000_000_000_000n)).describe('CPU limit as a number of CPUs, fractions allowed.'),
+        provenance: Provenance.describe('Where the ceilings came from.'),
+    }).strict().optional().describe('Memory and CPU ceilings for the service.'),
+    command: BoundedArgv.describe('Command the service runs, as an argument list.'),
     // Exactly one of `image` and `build` (checked with the environment). The manifest probe
     // stays required on an image: it is what verifies the declared architectures exist.
     image: z.object({
-        reference: z.string().max(4096).regex(/^[^\s@]+@sha256:[a-f0-9]{64}$/),
-        reason: DeclarationReason,
-        architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2),
-        manifest_probe: OverlayOperation,
-        registry_auth_probe: OverlayOperation.optional(),
-        provenance: Provenance.optional(),
-    }).strict().optional(),
+        reference: z.string().max(4096).regex(/^[^\s@]+@sha256:[a-f0-9]{64}$/).describe('Image reference pinned by sha256 digest.'),
+        reason: DeclarationReason.describe('Why this image is used.'),
+        architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2).describe('CPU architectures the image must support.'),
+        manifest_probe: OverlayOperation.describe('Command that checks the image manifest lists the declared architectures.'),
+        registry_auth_probe: OverlayOperation.optional().describe('Command that checks the registry sign-in the image needs.'),
+        provenance: Provenance.optional().describe('Where the image choice came from; omit to use the service\'s provenance.'),
+    }).strict().optional().describe('Pinned prebuilt image to run; declare exactly one of image and build.'),
     // Built from the service's sibling checkout. Both paths are confined: `context` below the
     // sibling, `dockerfile` below the context, so a build can never reach outside the checkout.
     build: z.object({
-        context: z.union([z.literal('.'), SafeRelativePath.max(4096)]),
-        dockerfile: SafeRelativePath.max(4096).optional(),
-    }).strict().optional(),
-    ports: z.array(z.object({ name: DeclarationId, host_variable: EnvironmentName, internal: z.number().int().min(1).max(65535), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).default('127.0.0.1') }).strict()).max(256).default([]),
+        context: z.union([z.literal('.'), SafeRelativePath.max(4096)]).describe('Build context directory, relative to the sibling.'),
+        dockerfile: SafeRelativePath.max(4096).optional().describe('Dockerfile path, relative to the build context.'),
+    }).strict().optional().describe('Build the image from the sibling checkout; declare exactly one of image and build.'),
+    ports: z.array(z.object({ name: DeclarationId.describe('Name of the published port.'), host_variable: EnvironmentName.describe('Environment variable that carries the leased host port.'), internal: z.number().int().min(1).max(65535).describe('Port the service listens on inside the container.'), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).default('127.0.0.1').describe('Host address the port is published on; defaults to loopback.') }).strict()).max(256).default([]).describe('Ports the service publishes on the host.'),
     host_aliases: z.array(GeneratedHostAlias).max(64).refine((aliases) => !hasDuplicate(aliases.map(({ hostname }) => hostname)), {
         message: 'generated service host aliases must name unique hostnames',
-    }).optional(),
+    }).optional().describe('Extra host names the service resolves to fixed addresses.'),
     // Host inputs belong to the service sibling; named volumes retain their declared identities.
-    mounts: z.array(z.object({ kind: z.enum(['bind', 'volume', 'environment-file']), source: z.union([z.literal('.'), SafeRelativePath.max(4096)]), target: ContainerPath, source_type: z.enum(['file', 'directory']).optional() }).strict().refine((mount) => mount.kind === 'volume' ? mount.source_type === undefined && mount.source !== '.' : mount.kind === 'environment-file' ? mount.source_type === 'file' : mount.source_type !== undefined, { path: ['source_type'], message: 'bind sources require their expected type and volume sources use declared identities' })).max(256).default([]),
-    dependencies: z.array(z.object({ service: DeclarationId, condition: z.enum(['service_started', 'service_healthy', 'service_completed_successfully']), reason: DeclarationReason }).strict()).max(256).default([]),
+    mounts: z.array(z.object({ kind: z.enum(['bind', 'volume', 'environment-file']).describe('Whether the source is a bind-mounted path, a named volume or an environment file.'), source: z.union([z.literal('.'), SafeRelativePath.max(4096)]).describe('Path in the sibling, or the declared volume id when kind is volume.'), target: ContainerPath.describe('Absolute path inside the container.'), source_type: z.enum(['file', 'directory']).optional().describe('Whether a bind source is a file or a directory; required for bind mounts.') }).strict().refine((mount) => mount.kind === 'volume' ? mount.source_type === undefined && mount.source !== '.' : mount.kind === 'environment-file' ? mount.source_type === 'file' : mount.source_type !== undefined, { path: ['source_type'], message: 'bind sources require their expected type and volume sources use declared identities' })).max(256).default([]).describe('Files, directories and volumes mounted into the service.'),
+    dependencies: z.array(z.object({ service: DeclarationId.describe('Service this one waits for.'), condition: z.enum(['service_started', 'service_healthy', 'service_completed_successfully']).describe('State the other service must reach: started, healthy or completed successfully.'), reason: DeclarationReason.describe('Why the service needs this dependency.') }).strict()).max(256).default([]).describe('Other services that must reach a state before this one starts.'),
     health: z.object({
         // Without a tool probe a failing property probe cannot say whether the product or the
         // probe's own tool is missing; failure text names that gap instead of guessing.
-        property: DeclarationReason, probe: OverlayOperation, tool_probe: OverlayOperation.optional(),
-        interval_seconds: z.number().int().min(1).max(3600),
-        timeout_seconds: z.number().int().min(1).max(3600),
-        retries: z.number().int().min(1).max(100),
-        start_period_seconds: z.number().int().min(1).max(3600),
-        measurement: HealthMeasurement.optional(),
+        property: DeclarationReason.describe('What the probe proves about the product.'), probe: OverlayOperation.describe('Command that checks the property; it runs in the service\'s own image.'), tool_probe: OverlayOperation.optional().describe('Command that checks the probe\'s own tool exists, so a failure names the missing tool.'),
+        interval_seconds: z.number().int().min(1).max(3600).describe('Seconds between probe runs.'),
+        timeout_seconds: z.number().int().min(1).max(3600).describe('Seconds one probe run may take.'),
+        retries: z.number().int().min(1).max(100).describe('Failed probe runs tolerated before the service is unhealthy.'),
+        start_period_seconds: z.number().int().min(1).max(3600).describe('Seconds after start during which failures are not counted; at least the measured start time.'),
+        measurement: HealthMeasurement.optional().describe('Measured start time the start period is checked against.'),
     }).strict().refine((health) => health.measurement === undefined || health.start_period_seconds >= health.measurement.duration_seconds, {
         path: ['start_period_seconds'], message: 'start period is shorter than its measurement',
-    }),
+    }).describe('How cockpit decides the service is healthy.'),
     // Pin files are read from this service sibling, including services without bind mounts.
-    toolchain_pins: z.array(z.object({ path: SafeRelativePath, pinned: z.string().min(1).max(256), observed: z.string().min(1).max(256), provenance: Provenance }).strict()).max(32).default([]),
+    toolchain_pins: z.array(z.object({ path: SafeRelativePath.describe('Pin file in the sibling that names the toolchain version.'), pinned: z.string().min(1).max(256).describe('Version the pin file declares.'), observed: z.string().min(1).max(256).describe('Version actually observed for the pin.'), provenance: Provenance.describe('Where the observed version came from.') }).strict()).max(32).default([]).describe('Toolchain version pins read from files in the sibling.'),
     // Absent means the value is declared by the configuration file itself.
-    provenance: Provenance.optional(),
+    provenance: Provenance.optional().describe('Where the service declaration came from; omit when this file declares it.'),
 }).strict()
 
 export const DataMode = z.enum(['empty', 'seeded', 'restored'])
 export const VendorPosture = z.enum(['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'])
 
 const DataOperation = z.object({
-    id: DeclarationId,
-    kind: z.enum(['schema', 'sweep', 'fixtures', 'restore', 'rewrite']),
-    operation: OverlayOperation,
-    prerequisites: z.array(OverlayOperation).max(64),
-    after: z.array(DeclarationId).max(256),
-    fresh_volume_only: z.boolean(),
+    id: DeclarationId.describe('Identifier of the step, referenced by other steps\' after list.'),
+    kind: z.enum(['schema', 'sweep', 'fixtures', 'restore', 'rewrite']).describe('What the step does to the product data.'),
+    operation: OverlayOperation.describe('Command the step runs.'),
+    prerequisites: z.array(OverlayOperation).max(64).describe('Commands that must succeed before the step runs.'),
+    after: z.array(DeclarationId).max(256).describe('Earlier steps in the same mode that must finish first.'),
+    fresh_volume_only: z.boolean().describe('Run the step only when the data volume is new.'),
     // Absent means the enclosing data mode's provenance applies.
-    provenance: Provenance.optional(),
+    provenance: Provenance.optional().describe('Where the step came from; omit to use the data mode\'s provenance.'),
 }).strict()
 
 const VendorDeclaration = z.object({
-    id: DeclarationId, posture: VendorPosture, reason: DeclarationReason, provenance: Provenance,
+    id: DeclarationId.describe('Identifier of the third-party vendor.'), posture: VendorPosture.describe('How the stack handles this vendor locally: bypassed, stubbed, substituted, vendor sandbox, record-replay or absent and gated.'), reason: DeclarationReason.describe('Why this posture was chosen.'), provenance: Provenance.describe('Where the posture came from.'),
     endpoints: z.array(z.object({
-        variable: EnvironmentName, sink: LocalEndpointUrl, runtime_service: DeclarationId,
-        supplier: z.object({ sibling: DeclarationId, template: SafeRelativePath }).strict(),
-    }).strict()).min(1).max(256),
-    nonempty_variables: z.array(EnvironmentName).min(1).max(256).optional(),
+        variable: EnvironmentName.describe('Environment variable that carries the vendor endpoint.'), sink: LocalEndpointUrl.describe('Local URL the endpoint is redirected to.'), runtime_service: DeclarationId.describe('Stack service that serves the sink.'),
+        supplier: z.object({ sibling: DeclarationId.describe('Sibling that owns the template.'), template: SafeRelativePath.describe('Template file, relative to the sibling, that supplies the variable.') }).strict().describe('Sibling environment template that supplies the variable.'),
+    }).strict()).min(1).max(256).describe('Vendor endpoints the product reads from the environment and the local sink each is pointed at.'),
+    nonempty_variables: z.array(EnvironmentName).min(1).max(256).optional().describe('Environment variables that must hold a value for the product to start.'),
     egress_guard: z.object({
-        flag: EnvironmentName,
-        enabled_value: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/),
-        local_service: DeclarationId,
-    }).strict().optional(),
-    loader_probe: OverlayOperation, route_probe: OverlayOperation, egress_probe: OverlayOperation,
-    placeholder: z.string().max(256).regex(/^cockpit:absent:[a-z0-9-]+$/),
-    shadow_files: z.array(z.object({ sibling: DeclarationId, instance: SafeRelativePath, probe: OverlayOperation }).strict()).max(64).optional(),
-    expiry: z.object({ expires_on: z.string().date(), reason: DeclarationReason, probe: OverlayOperation }).strict().optional(),
-    callback_reachability: z.object({ reachable: z.boolean(), alternative: DeclarationReason, reason: DeclarationReason }).strict(),
+        flag: EnvironmentName.describe('Environment variable that turns the guard on.'),
+        enabled_value: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).describe('Value the flag must hold for the guard to be on.'),
+        local_service: DeclarationId.describe('Local service that stands in for the vendor.'),
+    }).strict().optional().describe('Flag that makes the product refuse real vendor traffic.'),
+    loader_probe: OverlayOperation.describe('Command that checks the product loads the vendor configuration.'), route_probe: OverlayOperation.describe('Command that checks vendor calls reach the local sink.'), egress_probe: OverlayOperation.describe('Command that checks no vendor call leaves the machine.'),
+    placeholder: z.string().max(256).regex(/^cockpit:absent:[a-z0-9-]+$/).describe('Value written in place of the vendor credential, of the form cockpit:absent:<name>.'),
+    shadow_files: z.array(z.object({ sibling: DeclarationId.describe('Sibling that owns the file.'), instance: SafeRelativePath.describe('Instance file, relative to the sibling.'), probe: OverlayOperation.describe('Command that checks the file does not shadow the declared configuration.') }).strict()).max(64).optional().describe('Instance files that must not override the vendor configuration.'),
+    expiry: z.object({ expires_on: z.string().date().describe('Date the sandbox stops being valid.'), reason: DeclarationReason.describe('Why the sandbox expires on that date.'), probe: OverlayOperation.describe('Command that checks whether the sandbox is still valid.') }).strict().optional().describe('Expiry of the vendor sandbox; required for the vendor-sandbox posture.'),
+    callback_reachability: z.object({ reachable: z.boolean().describe('True when the vendor can reach the local stack.'), alternative: DeclarationReason.describe('How callbacks are exercised when the vendor cannot reach the stack.'), reason: DeclarationReason.describe('Why the vendor can or cannot reach the stack.') }).strict().describe('Whether the vendor can call back into the local stack.'),
     // Steps run in the fixed order enable, timestamp, sign, dispatch, then the tamper probe.
     callback: z.object({
-        enable: OverlayOperation,
-        timestamp_source: OverlayOperation,
-        fresh_window_seconds: z.number().int().min(1).max(3600),
+        enable: OverlayOperation.describe('Command that turns callbacks on.'),
+        timestamp_source: OverlayOperation.describe('Command that supplies the timestamp the signature covers.'),
+        fresh_window_seconds: z.number().int().min(1).max(3600).describe('Seconds a signed callback stays acceptable.'),
         // The digest is checked before each step that reads the fixture, so its raw bytes cannot drift.
-        fixture: z.object({ path: SafeRelativePath, sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
-        sign: OverlayOperation, dispatch: OverlayOperation,
-        tamper_probe: OverlayOperation,
-    }).strict().optional(),
-    tls: z.object({ generate_at_start: OverlayOperation, append_trust_probe: OverlayOperation, hostname_probe: OverlayOperation }).strict().optional(),
-    stub: z.object({ rejection_probe: OverlayOperation, outage_probe: OverlayOperation }).strict().optional(),
+        fixture: z.object({ path: SafeRelativePath.describe('Payload file, relative to the sibling.'), sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 digest of the payload, checked before each use.') }).strict().describe('Callback payload file and its digest.'),
+        sign: OverlayOperation.describe('Command that signs the payload.'), dispatch: OverlayOperation.describe('Command that delivers the signed payload to the product.'),
+        tamper_probe: OverlayOperation.describe('Command that checks the product rejects a tampered payload.'),
+    }).strict().optional().describe('Signed callback rehearsal: enable, timestamp, sign, dispatch, then a tamper check.'),
+    tls: z.object({ generate_at_start: OverlayOperation.describe('Command that creates the certificate when the stack starts.'), append_trust_probe: OverlayOperation.describe('Command that checks the product trusts the generated certificate.'), hostname_probe: OverlayOperation.describe('Command that checks the certificate matches the vendor host name.') }).strict().optional().describe('Local certificate setup for the vendor host name.'),
+    stub: z.object({ rejection_probe: OverlayOperation.describe('Command that checks the stub rejects an invalid request.'), outage_probe: OverlayOperation.describe('Command that checks the product copes with the stub being down.') }).strict().optional().describe('Probes for a stubbed vendor; required for the stubbed posture.'),
 }).strict()
 
 const GeneratedVolumes = z.array(z.object({
-    id: DeclarationId, purpose: z.enum(['dependencies', 'product-data']),
-    install_policy: ResettableVolumeId.optional(), provenance: Provenance,
+    id: DeclarationId.describe('Identifier of the named volume.'), purpose: z.enum(['dependencies', 'product-data']).describe('Whether the volume holds installed dependencies or product data.'),
+    install_policy: ResettableVolumeId.optional().describe('Install policy volume that fills it; required for dependency volumes.'), provenance: Provenance.describe('Where the volume declaration came from.'),
 }).strict()).max(256)
 
 export const DECISIONS_PATH = 'docs/cockpit/environment-decisions.md'
 const DECISION_SUBJECTS = ['service', 'volume', 'data-default', 'data-mode', 'restore', 'mount', 'port', 'vendor'] as const
 const DecisionEntries = z.array(z.object({
-    id: DeclarationId, subject: z.enum(DECISION_SUBJECTS),
-    subject_id: z.string().min(1).max(4096),
-    decided_on: z.string().date(), decision: DeclarationReason, rejected: z.array(DeclarationReason).min(1).max(64),
-    reason: DeclarationReason, provenance: Provenance,
+    id: DeclarationId.describe('Identifier of the decision record.'), subject: z.enum(DECISION_SUBJECTS).describe('Kind of structure the decision is about.'),
+    subject_id: z.string().min(1).max(4096).describe('Identity of the structure the decision is about.'),
+    decided_on: z.string().date().describe('Date the decision was made.'), decision: DeclarationReason.describe('What was decided.'), rejected: z.array(DeclarationReason).min(1).max(64).describe('Alternatives that were considered and rejected.'),
+    reason: DeclarationReason.describe('Why this was decided.'), provenance: Provenance.describe('Where the decision came from.'),
 }).strict()).max(512)
 
 export const GeneratedEnvironment = z.object({
-    compose_file: SafeRelativePath.max(4096),
-    services: z.array(GeneratedService).min(1).max(256),
-    volumes: GeneratedVolumes.default([]),
+    compose_file: SafeRelativePath.max(4096).describe('Path, relative to the cockpit, where the generated Compose file is written.'),
+    services: z.array(GeneratedService).min(1).max(256).describe('Services of the generated stack.'),
+    volumes: GeneratedVolumes.default([]).describe('Named volumes of the generated stack.'),
     // Absent means the stack has no product data step: `up` and `reset` skip it.
     data: z.object({
-        volume: DeclarationId,
-        default_mode: DataMode,
-        modes: z.array(z.object({ mode: DataMode, operations: z.array(DataOperation).min(1).max(256), probes: z.array(OverlayOperation).min(1).max(64), provenance: Provenance }).strict()).min(1).max(3),
+        volume: DeclarationId.describe('Product-data volume the data step fills.'),
+        default_mode: DataMode.describe('Data mode used when none is chosen.'),
+        modes: z.array(z.object({ mode: DataMode.describe('Data mode: empty, seeded or restored.'), operations: z.array(DataOperation).min(1).max(256).describe('Ordered steps that create the data for this mode.'), probes: z.array(OverlayOperation).min(1).max(64).describe('Commands that check the data is in the expected state.'), provenance: Provenance.describe('Where the mode came from.') }).strict()).min(1).max(3).describe('Data modes the stack supports, each with its steps.'),
         // Fixture determinism (stable keys, seeds) belongs to the product's writer: a seed it reads
         // goes in the fixture operation's argv, which reaches the product and its digest.
         fixtures: z.object({
-            persona_source: SafeRelativePath,
-            persona_outputs: z.array(z.object({ path: SafeRelativePath, format: z.enum(['json', 'typescript']), reason: DeclarationReason }).strict()).max(64),
-            volume_tag: DeclarationId, pagination_warning: DeclarationReason, provenance: Provenance,
-            volume_operations: z.array(OverlayOperation).min(1).max(256), volume_probes: z.array(OverlayOperation).min(1).max(64),
-        }).strict().optional(),
+            persona_source: SafeRelativePath.describe('File, relative to the cockpit, that describes the fixture personas.'),
+            persona_outputs: z.array(z.object({ path: SafeRelativePath.describe('Output file path, relative to the cockpit.'), format: z.enum(['json', 'typescript']).describe('Output format, json or typescript.'), reason: DeclarationReason.describe('Why this output is generated.') }).strict()).max(64).describe('Files generated from the personas for tests and tools.'),
+            volume_tag: DeclarationId.describe('Tag recorded with the fixture data on the volume.'), pagination_warning: DeclarationReason.describe('Warning shown with the fixtures about data beyond one page.'), provenance: Provenance.describe('Where the fixture setup came from.'),
+            volume_operations: z.array(OverlayOperation).min(1).max(256).describe('Commands that write the fixtures to the volume.'), volume_probes: z.array(OverlayOperation).min(1).max(64).describe('Commands that check the fixtures are on the volume.'),
+        }).strict().optional().describe('Fixture generation; required by a seeded mode.'),
         restore: z.object({
-            rewrites: z.array(z.object({ category: DeclarationId, operation: OverlayOperation, reason: DeclarationReason }).strict()).max(256),
-            untouched: z.array(DeclarationReason).min(1).max(256), provenance: Provenance,
-        }).strict().optional(),
-    }).strict().optional(),
-    vendors: z.array(VendorDeclaration).max(256).default([]),
+            rewrites: z.array(z.object({ category: DeclarationId.describe('Kind of sensitive data the rewrite covers.'), operation: OverlayOperation.describe('Command that performs the rewrite.'), reason: DeclarationReason.describe('Why the data needs rewriting.') }).strict()).max(256).describe('Commands that rewrite restored data so it is safe locally.'),
+            untouched: z.array(DeclarationReason).min(1).max(256).describe('Restored data deliberately left as it is, with the reason for each.'), provenance: Provenance.describe('Where the restore handling came from.'),
+        }).strict().optional().describe('Restore handling; required by, and only for, a restored mode.'),
+    }).strict().optional().describe('Product data step for the stack; omit when there is none and up and reset skip it.'),
+    vendors: z.array(VendorDeclaration).max(256).default([]).describe('Third-party vendors and how the stack handles each locally.'),
     // A structural subject without an entry is rendered as undecided rather than refused, so a
     // small stack does not have to invent a decision record to load.
     decisions: z.object({
-        entries: DecisionEntries.default([]),
-    }).strict().prefault({}),
+        entries: DecisionEntries.default([]).describe('Decision records; a structure without one is shown as undecided.'),
+    }).strict().prefault({}).describe('Recorded design decisions about the stack.'),
 }).strict().superRefine((declaration, ctx) => {
     const unique = (values: readonly string[], path: (string | number)[]) => {
         if (hasDuplicate(values)) ctx.addIssue({ code: 'custom', path, message: 'declaration contains duplicate identities' })
@@ -545,16 +545,16 @@ export type VendorPosture = z.infer<typeof VendorPosture>
 
 export const Environment = z
     .object({
-        addressing: AddressingPosture.optional(),
-        authentication: AuthPosture.optional(),
-        posture_requirements: z.array(PostureRequirement).min(1).max(128).optional(),
-        machine: MachineFloor.optional(),
-        resettable_volumes: z.array(ResettableVolumeId).default([]),
-        generated_host_paths: z.array(GeneratedHostPath).default([]),
-        compose_files: z.array(LocalComposePath).default([]),
-        entrypoint_derivatives: z.array(EntrypointDerivative).default([]),
-        install_policies: z.array(InstallPolicy).default([]),
-        generated: GeneratedEnvironment.optional(),
+        addressing: AddressingPosture.optional().describe('How the product is reached locally: by host name or by leased port.'),
+        authentication: AuthPosture.optional().describe('How the product signs in locally: real sign-in, bypassed, or none.'),
+        posture_requirements: z.array(PostureRequirement).min(1).max(128).optional().describe('Posture facts the product relies on, each tagged with the posture it depends on.'),
+        machine: MachineFloor.optional().describe('Least the container runtime must offer before the stack starts.'),
+        resettable_volumes: z.array(ResettableVolumeId).default([]).describe('Compose volumes that reset may delete and recreate, named by their Compose key.'),
+        generated_host_paths: z.array(GeneratedHostPath).default([]).describe('Host paths cockpit generates and owns, relative to the cockpit.'),
+        compose_files: z.array(LocalComposePath).default([]).describe('Existing Compose files, relative to the cockpit, that make up the stack; use this or generated.'),
+        entrypoint_derivatives: z.array(EntrypointDerivative).default([]).describe('Addresses derived from leased ports, such as application origins and callback URLs.'),
+        install_policies: z.array(InstallPolicy).default([]).describe('How dependencies are installed for each toolchain.'),
+        generated: GeneratedEnvironment.optional().describe('Stack that cockpit generates instead of using existing Compose files; use this or compose_files.'),
     })
     .strict()
     .superRefine((environment, ctx) => {
@@ -584,21 +584,21 @@ export const Environment = z
     })
 
 const SiblingGeneratedDerivation = z.object({
-    service: GeneratedService.omit({ id: true, sibling: true, mounts: true, profiles: true }),
+    service: GeneratedService.omit({ id: true, sibling: true, mounts: true, profiles: true }).describe('Generated service that runs this sibling\'s checkout.'),
     // The checkout is the sibling directory itself, bind-mounted as a directory at this target.
     checkout_mount: z.object({
-        target: ContainerPath,
-    }).strict(),
-    additional_mounts: GeneratedService.shape.mounts.optional().default([]),
+        target: ContainerPath.describe('Absolute path inside the container where the checkout is mounted.'),
+    }).strict().describe('Mount of the sibling checkout into the service.'),
+    additional_mounts: GeneratedService.shape.mounts.optional().default([]).describe('Extra mounts for the service beyond the checkout.'),
     port_defaults: z.record(EnvironmentName, z.number().int().min(1).max(65535)).refine(
         (ports) => Object.keys(ports).length <= STRUCTURED_INPUT_ENTRY_LIMIT,
         `port defaults must not exceed ${STRUCTURED_INPUT_ENTRY_LIMIT} entries`,
-    ),
-    entrypoints: z.array(EntrypointDerivative).max(256),
-    volumes: GeneratedVolumes.optional(),
-    install_policies: z.array(InstallPolicy).max(256).optional(),
-    decisions: DecisionEntries.min(1),
-    provenance: Provenance,
+    ).describe('Default host port for each of the service\'s host variables.'),
+    entrypoints: z.array(EntrypointDerivative).max(256).describe('Addresses derived from this service\'s ports.'),
+    volumes: GeneratedVolumes.optional().describe('Named volumes this row adds to the stack.'),
+    install_policies: z.array(InstallPolicy).max(256).optional().describe('Install policies this row adds to the stack.'),
+    decisions: DecisionEntries.min(1).describe('Decision records for the structure this row adds.'),
+    provenance: Provenance.describe('Where this row\'s declaration came from.'),
 }).strict().superRefine((generated, ctx) => {
     const hostVariables = generated.service.ports.map((port) => port.host_variable)
     const defaults = Object.keys(generated.port_defaults)
@@ -618,13 +618,13 @@ const SiblingGeneratedDerivation = z.object({
 
 const McpSourceReference = z.object({
     // A JSON file with a top-level `mcpServers` object, the shape agent tools read from `.mcp.json`.
-    path: SafeRelativePath.max(4096),
-    provenance: Provenance,
+    path: SafeRelativePath.max(4096).describe('JSON file in the sibling with a top-level mcpServers object, as agent tools read from .mcp.json.'),
+    provenance: Provenance.describe('Where this MCP source declaration came from.'),
 }).strict()
 
 const SiblingDerives = z.object({
-    generated: SiblingGeneratedDerivation.optional(),
-    mcp_sources: z.array(McpSourceReference).max(256).default([]),
+    generated: SiblingGeneratedDerivation.optional().describe('Generated-stack rows this sibling contributes.'),
+    mcp_sources: z.array(McpSourceReference).max(256).default([]).describe('MCP server declaration files this sibling publishes.'),
 }).strict().superRefine((derives, ctx) => {
     if (!derives.generated && derives.mcp_sources.length === 0) {
         ctx.addIssue({ code: 'custom', message: 'derives must declare generated data or MCP sources' })
@@ -667,41 +667,41 @@ export const Sibling = z
         // is recorded rather than derived. Slug, directory and remote are routinely three
         // different names for one repository, and every one of them is load-bearing
         // somewhere.
-        slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+        slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Short name of the sibling; also the prefix of its projected guide files.'),
         // Relative to the siblings root and resolved without further checks by several
         // consumers, so the schema is where a hostile cockpit.toml is stopped. `.` is the
         // siblings root itself: a single-repository stack whose one sibling is the cockpit root, or a
         // cockpit started before any product repository exists, which grows with `sibling add`.
-        dir: z.union([z.literal('.'), SafeRelativePath]),
+        dir: z.union([z.literal('.'), SafeRelativePath]).describe('Checkout directory under the siblings root, or . for the siblings root itself.'),
         // Absent exactly when nothing is cloned. Never derived from `dir`: a directory is
         // named for local convenience, a remote for whatever the org called it.
-        remote: z.string().min(1).optional(),
-        branch: z.string().min(1).optional(),
-        mount: Mount,
-        acquire: Acquire,
+        remote: z.string().min(1).optional().describe('Git remote to clone from; required when acquire is auto or manual and not allowed when none.'),
+        branch: z.string().min(1).optional().describe('Branch to check out when cloning.'),
+        mount: Mount.describe('How the stack uses the checkout: always mounted, mounted under a profile, host only, or not mounted.'),
+        acquire: Acquire.describe('How the checkout reaches disk: cloned by setup, cloned by a person, or not a repository.'),
         // The exported `*_DIR`. Recorded because it does not follow from the slug — a
         // `renderer` sibling may export ENGINE_DIR, and deriving RENDERER_DIR instead would
         // leave every consumer reading an unset variable.
-        var: SiblingVariable,
-        toolchain: Toolchain.default('none'),
-        gate: Gate.optional(),
+        var: SiblingVariable.describe('Name of the exported *_DIR environment variable that points at the checkout.'),
+        toolchain: Toolchain.default('none').describe('Toolchain that installs and tests the sibling; none for a directory of data.'),
+        gate: Gate.optional().describe('Set to operator for a lane that touches live data or local hardware; it never runs by default and asks first.'),
         // Why this repository cannot join the stack. Required on a host lane, because that
         // is a constraint someone had to discover and it will otherwise be rediscovered as a
         // bug: a simulator that cannot be containerised, a renderer that lives in a vendor's
         // cloud, a client that needs a display. Preflight prints this instead of reporting
         // the sibling broken.
-        host_reason: z.string().min(1).optional(),
+        host_reason: z.string().min(1).optional().describe('Why the sibling cannot join the stack; required when mount is host.'),
         // Which guide files this repository publishes. Projected into the cockpit as symlinks
         // to the live files — never copies, which are stale the moment the sibling edits its
         // own guide and report nothing. Defaulted rather than required: most repositories use
         // one or both of these, and one that does not is a row that says so.
-        guides: z.array(SafeRelativePath).default([...SIBLING_DEFAULT_GUIDES]),
+        guides: z.array(SafeRelativePath).default([...SIBLING_DEFAULT_GUIDES]).describe('Guide files the sibling publishes, linked into the cockpit as symlinks.'),
         // Setup writes this repository only when the declaration and its command-line approval agree.
-        instruction_pointer: z.boolean().default(false),
+        instruction_pointer: z.boolean().default(false).describe('Let setup add a pointer to the cockpit guide in this sibling, when the command line also approves it.'),
         // Printed when the checkout is missing, so it says what the absence costs.
-        purpose: z.string().min(1),
-        environment_files: z.array(EnvironmentFile).optional(),
-        derives: SiblingDerives.optional(),
+        purpose: z.string().min(1).describe('What the sibling is for; printed when its checkout is missing.'),
+        environment_files: z.array(EnvironmentFile).optional().describe('Template and instance environment file pairs the sibling needs.'),
+        derives: SiblingDerives.optional().describe('Facts about the sibling that cockpit derives rows or MCP servers from.'),
     })
     .strict()
     .refine((s) => (s.acquire === 'none' ? !s.remote : true), {
@@ -757,9 +757,9 @@ export const Sibling = z
 // byte-identical service config with only the published edge differing.
 export const Ports = z
     .object({
-        step: z.number().int().positive().default(100),
-        count: z.number().int().positive().default(27),
-        bases: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/), z.number().int().min(1).max(65535)),
+        step: z.number().int().positive().default(100).describe('Offset between consecutive stacks\' published ports.'),
+        count: z.number().int().positive().default(27).describe('Number of stacks that can run side by side.'),
+        bases: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/), z.number().int().min(1).max(65535)).describe('Base host port for each port variable; stack n publishes base plus n times step.'),
     })
     .strict()
     .superRefine((ports, context) => {
@@ -807,22 +807,22 @@ const GuardHosts = z.array(z.string().regex(GUARD_HOST_PATTERN)).max(GUARD_HOST_
 
 const GuardRuleText = z.string().min(1).max(512).regex(/\S/).regex(/^[^\x00-\x1f\x7f-\x9f]+$/u)
 const GuardAllow = z.object({
-    argv: GuardCommandArgv,
-    reason: GuardRuleText,
-    cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).optional(),
+    argv: GuardCommandArgv.describe('Command prefix, as an argument list, that is allowed.'),
+    reason: GuardRuleText.describe('Why the command is allowed.'),
+    cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).optional().describe('Allow only when run from this directory, relative to the cockpit.'),
 }).strict()
 const GuardDeny = z.union([
-    z.object({ prefix: GuardCommandArgv, reason: GuardRuleText, fix: GuardRuleText.optional() }).strict(),
-    z.object({ contains: GuardCommandArgv, reason: GuardRuleText, fix: GuardRuleText.optional() }).strict(),
+    z.object({ prefix: GuardCommandArgv.describe('Command prefix, as an argument list, that is refused.'), reason: GuardRuleText.describe('Why the command is refused.'), fix: GuardRuleText.optional().describe('Safer command or step to suggest instead.') }).strict(),
+    z.object({ contains: GuardCommandArgv.describe('Argument sequence that is refused wherever it appears in a command.'), reason: GuardRuleText.describe('Why the command is refused.'), fix: GuardRuleText.optional().describe('Safer command or step to suggest instead.') }).strict(),
 ])
 
 export const Guards = z
     .object({
-        hosted_db_hosts: GuardHosts.default([]),
-        vendor_endpoint_hosts: GuardHosts.default([]),
-        protected_branches: z.array(z.string()).default(['main', 'master']),
-        allow: z.array(GuardAllow).max(64).default([]),
-        deny: z.array(GuardDeny).max(64).default([]),
+        hosted_db_hosts: GuardHosts.default([]).describe('Hosted database host names the guards keep agents away from.'),
+        vendor_endpoint_hosts: GuardHosts.default([]).describe('Real vendor endpoint host names the guards keep agents away from.'),
+        protected_branches: z.array(z.string()).default(['main', 'master']).describe('Branches the guards keep agents from pushing to or rewriting.'),
+        allow: z.array(GuardAllow).max(64).default([]).describe('Commands allowed in addition to the built-in rules.'),
+        deny: z.array(GuardDeny).max(64).default([]).describe('Commands refused in addition to the built-in rules.'),
     })
     .strict()
 
@@ -834,7 +834,7 @@ export const Guards = z
 export const Mcp = z
     .object({
         approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync reports for the server'))
-            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}),
+            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.'),
     })
     .strict()
 
@@ -849,9 +849,9 @@ const EVALUATOR_TIMEOUT_DEFAULT_SECONDS = 900
 export const Workorders = z
     .object({
         // Consumers may lower the repeated-failure limit, never raise it.
-        attempt_cap: z.number().int().min(1).max(2).default(2),
+        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Repeated failures allowed before a work order stops; may be lowered but not raised.'),
         // Consumer values may lower these framework maxima, but cannot raise them.
-        wip_cap: z.number().int().min(1).max(3).default(3),
+        wip_cap: z.number().int().min(1).max(3).default(3).describe('Work orders that may be in progress at once; may be lowered but not raised.'),
         verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds one declared work-order verification command may run before it is stopped and reported as not run.'),
         evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
@@ -870,16 +870,16 @@ export function browserDriversCompatible(left: string, right: string): boolean {
 }
 
 const BrowserImage = z.object({
-    reference: z.string().regex(/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/),
-    driver_version: BrowserDriverVersion,
+    reference: z.string().regex(/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/).describe('Image reference pinned by sha256 digest.'),
+    driver_version: BrowserDriverVersion.describe('Playwright driver version the image carries.'),
 }).strict()
 
 const BrowserArtifactRoots = z.object({
-    runner: GeneratedHostPath,
-    mcp: GeneratedHostPath,
-    cli: GeneratedHostPath,
-    auth: GeneratedHostPath,
-    debugger: GeneratedHostPath,
+    runner: GeneratedHostPath.describe('Generated host path for the browser runner\'s files.'),
+    mcp: GeneratedHostPath.describe('Generated host path for the browser MCP server\'s files.'),
+    cli: GeneratedHostPath.describe('Generated host path for command-line browser output.'),
+    auth: GeneratedHostPath.describe('Generated host path for saved sign-in state.'),
+    debugger: GeneratedHostPath.describe('Generated host path for debugger sessions.'),
 }).strict().superRefine((artifacts, ctx) => {
     const paths = Object.values(artifacts)
     for (const [index, path] of paths.entries()) {
@@ -891,61 +891,61 @@ const BrowserArtifactRoots = z.object({
 })
 
 export const Browser = z.object({
-    engine: z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
+    engine: z.enum(['chromium', 'firefox', 'webkit']).default('chromium').describe('Browser engine to drive.'),
     network_exposure: z.string().min(1).max(512).regex(/^[a-z0-9.*:<>\[\],-]+$/).refine((value) => {
         const rules = value.split(',')
         return rules.length <= 32 && rules.every((rule) => rule.length > 0) && new Set(rules).size === rules.length
-    }, 'browser network exposure requires bounded unique rules').default('<loopback>'),
-    network_exposure_reason: z.string().min(1).max(512).refine((value) => value === value.trim() && !/[\x00-\x1f\x7f]/.test(value), 'browser exposure reason must be bounded plain text').optional(),
+    }, 'browser network exposure requires bounded unique rules').default('<loopback>').describe('Network rules the browser may reach beyond loopback; the default is loopback only.'),
+    network_exposure_reason: z.string().min(1).max(512).refine((value) => value === value.trim() && !/[\x00-\x1f\x7f]/.test(value), 'browser exposure reason must be bounded plain text').optional().describe('Why the browser needs wider network access; required when network_exposure is wider than loopback.'),
     harnesses: z.array(z.object({
-        target: z.enum(GUARD_SURFACE_TARGETS),
-        version: z.string().regex(/^\d+\.\d+\.\d+$/),
+        target: z.enum(GUARD_SURFACE_TARGETS).describe('Agent tool the browser is wired to.'),
+        version: z.string().regex(/^\d+\.\d+\.\d+$/).describe('Version of the agent tool the wiring was checked against.'),
     }).strict()).min(1).max(GUARD_SURFACE_TARGETS.length).refine(
         (rows) => !hasDuplicate(rows.map((row) => row.target)),
         'browser harness targets must be unique',
-    ),
-    images: z.object({ runner: BrowserImage.extend({ architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2).refine((values) => !hasDuplicate(values), 'browser image architectures must be unique').optional() }), mcp: BrowserImage }).strict(),
-    runner_health_measurement: HealthMeasurement.optional(),
-    resources: GeneratedService.shape.resources,
+    ).describe('Agent tools, with versions, that are wired to the browser.'),
+    images: z.object({ runner: BrowserImage.extend({ architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2).refine((values) => !hasDuplicate(values), 'browser image architectures must be unique').optional().describe('CPU architectures the runner image must support.') }).describe('Image that runs the browser.'), mcp: BrowserImage.describe('Image that serves the browser MCP server.') }).strict().describe('Pinned container images for the browser.'),
+    runner_health_measurement: HealthMeasurement.optional().describe('Measured time for the browser runner to become healthy.'),
+    resources: GeneratedService.shape.resources.describe('Memory and CPU ceilings for the browser runner.'),
     project: z.object({
-        manifest: GeneratedHostPath.optional(),
-        manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-        lockfile: GeneratedHostPath,
-        sha256: z.string().regex(/^[a-f0-9]{64}$/),
-        driver_version: BrowserDriverVersion,
-    }).strict(),
-    endpoint: z.string().url().optional(),
-    max_clients: z.number().int().min(1).max(64),
+        manifest: GeneratedHostPath.optional().describe('package.json for the project; omit to use the one beside the lockfile.'),
+        manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('SHA-256 of the manifest; required when manifest is set.'),
+        lockfile: GeneratedHostPath.describe('Lockfile the runner installs from.'),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the lockfile.'),
+        driver_version: BrowserDriverVersion.describe('Playwright driver version the lockfile pins.'),
+    }).strict().describe('Node project the runner installs its driver from.'),
+    endpoint: z.string().url().optional().describe('WebSocket address of the browser server, using an allowed host.'),
+    max_clients: z.number().int().min(1).max(64).describe('Most browser clients that may connect at once.'),
     proxy: z.object({
-        host_variable: EnvironmentName.optional(),
-        server_port: z.number().int().min(1).max(65535),
-        proxy_port: z.number().int().min(1).max(65535),
-        allowed_hosts: z.array(z.string().min(1).max(260)).min(1).max(64),
-        bind: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
-    }).strict(),
+        host_variable: EnvironmentName.optional().describe('Port variable in [ports.bases] that leases the proxy port.'),
+        server_port: z.number().int().min(1).max(65535).describe('Port the browser server listens on.'),
+        proxy_port: z.number().int().min(1).max(65535).describe('Port the proxy listens on; differs from server_port.'),
+        allowed_hosts: z.array(z.string().min(1).max(260)).min(1).max(64).describe('Host and port pairs the proxy allows.'),
+        bind: z.enum(['127.0.0.1', '::1']).default('127.0.0.1').describe('Loopback address the proxy binds to.'),
+    }).strict().describe('Proxy the browser reaches the application through.'),
     resolver: z.array(z.object({
-        hostname: z.string().regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*$/),
-        address: z.union([z.ipv4(), z.ipv6()]),
-    }).strict()).max(64).default([]),
+        hostname: z.string().regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*$/).describe('Host name to resolve.'),
+        address: z.union([z.ipv4(), z.ipv6()]).describe('Address the host name resolves to.'),
+    }).strict()).max(64).default([]).describe('Fixed host name to address mappings the browser uses.'),
     authentication: z.object({
-        policy: z.enum(['none', 'serialized', 'per-worker']),
+        policy: z.enum(['none', 'serialized', 'per-worker']).describe('Whether sessions share no sign-in, take turns on one, or each keep their own.'),
         states: z.array(z.object({
-            worker: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
-            path: GeneratedHostPath,
-        }).strict()).max(64).default([]),
-    }).strict(),
+            worker: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).describe('Name of the worker the state belongs to.'),
+            path: GeneratedHostPath.describe('Saved sign-in state file under the auth artifact root.'),
+        }).strict()).max(64).default([]).describe('Saved sign-in states, one per worker.'),
+    }).strict().describe('How browser sessions sign in to the application.'),
     // `isolated` and `reaches_production` are the person's statement about the data the browser
     // touches; cockpit cannot observe either. They are required rather than defaulted so that
     // request_preapproval, which lets browser tools run without prompts, is never granted on a
     // posture nobody wrote down.
     data: z.object({
-        mode: DataMode,
-        isolated: z.boolean(),
-        reaches_production: z.boolean(),
-    }).strict(),
-    request_preapproval: z.boolean().default(false),
-    headed: z.boolean().default(false),
-    artifacts: BrowserArtifactRoots,
+        mode: DataMode.describe('Data mode the stack runs in while the browser is used.'),
+        isolated: z.boolean().describe('True when the data is separate from anyone else\'s.'),
+        reaches_production: z.boolean().describe('True when browser actions can affect production.'),
+    }).strict().describe('Statement about the data the browser touches; cockpit cannot observe it.'),
+    request_preapproval: z.boolean().default(false).describe('Run browser tools without prompts; allowed only on isolated, non-production, non-restored data.'),
+    headed: z.boolean().default(false).describe('Show the browser window instead of running it headless.'),
+    artifacts: BrowserArtifactRoots.describe('Generated host paths for browser output.'),
 }).strict().superRefine((browser, ctx) => {
     if (browser.resources && !browser.endpoint) {
         ctx.addIssue({ code: 'custom', path: ['resources'], message: 'browser resource ceilings require a generated runner endpoint' })
@@ -1002,34 +1002,34 @@ const TestingCommand = z.array(z.string().min(1).max(4096).refine((value) => !/[
 const TestingSelectArguments = z.array(z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value))).min(1).max(32)
     .refine((values) => values.some((value) => value.includes('{value}')), 'a selection must place {value} in at least one argument')
 const TestingSelect = z.object({
-    spec: TestingSelectArguments.optional(),
-    file: TestingSelectArguments.optional(),
-    test: TestingSelectArguments.optional(),
-    route: TestingSelectArguments.optional(),
+    spec: TestingSelectArguments.optional().describe('Arguments that select tests by spec; {value} becomes the selection.'),
+    file: TestingSelectArguments.optional().describe('Arguments that select tests by file; {value} becomes the selection.'),
+    test: TestingSelectArguments.optional().describe('Arguments that select tests by test name; {value} becomes the selection.'),
+    route: TestingSelectArguments.optional().describe('Arguments that select tests by route; {value} becomes the selection.'),
 }).strict()
 export const Testing = z.object({
     stages: z.array(z.object({
-        id: TestingName,
-        command: TestingCommand,
-        requires_stack: z.boolean(),
+        id: TestingName.describe('Name of the stage.'),
+        command: TestingCommand.describe('Command to run, as an argument list.'),
+        requires_stack: z.boolean().describe('True when the stage needs the stack running.'),
         timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds the stage may run before it is stopped and the gate reports DEGRADED.'),
         select: TestingSelect.optional()
             .describe('Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value.'),
-    }).strict()).min(1).max(128),
+    }).strict()).min(1).max(128).describe('Commands that make up the test gates.'),
     gates: z.array(z.object({
-        id: TestingName,
-        tier: z.enum(['targeted', 'full']),
-        stages: z.array(TestingName).min(1).max(128),
-        changes: z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value)),
-    }).strict()).min(1).max(128),
+        id: TestingName.describe('Name of the gate.'),
+        tier: z.enum(['targeted', 'full']).describe('Whether the gate covers targeted changes or the full suite.'),
+        stages: z.array(TestingName).min(1).max(128).describe('Stages the gate runs, by id.'),
+        changes: z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value)).describe('Kind of change that calls for this gate.'),
+    }).strict()).min(1).max(128).describe('Named gates that run stages before handing back changes.'),
     native_hooks: z.object({
-        install: z.enum(['inspect', 'explicit-native']).default('inspect'),
-    }).strict(),
+        install: z.enum(['inspect', 'explicit-native']).default('inspect').describe('Inspect the repository\'s hooks, or install them as the policy file declares.'),
+    }).strict().describe('How the repository\'s own git hooks are handled.'),
     native_hook_policy: z.object({
-        path: SafeRelativePath.max(4096),
-        sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    }).strict().optional(),
+        path: SafeRelativePath.max(4096).describe('Policy file, relative to the cockpit.'),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the policy file.'),
+    }).strict().optional().describe('Policy file for installing the repository\'s hooks; required for explicit-native.'),
 }).strict().superRefine((testing, ctx) => {
     const stageIds = testing.stages.map((stage) => stage.id)
     const gateIds = testing.gates.map((gate) => gate.id)
@@ -1048,13 +1048,13 @@ export const Testing = z.object({
 
 export const CockpitMeta = z
     .object({
-        name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+        name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Name of this cockpit.'),
         // Resolved from the MAIN checkout, never from the cwd's parent — a nested linked
         // checkout must still find the declared sibling root.
-        siblings_root: z.string().default('..'),
+        siblings_root: z.string().default('..').describe('Directory holding the sibling checkouts, relative to the cockpit.'),
         // preflight FAILS over it. A cap that only warns is a cap that is always slightly
         // exceeded; adherence falls as the guide grows.
-        guide_cap: z.number().int().positive().default(200),
+        guide_cap: z.number().int().positive().default(200).describe('Most lines of always-loaded guidance; preflight fails above it.'),
     })
     .strict()
 
@@ -1079,8 +1079,8 @@ function hasYamlOnlyMarkdownFrontmatter(path: string, bytes: string): boolean {
 }
 
 export const SurfaceSource = z.object({
-    path: SurfacePath,
-    bytes: SurfaceBytes,
+    path: SurfacePath.describe('Path of the source file.'),
+    bytes: SurfaceBytes.describe('Full text of the source.'),
 }).strict().superRefine((source, ctx) => {
     if (!hasYamlOnlyMarkdownFrontmatter(source.path, source.bytes)) {
         ctx.addIssue({
@@ -1092,16 +1092,16 @@ export const SurfaceSource = z.object({
 })
 
 export const SurfaceOverrideReference = z.object({
-    name: SurfaceName,
-    sha256: SurfaceSha256,
+    name: SurfaceName.describe('Name of the core declaration being replaced.'),
+    sha256: SurfaceSha256.describe('SHA-256 of the original core declaration, recorded so a later change to it is reported.'),
 }).strict()
 
 export const SurfaceDeclaration = z.object({
-    name: SurfaceName,
-    feature: z.enum(SURFACE_FEATURES),
-    sources: z.array(SurfaceSource).min(1).max(256),
-    source: SurfacePath,
-    replaces: SurfaceOverrideReference.optional(),
+    name: SurfaceName.describe('Name of the declaration; an overlay that reuses a core name replaces it.'),
+    feature: z.enum(SURFACE_FEATURES).describe('Kind of surface the declaration provides.'),
+    sources: z.array(SurfaceSource).min(1).max(256).describe('Files that make up the declaration.'),
+    source: SurfacePath.describe('Where the declaration was read from.'),
+    replaces: SurfaceOverrideReference.optional().describe('Core declaration this overlay replaces; required when the name matches a core one.'),
 }).strict().superRefine((declaration, ctx) => {
     if (!surfaceSourcesMatchFeature(declaration.sources, declaration.feature)) {
         ctx.addIssue({ code: 'custom', path: ['sources'], message: 'surface sources must match their feature and include every skill definition' })
@@ -1115,18 +1115,18 @@ export const SurfaceDeclaration = z.object({
 })
 
 export const SurfaceOverlay = SurfaceDeclaration.safeExtend({
-    feature: z.enum(['rules', 'subagents', 'skills', 'hooks']),
+    feature: z.enum(['rules', 'subagents', 'skills', 'hooks']).describe('Kind of surface the overlay provides.'),
 })
 
 // A team's own harness settings file that cockpit moved under cockpit/adopted/ and merges with its
 // rendering. `sha256` records the bytes that were moved; it is a record for review, not a lock:
 // the adopted copy is consumer-owned, and the next sync re-merges whatever it holds.
 export const SurfaceAdoption = z.object({
-    path: z.enum(ADOPTABLE_SURFACE_PATHS),
-    source: SurfacePath,
-    sha256: SurfaceSha256,
-    adopted_on: z.string().date(),
-    provenance: Provenance,
+    path: z.enum(ADOPTABLE_SURFACE_PATHS).describe('Harness settings file that was adopted.'),
+    source: SurfacePath.describe('Where the adopted copy now lives, under cockpit/adopted/.'),
+    sha256: SurfaceSha256.describe('SHA-256 of the bytes that were moved, as a record for review.'),
+    adopted_on: z.string().date().describe('Date the file was adopted.'),
+    provenance: Provenance.describe('Where the adoption came from; its kind must be declared.'),
 }).strict().superRefine((row, ctx) => {
     if (row.source !== `${ADOPTED_SURFACE_ROOT}/${row.path}`) {
         ctx.addIssue({ code: 'custom', path: ['source'], message: `an adopted surface is kept at ${ADOPTED_SURFACE_ROOT}/<path>` })
@@ -1137,42 +1137,42 @@ export const SurfaceAdoption = z.object({
 })
 
 const HarnessMechanism = z.object({
-    module: SurfacePath,
-    export: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(128),
+    module: SurfacePath.describe('Module that implements the capability.'),
+    export: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(128).describe('Export of the module that implements the capability.'),
 }).strict()
 
 const HarnessCapabilityBase = {
-    feature: z.enum(SURFACE_FEATURES),
-    measured_on: z.string().date(),
+    feature: z.enum(SURFACE_FEATURES).describe('Surface feature this row describes.'),
+    measured_on: z.string().date().describe('Date the capability was measured.'),
 } as const
 
 const HarnessEmittedCapability = {
     ...HarnessCapabilityBase,
-    spelling: SurfacePath,
-    control: SurfacePath,
-    mechanism: HarnessMechanism,
+    spelling: SurfacePath.describe('File the harness reads for this feature.'),
+    control: SurfacePath.describe('Path of the deliberately broken control file the capability was measured against.'),
+    mechanism: HarnessMechanism.describe('Code that emits the surface.'),
 } as const
 
 export const CustomHarnessCapability = z.discriminatedUnion('state', [
     z.object({
         ...HarnessEmittedCapability,
-        state: z.literal('enforced'),
-        evidence: z.object({ reference: SurfacePath, sha256: SurfaceSha256 }).strict(),
+        state: z.literal('enforced').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
+        evidence: z.object({ reference: SurfacePath.describe('Probe record or file, relative to the cockpit.'), sha256: SurfaceSha256.describe('SHA-256 of the evidence.') }).strict().describe('Evidence that the harness enforces the capability.'),
     }).strict(),
     z.object({
         ...HarnessEmittedCapability,
-        state: z.literal('instructed'),
+        state: z.literal('instructed').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
     }).strict(),
     z.object({
         ...HarnessCapabilityBase,
-        state: z.literal('unavailable'),
-        reason: DeclarationReason,
+        state: z.literal('unavailable').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
+        reason: DeclarationReason.describe('Why the capability is unavailable.'),
     }).strict(),
 ])
 
 export const CustomHarness = z.object({
-    name: SurfaceName.regex(new RegExp(`^(?!(?:${SURFACE_TARGETS.join('|')})$)`), 'custom harness names cannot replace shipped targets'),
-    capabilities: z.array(CustomHarnessCapability).length(SURFACE_FEATURES.length),
+    name: SurfaceName.regex(new RegExp(`^(?!(?:${SURFACE_TARGETS.join('|')})$)`), 'custom harness names cannot replace shipped targets').describe('Name of the custom harness; cannot reuse a shipped one.'),
+    capabilities: z.array(CustomHarnessCapability).length(SURFACE_FEATURES.length).describe('One row per surface feature saying what the harness supports.'),
 }).strict().superRefine((harness, ctx) => {
     const features = harness.capabilities.map((capability) => capability.feature)
     if (hasDuplicate(features) || SURFACE_FEATURES.some((feature) => !features.includes(feature))) {
@@ -1185,10 +1185,10 @@ export const CustomHarness = z.object({
 })
 
 export const Surfaces = z.object({
-    overlays: z.array(SurfaceOverlay).max(256).default([]),
-    harnesses: z.array(CustomHarness).max(64).default([]),
-    bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]),
-    adopted: z.array(SurfaceAdoption).max(ADOPTABLE_SURFACE_PATHS.length).default([]),
+    overlays: z.array(SurfaceOverlay).max(256).default([]).describe('Team-owned rules, subagents, skills and hooks added to the generated surfaces.'),
+    harnesses: z.array(CustomHarness).max(64).default([]).describe('Agent tools beyond the shipped ones, with measured capabilities.'),
+    bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]).describe('Bundle formats to publish, such as a Claude plugin bundle.'),
+    adopted: z.array(SurfaceAdoption).max(ADOPTABLE_SURFACE_PATHS.length).default([]).describe('Harness settings files cockpit merges with its own output.'),
 }).strict().superRefine((surfaces, ctx) => {
     if (hasDuplicate(surfaces.adopted.map((row) => row.path))) {
         ctx.addIssue({ code: 'custom', path: ['adopted'], message: 'each harness settings file is adopted at most once' })
@@ -1234,17 +1234,17 @@ export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnabl
 export const CockpitConfig = z
     .object({
         unconfirmed: z.array(z.enum(UNCONFIRMABLE_ANSWERS)).min(1).max(UNCONFIRMABLE_ANSWERS.length)
-            .refine(rows => new Set(rows).size === rows.length, { message: 'unconfirmed lists an answer more than once' }).optional(),
-        cockpit: CockpitMeta,
-        sibling: z.array(Sibling).min(1),
-        ports: Ports,
-        guards: Guards.prefault({}),
-        mcp: Mcp.prefault({}),
-        workorders: Workorders.prefault({}),
-        browser: Browser.optional(),
-        testing: Testing.optional(),
-        environment: Environment.prefault({}),
-        surfaces: Surfaces.prefault({}),
+            .refine(rows => new Set(rows).size === rows.length, { message: 'unconfirmed lists an answer more than once' }).optional().describe('Answers no person has stated yet; init writes them and doctor reports them.'),
+        cockpit: CockpitMeta.describe('Identity and layout of this cockpit.'),
+        sibling: z.array(Sibling).min(1).describe('Product repositories the cockpit works across.'),
+        ports: Ports.describe('Port leasing for running stacks side by side.'),
+        guards: Guards.prefault({}).describe('Rules that restrict what agents may run.'),
+        mcp: Mcp.prefault({}).describe('Approval of MCP servers.'),
+        workorders: Workorders.prefault({}).describe('Limits for work orders.'),
+        browser: Browser.optional().describe('Browser automation for the stack.'),
+        testing: Testing.optional().describe('Test stages and gates.'),
+        environment: Environment.prefault({}).describe('How the stack is reached, signed in to, built and kept.'),
+        surfaces: Surfaces.prefault({}).describe('Instructions, skills and settings generated for agent tools.'),
     })
     .strict()
     .superRefine((cfg, ctx) => {

@@ -156,7 +156,9 @@ describe('the published cockpit schema', () => {
         const checkedIn = JSON.parse(readFileSync(new URL('../cockpit.schema.json', import.meta.url), 'utf8'))
         const validators = [emitted, checkedIn].map((schema) => compileDraft04Schema(schema))
         const fields = emitted.properties.guards.properties
-        expect(fields.vendor_endpoint_hosts).toEqual(fields.hosted_db_hosts)
+        // The two lists share one contract and differ only in what each is for.
+        const contract = ({ description: _description, ...rest }: Record<string, unknown>) => rest
+        expect(contract(fields.vendor_endpoint_hosts)).toEqual(contract(fields.hosted_db_hosts))
         for (const field of ['hosted_db_hosts', 'vendor_endpoint_hosts']) {
             for (const [hosts, accepted] of [
                 [[], true], [[exact, `*.other.test`], true], [[`*.${exact}`], true],
@@ -904,6 +906,43 @@ describe('the published cockpit schema', () => {
             expect(CockpitConfig.safeParse(config).success).toBe(false)
             expect(validate(config), JSON.stringify(validate.errors)).toBe(false)
         }
+    })
+
+    it('requires provenance evidence on every provenance table the editor schema publishes', () => {
+        const withoutRule: string[] = []
+        const seen: string[] = []
+        const walk = (node: unknown, path: string): void => {
+            if (node === null || typeof node !== 'object') return
+            const table = node as Record<string, unknown>
+            const fields = table.properties as Record<string, unknown> | undefined
+            if (fields?.observed_on && fields.kind && fields.source) {
+                seen.push(path)
+                if (!Array.isArray(table.anyOf)) withoutRule.push(path)
+            }
+            for (const [key, value] of Object.entries(table)) walk(value, `${path}.${key}`)
+        }
+        walk(JSON.parse(renderCockpitSchema()), '#')
+
+        expect(seen.some((path) => path.includes('runner_health_measurement'))).toBe(true)
+        expect(seen.some((path) => path.includes('adopted'))).toBe(true)
+        expect(withoutRule).toEqual([])
+    })
+
+    it('describes every field so editors and the reference can say what it does', () => {
+        const undescribed: string[] = []
+        const walk = (node: unknown, path: string): void => {
+            if (node === null || typeof node !== 'object') return
+            const table = node as Record<string, unknown>
+            for (const [name, field] of Object.entries((table.properties ?? {}) as Record<string, unknown>)) {
+                const description = (field as { description?: unknown }).description
+                if (typeof description !== 'string' || description.length === 0) undescribed.push(`${path}.${name}`)
+            }
+            // anyOf, oneOf, allOf and not restate fields as conditions, not as declarations.
+            for (const [key, value] of Object.entries(table)) if (!['anyOf', 'oneOf', 'allOf', 'not'].includes(key)) walk(value, `${path}.${key}`)
+        }
+        walk(JSON.parse(renderCockpitSchema()), '#')
+
+        expect([...new Set(undescribed)]).toEqual([])
     })
 
 })

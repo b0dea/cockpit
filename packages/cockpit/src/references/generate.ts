@@ -423,7 +423,7 @@ function renderConfigurationTables(schema: SchemaNode): string {
         .map(([pattern], index) => [pattern, `P${index + 1}`]))
     const pattern = (value: string) => patternNames.has(value) ? `[${patternNames.get(value)}](#patterns)` : tableCode(value)
 
-    interface Described { readonly type: string; readonly facts: readonly string[] }
+    interface Described { readonly type: string; readonly facts: readonly string[]; readonly meaning?: string }
     const sections: string[] = []
     const shapeSections = new Map<string, string[]>()
     // GitHub numbers a repeated heading's anchor, which would silently retarget every link to it.
@@ -446,6 +446,9 @@ function renderConfigurationTables(schema: SchemaNode): string {
         ...(node.additionalProperties === false ? [] : node.additionalProperties === undefined ? ['- Accepts keys this table does not list.\n']
             : [`- Accepts other keys whose values match ${inlineCode(JSON.stringify(node.additionalProperties))}.\n`]),
     ]
+    // A description is one plain sentence; the pipe would end its table cell early.
+    const meaningCell = (text: string | undefined) => (text ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ')
+    const descriptionOf = (node: SchemaNode) => node.description === undefined ? undefined : String(node.description)
     const link = (title: string) => `[${title}](#${headingAnchor(title)})`
     // Renders one table's section, then the sections of the tables nested in it.
     const table = (node: SchemaNode, title: string, path: readonly string[], into: string[]) => {
@@ -460,10 +463,10 @@ function renderConfigurationTables(schema: SchemaNode): string {
             if (!isNode(child)) throw new Error(`${title}.${key} is not a schema`)
             const described = value(child, [...path, key], false, nested, `${title}.${key}`)
             const facts = [...(required.has(key) ? ['required'] : []), ...described.facts]
-            return `| ${tableCode(key)} | ${described.type} | ${child.default === undefined ? '' : json(child.default)} | ${facts.join('; ')} |\n`
+            return `| ${tableCode(key)} | ${meaningCell(described.meaning)} | ${described.type} | ${child.default === undefined ? '' : json(child.default)} | ${facts.join('; ')} |\n`
         })
         const tableRules = rules(node)
-        into.push(`### ${title}\n\n| Key | Type | Default | Constraints |\n| --- | --- | --- | --- |\n${rows.join('')}`
+        into.push(`### ${title}\n\n| Key | Meaning | Type | Default | Constraints |\n| --- | --- | --- | --- | --- |\n${rows.join('')}`
             + (tableRules.length > 0 ? `\n${tableRules.join('')}` : ''), ...nested)
     }
     const sectionTitle = (path: readonly string[], array: boolean) => {
@@ -488,7 +491,7 @@ function renderConfigurationTables(schema: SchemaNode): string {
     }
     // Describes a field's value: its type cell and its constraints. Nested tables add sections.
     const value = (node: SchemaNode, path: readonly string[], array: boolean, nested: string[], where: string): Described => {
-        if (isTable(node)) return { type: `table: ${tableReference(node, path, array, nested)}`, facts: node.description === undefined ? [] : [String(node.description)] }
+        if (isTable(node)) return { type: `table: ${tableReference(node, path, array, nested)}`, facts: [], meaning: descriptionOf(node) }
         unknownKeyword(node, SCALAR_KEYWORDS, where)
         const variants = variantsOf(node)
         if (variants) {
@@ -498,10 +501,11 @@ function renderConfigurationTables(schema: SchemaNode): string {
                 table(branch, title, path, nested)
                 return link(title)
             })
-            return { type: `table, one of: ${forms.join(', ')}`, facts: [] }
+            return { type: `table, one of: ${forms.join(', ')}`, facts: [], meaning: descriptionOf(node) }
         }
         if (node.exclusiveMinimum !== undefined && node.exclusiveMinimum !== true) throw new Error(`the configuration reference reads exclusiveMinimum only as the draft-04 boolean, at ${where}`)
         const facts: string[] = []
+        let meaning = descriptionOf(node)
         let type = typeof node.type === 'string' ? node.type
             : Array.isArray(node.enum) ? [...new Set(node.enum.map(literal => typeof literal))].join(' or ') : undefined
         if (Array.isArray(node.enum)) facts.push(node.enum.length === 1 ? `exactly ${json(node.enum[0])}` : `one of ${node.enum.map(json).join(', ')}`)
@@ -516,11 +520,13 @@ function renderConfigurationTables(schema: SchemaNode): string {
             const item = value(node.items, path, true, nested, `${where}[]`)
             type = `array of ${item.type}`
             if (item.facts.length > 0) facts.push(`each item: ${item.facts.join(', ')}`)
+            meaning ??= item.meaning
         }
         if (isNode(node.additionalProperties)) {
             const entry = value(node.additionalProperties, path, false, nested, `${where}.*`)
             type = `table of ${entry.type}`
             facts.push(`any key; each value: ${entry.facts.join(', ')}`)
+            meaning ??= entry.meaning
         }
         // A record whose keys the loader constrains: draft 4 states the key rule as its one pattern property.
         if (isNode(node.patternProperties)) {
@@ -533,6 +539,7 @@ function renderConfigurationTables(schema: SchemaNode): string {
         if (Array.isArray(node.allOf)) for (const branch of node.allOf as SchemaNode[]) {
             const described = value(branch, path, array, nested, where)
             type ??= described.type
+            meaning ??= described.meaning
             facts.push(...described.facts)
         }
         for (const keyword of ['anyOf', 'oneOf'] as const) if (Array.isArray(node[keyword])) {
@@ -544,9 +551,8 @@ function renderConfigurationTables(schema: SchemaNode): string {
             facts.push(`${keyword === 'oneOf' ? 'exactly one of' : 'either'} ${branches.map(branch => `(${shown(branch).join(', ')})`).join(' or ')}`)
         }
         if (node.not !== undefined) facts.push(`must not match ${json(node.not)}`)
-        if (node.description !== undefined) facts.push(String(node.description))
         if (type === undefined) throw new Error(`the configuration reference cannot name the type at ${where}`)
-        return { type, facts }
+        return { type, facts, meaning }
     }
 
     table(schema, 'Top-level keys', [], sections)
