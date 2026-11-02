@@ -1650,17 +1650,10 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                         "type": "string",
                         "maxLength": 4096,
                         "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
-                      },
-                      "source_type": {
-                        "type": "string",
-                        "enum": [
-                          "directory"
-                        ]
                       }
                     },
                     "required": [
-                      "target",
-                      "source_type"
+                      "target"
                     ],
                     "additionalProperties": false
                   },
@@ -1848,11 +1841,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                           "type": "string",
                           "pattern": "^[a-z0-9][a-z0-9_.-]*$"
                         },
-                        "target": {
-                          "type": "string",
-                          "maxLength": 4096,
-                          "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
-                        },
                         "provenance": {
                           "type": "object",
                           "properties": {
@@ -1936,7 +1924,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       "required": [
                         "id",
                         "purpose",
-                        "target",
                         "provenance"
                       ],
                       "additionalProperties": false,
@@ -2098,12 +2085,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                           "maxLength": 4096,
                           "pattern": "\\S"
                         },
-                        "reviewer": {
-                          "type": "string",
-                          "enum": [
-                            "consumer-maintainer"
-                          ]
-                        },
                         "provenance": {
                           "type": "object",
                           "properties": {
@@ -2192,7 +2173,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                         "decision",
                         "rejected",
                         "reason",
-                        "reviewer",
                         "provenance"
                       ],
                       "additionalProperties": false
@@ -2300,12 +2280,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       "maxLength": 4096,
                       "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
                     },
-                    "format": {
-                      "type": "string",
-                      "enum": [
-                        "mcp-json"
-                      ]
-                    },
                     "provenance": {
                       "type": "object",
                       "properties": {
@@ -2388,7 +2362,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                   },
                   "required": [
                     "path",
-                    "format",
                     "provenance"
                   ],
                   "additionalProperties": false
@@ -3231,18 +3204,11 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                   "path": {
                     "type": "string",
                     "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
-                  },
-                  "source": {
-                    "type": "string",
-                    "enum": [
-                      "seeded"
-                    ]
                   }
                 },
                 "required": [
                   "worker",
-                  "path",
-                  "source"
+                  "path"
                 ],
                 "additionalProperties": false
               }
@@ -5401,11 +5367,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                     "type": "string",
                     "pattern": "^[a-z0-9][a-z0-9_.-]*$"
                   },
-                  "target": {
-                    "type": "string",
-                    "maxLength": 4096,
-                    "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
-                  },
                   "provenance": {
                     "type": "object",
                     "properties": {
@@ -5489,7 +5450,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                 "required": [
                   "id",
                   "purpose",
-                  "target",
                   "provenance"
                 ],
                 "additionalProperties": false,
@@ -9467,17 +9427,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                   "stub": {
                     "type": "object",
                     "properties": {
-                      "validates": {
-                        "minItems": 1,
-                        "maxItems": 256,
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 4096,
-                          "pattern": "\\S"
-                        }
-                      },
                       "rejection_probe": {
                         "type": "object",
                         "properties": {
@@ -9804,7 +9753,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       }
                     },
                     "required": [
-                      "validates",
                       "rejection_probe",
                       "outage_probe"
                     ],
@@ -9872,13 +9820,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
               "default": {},
               "type": "object",
               "properties": {
-                "path": {
-                  "default": "docs/cockpit/environment-decisions.md",
-                  "type": "string",
-                  "enum": [
-                    "docs/cockpit/environment-decisions.md"
-                  ]
-                },
                 "entries": {
                   "default": [],
                   "maxItems": 512,
@@ -9936,12 +9877,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                         "minLength": 1,
                         "maxLength": 4096,
                         "pattern": "\\S"
-                      },
-                      "reviewer": {
-                        "type": "string",
-                        "enum": [
-                          "consumer-maintainer"
-                        ]
                       },
                       "provenance": {
                         "type": "object",
@@ -10031,7 +9966,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                       "decision",
                       "rejected",
                       "reason",
-                      "reviewer",
                       "provenance"
                     ],
                     "additionalProperties": false
@@ -10169,22 +10103,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
                     "pattern": "^(?!(?:claudecode|codexcli|opencode|cursor|grokcli)$)"
                   }
                 ]
-              },
-              "features": {
-                "minItems": 6,
-                "maxItems": 6,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "rules",
-                    "mcp",
-                    "subagents",
-                    "skills",
-                    "hooks",
-                    "permissions"
-                  ]
-                }
               },
               "capabilities": {
                 "minItems": 6,
@@ -10446,7 +10364,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
             },
             "required": [
               "name",
-              "features",
               "capabilities"
             ],
             "additionalProperties": false
@@ -10706,8 +10623,8 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
       "rule": "unique"
     },
     {
-      "path": "surfaces.harnesses[].features",
-      "rule": "exact_capability_feature_set"
+      "path": "surfaces.harnesses[].capabilities",
+      "rule": "one_row_per_surface_feature"
     },
     {
       "path": "surfaces.harnesses[].capabilities[].spelling",
@@ -10864,8 +10781,8 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
       "rule": "unique"
     },
     {
-      "path": "surfaces.harnesses[].features",
-      "rule": "exact_capability_feature_set"
+      "path": "surfaces.harnesses[].capabilities",
+      "rule": "one_row_per_surface_feature"
     },
     {
       "path": "surfaces.harnesses[].capabilities[].spelling",
