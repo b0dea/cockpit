@@ -2864,6 +2864,13 @@ async function executeUpRound(
             operationGeneration,
         })
         if (admission.kind === 'refusal') {
+            // A compose-first stack has no generated replay to compare, so a declaration edit shows
+            // only as changed work. Restarting it from scratch recreated healthy containers under
+            // the new declaration, and stopped them when their labels no longer matched; a fully
+            // started stack is refused instead, as a generated one is.
+            if (stored && !resetProgress && !generated && progressComplete) {
+                return { kind: 'complete' as const, result: runtimeChangedRefusal(context) }
+            }
             return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
                 : { kind: 'complete' as const, result: {

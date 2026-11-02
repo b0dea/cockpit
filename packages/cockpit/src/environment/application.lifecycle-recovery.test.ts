@@ -493,7 +493,7 @@ describe('lifecycle application contracts', () => {
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_RECORD_MALFORMED' }] })
     })
 
-    it('resets changed lifecycle work before revalidating its old containers', async () => {
+    it('resets changed lifecycle work of a partial startup before revalidating its old containers', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const address = context.namespace.paths.lifecycle(context.stackId)
         await transactState(context.namespace, address, { ownerId: context.holderId }, () => ({
@@ -563,7 +563,7 @@ describe('lifecycle application contracts', () => {
 
         await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'db' }, { id: 'api' }] }, lifecycle: {} } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: async (step) => {
@@ -589,6 +589,41 @@ describe('lifecycle application contracts', () => {
             expect.objectContaining({ progress: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64), completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }] } }),
             expect.objectContaining({ progress: null }),
         ])
+    })
+
+    // A fully started compose-first stack whose declaration changed was restarted from scratch, which
+    // recreated healthy containers and stopped them when their labels no longer matched.
+    it('refuses changed work on a fully started compose-first stack and starts nothing', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
+            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId,
+            subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),
+            value: {
+                holderId: context.holderId, workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
+                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }],
+            },
+        }))
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        const projection = Object.freeze({
+            lease, entrypoints: Object.freeze([]),
+            ownership: Object.freeze({ change: 'unchanged' as const, holderId: context.holderId, recordRevision: 2, holderCount: 1, holderIds: Object.freeze([context.holderId]) }),
+        })
+        const leaseResult = Object.freeze({ kind: 'complete' as const, change: 'unchanged' as const, holderId: context.holderId,
+            recordRevision: 2, lease, observation: 'resolved-listener-evidence-accepted' as const })
+        applicationOwners.lifecycle.admitUpProgress = () => ({ kind: 'refusal', diagnostics: [{ severity: 'error', code: 'LIFECYCLE_PROGRESS_INVALID', message: 'work changed' }] })
+        const execute = vi.fn(async () => ({}) as never)
+
+        const result = await runUp({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {} } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
+            execute,
+        })
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID',
+            message: expect.stringContaining('up does not replace a running stack') }] })
+        expect(execute).not.toHaveBeenCalled()
     })
 
     it('resumes a completed dependency prefix in one readiness round', async () => {
