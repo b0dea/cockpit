@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installedPackageMetadata } from './package-metadata.js'
-import { initializeTeamMetadata, prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata } from './team-metadata.js'
+import { initializeTeamMetadata, prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata, inspectTeamReadiness } from './team-metadata.js'
+import { encodeGuardLocalIdentity, writeCockpitLocalFiles } from './guards/local-identity.js'
 
 const roots: string[] = []
 async function fixture(siblingsRoot = 'repositories', generatedHostPaths: readonly string[] = []): Promise<string> {
@@ -131,6 +132,32 @@ purpose = "Synthetic local repository"
         expect(ignored('services/api/probe.txt')).toBe(0)
         expect(ignored('app/probe.txt')).toBe(1)
         expect(spawnSync('git', ['-C', root, 'add', '--dry-run', '.']).status).toBe(0)
+    })
+
+    it('names a cockpit with no installed copy, a guard bound elsewhere, and a sibling repository a teammate cannot clone', async () => {
+        // init runs from a temporary copy of cockpit, so a fresh cockpit has none of its own.
+        const root = await fixture('.')
+        const configPath = join(root, 'cockpit.toml')
+        await mkdir(join(root, 'app'))
+        expect((await inspectTeamReadiness(configPath)).map(({ code, target }) => [code, target])).toEqual([['COCKPIT_NOT_INSTALLED', 'node_modules']])
+
+        const installed = join(root, 'node_modules', ...installedPackageMetadata.name.split('/'))
+        await mkdir(installed, { recursive: true })
+        await mkdir(join(root, '.cockpit'))
+        const identity = Object.fromEntries(['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode',
+            'node', 'nodeSha256', 'nodeFingerprint', 'moduleSha256'].map(key => [key, 'synthetic']))
+        const bind = (module: string) => writeCockpitLocalFiles(root, [{ name: 'guard-identity',
+            bytes: encodeGuardLocalIdentity({ ...identity, module } as never) }])
+        expect(await bind('/synthetic/bootstrap/node_modules/cockpit/dist/cli.js')).toEqual({ kind: 'complete' })
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'COCKPIT_NOT_INSTALLED',
+            target: '.cockpit/local/guard-identity', message: expect.stringContaining('/synthetic/bootstrap/') })])
+        expect(await bind(join(installed, 'dist/cli.js'))).toEqual({ kind: 'complete' })
+        expect(await inspectTeamReadiness(configPath)).toEqual([])
+
+        // The same acquire = "none" row is local data while app is a plain directory, and a repository once it is one.
+        expect(spawnSync('git', ['-C', join(root, 'app'), 'init', '--quiet']).status).toBe(0)
+        expect(await inspectTeamReadiness(configPath)).toEqual([expect.objectContaining({ code: 'SIBLING_REMOTE_UNRECORDED',
+            target: 'sibling:app', fix: expect.stringContaining('sibling add app --remote <url>') })])
     })
 
     it('reports the exact initialization writes during a read-only preview', async () => {

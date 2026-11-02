@@ -23,6 +23,7 @@ import {
     observeComparisonRemoteRevalidation,
     observeComparisonRemoteUrl,
     decodeGitObservation,
+    inspectTrackedSecretFiles,
     observeGit,
     observeGitAncestry,
     observeRunningCheckout,
@@ -571,5 +572,36 @@ describe('comparison remote identity evidence', () => {
             expect(observeComparisonRemoteRevalidation({ ...revalidation }, revalidationOutcome)).toMatchObject({ kind: 'unavailable' })
             expect(observeComparisonRemoteRevalidation(revalidation, { ...revalidationOutcome })).toMatchObject({ kind: 'unavailable' })
         } finally { await rm(root, { recursive: true, force: true }) }
+    })
+})
+
+describe('tracked secret files', () => {
+    it('names committed secret-shaped files by path only and leaves templates and untracked files alone', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-tracked-secrets-')))
+        try {
+            const repository = join(root, 'api')
+            await mkdir(join(repository, 'config'), { recursive: true })
+            const value = 'synthetic-value-never-reported'
+            await Promise.all([
+                writeFile(join(repository, '.env'), `API_TOKEN=${value}\n`),
+                writeFile(join(repository, 'config', '.env.production'), `API_TOKEN=${value}\n`),
+                writeFile(join(repository, '.env.example'), 'API_TOKEN=\n'),
+                writeFile(join(repository, '.environment-notes'), 'not a secret file\n'),
+            ])
+            execFileSync('git', ['init', '--quiet', repository])
+            execFileSync('git', ['-C', repository, 'add', '--force', '.env', 'config/.env.production', '.env.example', '.environment-notes'])
+            await writeFile(join(repository, '.env.local'), `API_TOKEN=${value}\n`)
+            const git = await resolveGitExecutable(process.env)
+            if (git.state !== 'available') throw new Error('git is unavailable')
+
+            const findings = await inspectTrackedSecretFiles({ executable: git.value, timeoutMs: 5_000,
+                repositories: [{ slug: 'api', root: repository }, { slug: 'docs', root }] }, executeProbe)
+
+            expect(findings).toEqual([expect.objectContaining({ severity: 'warning', code: 'SECRET_FILE_TRACKED', target: 'sibling:api',
+                message: expect.stringContaining('(.env, config/.env.production)') })])
+            expect(JSON.stringify(findings)).not.toContain(value)
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
     })
 })
