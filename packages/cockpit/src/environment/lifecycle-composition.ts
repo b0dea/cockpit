@@ -40,8 +40,10 @@ import {
     type SleepCommandAdapters,
     type UpCommandAdapters,
 } from './application.js'
+import { observeProcessStart, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
     ENVIRONMENT_CODES,
+    isCanonicalTimestamp,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     type ExecutionStep,
@@ -171,6 +173,9 @@ export interface LifecycleCommandCompositionInput {
     readonly timeoutMs: number
     readonly activeProfiles?: readonly string[]
     readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority | (() => RuntimeMeasurementProbeAuthority)
+    // The `cockpit session` wrapper's own process, recorded with its hold so that the hold is
+    // released once that process is gone.
+    readonly holderProcess?: HolderProcess
 }
 
 export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness'> & {
@@ -281,7 +286,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         const descriptors = Object.getOwnPropertyDescriptors(value)
         const keys = ['configPath', 'env', 'sessionId', 'timeoutMs']
         const actualKeys = Reflect.ownKeys(descriptors)
-        const optionalKeys = ['activeProfiles', 'runtimeMeasurementProbeAuthority'].filter((key) => descriptors[key] !== undefined)
+        const optionalKeys = ['activeProfiles', 'runtimeMeasurementProbeAuthority', 'holderProcess'].filter((key) => descriptors[key] !== undefined)
         if (actualKeys.length !== keys.length + optionalKeys.length
             || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))
             || optionalKeys.some((key) => !('value' in descriptors[key]!))) return undefined
@@ -291,12 +296,16 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         const timeoutMs = descriptors.timeoutMs!.value
         const activeProfiles = descriptors.activeProfiles?.value
         const runtimeMeasurementProbeAuthority = descriptors.runtimeMeasurementProbeAuthority?.value
+        const holderProcess = descriptors.holderProcess?.value as HolderProcess | undefined
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.includes('\0')
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
             || activeProfiles !== undefined && (!Array.isArray(activeProfiles) || activeProfiles.length > 64
                 || new Set(activeProfiles).size !== activeProfiles.length
                 || activeProfiles.some((profile) => typeof profile !== 'string' || !/^[a-z0-9][a-z0-9_.-]*$/.test(profile)))
+            || holderProcess !== undefined && (!holderProcess || typeof holderProcess !== 'object'
+                || !Number.isSafeInteger(holderProcess.pid) || holderProcess.pid! < 1
+                || holderProcess.processStartedAt !== undefined && !isCanonicalTimestamp(holderProcess.processStartedAt))
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
         const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
@@ -306,7 +315,9 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         }
         return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), sessionId, timeoutMs,
             ...(activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...activeProfiles].sort()) }),
-            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }) })
+            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
+            ...(holderProcess === undefined ? {} : { holderProcess: Object.freeze({ pid: holderProcess.pid,
+                ...(holderProcess.processStartedAt === undefined ? {} : { processStartedAt: holderProcess.processStartedAt }) }) }) })
     } catch {
         return undefined
     }
@@ -1134,6 +1145,13 @@ export function createLifecycleCommandAdapters(
 
     const withAcquiredPorts: LifecycleCommandAdapterComposition['withAcquiredPorts'] = async (context, use, refuse) => {
         if (!bindings.has(context)) return undefined
+        const holderProcess = input?.holderProcess
+        const reaped = await releaseDeadSessionHolders({
+            namespace: context.namespace, stackId: context.stackId,
+            successor: { holderId: context.holderId, checkoutId: context.checkoutId, ...holderProcess },
+            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, execute),
+        })
+        if (reaped.kind === 'refusal') return refuse?.(reaped.diagnostics)
         const now = new Date().toISOString()
         const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
         const acquired = await acquirePortProjection({
@@ -1146,6 +1164,7 @@ export function createLifecycleCommandAdapters(
             listenerTimeoutMs,
             listenerEvidence: await listenerEvidence(context, now, listenerTimeoutMs),
             declarations: context.entrypointDerivatives,
+            ...(holderProcess === undefined ? {} : { holderProcess }),
         })
         if (acquired.kind === 'refusal') return refuse?.(acquired.diagnostics)
         if (acquired.kind !== 'complete') return undefined

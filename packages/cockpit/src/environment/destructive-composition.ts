@@ -15,7 +15,7 @@ import {
     type ResetCommandAdapters,
 } from './application.js'
 import { ENVIRONMENT_CODES, type Diagnostic, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
-import { decodeCoordinationRecord, readActiveStackInventory } from './claims.js'
+import { decodeCoordinationRecord, liveHolderMessage, observeProcessStart, readActiveStackInventory, releaseDeadSessionHolders } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolvePathRemovalExecutable } from './executable.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -432,6 +432,12 @@ export function createDestructiveCommandAdapters(
                 return loaded.kind === 'refusal' ? loaded : refusal(request.configPath)
             }
             const context = loaded.result
+            const reaped = await releaseDeadSessionHolders({
+                namespace: context.namespace, stackId: context.stackId,
+                successor: { holderId: context.holderId, checkoutId: context.checkoutId },
+                now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, execute),
+            })
+            if (reaped.kind === 'refusal') return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics })
             let inventory = await readActiveStackInventory(context.namespace)
             if (inventory.kind !== 'complete') return refusal(context.stackId)
             const currentRecord = inventory.value.find(({ stackId }) => stackId === context.stackId)?.record
@@ -451,7 +457,7 @@ export function createDestructiveCommandAdapters(
                 const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
                 if (!coordination) return refusal(context.stackId)
                 if (coordination.holders.length > 0) {
-                    return refusal(context.stackId, `another session holds this stack, and down and reset never displace a live holder; end that cockpit session or run \`${cockpitCommand('sleep')}\` from it, then retry`, ENVIRONMENT_CODES.CLAIM_CO_TENANT)
+                    return refusal(context.stackId, liveHolderMessage(coordination.holders), ENVIRONMENT_CODES.CLAIM_CO_TENANT)
                 }
                 // `sleep` and an ended `session` release the final holder and stop the runtime,
                 // but its containers, networks and images remain. Claiming the stack here, as

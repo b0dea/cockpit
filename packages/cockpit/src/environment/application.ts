@@ -179,6 +179,8 @@ import {
     reserveDrain,
     reserveDrainAttempt,
     decodeCoordinationRecord,
+    observeProcessStart,
+    releaseDeadSessionHolders,
     type DrainOutcomeAuthority,
     type DrainReservationRequest,
 } from './claims.js'
@@ -3413,6 +3415,14 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             : diagnostic),
     }
 
+    if (recovery.kind !== 'recoverable') {
+        const reaped = await releaseDeadSessionHolders({
+            namespace: context.namespace, stackId: context.stackId,
+            successor: { holderId: context.holderId, checkoutId: context.checkoutId },
+            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, adapters.execute),
+        })
+        if (reaped.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: reaped.diagnostics }
+    }
     const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
     if (unheld) return unheld
     const retained = await observeRetainedPortFamily({

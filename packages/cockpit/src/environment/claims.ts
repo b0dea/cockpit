@@ -29,7 +29,7 @@ import {
     type StackId,
 } from './contract.js'
 import { authenticatedExecutionOutcome, consumeFencedExecutionTermination, type ExecuteProbeOutcome, type FencedExecutionTermination } from '../environment-exec/execute.js'
-import { resolvedExecutable, type ResolvedExecutable } from './executable.js'
+import { resolveExecutablePath, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import { observeConfigSource } from '../config/load.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import {
@@ -58,6 +58,7 @@ export const mechanism = {
     exports: [
         'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
+        'observeProcessStart', 'releaseDeadSessionHolders', 'describeHolder', 'liveHolderMessage',
         'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
@@ -115,7 +116,8 @@ const ClaimHolderSchema = z.object({
     checkoutId: z.string().regex(checkoutIdentity),
     claimedAt: z.string().refine(isCanonicalTimestamp),
     pid: z.number().int().positive().max(2_147_483_647).optional(),
-}).strict()
+    processStartedAt: z.string().refine(isCanonicalTimestamp).optional(),
+}).strict().refine((holder) => holder.processStartedAt === undefined || holder.pid !== undefined)
 
 const PortLeaseRecordSchema = z.object({
     offset: z.number().int().nonnegative().safe(),
@@ -332,6 +334,9 @@ export interface ClaimHolder {
     readonly checkoutId: CheckoutId
     readonly claimedAt: string
     readonly pid?: number
+    // When the holding process started, read with `ps`. Present only for a `cockpit session`
+    // wrapper, whose hold ends with its process; the plain CLI's hold outlives every command.
+    readonly processStartedAt?: string
 }
 
 export interface PortLeaseRecord {
@@ -687,6 +692,134 @@ const issuedHolderProbePlans = new WeakMap<object, {
     readonly timeoutMs: number
     readonly holderIds: readonly HolderId[]
 }>()
+
+export interface HolderProcess {
+    readonly pid?: number
+    readonly processStartedAt?: string
+}
+
+export type ProcessStartObservation =
+    | { readonly state: 'absent' }
+    | { readonly state: 'present'; readonly startedAt: string }
+    | { readonly state: 'unknown'; readonly reason: string }
+
+const PS_START = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// A pid alone does not name a holder: the pid of a killed session is reused, and a reused pid read
+// as the session would wedge its stack for as long as the stranger runs. So a session records when
+// its process started, and a holder is dead only when its pid is gone or now belongs to a process
+// that started at another time. `ps` prints that start to the second under a fixed locale and zone
+// on both macOS and Linux; anything it cannot confirm reads as unknown, and unknown is never dead.
+export async function observeProcessStart(
+    pid: number,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<ProcessStartObservation> {
+    if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2_147_483_647) return { state: 'unknown', reason: `process id ${pid} is invalid` }
+    try {
+        process.kill(pid, 0)
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ESRCH') return { state: 'absent' }
+        if (code !== 'EPERM') return { state: 'unknown', reason: `process ${pid} could not be signalled: ${code ?? String(error)}` }
+    }
+    let ps: ResolvedExecutable | undefined
+    for (const candidate of ['/bin/ps', '/usr/bin/ps']) {
+        const resolved = await resolveExecutablePath(candidate)
+        if (resolved.state === 'available') { ps = resolved.value; break }
+    }
+    if (!ps) return { state: 'unknown', reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
+    const step = snapshotExecutionPlan({ steps: [Object.freeze({
+        id: `holder:process-start:${pid}`,
+        argv: Object.freeze([ps.canonicalPath, '-o', 'lstart=', '-p', String(pid)] as const),
+        argv0: ps.invocationPath, cwd: '/', env: Object.freeze({ LC_ALL: 'C', TZ: 'UTC0' }), timeoutMs: 5_000,
+        stdoutLimitBytes: 256, stderrLimitBytes: 1_024, paths: Object.freeze([]), ports: Object.freeze([]),
+        labels: Object.freeze({ pid: String(pid) }), expected: Object.freeze([]),
+        consumedFiles: Object.freeze([Object.freeze({ path: ps.canonicalPath, sha256: ps.sha256, maxBytes: 536_870_912,
+            argvIndexes: Object.freeze([0]), executable: true, executionMode: ps.executionMode })]),
+        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
+    })] })?.steps[0]
+    if (!step) return { state: 'unknown', reason: 'the ps step could not be planned' }
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    if (!outcome || outcome.kind !== 'complete' || outcome.execution.exitCode !== 0) {
+        return { state: 'unknown', reason: `ps did not report when process ${pid} started` }
+    }
+    const match = PS_START.exec(Buffer.from(outcome.stdout).toString('utf8').trim())
+    if (!match) return { state: 'unknown', reason: `ps reported an unrecognised start time for process ${pid}` }
+    const [, month, day, hours, minutes, seconds, year] = match
+    const startedAt = new Date(Date.UTC(Number(year), MONTHS.indexOf(month!), Number(day), Number(hours), Number(minutes), Number(seconds)))
+    return Number.isNaN(startedAt.getTime()) ? { state: 'unknown', reason: `ps reported an invalid start time for process ${pid}` }
+        : { state: 'present', startedAt: startedAt.toISOString() }
+}
+
+export function describeHolder(holder: ClaimHolder): string {
+    return holder.pid === undefined ? holder.holderId : `${holder.holderId} (process ${holder.pid})`
+}
+
+// Names each other holder and how to end it. A dead session's hold is released before this is
+// reached, so every holder named here is running, or could not be confirmed gone.
+export function liveHolderMessage(holders: readonly ClaimHolder[]): string {
+    const pids = holders.flatMap(({ pid }) => pid === undefined ? [] : [pid])
+    return `another cockpit session holds this stack (${holders.map(describeHolder).join(', ')}), and down and reset never displace a running session; `
+        + `let its command finish${pids.length > 0 ? ` or stop it with \`kill ${pids.join(' ')}\`` : ''}, then retry`
+}
+
+export type ReleaseDeadSessionHoldersResult =
+    | { readonly kind: 'complete'; readonly released: readonly ClaimHolder[] }
+    | ClaimMutationRefusal
+
+/**
+ * Remove the holds of `cockpit session` wrappers whose process is gone. A session killed with
+ * SIGKILL, a crash or a closed terminal never runs its closing `sleep`, and its hold then made
+ * `down`, `reset` and `sleep` refuse forever while naming a session nobody could end. When every
+ * holder is dead, the requesting holder takes the stack over in the same transaction: the stack is
+ * still running, and a lease no holder retains reads as a stopped stack whose ports are free.
+ */
+export async function releaseDeadSessionHolders(input: {
+    readonly namespace: StateNamespace
+    readonly stackId: StackId
+    readonly successor: { readonly holderId: HolderId; readonly checkoutId: CheckoutId } & HolderProcess
+    readonly now: string
+    readonly observe: (pid: number) => Promise<ProcessStartObservation>
+}): Promise<ReleaseDeadSessionHoldersResult> {
+    const stored = await readState(input.namespace.paths.coordination(input.stackId))
+    if (stored.kind === 'missing') return { kind: 'complete', released: [] }
+    if (stored.kind !== 'complete') return stateRefusal(stored)
+    const value = decodeCoordinationRecord(stored.value, input.stackId)
+    if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
+    if (isDrainActive(value) || isRestoreActive(value)) return { kind: 'complete', released: [] }
+    const dead: ClaimHolder[] = []
+    for (const holder of value.holders) {
+        if (holder.holderId === input.successor.holderId || holder.pid === undefined || holder.processStartedAt === undefined) continue
+        const observed = await input.observe(holder.pid)
+        if (observed.state === 'absent' || observed.state === 'present' && observed.startedAt !== holder.processStartedAt) dead.push(holder)
+    }
+    if (dead.length === 0) return { kind: 'complete', released: [] }
+    let committed: readonly ClaimHolder[] = []
+    const result = await transactClaim<ReleaseDeadSessionHoldersResult>(input.namespace, input.stackId, input.successor.holderId, (current) => {
+        const latest = decodeCoordinationRecord(current, input.stackId)
+        if (!latest) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
+        if (isDrainActive(latest) || isRestoreActive(latest) || latest.lease === null || latest.lease.released) {
+            return abortStateTransaction({ kind: 'complete', released: [] })
+        }
+        // Only a holder still recorded exactly as it was observed is released; one that changed
+        // since is someone else's to judge.
+        const released = dead.filter((holder) => latest.holders.some((candidate) => candidate.holderId === holder.holderId
+            && candidate.claimedAt === holder.claimedAt && candidate.pid === holder.pid
+            && candidate.processStartedAt === holder.processStartedAt))
+        if (released.length === 0) return abortStateTransaction({ kind: 'complete', released: [] })
+        committed = released
+        const remaining = latest.holders.filter((holder) => !released.some(({ holderId }) => holderId === holder.holderId))
+        const reduced: CoordinationRecord = { ...latest, holders: remaining, lastReleasedHolder: released.at(-1)!.holderId }
+        const next = remaining.length > 0 ? reduced : addCoordinationHolder(reduced, input.successor, input.now)?.value
+        if (!next) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the successor holder', input.successor.holderId))
+        return coordinationStateRecord(input.namespace, input.stackId, current, input.now, next)
+    })
+    if ('diagnostics' in result || 'released' in result) return result
+    if (result.kind !== 'complete') return result.kind === 'missing'
+        ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
+    return { kind: 'complete', released: Object.freeze(committed) }
+}
 
 const HOLDER_PROCESS_PROBE = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
 
@@ -1178,6 +1311,7 @@ export function decodeCoordinationRecord(record: StateRecord | null, stackId: St
                 checkoutId: holder.checkoutId as CheckoutId,
                 claimedAt: holder.claimedAt,
                 ...(holder.pid === undefined ? {} : { pid: holder.pid }),
+                ...(holder.processStartedAt === undefined ? {} : { processStartedAt: holder.processStartedAt }),
             }))
             .sort((left, right) => left.holderId < right.holderId ? -1 : left.holderId > right.holderId ? 1 : 0),
         lease: parsed.data.lease === null ? null : {
@@ -1208,7 +1342,7 @@ export function decodeCoordinationRecord(record: StateRecord | null, stackId: St
 
 export function addCoordinationHolder(
     value: CoordinationRecord,
-    holder: { readonly holderId: HolderId; readonly checkoutId: CheckoutId },
+    holder: { readonly holderId: HolderId; readonly checkoutId: CheckoutId } & HolderProcess,
     now: string,
 ): { readonly value: CoordinationRecord; readonly change: 'acquired' | 'unchanged' } | undefined {
     const existing = value.holders.find((candidate) => candidate.holderId === holder.holderId)
@@ -2401,6 +2535,10 @@ export async function inspectDestructiveDrainRecovery(input: {
     const value = decodeCoordinationRecord(record, stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', address.path)
     if (value.drain == null) {
+        const others = value.holders.filter((holder) => holder.holderId !== holderId)
+        if (others.length > 0 && value.holders.some((holder) => holder.holderId === holderId)) {
+            return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, liveHolderMessage(others), stackId)
+        }
         if (value.holders.length !== 1 || value.holders[0]?.holderId !== holderId
             || value.lease === null || value.lease.released) {
             return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'destructive recovery requires exact retained holder and lease ownership', stackId)

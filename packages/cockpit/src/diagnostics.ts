@@ -53,7 +53,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',
-        fix: `for a failed up attempt, run ${cockpitCommand('up')} to resume or ${cockpitCommand('down')} to release; otherwise have every owning session run ${cockpitCommand('sleep')}, then retry`,
+        fix: `for a failed up attempt, run ${cockpitCommand('up')} to resume or ${cockpitCommand('down')} to release; otherwise end each cockpit session the message names (let its command finish, or stop the named process), then retry; a session whose process is gone is released by the next up, sleep, down or reset`,
     }),
     PORT_FAMILY_COLLISION: Object.freeze({
         why: 'one or more ports selected for this stack are already in use',

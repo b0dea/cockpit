@@ -278,6 +278,14 @@ identity, and a second `cockpit session` wrapper is refused. Once cleanup comple
 exits with the command's own status, or 128 plus the signal number (and names the signal) when a
 signal ended it. It exits 2 when cleanup fails and 130 when you cancel it.
 
+A session records its wrapper's process ID and start time with its hold. A wrapper that dies
+without its closing `sleep`, from SIGKILL, a crash or a closed terminal, leaves that hold behind;
+the next `up`, `sleep`, `down` or `reset` from the checkout sees that the process is gone and
+releases it. When it was the last hold, the command's own hold takes the running stack over, so
+`sleep` stops it and `down` removes it. A hold whose process is still running, or whose start time
+`ps` could not confirm, is kept: the `CLAIM_CO_TENANT` refusal names each such holder and its
+process ID, so you can end that command, for example with `kill <pid>`, and retry.
+
 The command `session` runs gets the stack's addresses in its environment, so an agent started under
 it can reach the stack without rerunning `up --json`:
 
@@ -314,8 +322,8 @@ clears startup progress only after confirming the removals, which lets the next 
 generated identity. `down` also retires a stack that `sleep` or an ended `session` left stopped:
 with no holder left, it claims the stack for this checkout without starting anything and removes
 it, so you do not have to run `up` first. While another session still holds the stack, `down`
-refuses with `CLAIM_CO_TENANT`; end that `cockpit session` or run `cockpit sleep` from it, then
-retry.
+refuses with `CLAIM_CO_TENANT` and names that session's holder and process; end that
+`cockpit session`, then retry.
 
 `reset` first shows an exact preview of the generated volumes and declared generated host paths it
 would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at a
