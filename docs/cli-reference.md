@@ -53,8 +53,11 @@ Does not read `cockpit.toml`.
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -269,9 +272,6 @@ Does not read `cockpit.toml`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `OUTPUT_WRITE_FAILED` |
@@ -381,6 +381,8 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `COCKPIT_REVISION_INVALID` | reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry |
+| `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 
 | Other diagnostics |
@@ -393,7 +395,6 @@ Does not read `cockpit.toml`.
 | `ADOPTION_STATE_INVALID` |
 | `ADOPTION_TOO_LARGE` |
 | `ADOPTION_UNREADABLE` |
-| `COCKPIT_REVISION_INVALID` |
 | `REGISTRY_ADOPTION_REQUIRED` |
 | `REGISTRY_AMBIGUOUS` |
 | `REGISTRY_ARTIFACT_UNSAFE` |
@@ -466,6 +467,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
 | `INSTANCE_NOT_IGNORED` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
+| `SETUP_CLONE_FAILED` |
 | `SETUP_CONFIG_REQUIRED` |
 | `SETUP_INSTRUCTION_POINTER_INVALID` |
 | `SETUP_INSTRUCTION_POINTER_OFFERED` |
@@ -514,7 +516,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -815,6 +817,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--probe-specifications` | string | unset |
+| `--write-probe-specifications` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
@@ -837,6 +840,7 @@ Reads `cockpit.toml` from `--config`.
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -856,7 +860,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `SELFTEST_EXECUTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SELFTEST_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications; [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -954,6 +958,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
+| `OUTPUT_WRITE_FAILED` |
 | `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
@@ -995,7 +1000,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -1153,6 +1158,10 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -1204,10 +1213,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `MACHINE_COLD_START_EXCEEDED` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
@@ -1250,6 +1255,9 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -1292,9 +1300,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
@@ -1331,6 +1336,10 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -1385,10 +1394,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `MACHINE_COLD_START_EXCEEDED` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
@@ -1432,6 +1437,9 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -1474,9 +1482,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
@@ -1518,6 +1523,9 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -1560,9 +1568,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
@@ -1604,6 +1609,10 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -1660,10 +1669,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
-| `MACHINE_COLD_START_EXCEEDED` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
@@ -1677,6 +1682,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESET_CO_TENANT` |
 | `RUNNING_CHECKOUT_MISMATCH` |
 | `RUNTIME_COMPOSE_REMOTE` |
+| `RUNTIME_IMAGE_UNAVAILABLE` |
 | `RUNTIME_LAUNCHER_UNAVAILABLE` |
 | `RUNTIME_PROBE_TIMEOUT` |
 | `SETUP_PATH_TYPE_INVALID` |
@@ -1778,7 +1784,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -1928,9 +1937,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `OVERRIDDEN_CORE_CHANGED` |
@@ -1983,8 +1989,11 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -2135,9 +2144,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `OVERRIDDEN_CORE_CHANGED` |
@@ -2189,6 +2195,9 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -2230,9 +2239,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
@@ -2272,6 +2278,9 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
@@ -2313,9 +2322,6 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
-| `MACHINE_CPU_BELOW_FLOOR` |
-| `MACHINE_DISK_BELOW_FLOOR` |
-| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
