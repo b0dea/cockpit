@@ -33,7 +33,7 @@ import {
     type StackId,
     snapshotJson,
 } from './contract.js'
-import { gitEnvironment, type SetupObservation, type SetupResult } from './setup.js'
+import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupResult } from './setup.js'
 import type { InstructionPointerResult } from './instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
@@ -1338,7 +1338,8 @@ function exactSetupResult(
     const origin = evidence.remotes && typeof evidence.remotes === 'object' && !Array.isArray(evidence.remotes)
         ? (evidence.remotes as Record<string, unknown>).origin
         : undefined
-    const remoteMatches = sibling.remote !== undefined && origin === sibling.remote
+    const remoteMatches = sibling.remote !== undefined && typeof origin === 'string'
+        && resolveLocalRemote(origin, siblingsRoot) === resolveLocalRemote(sibling.remote, siblingsRoot)
     const allowed = outcomeKind === 'complete' && action === 'report' && (
         sibling.acquire === 'none' && ['absent', 'directory', 'repository'].includes(observedKind as string)
         || sibling.acquire === 'manual' && observedKind === 'absent'
@@ -4711,7 +4712,7 @@ function issueHealthObservationSource(
                 source: `${loaded.source.path}:${sibling.slug}`,
                 sibling: sibling.slug,
                 acquire: sibling.acquire,
-                ...(sibling.remote === undefined ? {} : { declaredRemote: sibling.remote }),
+                ...(sibling.remote === undefined ? {} : { declaredRemote: resolveLocalRemote(sibling.remote, siblingsRoot) }),
             })
         })
         const prepared = Object.freeze({

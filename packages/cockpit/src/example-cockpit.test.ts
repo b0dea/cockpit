@@ -167,12 +167,19 @@ describe('the public synthetic cockpit', () => {
                 execFileSync('git', ['-C', app, 'add', '.env.example'])
                 execFileSync('git', ['-C', app, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
                     'commit', '--quiet', '-m', 'generated synthetic template'])
+                // sync needs the web checkout to exist, but a fresh machine has none: setup must clone it
+                // from the relative remote and accept the absolute origin Git records for it.
+                rmSync(join(root, 'repositories/web'), { recursive: true })
             }
             const result = run(root, argv)
             expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
             expect(result.stderr).toBe('')
             expect(result.response.invocation.exitCode).toBe(0)
         }
+        const rerun = run(root, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
+        expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0)
+        expect(rerun.response.result.siblings.map((row: { changed: boolean }) => row.changed)).toEqual([false, false])
+        expect(existsSync(join(root, 'repositories/web/.git'))).toBe(true)
         expect(existsSync(join(root, '.cockpit/generated-environment-ownership.json'))).toBe(true)
         expect(existsSync(join(root, 'compose.generated.yml'))).toBe(true)
         expect(existsSync(join(root, 'repositories/app/.env'))).toBe(true)
