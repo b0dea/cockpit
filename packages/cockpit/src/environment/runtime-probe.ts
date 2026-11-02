@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'n
 import { fileURLToPath } from 'node:url'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { ENVIRONMENT_CODES, type ExecutionStep, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type ExecutionStep, type StackId } from './contract.js'
 import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { runDown, runLogs, runReset, runSleep, runUp } from './application.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
@@ -167,7 +167,10 @@ function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
             image: Object.freeze({ ...captured.image }),
             installedModule: Object.freeze({ ...captured.installedModule }),
         })
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the request malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 function hash(value: string | Buffer): string {
@@ -182,13 +185,19 @@ function confined(root: string, target: string): boolean {
 function decode(outcome: ExecuteProbeOutcome): string | undefined {
     if (outcome.kind !== 'complete') return undefined
     // Preserve endpoint-edge whitespace so locality admission can refuse identity aliases.
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).replace(/\r?\n$/, '') } catch { return undefined }
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).replace(/\r?\n$/, '') } catch {
+        // Undecodable output is reported by each caller as an unreadable result.
+        return undefined
+    }
 }
 
 function refusalCategory(outcome: ExecuteProbeOutcome): string {
     if (outcome.kind !== 'refusal') return 'unreadable-output'
     let stderr = ''
-    try { stderr = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr) } catch { return outcome.code }
+    try { stderr = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr) } catch {
+        // Undecodable stderr cannot be categorised; the refusal code alone is the category.
+        return outcome.code
+    }
     if (/unknown flag/i.test(stderr)) return `${outcome.code}:unknown-flag`
     if (/cannot|incompatible|conflict/i.test(stderr)) return `${outcome.code}:incompatible-options`
     if (/services\.probe\.labels/i.test(stderr)) return `${outcome.code}:service-labels`
@@ -209,7 +218,10 @@ function generatedArtifactDetail(outcome: ExecuteProbeOutcome): string {
     try {
         const first = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr).split('\n', 1)[0] ?? ''
         return first.replaceAll(/[a-f0-9]{32,}/g, '<identity>').replaceAll(/\/[\w./-]+/g, '<path>').slice(0, 256)
-    } catch { return refusalCategory(outcome) }
+    } catch {
+        // Undecodable stderr has no first line to show; the category stands in for it.
+        return refusalCategory(outcome)
+    }
 }
 
 interface ProbeRunner {
@@ -342,7 +354,11 @@ async function emptyDirectory(path: string): Promise<boolean> {
     try {
         const canonical = await realpath(path)
         return canonical === path && (await readdir(path)).length === 0
-    } catch { return false }
+    } catch (error) {
+        // A missing directory is not an empty one; any other failure reaches the caller's refusal.
+        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) throw error
+        return false
+    }
 }
 
 async function writeExclusive(path: string, contents: string): Promise<void> {
@@ -362,7 +378,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             || !await emptyDirectory(input.cwd)) {
             return unavailable(input, 'the installed module identity or disposable probe directory could not be authenticated')
         }
-    } catch { return unavailable(input, 'the installed module identity could not be read') }
+    } catch (error) { return unavailable(input, `the installed module identity could not be read: ${errorCause(error)}`) }
 
     const startedAt = new Date().toISOString()
     const deadline = Date.parse(startedAt) + PROBE_WINDOW_MS
@@ -624,7 +640,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             const probe = parsed.services?.probe
             checks.topology = probe !== undefined && Array.isArray(probe.volumes) && probe.volumes.length === 3
                 && probe.healthcheck !== undefined && probe.labels !== undefined
-        } catch { fail('the topology projection was not readable JSON') }
+        } catch (error) { fail(`the topology projection was not readable JSON: ${errorCause(error)}`) }
         if (!profileProjected || !checks.topology) fail('the candidate did not project its profile, mounts, labels, and healthcheck')
 
         fresh()
@@ -660,7 +676,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 && Object.entries(labels).every(([name, value]) => profileData.Config?.Labels?.[name] === value)
             checks.ownership = checks.ownership && Object.entries(labels).every(([name, value]) => data.Config?.Labels?.[name] === value)
                 && [siblingPath, generatedPath].every((source) => data.Mounts?.some((mount) => mount.Source === source) === true)
-        } catch { fail('the container inspection was malformed') }
+        } catch (error) { fail(`the container inspection was malformed: ${errorCause(error)}`) }
         if (!checks.profile || !checks.health || !checks.ownership) fail('profile activation, health, mounts, or canonical ownership labels were not closed')
 
         const readMarker = decode(await execute.run('mount-read', ['container', 'exec', containerId, 'cat', '/probe/input']))
@@ -705,7 +721,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         if (collisionFree) {
             try {
                 if (ownerCleanup && !ownerCleanupAttempted) {
-                    try { await ownerCleanup() } catch { checks.teardown = false }
+                    try { await ownerCleanup() } catch { checks.teardown = false /* reported as the teardown verdict */ }
                 }
                 let survivors = await inventory(cleanupExecute.run, 'post-owned', probeScope)
                 for (let attempt = 0; attempt < 2 && survivors
@@ -720,13 +736,14 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 resourcesEqual = pre !== undefined && post !== undefined && inventoriesEqual(pre, post)
                 changedResourceKinds = pre !== undefined && post !== undefined ? inventoryDifferences(pre, post) : Object.freeze(['inventory-unavailable'])
             } catch {
+                // Cleanup is best effort; the teardown verdict and survivor list report the failure.
                 checks.teardown = false
                 ownedSurvivors = Object.freeze(['cleanup-unavailable'])
             }
         }
         for (const path of [configPath, candidatePath, controlPath, defaultEnvironmentPath, ownershipPath,
             generatedPath, siblingsRoot, homePath, join(input.cwd, '.git')]) {
-            try { await rm(path, { recursive: true, force: true }) } catch { checks.teardown = false }
+            try { await rm(path, { recursive: true, force: true }) } catch { checks.teardown = false /* reported as the teardown verdict */ }
         }
     }
 
