@@ -141,7 +141,8 @@ describe('browser transport surfaces', () => {
             authorization => executeBrowserProjectOperation(client, input.runtime, {
                 kind: 'drive', surface: { name: 'app', url: 'https://app.example.invalid/' }, deadline: Date.now() + 30_000,
             }, authorization))
-        expect(admitted.kind === 'admitted' ? admitted.value?.execution.exitCode : undefined).toBe(0)
+        const value = admitted.kind === 'admitted' ? admitted.value : undefined
+        expect(value && 'execution' in value ? value.execution.exitCode : undefined).toBe(0)
     })
 
     it('holds one durable per-worker claim while a different declared worker remains concurrent', async () => {
@@ -194,6 +195,19 @@ describe('browser transport surfaces', () => {
         } as never)
         expect(outcome).toBeUndefined()
         await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('names the filesystem error when the screenshot artifact root cannot be inspected', async () => {
+        const input = await fixture('bypassed', true, true)
+        const client = renderBrowserSurfaces(input).clients[0]!
+        await rm(client.artifactRoot, { recursive: true })
+        const admitted = await withBrowserProjectOperationAdmission(client, input.runtime, { origin: 'https://app.example.invalid' },
+            authorization => executeBrowserProjectOperation(client, input.runtime, {
+                kind: 'screenshot', surface: { name: 'app', url: 'https://app.example.invalid/' }, deadline: Date.now() + 30_000,
+                output: join(client.artifactRoot, 'screenshot-00000000-0000-4000-8000-000000000000.png'),
+            }, authorization))
+        expect(admitted).toMatchObject({ kind: 'admitted', value: { kind: 'unadmitted',
+            cause: expect.stringMatching(/artifact root could not be inspected: ENOENT.*lstat/) } })
     })
 
     it('renders measured spellings through the shared MCP collector and keeps callable proof held', async () => {

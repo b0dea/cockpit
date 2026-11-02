@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { z } from 'zod'
-import { filesystemObjectIdentity, isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId } from '../environment/contract.js'
+import { errorCause, filesystemObjectIdentity, isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock, readState, transactState, withStateScopedLock,
@@ -305,16 +305,15 @@ export function authenticateBrowserProjectClient(value: unknown, runtime: Browse
         ? value as BrowserProjectClient : undefined
 }
 
+// Returns undefined for a path that is not a confined directory; a filesystem error is thrown for the caller to name.
 function artifactDirectoryIdentity(path: string): FilesystemIdentity | undefined {
-    try {
-        const directory = lstatSync(path, { bigint: true })
-        const parentPath = dirname(path)
-        const parent = lstatSync(parentPath, { bigint: true })
-        if (!directory.isDirectory() || directory.isSymbolicLink() || !parent.isDirectory() || parent.isSymbolicLink()
-            || realpathSync(path) !== path || realpathSync(parentPath) !== parentPath) return undefined
-        return Object.freeze({ ...filesystemObjectIdentity(directory),
-            ancestors: Object.freeze([Object.freeze({ path: parentPath, ...filesystemObjectIdentity(parent) })]) })
-    } catch { return undefined }
+    const directory = lstatSync(path, { bigint: true })
+    const parentPath = dirname(path)
+    const parent = lstatSync(parentPath, { bigint: true })
+    if (!directory.isDirectory() || directory.isSymbolicLink() || !parent.isDirectory() || parent.isSymbolicLink()
+        || realpathSync(path) !== path || realpathSync(parentPath) !== parentPath) return undefined
+    return Object.freeze({ ...filesystemObjectIdentity(directory),
+        ancestors: Object.freeze([Object.freeze({ path: parentPath, ...filesystemObjectIdentity(parent) })]) })
 }
 
 function operationStatePath(runtime: BrowserRuntimeProjection, client: BrowserProjectClient, role: string | undefined): string | null | undefined {
@@ -370,8 +369,16 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
     })
 }
 
+// A prerequisite the operation could not inspect; errorCause keeps the operation and path of a system
+// error and only the class of anything else.
+export type BrowserProjectOperationNotAdmitted = Readonly<{ kind: 'unadmitted'; cause: string }>
+
+function notAdmitted(what: string, error: unknown): BrowserProjectOperationNotAdmitted {
+    return Object.freeze({ kind: 'unadmitted', cause: `${what}: ${errorCause(error)}` })
+}
+
 export async function executeBrowserProjectOperation(client: BrowserProjectClient, runtime: BrowserRuntimeProjection,
-    input: BrowserProjectOperation, authorization?: BrowserProjectOperationAuthorization): Promise<ExecuteProbeOutcome | undefined> {
+    input: BrowserProjectOperation, authorization?: BrowserProjectOperationAuthorization): Promise<ExecuteProbeOutcome | BrowserProjectOperationNotAdmitted | undefined> {
     if (issuedClients.get(client) !== runtime) return undefined
     const admitted = authorization && issuedOperationAuthorizations.get(authorization)
     if (!admitted || admitted.client !== client || admitted.runtime !== runtime || admitted.active) return undefined
@@ -382,20 +389,27 @@ export async function executeBrowserProjectOperation(client: BrowserProjectClien
     const remaining = operation.deadline - Date.now()
     if (remaining <= 0 || remaining > COMMAND_TIMEOUT_MS) return undefined
     let url: URL
+    // The surface address was already validated by the schema; the URL error would quote it, so the
+    // caller's fixed not-admitted message stands.
     try { url = new URL(operation.surface.url) } catch { return undefined }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.origin !== admitted.origin
         || operation.role !== admitted.role) return undefined
     const statePath = admitted.statePath
     const screenshot = operation.kind === 'screenshot'
     if (screenshot !== (operation.output !== undefined)) return undefined
-    const artifactIdentity = screenshot ? artifactDirectoryIdentity(client.artifactRoot) : undefined
+    let artifactIdentity: FilesystemIdentity | undefined
+    if (screenshot) {
+        try { artifactIdentity = artifactDirectoryIdentity(client.artifactRoot) } catch (error) { return notAdmitted('the screenshot artifact root could not be inspected', error) }
+    }
     if (screenshot && (!artifactIdentity || dirname(operation.output!) !== client.artifactRoot
         || !/^screenshot-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/.test(basename(operation.output!)))) return undefined
+    // The revalidation throws only its own fixed-text TypeError, whose class says nothing the caller's
+    // refusal does not, so the admission is simply withheld.
     try { assertBrowserStorageStateCurrent(runtime) } catch { return undefined }
     let stateBytes: Buffer | undefined
-    try { stateBytes = statePath ? observedFile(statePath, 1_048_576) : undefined } catch { return undefined }
+    try { stateBytes = statePath ? observedFile(statePath, 1_048_576) : undefined } catch (error) { return notAdmitted('the seeded storage state could not be read', error) }
     const step = operationStep(client, runtime, operation, remaining, admitted.origin, statePath, stateBytes, artifactIdentity)
-    try { assertBrowserStorageStateCurrent(runtime) } catch { return undefined }
+    try { assertBrowserStorageStateCurrent(runtime) } catch { return undefined } // fixed-text TypeError, as above
     admitted.active = true
     const pending = executeProbe(step).then(outcome => authenticatedExecutionOutcome(outcome, step))
     admitted.pending.add(pending)
@@ -447,6 +461,7 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
         state = Object.freeze({ namespace: values.namespace as StateNamespace, stackId: values.stackId as StackId, ownerId: values.ownerId as HolderId })
     }
     let origin: URL
+    // The URL error quotes the caller's origin; the refusal below names the expected shape instead.
     try { origin = new URL(captured.origin as string) } catch {
         return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires an issued HTTP application origin' })
     }
@@ -470,6 +485,7 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
         return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires current declared authentication authority' })
     }
     const invoke = async (): Promise<BrowserProjectOperationAdmissionResult<T>> => {
+        // Only the runtime's fixed-text TypeError escapes the revalidation; the refusal names the condition.
         try { assertBrowserStorageStateCurrent(runtime) } catch {
             return Object.freeze({ kind: 'refusal', reason: 'Browser seeded state changed before operation dispatch' })
         }

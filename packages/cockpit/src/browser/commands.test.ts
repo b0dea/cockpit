@@ -21,7 +21,7 @@ afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursi
 type ModuleMode = 'connect' | 'context' | 'page' | 'goto' | 'aria' | 'screenshot' | 'http-error'
     | 'null-response' | 'redirect-return' | 'final-foreign' | 'same-origin-redirect' | 'popup-cross-origin' | 'control-plane-attempts'
     | 'later-navigation' | 'refused'
-    | 'oversize-aria' | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'cleanup' | null
+    | 'oversize-aria' | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'remove-screenshot' | 'cleanup' | null
 
 function playwrightModule(input: { logPath: string; serverPath: string; artifactRoot: string; outsideRoot: string; mode: ModuleMode }): string {
     return `const fs = require('node:fs')
@@ -91,7 +91,7 @@ const browser = () => ({
           ${input.mode === 'preexisting-screenshot' ? "fs.writeFileSync(output(), 'preexisting')" : ''}
           ${input.mode === 'swap-root' ? `fs.renameSync(${JSON.stringify(input.artifactRoot)}, ${JSON.stringify(`${input.artifactRoot}.moved`)}); fs.symlinkSync(${JSON.stringify(input.outsideRoot)}, ${JSON.stringify(input.artifactRoot)})` : ''}
           return ${input.mode === 'oversize-screenshot' ? `Buffer.alloc(${8_388_609})` : "Buffer.from('synthetic screenshot')"} },
-        close: async () => { log(['page.close']); ${input.mode === 'cleanup' ? "throw new Error('synthetic cleanup failure')" : ''} }
+        close: async () => { log(['page.close']); ${input.mode === 'remove-screenshot' ? 'fs.rmSync(output())' : ''}; ${input.mode === 'cleanup' ? "throw new Error('synthetic cleanup failure')" : ''} }
       } },
       close: async () => log(['context.close'])
     } },
@@ -449,6 +449,14 @@ describe('browser driving commands', () => {
         await expect(executeBrowserCommand({ runtime: swapped.runtime, client: swapped.client, policy: swapped.policy, kind: 'screenshot' }))
             .resolves.toMatchObject({ kind: 'refusal' })
         expect(await readdir(swapped.outsideRoot)).toEqual([])
+    })
+
+    it('names the filesystem error when the written screenshot cannot be postchecked', async () => {
+        // The file vanishes after the operation wrote it and before the postcheck reads it back.
+        const gone = await fixture({ mode: 'remove-screenshot' })
+        const result = await executeBrowserCommand({ runtime: gone.runtime, client: gone.client, policy: gone.policy, kind: 'screenshot' })
+        expect(result).toMatchObject({ kind: 'refusal', reason: expect.stringMatching(
+            /^Browser screenshot output failed its contained mode-600 postcheck for home \(ENOENT: .*screenshot-[0-9a-f-]+\.png'\)$/) })
     })
 
     it('reports the sanitized failing phase and closes every resource created before a failure', async () => {

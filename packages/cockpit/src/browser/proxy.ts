@@ -24,6 +24,7 @@ export function browserProxyAuthorityMatches(value: string, expectedPort: number
         return value === `${parsed.hostname}:${expectedPort}`
             && parsed.hostname !== 'undefined' && parsed.hostname !== 'null'
     } catch {
+        // A URL parse error quotes the authority; a boolean answer is the whole contract.
         return false
     }
 }

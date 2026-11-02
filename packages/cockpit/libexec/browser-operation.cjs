@@ -59,6 +59,8 @@ async function main() {
         context = await browser.newContext({ ...(storageState ? { storageState } : {}), serviceWorkers: 'block' })
         const controlAuthorities = new Set(JSON.parse(one('--control-authorities')))
         const controlPorts = new Set(JSON.parse(one('--control-ports')).map(String))
+        // An address that does not parse cannot be shown to be safe, so both guards treat it as blocked
+        // rather than naming the error, which would quote the address.
         const isControlAuthority = value => { try {
             const parsed = new URL(value)
             const port = parsed.port || (parsed.protocol === 'http:' || parsed.protocol === 'ws:' ? '80'
@@ -179,6 +181,7 @@ async function main() {
     }
     finally {
         for (const value of [page, context, browser]) if (value && typeof value.close === 'function') {
+            // The failure record carries a cleanup flag and never a message, so the error is not kept.
             try { await value.close() } catch { cleanupFailed = true }
         }
     }

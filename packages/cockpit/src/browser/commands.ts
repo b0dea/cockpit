@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { isIP } from 'node:net'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
-import { snapshotJson, type HolderId, type StackId } from '../environment/contract.js'
+import { errorCause, snapshotJson, type HolderId, type StackId } from '../environment/contract.js'
 import { inspectBrowserDebuggerPreparation, type BrowserDebuggerPreparation } from '../environment/generated-application.js'
 import { type StateNamespace } from '../environment/state.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -77,6 +77,8 @@ function parseBrowserFailure(value: Buffer): Readonly<{
 }> | undefined {
     if (value.byteLength === 0 || value.byteLength > 1_024) return undefined
     let parsed: unknown
+    // The bytes come from the child's stderr and a parse error can quote them; the caller reports
+    // the failure from its own fixed text when this returns undefined.
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(value)) } catch { return undefined }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     const row = parsed as Record<string, unknown>
@@ -142,6 +144,8 @@ export function ownDataRecord(value: unknown, required: readonly string[], optio
             || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) return undefined
         return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
     } catch {
+        // A hostile value can throw from any inspection above; the caller refuses with its fixed
+        // closed-input message and never echoes what the value said.
         return undefined
     }
 }
@@ -230,12 +234,14 @@ function publicAuthentication(value: NonNullable<ReturnType<typeof authenticatio
 
 function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: string): Readonly<{ finalUrl: string; evidence?: { sha256: string; byteLength: number } }> | undefined {
     let parsed: unknown
+    // Child stdout can be quoted by a parse error; the caller refuses with its own fixed message.
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(value)) } catch { return undefined }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     const row = parsed as Record<string, unknown>
     const expected = kind === 'drive' ? ['finalUrl', 'operation', 'schema'] : ['evidence', 'finalUrl', 'operation', 'schema']
     if (Object.keys(row).sort().join(',') !== expected.sort().join(',') || row.schema !== 'cockpit-browser-observation/v1' || row.operation !== kind || typeof row.finalUrl !== 'string') return undefined
     let final: URL
+    // A URL error quotes the child-reported address; the caller refuses with its own fixed message.
     try { final = new URL(row.finalUrl) } catch { return undefined }
     if (final.origin !== origin || final.username || final.password || final.hash) return undefined
     if (kind === 'drive') return Object.freeze({ finalUrl: final.href })
@@ -247,6 +253,7 @@ function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: strin
     return Object.freeze({ finalUrl: final.href, evidence: Object.freeze({ sha256: evidence.sha256, byteLength: evidence.byteLength as number }) })
 }
 
+// Returns undefined when the file fails a check; a filesystem error is thrown for the caller to name.
 function postcheckScreenshot(root: string, cockpitRoot: string, path: string, expected: { sha256: string; byteLength: number }): string | undefined {
     let descriptor: number | undefined
     try {
@@ -267,8 +274,7 @@ function postcheckScreenshot(root: string, cockpitRoot: string, path: string, ex
         if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) return undefined
         const receiptPath = relative(cockpitRoot, path)
         return receiptPath && !receiptPath.startsWith('..') && !isAbsolute(receiptPath) ? receiptPath : undefined
-    } catch { return undefined }
-    finally { if (descriptor !== undefined) closeSync(descriptor) }
+    } finally { if (descriptor !== undefined) closeSync(descriptor) }
 }
 
 export function isIssuedBrowserCommandReceipt(value: unknown): value is BrowserCommandReceipt {
@@ -309,13 +315,17 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         if (unavailable) return refusal(unavailable)
     }
     for (const surface of policy.surfaces) {
+        // Only the runtime's own fixed-text TypeError escapes the revalidation (its filesystem errors
+        // are already folded into that message), so the refusal names the condition instead.
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed before application driving') }
         const output = input.kind === 'screenshot' ? resolve(client.artifactRoot, `screenshot-${randomUUID()}.png`) : undefined
         if (deadline <= Date.now()) return refusal('Browser command exceeded its total 30-second deadline')
         const authenticated = await executeBrowserProjectOperation(client, input.runtime, Object.freeze({
             kind: input.kind, surface, deadline, ...(auth.posture === 'real' ? { role: auth.role } : {}), ...(output ? { output } : {}),
         }), authorization)
-        if (!authenticated) return refusal(`Browser ${input.kind} operation was not admitted to the bounded executor for ${surface.name}`)
+        if (!authenticated || authenticated.kind === 'unadmitted') {
+            return refusal(`Browser ${input.kind} operation was not admitted to the bounded executor for ${surface.name}${authenticated ? ` (${authenticated.cause})` : ''}`)
+        }
         const failure = authenticated.execution.exitCode === 0 ? undefined : parseBrowserFailure(authenticated.stderr)
         if (failure) {
             return refusal(`Browser ${input.kind} operation failed during ${failure.phase} (${failure.category})${failure.cleanup && failure.phase !== 'cleanup'
@@ -333,8 +343,10 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         const base = { name: surface.name, url: observation.finalUrl }
         if (input.kind === 'accessibility') receipts.push(Object.freeze({ ...base, accessibility: observation.evidence! }))
         else if (input.kind === 'screenshot') {
-            const path = postcheckScreenshot(client.artifactRoot, client.cwd, output!, observation.evidence!)
-            if (!path) return refusal(`Browser screenshot output failed its contained mode-600 postcheck for ${surface.name}`)
+            let path: string | undefined
+            let cause = ''
+            try { path = postcheckScreenshot(client.artifactRoot, client.cwd, output!, observation.evidence!) } catch (error) { cause = ` (${errorCause(error)})` }
+            if (!path) return refusal(`Browser screenshot output failed its contained mode-600 postcheck for ${surface.name}${cause}`)
             receipts.push(Object.freeze({ ...base, screenshot: Object.freeze({ path, ...observation.evidence! }) }))
         } else receipts.push(Object.freeze(base))
     }
@@ -350,8 +362,9 @@ export async function executeBrowserCommand(value: BrowserCommandInput): Promise
     if (!input) return refusal('Browser command requires a closed own-data input')
     if (!kinds.has(input.kind)) return refusal('Browser command kind is unsupported')
     let client: BrowserProjectClient | undefined
-    try { client = authenticateBrowserProjectClient(input.client, input.runtime) } catch { client = undefined }
-    if (!client) return refusal('Browser command requires an issued project module client')
+    let clientCause = ''
+    try { client = authenticateBrowserProjectClient(input.client, input.runtime) } catch (error) { clientCause = ` (${errorCause(error)})` }
+    if (!client) return refusal(`Browser command requires an issued project module client${clientCause}`)
     if (issuedPolicies.get(input.policy) !== input.runtime) return refusal('Browser command requires an issued route policy for the current runtime')
     if (input.runtime.connection.kind === 'remote' && !networkExposureCovers(input.runtime.networkExposure, new URL(input.policy.origin))) {
         return refusal(`Browser application origin ${input.policy.origin} is outside browser.network_exposure (${input.runtime.networkExposure}): `
