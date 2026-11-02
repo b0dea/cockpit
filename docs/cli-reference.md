@@ -47,6 +47,7 @@ Does not read `cockpit.toml`.
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
@@ -73,6 +74,7 @@ Does not read `cockpit.toml`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -291,6 +293,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -544,6 +547,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -599,6 +603,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -653,6 +658,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
@@ -663,6 +669,7 @@ Reads `cockpit.toml` from `--config`.
 
 | Other diagnostics |
 | --- |
+| `CLAIM_LIVENESS_UNKNOWN` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_SCHEMA_INVALID` |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
@@ -687,6 +694,8 @@ Reads `cockpit.toml` from `--config`.
 | `STACK_NOT_RUNNING` |
 | `STACK_RECORDED_UNDER_EARLIER_NAME` |
 | `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_LOCKED` |
+| `STATE_ROOT_UNAVAILABLE` |
 
 ## cockpit down
 
@@ -713,6 +722,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -769,6 +779,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -832,6 +843,7 @@ Reads `cockpit.toml` from `--config`.
 | `EXECUTION_COMPENSATION_TIMEOUT` |
 | `EXECUTION_PRECONDITION_CHANGED` |
 | `EXECUTION_SPAWN_FAILED` |
+| `STATE_ROOT_UNAVAILABLE` |
 
 ## cockpit sibling
 
@@ -914,6 +926,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -969,6 +982,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -1028,6 +1042,7 @@ Reads `cockpit.toml` from `--config`.
 | `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |

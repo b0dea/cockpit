@@ -3675,7 +3675,7 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
               "type": "integer",
               "minimum": 0,
               "exclusiveMinimum": true,
-              "maximum": 9007199254740991
+              "maximum": 3600
             }
           },
           "required": [
@@ -10747,6 +10747,10 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
     {
       "path": "environment.resettable_volumes[]",
       "rule": "unique"
+    },
+    {
+      "path": "environment.resettable_volumes[]",
+      "rule": "declared_compose_volume_key"
     },
     {
       "path": "environment.generated_host_paths[]",

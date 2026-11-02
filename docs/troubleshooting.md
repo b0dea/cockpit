@@ -253,6 +253,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `COMPOSE_BIND_UNDECLARED` | see the message |
 | `COMPOSE_HEALTHCHECK_MISSING` | see the message |
 | `COMPOSE_IMAGE_UNPINNED` | see the message |
+| `COMPOSE_PORT_ALL_INTERFACES` | see the message |
 | `COMPOSE_PORT_NOT_LEASED` | see the message |
 | `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
@@ -422,6 +423,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `INSTANCE_NOT_IGNORED` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MACHINE_COLD_START_EXCEEDED` | see the message |
 | `MACHINE_CPU_BELOW_FLOOR` | see the message |
 | `MACHINE_DISK_BELOW_FLOOR` | see the message |
