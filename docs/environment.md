@@ -269,7 +269,10 @@ rather than an invented one.
 ### Release the stack
 
 `sleep` removes the current holder. It stops the shared runtime only when no other holder remains,
-so one holder cannot stop another's environment. `stackId` names the shared runtime and
+so one holder cannot stop another's environment. Stopping the runtime also releases the stack's port
+lease, so a stopped stack does not use up one of the `ports.count` families other checkouts need;
+the next `up` leases afresh and may land on a different family, so read the ports and entrypoints
+it returns instead of reusing the earlier ones. `stackId` names the shared runtime and
 `checkoutId` names one checkout; two checkouts with the same stack ID are still not
 interchangeable.
 

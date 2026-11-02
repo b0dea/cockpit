@@ -2830,7 +2830,7 @@ async function executeUpRound(
                     const logDiagnostics = await reportFailedService(admitted.logs, completed.service, context, adapters)
                     const primary = lifecycleRefusal(
                         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-                        'completed runtime service could not be revalidated',
+                        `completed runtime service could not be revalidated: its recorded container is no longer running and healthy, for example after it was killed — fix: run \`${cockpitCommand('sleep', { config: context.source.path })}\`, then \`${lifecycleSuggestion(context, 'up')}\` to start the stack again`,
                         completed.service,
                     )
                     return { kind: 'refusal', result: {
@@ -3336,7 +3336,12 @@ export async function runSession(
     )
 
     const sleep = await adapters.sleep({ configPath: input.configPath })
-    const cleanup = sleep.kind === 'complete' ? `; environment cleanup ${sleep.result.change}` : ''
+    // The sleep change names what happened to the stack, not to the session's hold, which every
+    // completed cleanup released; "cleanup retained" read as the hold having been kept.
+    const cleanup = sleep.kind !== 'complete' ? ''
+        : sleep.result.change === 'stopped' ? '; its hold was released and the stack stopped'
+            : sleep.result.change === 'retained' ? '; its hold was released and another holder keeps the stack running'
+                : '; its hold was released'
     // A command that exits nonzero is a normal end of the session, not a cockpit failure: a wrapper
     // that exits 2 for it hides the command's own status from the scripts and agents that branch on
     // it. So a completed cleanup passes that status through, with the shell convention of 128 plus
