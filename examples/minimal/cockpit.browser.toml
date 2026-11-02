@@ -70,9 +70,9 @@ start_period_seconds = 20
 [browser]
 # Browser commands drive through a harness row whose version cockpit has measured.
 harnesses = [{ target = "claudecode", version = "2.1.220" }]
-# Playwright v1.64.0-noble, and @playwright/mcp 0.0.83, which bundles Playwright 1.64.0-alpha; a
-# client and server must share major.minor. Both images are indexes for amd64 and arm64.
-images = { runner = { reference = "mcr.microsoft.com/playwright@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f", driver_version = "1.64.0", architectures = ["amd64", "arm64"] }, mcp = { reference = "mcr.microsoft.com/playwright/mcp@sha256:690763cbb437ee7233f538a953bb5390bf03791eb5c965b471e59d17a6132fcb", driver_version = "1.64.0" } }
+# Playwright v1.64.0-noble, and @playwright/mcp 0.0.83, which bundles Playwright 1.64.0-alpha-1790635538000;
+# a client and server must share major.minor. Both images are indexes for amd64 and arm64.
+images = { runner = { reference = "mcr.microsoft.com/playwright@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f", driver_version = "1.64.0", architectures = ["amd64", "arm64"] }, mcp = { reference = "mcr.microsoft.com/playwright/mcp@sha256:690763cbb437ee7233f538a953bb5390bf03791eb5c965b471e59d17a6132fcb", driver_version = "1.64.0-alpha-1790635538000" } }
 runner_health_measurement = { duration_seconds = 10, provenance = { source = "cockpit up", observed_on = "2026-11-02", kind = "measured", reason = "A recreated runner was healthy 5 s after start, npm ci download included" } }
 # The browser project holds only @playwright/test; the runner installs it with npm ci, and the
 # browser commands load the same pinned module on this machine.
