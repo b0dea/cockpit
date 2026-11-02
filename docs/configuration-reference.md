@@ -141,7 +141,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `service` | Generated service that runs this sibling's checkout. | table: [`[sibling.derives.generated.service]`](#siblingderivesgeneratedservice) |  | required |
 | `checkout_mount` | Mount of the sibling checkout into the service. | table: [`[sibling.derives.generated.checkout_mount]`](#siblingderivesgeneratedcheckout_mount) |  | required |
 | `additional_mounts` | Extra mounts for the service beyond the checkout. | array of table: [`additional_mounts` shape](#additional_mounts-shape) | `[]` | at most 256 items |
-| `port_defaults` | Default host port for each of the service's host variables. | table of integer |  | required; any key; each value: 1–65535 |
+| `port_defaults` | Default host port for each of the service's host variables. | table of integer |  | required; each key: pattern `^(?=[\s\S]{0,128}$)(?:^[A-Z][A-Z0-9_]*$)`; each value: 1–65535 |
 | `entrypoints` | Addresses derived from this service's ports. | array of table: [`entrypoints` shape](#entrypoints-shape) |  | required; at most 256 items |
 | `volumes` | Named volumes this row adds to the stack. | array of table: [`volumes` shape](#volumes-shape) |  | at most 256 items |
 | `install_policies` | Install policies this row adds to the stack. | array of table: [`install_policies` shape](#install_policies-shape) |  | at most 256 items |
@@ -185,7 +185,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `step` | Offset between consecutive stacks' published ports. | integer | `100` | greater than 0; at most 9007199254740991 |
 | `count` | Number of stacks that can run side by side. | integer | `27` | greater than 0; at most 9007199254740991 |
-| `bases` | Base host port for each port variable; stack n publishes base plus n times step. | table of integer |  | required; any key; each value: 1–65535 |
+| `bases` | Base host port for each port variable; stack n publishes base plus n times step. | table of integer |  | required; each key: pattern `^[A-Z][A-Z0-9_]*$`; each value: 1–65535 |
 
 ### `[guards]`
 
@@ -225,7 +225,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | any key; each value: pattern `^[a-f0-9]{64}$` |
+| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
 
 ### `[workorders]`
 
