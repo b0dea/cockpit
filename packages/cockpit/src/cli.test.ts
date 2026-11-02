@@ -1445,7 +1445,7 @@ describe('setup process contract', () => {
             diagnostics: [{
                 severity: 'error',
                 code: 'STATE_ROOT_UNAVAILABLE',
-                message: 'selected state root is not safely usable',
+                message: expect.stringMatching(/^the state root .* lies inside the checkout /),
                 target: expect.stringContaining(mainCheckout),
             }],
         })

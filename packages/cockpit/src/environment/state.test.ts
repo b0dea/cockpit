@@ -40,6 +40,9 @@ const executeFile = promisify(execFile)
 const lockAcquisitionControl = vi.hoisted(() => ({
     afterLockCreated: undefined as undefined | ((lockPath: string) => Promise<void>),
 }))
+// A sandbox that keeps the home directory read-only (Codex's workspace-write sandbox) denies the
+// write probe with EPERM although the mode bits allow it; chmod cannot stage that.
+const sandboxDenied = vi.hoisted(() => ({ path: '' }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -52,13 +55,21 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         }
         return created
     }) as typeof actual.mkdir
-    return { ...actual, mkdir, default: { ...actual, mkdir } }
+    const access = (async (...args: Parameters<typeof actual.access>) => {
+        if (sandboxDenied.path && args[0] === sandboxDenied.path) {
+            throw Object.assign(new Error(`EPERM: operation not permitted, access '${sandboxDenied.path}'`),
+                { code: 'EPERM', errno: -1, syscall: 'access', path: sandboxDenied.path })
+        }
+        return actual.access(...args)
+    }) as typeof actual.access
+    return { ...actual, mkdir, access, default: { ...actual, mkdir, access } }
 })
 
 const temporaryPaths: string[] = []
 
 afterEach(async () => {
     lockAcquisitionControl.afterLockCreated = undefined
+    sandboxDenied.path = ''
     await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
@@ -300,7 +311,7 @@ describe('selectStateRoot', () => {
         expect(missingHome).toEqual({
             kind: 'refusal',
             code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-            message: 'state root requires an absolute usable home directory',
+            message: 'the state root is under the home directory, but HOME is not set',
             target: '',
         })
         expect(JSON.stringify(missingHome)).not.toContain(tmpdir())
@@ -337,12 +348,22 @@ describe('selectStateRoot', () => {
 
         expect(linked).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE })
         expect(file).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE })
-        expect(unwritable).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE })
-        expect(contained).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE })
+        expect(unwritable).toEqual({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, target: join(unwritableXdg, 'cockpit', 'v1'),
+            message: `cockpit keeps its state under ${join(unwritableXdg, 'cockpit', 'v1')}, but ${unwritableXdg} is not writable by its owner` })
+        expect(contained).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+            message: `the state root ${join(home, '.local', 'state', 'cockpit', 'v1')} lies inside the checkout ${parent}` })
         expect(containedInOneOfMany).toMatchObject({
             kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
         })
         expect(unwritableRoot).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE })
+
+        // A sandbox's denial names the directory and the errno, and says to run outside it, rather
+        // than blaming the home directory.
+        sandboxDenied.path = home
+        const sandboxed = await selectStateRoot({ platform: 'darwin', home, cockpitId })
+        const stateRoot = join(home, 'Library', 'Application Support', 'cockpit', 'state', 'v1')
+        expect(sandboxed).toEqual({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, target: stateRoot,
+            message: `cockpit keeps its state under ${stateRoot}, but ${home} is not writable by this process (EPERM: operation not permitted, access '${home}'); a sandbox that keeps this directory read-only cannot run cockpit commands that record state, so run this command outside the sandbox or let the sandbox write there` })
 
         await chmod(unwritableXdg, 0o700)
         await chmod(join(xdgWithUnwritableRoot, 'cockpit', 'v1'), 0o700)

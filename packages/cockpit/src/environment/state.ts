@@ -434,67 +434,72 @@ function privatelyOwned(status: { readonly uid: number; readonly mode: number },
     return uid !== undefined && status.uid === uid && (status.mode & 0o022) === 0
 }
 
-async function usableBase(path: string, uid: number): Promise<boolean> {
-    if (!isAbsolute(path)) return false
-    try {
-        const status = await lstat(path)
-        if (!status.isDirectory() || status.isSymbolicLink() || !privatelyOwned(status, uid) || (status.mode & 0o200) === 0) {
-            return false
-        }
-        await access(path, constants.W_OK)
-        return true
-    } catch {
-        // Any failure to prove the directory private and writable means it is unusable; the caller refuses an unusable root.
-        return false
+// Why a directory cannot hold private state, naming the path and the check that failed; 'missing'
+// when it does not exist. A sandbox that keeps the home directory read-only fails the write probe
+// with EPERM, and reporting that as an unusable home directory sent people looking for a HOME problem.
+type Unusable = Readonly<{ reason: string; denied: boolean }>
+
+async function unusableDirectory(path: string, uid: number): Promise<Unusable | 'missing' | undefined> {
+    let status
+    try { status = await lstat(path) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
+        return { reason: `${path} cannot be inspected (${errorCause(error)})`, denied: deniedAccess(error) }
     }
+    if (status.isSymbolicLink()) return { reason: `${path} is a symbolic link`, denied: false }
+    if (!status.isDirectory()) return { reason: `${path} is not a directory`, denied: false }
+    if (!privatelyOwned(status, uid)) return { reason: `${path} is not owned by this user or is writable by its group or others`, denied: false }
+    if ((status.mode & 0o200) === 0) return { reason: `${path} is not writable by its owner`, denied: false }
+    try { await access(path, constants.W_OK) } catch (error) {
+        return { reason: `${path} is not writable by this process (${errorCause(error)})`, denied: deniedAccess(error) }
+    }
+    return undefined
 }
 
-async function usableSelectedBase(path: string, uid: number): Promise<boolean> {
-    if (!isAbsolute(path)) return false
+function deniedAccess(error: unknown): boolean {
+    return ['EPERM', 'EACCES', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')
+}
+
+async function usableBase(path: string, uid: number): Promise<Unusable | undefined> {
+    if (!isAbsolute(path)) return { reason: `${path} is not an absolute path`, denied: false }
+    const unusable = await unusableDirectory(path, uid)
+    return unusable === 'missing' ? { reason: `${path} does not exist`, denied: false } : unusable
+}
+
+async function usableSelectedBase(path: string, uid: number): Promise<Unusable | undefined> {
+    if (!isAbsolute(path)) return { reason: `${path} is not an absolute path`, denied: false }
     let cursor = path
     while (true) {
-        try {
-            const status = await lstat(cursor)
-            if (!status.isDirectory() || status.isSymbolicLink() || !privatelyOwned(status, uid) || (status.mode & 0o200) === 0) {
-                return false
-            }
-            await access(cursor, constants.W_OK)
-            return true
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false
-        }
+        const unusable = await unusableDirectory(cursor, uid)
+        if (unusable !== 'missing') return unusable
         const parent = dirname(cursor)
-        if (parent === cursor) return false
+        if (parent === cursor) return { reason: `no ancestor of ${path} exists`, denied: false }
         cursor = parent
     }
 }
 
-async function safeDescendant(base: string, candidate: string, uid: number): Promise<boolean> {
-    if (!(await usableSelectedBase(base, uid)) || !confinedTo(base, candidate)) return false
+async function safeDescendant(base: string, candidate: string, uid: number): Promise<Unusable | undefined> {
+    const unusableBase = await usableSelectedBase(base, uid)
+    if (unusableBase) return unusableBase
+    if (!confinedTo(base, candidate)) return { reason: `${candidate} is outside ${base}`, denied: false }
     const relation = relative(base, candidate)
     let cursor = base
     for (const segment of relation.split(sep).filter(Boolean)) {
         cursor = join(cursor, segment)
-        try {
-            const status = await lstat(cursor)
-            if (
-                !status.isDirectory()
-                || status.isSymbolicLink()
-                || !privatelyOwned(status, uid)
-                || (status.mode & 0o200) === 0
-            ) return false
-            try {
-                await access(cursor, constants.W_OK)
-            } catch {
-                // Any failure to prove the directory private and writable means it is unusable; the caller refuses an unusable root.
-                return false
-            }
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') break
-            return false
-        }
+        const unusable = await unusableDirectory(cursor, uid)
+        if (unusable === 'missing') break
+        if (unusable) return unusable
     }
-    return true
+    return undefined
+}
+
+// The refusal names the directory and the failed check. A permission failure is usually a sandbox
+// (Codex's workspace-write sandbox keeps the home directory read-only); cockpit cannot run inside
+// one that forbids its state root, so it says to run the command outside it.
+function unusableStateRoot<T>(root: string, unusable: Unusable): StateResult<T> {
+    return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        `cockpit keeps its state under ${root}, but ${unusable.reason}${unusable.denied
+            ? '; a sandbox that keeps this directory read-only cannot run cockpit commands that record state, so run this command outside the sandbox or let the sandbox write there'
+            : ''}`, root)
 }
 
 function checkedSegment(value: string, label: string): string {
@@ -871,22 +876,19 @@ async function selectStateBase(
     input: Readonly<{ platform: 'darwin' | 'linux'; home: string | undefined; xdgStateHome?: string }>,
     uid: number,
 ): Promise<StateBase | StateRefusal> {
-    if (input.platform === 'darwin') {
-        if (!input.home || !(await usableBase(input.home, uid))) {
-            return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', input.home ?? '')
-        }
-        return { kind: 'complete', value: Object.freeze({ base: input.home, root: join(input.home, 'Library', 'Application Support', 'cockpit', 'state', 'v1') }) }
+    if (input.platform === 'linux' && input.xdgStateHome !== undefined) {
+        const root = join(input.xdgStateHome, 'cockpit', 'v1')
+        const unusable = await usableSelectedBase(input.xdgStateHome, uid)
+        if (unusable) return unusableStateRoot<never>(root, unusable) as StateRefusal
+        return { kind: 'complete', value: Object.freeze({ base: input.xdgStateHome, root }) }
     }
-    if (input.xdgStateHome !== undefined) {
-        if (!(await usableSelectedBase(input.xdgStateHome, uid))) {
-            return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'present XDG state home is not safely usable', input.xdgStateHome)
-        }
-        return { kind: 'complete', value: Object.freeze({ base: input.xdgStateHome, root: join(input.xdgStateHome, 'cockpit', 'v1') }) }
-    }
-    if (!input.home || !(await usableBase(input.home, uid))) {
-        return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', input.home ?? '')
-    }
-    return { kind: 'complete', value: Object.freeze({ base: input.home, root: join(input.home, '.local', 'state', 'cockpit', 'v1') }) }
+    if (!input.home) return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'the state root is under the home directory, but HOME is not set', '')
+    const root = input.platform === 'darwin'
+        ? join(input.home, 'Library', 'Application Support', 'cockpit', 'state', 'v1')
+        : join(input.home, '.local', 'state', 'cockpit', 'v1')
+    const unusable = await usableBase(input.home, uid)
+    if (unusable) return unusableStateRoot<never>(root, unusable) as StateRefusal
+    return { kind: 'complete', value: Object.freeze({ base: input.home, root }) }
 }
 
 /**
@@ -896,12 +898,11 @@ async function selectStateBase(
  */
 export async function selectMachineStateRoot(input: Readonly<{ platform: 'darwin' | 'linux'; home: string | undefined; xdgStateHome?: string; uid?: number }>): Promise<StateResult<string>> {
     const uid = input.uid ?? process.getuid?.()
-    if (uid === undefined) return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', input.home ?? '')
+    if (uid === undefined) return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'this platform reports no user id, so no private state root can be chosen', input.home ?? '')
     const selected = await selectStateBase({ platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome }, uid)
     if (selected.kind !== 'complete') return selected
-    if (!(await safeDescendant(selected.value.base, selected.value.root, uid))) {
-        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'selected state root is not safely usable', selected.value.root)
-    }
+    const unusable = await safeDescendant(selected.value.base, selected.value.root, uid)
+    if (unusable) return unusableStateRoot(selected.value.root, unusable)
     return { kind: 'complete', value: selected.value.root }
 }
 
@@ -922,8 +923,10 @@ export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootIn
     const selectedBase = await selectStateBase(stableInput, uid)
     if (selectedBase.kind === 'refusal') return selectedBase
     const { base, root } = selectedBase.value
-    if (!(await safeDescendant(base, root, uid)) || confinedTo(stableInput.checkoutRoot, root)) {
-        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'selected state root is not safely usable', root)
+    const unusable = await safeDescendant(base, root, uid)
+    if (unusable) return unusableStateRoot(root, unusable)
+    if (confinedTo(stableInput.checkoutRoot, root)) {
+        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `the state root ${root} lies inside the checkout ${stableInput.checkoutRoot}`, root)
     }
     try {
         const canonicalCheckout = await lstat(stableInput.checkoutRoot)
@@ -963,7 +966,7 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
     if (uid === undefined) {
         return refusal(
             ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-            'state root requires an absolute usable home directory',
+            'this platform reports no user id, so no private state root can be chosen',
             stableInput.home ?? '',
         )
     }
@@ -984,8 +987,11 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
     if (selectedBase.kind === 'refusal') return selectedBase
     const { base, root } = selectedBase.value
 
-    if (!(await safeDescendant(base, root, uid)) || checkoutRoots.some((checkoutRoot) => confinedTo(checkoutRoot, root))) {
-        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'selected state root is not safely usable', root)
+    const unusable = await safeDescendant(base, root, uid)
+    if (unusable) return unusableStateRoot(root, unusable)
+    const containing = checkoutRoots.find((checkoutRoot) => confinedTo(checkoutRoot, root))
+    if (containing !== undefined) {
+        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `the state root ${root} lies inside the checkout ${containing}`, root)
     }
 
     try {

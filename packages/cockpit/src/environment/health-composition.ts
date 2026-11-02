@@ -702,6 +702,10 @@ export function createHealthCommandAdapters(
             checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath],
             cockpitId: checkout.cockpitId,
         })
+        // Without the state root's own refusal, doctor reported only that its observation source
+        // was unavailable, which named neither the directory nor why it could not be used.
+        if (namespace.kind === 'refusal') return refuse?.([Object.freeze({ severity: 'error' as const,
+            code: namespace.code, message: namespace.message, target: namespace.target })])
         if (namespace.kind !== 'complete') return undefined
         selectedNamespace = namespace.value
         const currentStack = stackId({
