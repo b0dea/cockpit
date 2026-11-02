@@ -1604,7 +1604,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             || descriptor.version !== 1 || !['task', 'issue', 'spec', 'decision', 'programme'].includes(descriptor.kind as string)
             || typeof descriptor.reference !== 'string' || typeof descriptor.certification !== 'boolean' || typeof descriptor.crossSession !== 'boolean'
             || descriptor.programme !== null && (typeof descriptor.programme !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(descriptor.programme))) {
-            throw new Error('intent descriptor has an invalid closed JSON shape; required fields prevent ambiguous routing; fix: follow the Intent descriptor section of ./node_modules/@b0dea/cockpit/docs/work-and-browser.md, then rerun npx --no cockpit work intake with --intent <relative-json-path>')
+            throw new Error(`intent descriptor has an invalid closed JSON shape; required fields prevent ambiguous routing; fix: follow the Intent descriptor section of ./node_modules/@b0dea/cockpit/docs/work-and-browser.md, then rerun npx --no cockpit work intake --config ${shellQuote(config.source.path)} --intent <relative-json-path>`)
         }
         const upstreamPath = descriptor.reference
         const upstream = readBounded(root, upstreamPath, MAX_DOCUMENT_BYTES); const upstreamAgain = readBounded(root, upstreamPath, MAX_DOCUMENT_BYTES)

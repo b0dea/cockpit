@@ -6,7 +6,7 @@ import { delimiter, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runCli, type CliHandlerOverrides } from './cli.js'
-import { commands as cliCommands } from './command-table.js'
+import { commandGroups, commands as cliCommands } from './command-table.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
 import { admitDiagnosticFix, cockpitCommand, formatShellCommand, type ConfiguredCommand } from './fix-catalogue.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
@@ -128,8 +128,10 @@ describe('executable remedy catalogue', () => {
 // Docker daemon is named.
 describe('printed cockpit commands', () => {
     const VERBS = 'sibling add|sibling remove|runtime measure|baseline-record|setup|sync|check|selftest|upgrade|up|sleep|session|down|reset|preflight|doctor|logs'
-    const runnable = new RegExp(`(?:npx --no |\\./node_modules/\\.bin/)cockpit (${VERBS})(?![\\w-])`, 'g')
-    const bare = new RegExp(`\\b(?:run|rerun|re-run)\\s+\`?cockpit (?:${VERBS})(?![\\w-])`, 'gi')
+    // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
+    const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
+    const runnable = new RegExp(`(?:npx --no |\\./node_modules/\\.bin/)cockpit (${SCANNED})(?![\\w-])`, 'g')
+    const bare = new RegExp(`\\b(?:run|rerun|re-run)\\s+\`?cockpit (?:${SCANNED})(?![\\w-])`, 'gi')
     // A command ends at its closing quote or the prose around it.
     const commandEnd = /[`'";,)|\\]| then | to | and | or /
     // init takes no --config: it refuses without its root operand and --target, and a bare

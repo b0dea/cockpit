@@ -443,8 +443,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
 
         const help = execFileSync(process.execPath, [launcher, '--help'], options)
         expect(help).toContain('registry-resolve')
-        expect(help).toContain('sync                   Write the generated stack and agent files from cockpit.toml')
-        expect(help).toContain('check                  Report generated files that no longer match cockpit.toml')
+        expect(help).toContain('sync              Write the generated stack and agent files from cockpit.toml')
+        expect(help).toContain('check             Report generated files that no longer match cockpit.toml')
         expect(help).toContain('selftest')
         expect(help).toContain('upgrade')
         const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
