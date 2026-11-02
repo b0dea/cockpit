@@ -5,7 +5,7 @@ import { isProxy } from 'node:util/types'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { GeneratedEnvironment } from '../schema.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, HOST_PROCESS_CONTROL_ENV, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, HOST_PROCESS_CONTROL_ENV, errorCause, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     admitRuntimeServiceHealth,
@@ -418,6 +418,7 @@ async function revalidateLocalService(
             && current.evidence.service === authority.evidence.service
             && current.evidence.containerId === authority.evidence.containerId
     } catch {
+        // Any failure to re-read the service means its evidence is not revalidated; the caller reports it as changed.
         return false
     }
 }
@@ -451,8 +452,8 @@ export async function verifyExternalDependency(plan: ExternalDependencyPlan, opt
             }
         }
         let outcome: ExecuteProbeOutcome
-        try { outcome = await options.execute(planned.step) } catch {
-            return unavailable('EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE', `executor evidence is unavailable for ${planned.role}`)
+        try { outcome = await options.execute(planned.step) } catch (error) {
+            return unavailable('EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE', `executor evidence is unavailable for ${planned.role}: ${errorCause(error)}`)
         }
         const authenticated = authenticatedExecutionOutcome(outcome, planned.step)
         if (authenticated === undefined) return unavailable('EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE', `executor evidence is not authentic for ${planned.role}`)
@@ -500,7 +501,10 @@ export function observeExternalDependency(input: {
 }): ExternalDependencyObservation | undefined {
     if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
     let descriptors: PropertyDescriptorMap
-    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch { return undefined }
+    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch {
+        // A throwing proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
     const keys = ['authority', 'evidence']
     if (Reflect.ownKeys(descriptors).length !== keys.length
         || keys.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
@@ -592,7 +596,10 @@ export function observeExternalDependencies(input: {
 }): EnvironmentObservation | undefined {
     if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
     let descriptors: PropertyDescriptorMap
-    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch { return undefined }
+    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch {
+        // A throwing proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
     const keys = ['authority', 'observations', 'purpose']
     if (Reflect.ownKeys(descriptors).length !== keys.length
         || keys.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))

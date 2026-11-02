@@ -1,6 +1,7 @@
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { isProxy } from 'node:util/types'
 import {
+    errorCause,
     isCanonicalTimestamp,
     snapshotExecutionStep,
     type ExecutionFailureCode,
@@ -164,8 +165,8 @@ export function createDependencyRuntimePlan(input: { readonly runtime: Dependenc
         const plan = Object.freeze({ kind: 'planned' as const, inspect, architecture, abi })
         issuedPlans.set(plan, envelope)
         return plan
-    } catch {
-        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', 'dependency runtime request is unavailable')
+    } catch (error) {
+        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', `dependency runtime request is unavailable: ${errorCause(error)}`)
     }
 }
 
@@ -179,7 +180,10 @@ function text(outcome: ExecuteProbeOutcome, step: ExecutionStep, envelope: Depen
             startedAt: authenticated.receipt.startedAt,
             finishedAt: authenticated.receipt.finishedAt,
         })
-    } catch { return undefined }
+    } catch {
+        // Undecodable output is refused by the caller as unavailable compatibility evidence.
+        return undefined
+    }
 }
 
 function inspectIdentity(source: string, envelope: DependencyRuntimeEnvelope): { readonly imageId: string } | DependencyRuntimeRefusal {
@@ -204,8 +208,8 @@ function inspectIdentity(source: string, envelope: DependencyRuntimeEnvelope): {
             && (item as Record<string, unknown>).Destination === envelope.mount.target)
         if (matches.length !== 1) return refusal('DEPENDENCY_RUNTIME_UNMOUNTED', 'the admitted dependency volume is not mounted at its declared target')
         return Object.freeze({ imageId: value.Image })
-    } catch {
-        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', 'runtime inspection output is malformed')
+    } catch (error) {
+        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', `runtime inspection output is malformed: ${errorCause(error)}`)
     }
 }
 
@@ -249,8 +253,8 @@ export function admitDependencyRuntime(input: {
         const binding = Object.freeze({}) as DependencyRuntimeBinding
         issuedBindings.set(binding, Object.freeze({ envelope, compatibility }))
         return Object.freeze({ kind: 'complete' as const, binding, compatibility })
-    } catch {
-        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', 'runtime compatibility evidence is unavailable')
+    } catch (error) {
+        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', `runtime compatibility evidence is unavailable: ${errorCause(error)}`)
     }
 }
 
@@ -332,8 +336,8 @@ export function createDependencyExecutionPlan(input: {
         issuedExecutionSteps.set(installStep, authority.envelope.observationWindow)
         issuedExecutionSteps.set(loadStep, authority.envelope.observationWindow)
         return Object.freeze({ kind: 'complete' as const, install: installStep, load: loadStep, compatibility: authority.compatibility })
-    } catch {
-        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', 'dependency execution plan is unavailable')
+    } catch (error) {
+        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', `dependency execution plan is unavailable: ${errorCause(error)}`)
     }
 }
 
@@ -384,8 +388,8 @@ export function createDependencyLoadPlan(input: {
         const plan = Object.freeze({ kind: 'planned' as const, step, compatibility: authority.compatibility })
         issuedLoadPlans.set(plan, Object.freeze({ step, observationWindow: authority.envelope.observationWindow }))
         return plan
-    } catch {
-        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', 'dependency load plan is unavailable')
+    } catch (error) {
+        return refusal('DEPENDENCY_RUNTIME_UNAVAILABLE', `dependency load plan is unavailable: ${errorCause(error)}`)
     }
 }
 
