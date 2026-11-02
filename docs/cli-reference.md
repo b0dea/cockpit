@@ -6,7 +6,7 @@ This generated reference is for users looking up an exact command, flag, exit co
 
 Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
 
-Each command lists the codes its code path can produce, derived from the source, so a list can name a code that needs a failure your setup never meets.
+Each command lists the codes its code path can produce, derived from the source rather than observed, and the lists err towards too many. A list can name a code that needs a failure your setup never meets, and, where commands are built from the same shared parts, a code only a related command raises. A code a command prints that its list does not name is a defect in this page.
 
 Every command can produce these codes, so they are listed once, here, and not under each command:
 
@@ -44,28 +44,26 @@ Does not read `cockpit.toml`.
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -80,7 +78,6 @@ Does not read `cockpit.toml`.
 | `PROJECTION_ROOT_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
 | `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
-| `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 | `RESTRICTION_ADAPTER_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_EVENT_UNADAPTED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
@@ -124,6 +121,7 @@ Does not read `cockpit.toml`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -150,6 +148,7 @@ Does not read `cockpit.toml`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -176,6 +175,7 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_ESTATE_OBSERVATION_CHANGED` |
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_GAP` |
 | `DOCUMENT_INFERRED` |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` |
@@ -209,12 +209,10 @@ Does not read `cockpit.toml`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -228,7 +226,6 @@ Does not read `cockpit.toml`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GIT_COMPARISON_REMOTE_MISMATCH` |
@@ -275,9 +272,13 @@ Does not read `cockpit.toml`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
 | `OUTPUT_WRITE_FAILED` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -288,6 +289,7 @@ Does not read `cockpit.toml`.
 | `REGISTRY_ENCODING_INVALID` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
 | `REGISTRY_NOT_FOUND` |
+| `REGISTRY_ROW_SKIPPED` |
 | `REGISTRY_TOO_LARGE` |
 | `REGISTRY_UNREADABLE` |
 | `RUNNING_CHECKOUT_MISMATCH` |
@@ -302,7 +304,6 @@ Does not read `cockpit.toml`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `TEMPLATE_PATH_OUTSIDE_ROOT` |
 | `WO_POLICY_INVALID` |
@@ -327,11 +328,9 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
-| `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 
 | Other diagnostics |
 | --- |
@@ -346,6 +345,7 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_ESTATE_GAPS_INVALID` |
 | `DOCUMENT_ESTATE_INCOMPLETE` |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_GAP` |
 | `DOCUMENT_INFERRED` |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` |
 | `DOCUMENT_OPTION_DUPLICATE` |
@@ -360,6 +360,7 @@ Does not read `cockpit.toml`.
 | `REGISTRY_EMPTY` |
 | `REGISTRY_ENCODING_INVALID` |
 | `REGISTRY_NOT_FOUND` |
+| `REGISTRY_ROW_SKIPPED` |
 | `REGISTRY_TOO_LARGE` |
 | `REGISTRY_UNREADABLE` |
 
@@ -384,9 +385,7 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `COCKPIT_REVISION_INVALID` | reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
-| `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
 
 | Other diagnostics |
 | --- |
@@ -398,6 +397,7 @@ Does not read `cockpit.toml`.
 | `ADOPTION_STATE_INVALID` |
 | `ADOPTION_TOO_LARGE` |
 | `ADOPTION_UNREADABLE` |
+| `COCKPIT_REVISION_INVALID` |
 | `REGISTRY_ADOPTION_REQUIRED` |
 | `REGISTRY_AMBIGUOUS` |
 | `REGISTRY_ARTIFACT_UNSAFE` |
@@ -409,6 +409,7 @@ Does not read `cockpit.toml`.
 | `REGISTRY_OPTION_DUPLICATE` |
 | `REGISTRY_OUTPUT_UNSUPPORTED` |
 | `REGISTRY_POSITIONAL_UNSUPPORTED` |
+| `REGISTRY_ROW_SKIPPED` |
 | `REGISTRY_SIBLINGS_ROOT_REQUIRED` |
 | `REGISTRY_SOURCE_REQUIRED` |
 | `REGISTRY_TOO_LARGE` |
@@ -436,9 +437,12 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
 | `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
 | `REGISTRY_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#harness-surface-failures) |
-| `SETUP_MANUAL_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again |
+| `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers |
+| `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again; [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SETUP_REMOTE_MISMATCH` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
@@ -470,10 +474,8 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
 | `INSTANCE_NOT_IGNORED` |
 | `REGISTRY_GENERATED_BASELINE_MISSING` |
-| `SETUP_CLONE_FAILED` |
 | `SETUP_CONFIG_REQUIRED` |
 | `SETUP_INSTRUCTION_POINTER_INVALID` |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` |
 | `SETUP_NONE_ABSENT` |
 | `SETUP_NONE_DIRECTORY` |
 | `SETUP_NONE_REPOSITORY` |
@@ -517,15 +519,18 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -576,6 +581,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -615,11 +621,9 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -633,10 +637,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LOCAL_VALUE_CORRECTED` |
@@ -647,7 +651,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -672,17 +675,19 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -733,6 +738,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -753,6 +759,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -779,11 +786,9 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -797,10 +802,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LOCAL_VALUE_CORRECTED` |
@@ -811,7 +816,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -838,18 +842,20 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -868,8 +874,9 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
 | `SELFTEST_EXECUTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
-| `SELFTEST_SOURCE_INVALID` | replace each null in the listed rows with the probe for that tool, then rerun selftest with the same file; write a new file with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>, fill the fields it lists, then pass that file to --probe-specifications; [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SELFTEST_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 | `SKILL_COMMAND_UNDECLARED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -902,6 +909,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -921,6 +929,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -947,11 +956,9 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -965,11 +972,11 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
 | `OUTPUT_WRITE_FAILED` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LOCAL_VALUE_CORRECTED` |
@@ -980,7 +987,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `WO_POLICY_INVALID` |
 
 ## cockpit upgrade
@@ -1009,15 +1015,18 @@ Reads `cockpit.toml` from `--config`.
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
 | `PROJECTION_GUIDE_CHANGED` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1068,6 +1077,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -1113,11 +1123,9 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -1131,10 +1139,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LOCAL_VALUE_CORRECTED` |
@@ -1145,7 +1153,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -1169,23 +1176,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1239,6 +1244,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -1260,6 +1266,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -1298,12 +1305,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -1317,7 +1322,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GIT_STATE_UNHEALTHY` |
@@ -1330,8 +1334,13 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MACHINE_COLD_START_EXCEEDED` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -1350,7 +1359,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -1374,22 +1382,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1443,6 +1450,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -1463,6 +1471,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -1497,12 +1506,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -1516,7 +1523,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -1527,7 +1533,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -1543,7 +1553,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -1566,23 +1575,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1637,6 +1644,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -1659,6 +1667,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -1698,12 +1707,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -1717,7 +1724,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GIT_STATE_UNHEALTHY` |
@@ -1730,8 +1736,13 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MACHINE_COLD_START_EXCEEDED` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -1751,7 +1762,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -1775,22 +1785,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -1844,6 +1853,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -1863,6 +1873,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -1898,12 +1909,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -1917,7 +1926,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -1928,7 +1936,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -1946,7 +1958,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -1971,22 +1982,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2040,6 +2050,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -2059,6 +2070,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -2094,12 +2106,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -2113,7 +2123,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -2124,7 +2133,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -2142,7 +2155,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -2167,24 +2179,22 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
-| `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2204,6 +2214,7 @@ Reads `cockpit.toml` from `--config`.
 | `RESTRICTION_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_OUTPUT_LIMIT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `RESTRICTION_TEMPLATE_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
@@ -2239,6 +2250,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -2261,6 +2273,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -2301,12 +2314,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -2320,7 +2331,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GIT_STATE_UNHEALTHY` |
@@ -2333,8 +2343,13 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
 | `LIFECYCLE_PROGRESS_INVALID` |
+| `MACHINE_COLD_START_EXCEEDED` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -2346,7 +2361,6 @@ Reads `cockpit.toml` from `--config`.
 | `RESET_CO_TENANT` |
 | `RUNNING_CHECKOUT_MISMATCH` |
 | `RUNTIME_COMPOSE_REMOTE` |
-| `RUNTIME_IMAGE_UNAVAILABLE` |
 | `RUNTIME_LAUNCHER_UNAVAILABLE` |
 | `RUNTIME_PROBE_TIMEOUT` |
 | `SETUP_PATH_TYPE_INVALID` |
@@ -2359,7 +2373,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -2390,14 +2403,15 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
 | `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 
 | Other diagnostics |
 | --- |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -2447,23 +2461,22 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2521,6 +2534,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -2542,6 +2556,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -2583,12 +2598,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -2602,7 +2615,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GIT_COMPARISON_REMOTE_MISMATCH` |
@@ -2615,8 +2627,12 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -2635,7 +2651,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `TEMPLATE_PATH_OUTSIDE_ROOT` |
 | `WO_POLICY_INVALID` |
@@ -2661,25 +2676,24 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2737,6 +2751,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -2759,6 +2774,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -2800,12 +2816,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -2819,7 +2833,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GIT_COMPARISON_REMOTE_MISMATCH` |
@@ -2832,8 +2845,12 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_MATERIALIZATION_UNAVAILABLE` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -2852,7 +2869,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `TEMPLATE_PATH_OUTSIDE_ROOT` |
 | `WO_POLICY_INVALID` |
@@ -2881,23 +2897,22 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -2952,6 +2967,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -2971,6 +2987,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -3004,12 +3021,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -3023,7 +3038,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -3033,7 +3047,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -3048,7 +3066,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -3075,22 +3092,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3145,6 +3161,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -3164,6 +3181,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -3197,12 +3215,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -3216,7 +3232,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -3226,7 +3241,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -3241,7 +3260,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WO_POLICY_INVALID` |
 
@@ -3270,22 +3288,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3340,6 +3357,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -3362,6 +3380,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -3395,12 +3414,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -3414,7 +3431,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -3424,7 +3440,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -3439,7 +3459,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -3509,22 +3528,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3579,6 +3597,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -3601,6 +3620,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -3634,12 +3654,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -3653,7 +3671,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -3663,7 +3680,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -3678,7 +3699,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -3749,22 +3769,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -3819,6 +3838,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -3841,6 +3861,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -3874,12 +3895,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -3893,7 +3912,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -3903,7 +3921,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -3918,7 +3940,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WORK_OPERATOR_REQUIRED` |
@@ -3990,22 +4011,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4060,6 +4080,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -4082,6 +4103,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -4115,12 +4137,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -4134,7 +4154,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -4144,7 +4163,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -4159,7 +4182,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WORK_OPERATOR_REQUIRED` |
@@ -4229,22 +4251,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4299,6 +4320,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -4321,6 +4343,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -4354,12 +4377,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -4373,7 +4394,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -4383,7 +4403,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -4398,7 +4422,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -4469,22 +4492,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4539,6 +4561,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -4561,6 +4584,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -4594,12 +4618,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -4613,7 +4635,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -4623,7 +4644,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -4638,7 +4663,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -4709,22 +4733,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -4779,6 +4802,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -4801,6 +4825,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -4834,12 +4859,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -4853,7 +4876,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -4863,7 +4885,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -4878,7 +4904,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -4949,22 +4974,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5019,6 +5043,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -5041,6 +5066,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -5074,12 +5100,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -5093,7 +5117,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -5103,7 +5126,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -5118,7 +5145,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -5188,22 +5214,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5258,6 +5283,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -5280,6 +5306,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -5313,12 +5340,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -5332,7 +5357,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -5342,7 +5366,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -5357,7 +5385,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -5427,22 +5454,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5497,6 +5523,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -5519,6 +5546,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -5552,12 +5580,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -5571,7 +5597,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -5581,7 +5606,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -5596,7 +5625,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -5666,22 +5694,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5736,6 +5763,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -5758,6 +5786,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -5791,12 +5820,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -5810,7 +5837,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -5820,7 +5846,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -5835,7 +5865,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -5907,22 +5936,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -5977,6 +6005,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -5999,6 +6028,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -6032,12 +6062,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -6051,7 +6079,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -6061,7 +6088,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -6076,7 +6107,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -6145,22 +6175,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6215,6 +6244,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -6237,6 +6267,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -6270,12 +6301,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -6289,7 +6318,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -6299,7 +6327,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -6314,7 +6346,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -6384,22 +6415,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6454,6 +6484,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -6476,6 +6507,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -6509,12 +6541,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -6528,7 +6558,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -6538,7 +6567,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -6553,7 +6586,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -6623,22 +6655,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6693,6 +6724,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -6715,6 +6747,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -6748,12 +6781,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -6767,7 +6798,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -6777,7 +6807,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -6792,7 +6826,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -6862,22 +6895,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -6932,6 +6964,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -6954,6 +6987,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -6987,12 +7021,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -7006,7 +7038,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -7016,7 +7047,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -7031,7 +7066,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -7101,22 +7135,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -7171,6 +7204,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -7193,6 +7227,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -7226,12 +7261,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -7245,7 +7278,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -7255,7 +7287,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -7270,7 +7306,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -7340,22 +7375,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -7410,6 +7444,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -7432,6 +7467,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -7465,12 +7501,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -7484,7 +7518,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -7494,7 +7527,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -7509,7 +7546,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
@@ -7579,22 +7615,21 @@ Reads `cockpit.toml` from `--config`.
 | Diagnostic | What to do |
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
-| `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
-| `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
 | `MCP_APPROVAL_UNKNOWN` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `MCP_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `MCP_NOT_APPROVED` | to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed; [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
-| `OVERRIDDEN_CORE_CHANGED` | review the new built-in against your override, set the overlay's replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `MCP_NOT_APPROVED` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `PORT_FAMILY_COLLISION` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PORT_LEASE_EXHAUSTED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `PROJECTION_GRANT_MISMATCH` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
@@ -7649,6 +7684,7 @@ Reads `cockpit.toml` from `--config`.
 | `SURFACE_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `SURFACE_SCRATCH_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SURFACE_STAGE_VARIANCE` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
@@ -7671,6 +7707,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |
@@ -7704,12 +7741,10 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_DECISION_SENSITIVE` |
 | `GENERATED_DECISION_STALE` |
 | `GENERATED_DECLARATION_INVALID` |
-| `GENERATED_DECLARATION_MISSING` |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` |
 | `GENERATED_INPUT_INVALID` |
 | `GENERATED_INSPECTION_INVALID` |
-| `GENERATED_OWNERSHIP_DRIFT` |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
 | `GENERATED_OWNERSHIP_MISSING` |
 | `GENERATED_PATH_DUPLICATE` |
@@ -7723,7 +7758,6 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_RENDER_UNAUTHENTICATED` |
 | `GENERATED_SIBLING_ROOT_INVALID` |
 | `GENERATED_SOURCE_CHANGED` |
-| `GENERATED_STALE_ARTIFACT` |
 | `GENERATED_STALE_ARTIFACT_DRIFT` |
 | `GENERATED_TEMPLATE_INVALID` |
 | `GUIDE_CAP_EXCEEDED` |
@@ -7733,7 +7767,11 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_STALE_PATH` |
 | `INSTALL_STATE_UNHEALTHY` |
 | `LIFECYCLE_EVIDENCE_INVALID` |
+| `MACHINE_CPU_BELOW_FLOOR` |
+| `MACHINE_DISK_BELOW_FLOOR` |
+| `MACHINE_MEMORY_BELOW_FLOOR` |
 | `MOUNT_POSTURE_UNAVAILABLE` |
+| `OVERRIDDEN_CORE_CHANGED` |
 | `PORT_EXTERNAL_REGISTRATION_GAP` |
 | `PORT_FAMILY_OUT_OF_RANGE` |
 | `PORT_LISTENER_EVIDENCE_INVALID` |
@@ -7748,7 +7786,6 @@ Reads `cockpit.toml` from `--config`.
 | `STATE_LOCKED` |
 | `STATE_ROOT_UNAVAILABLE` |
 | `STATE_UNSEEDED` |
-| `SURFACE_RULE_SCOPE_UNSUPPORTED` |
 | `TEAM_METADATA_UNAVAILABLE` |
 | `WORK_APPLICATION_REFUSED` |
 | `WO_ACCEPTANCE_DECLINED` |
