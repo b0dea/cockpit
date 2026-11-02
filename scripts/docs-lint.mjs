@@ -900,7 +900,6 @@ function firstConceptMention(row, links, term) {
     return null
 }
 
-const EVIDENCE_FENCE = /```docs-evidence\s*\n([\s\S]*?)\n```/g
 const PRIVATE_EXECUTION_WORDS = ['ph' + 'ase', 'wa' + 've', 'pl' + 'an', 'ta' + 'sk'].join('|')
 const PRIVATE_CEREMONY = [
     { label: 'private working-state path', pattern: /\.[a-z][a-z0-9_-]*\/(?:STATE|PLAN|REQUIREMENTS)\.md\b/i },
@@ -921,26 +920,49 @@ function evidenceRefusal(code, message) {
     return `[${code}] ${message}`
 }
 
-function parseEvidence(path, root) {
-    let body
+// A JSON.parse message quotes the bytes where parsing stopped, and evidence files may hold values
+// the reader of a refusal should not see; name the file, the line and the expected shape instead.
+function parseJsonText(text, path, expected, firstLine = 1) {
     try {
-        body = readFileSync(resolve(root, path), 'utf8')
+        return { value: JSON.parse(text) }
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { errors: [evidenceRefusal('DOCEV001_UNREADABLE', `${path}: ${message}`)] }
+        if (!(error instanceof SyntaxError)) throw error
+        const line = /\(line (\d+) column \d+\)/.exec(error.message)?.[1]
+        const where = line === undefined ? '' : ` at line ${Number(line) + firstLine - 1}`
+        return { refusal: `${path} is not valid JSON${where}; expected ${expected}` }
     }
-    const matches = [...body.matchAll(EVIDENCE_FENCE)]
-    if (matches.length !== 1) {
+}
+
+// Returns the parsed object, or the refusal text.
+function parseJsonObject(text, path, firstLine = 1) {
+    const { value, refusal } = parseJsonText(text, path, 'one JSON object', firstLine)
+    if (refusal !== undefined) return refusal
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : `${path} must hold one JSON object`
+}
+
+// The body of a block, and the file line its first body line sits on.
+function fencedJsonBlocks(body, label) {
+    return [...body.matchAll(new RegExp('```' + label + '\\s*\\n([\\s\\S]*?)\\n```', 'g'))]
+        .map(match => ({ text: match[1], firstLine: body.slice(0, match.index).split('\n').length + 1 }))
+}
+
+function readText(path, root, code) {
+    try {
+        return { text: readFileSync(resolve(root, path), 'utf8') }
+    } catch (error) {
+        return { errors: [evidenceRefusal(code, `${path}: ${errorCause(error)}`)] }
+    }
+}
+
+function parseEvidence(path, root) {
+    const read = readText(path, root, 'DOCEV001_UNREADABLE')
+    if (read.errors) return read
+    const blocks = fencedJsonBlocks(read.text, 'docs-evidence')
+    if (blocks.length !== 1) {
         return { errors: [evidenceRefusal('DOCEV002_BLOCK_COUNT', `${path} must contain exactly one docs-evidence JSON block`)] }
     }
-    try {
-        const value = JSON.parse(matches[0][1])
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('root must be an object')
-        return { value }
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { errors: [evidenceRefusal('DOCEV003_JSON_INVALID', `${path}: ${message}`)] }
-    }
+    const value = parseJsonObject(blocks[0].text, path, blocks[0].firstLine)
+    return typeof value === 'string' ? { errors: [evidenceRefusal('DOCEV003_JSON_INVALID', value)] } : { value }
 }
 
 function resolveCandidate(root, candidate) {
@@ -1847,39 +1869,24 @@ export function validateOperatorReviewEvidence(options) {
 }
 
 function readJson(path, root = ROOT) {
-    try {
-        const value = JSON.parse(readFileSync(resolve(root, path), 'utf8'))
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-            return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: root must be an object`)] }
-        }
-        return { value }
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: ${message}`)] }
-    }
+    const read = readText(path, root, 'DOCEV060_JSON_INVALID')
+    if (read.errors) return read
+    const value = parseJsonObject(read.text, path)
+    return typeof value === 'string' ? { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', value)] } : { value }
 }
 
+// A report is either one JSON object or Markdown carrying exactly one fenced block of it.
 function readStructuredJson(path, root, fenceLabel) {
-    try {
-        const body = readFileSync(resolve(root, path), 'utf8')
-        try {
-            const value = JSON.parse(body)
-            if (value !== null && typeof value === 'object' && !Array.isArray(value)) return { value }
-        } catch {
-            // Not a JSON document: Markdown evidence is parsed below, and refuses if no block parses.
-        }
-        const expression = new RegExp('```' + fenceLabel + '\\s*\\n([\\s\\S]*?)\\n```', 'g')
-        const matches = [...body.matchAll(expression)]
-        if (matches.length !== 1) {
-            return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: expected one ${fenceLabel} JSON block`)] }
-        }
-        const value = JSON.parse(matches[0][1])
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('root must be an object')
-        return { value }
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: ${message}`)] }
+    const read = readText(path, root, 'DOCEV060_JSON_INVALID')
+    if (read.errors) return read
+    const whole = parseJsonObject(read.text, path)
+    if (typeof whole !== 'string') return { value: whole }
+    const blocks = fencedJsonBlocks(read.text, fenceLabel)
+    if (blocks.length !== 1) {
+        return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: expected one ${fenceLabel} JSON block`)] }
     }
+    const value = parseJsonObject(blocks[0].text, path, blocks[0].firstLine)
+    return typeof value === 'string' ? { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', value)] } : { value }
 }
 
 function sha256(body) {
@@ -1935,8 +1942,7 @@ export function writeReviewManifest({ root = ROOT, path, expectedFixedPoint, can
         writeFileSync(resolve(root, path), `${JSON.stringify(computed.manifest, null, 2)}\n`, { flag: 'wx' })
         return []
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return [evidenceRefusal('DOCEV063_MANIFEST_WRITE_FAILED', `${path}: ${message}`)]
+        return [evidenceRefusal('DOCEV063_MANIFEST_WRITE_FAILED', `${path}: ${errorCause(error)}`)]
     }
 }
 
@@ -2241,17 +2247,18 @@ export function validateEdgeCoverageDocuments({ root = ROOT, contractPath, cover
     const coverage = readJson(coveragePath, root)
     if (contract.errors) return [...errors, ...contract.errors]
     if (coverage.errors) return [...errors, ...coverage.errors]
+    let source
     try {
-        const source = readFileSync(resolve(root, sourceInputPath))
-        const rows = JSON.parse(source.toString('utf8'))
-        const ids = Array.isArray(rows) ? rows.map((row) => row?.id) : []
-        if (!uniqueStringArray(ids) || !exactJson(contract.value.inputIds, ids)
-            || coverage.value.inputSha256 !== sha256(source)) {
-            errors.push(evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', 'edge coverage does not match its supplied source input'))
-        }
+        source = readFileSync(resolve(root, sourceInputPath))
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        errors.push(evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', message))
+        return [...errors, evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', `${sourceInputPath}: ${errorCause(error)}`)]
+    }
+    const rows = parseJsonText(source.toString('utf8'), sourceInputPath, 'an array of rows with ids')
+    if (rows.refusal !== undefined) return [...errors, evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', rows.refusal)]
+    const ids = Array.isArray(rows.value) ? rows.value.map((row) => row?.id) : []
+    if (!uniqueStringArray(ids) || !exactJson(contract.value.inputIds, ids)
+        || coverage.value.inputSha256 !== sha256(source)) {
+        errors.push(evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', 'edge coverage does not match its supplied source input'))
     }
     return errors
 }
@@ -2340,8 +2347,7 @@ export function validateAcceptanceDocuments({ root = ROOT, contractPath, inputPa
             .map(([role, path]) => ({ role, path, sha256: sha256(readFileSync(resolve(root, path))) }))
             .sort((left, right) => left.role.localeCompare(right.role))
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        errors.push(evidenceRefusal('DOCEV097_ACCEPTANCE_ARTIFACT_MISMATCH', message))
+        errors.push(evidenceRefusal('DOCEV097_ACCEPTANCE_ARTIFACT_MISMATCH', errorCause(error)))
         return errors
     }
     if (!exactJson(input.value.artifacts, expected)) {

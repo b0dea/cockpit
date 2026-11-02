@@ -6235,7 +6235,6 @@ const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[]
     ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', 'the recovery record was synced before its directory handle is closed'],
     ['packages/cockpit/src/surfaces/projection.ts#readGuide', 'a guide that vanishes or turns unreadable mid-read is recorded as an identity change'],
-    ['scripts/docs-lint.mjs#readStructuredJson', 'non-JSON evidence falls through to the Markdown parse, which refuses when nothing parses'],
 ]
 
 // Shipped helper processes run outside the TypeScript graph; the rulesync bundle is generated

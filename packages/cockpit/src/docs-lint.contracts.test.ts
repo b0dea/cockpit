@@ -120,6 +120,24 @@ describe('runtime evidence', () => {
         }
     })
 
+    it('names malformed evidence JSON by file and line without quoting it', () => {
+        const fixture = createCommittedEvidenceFixture()
+        const canary = 'CANARY_SECRET_7f3a'
+        try {
+            writeFileSync(join(fixture.root, 'runtime.json'), `{"token": ${canary}}`)
+            const runtime = validateRuntimeEvidence({ root: fixture.root, path: 'runtime.json', expectedFixedPoint: fixture.base, candidate: fixture.head }).join('\n')
+            expect(runtime).toContain('[DOCEV060_JSON_INVALID] runtime.json is not valid JSON; expected one JSON object')
+            writeJson(join(fixture.root, 'manifest.json'), fixture.manifest)
+            writeFileSync(join(fixture.root, 'review.md'), `# Review\n\n\`\`\`review-evidence\n{\n  "token": "${canary}",,\n}\n\`\`\`\n`)
+            const review = validateReviewReports({ root: fixture.root, manifestPath: 'manifest.json', reviewPaths: ['review.md'], expectedFixedPoint: fixture.base, candidate: fixture.head }).join('\n')
+            expect(review).toContain('[DOCEV060_JSON_INVALID] review.md is not valid JSON at line 5; expected one JSON object')
+            // The parser quotes only a short window of input, so the check looks for the prefix.
+            expect(`${runtime}\n${review}`).not.toContain('CANARY')
+        } finally {
+            rmSync(fixture.root, { recursive: true, force: true })
+        }
+    })
+
     it('rejects nested runtime records not emitted by the producer', () => {
         const fixture = createCommittedEvidenceFixture()
         try {
