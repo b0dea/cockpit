@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commands } from './command-table.js'
 import { runCli, type CliIo } from './cli.js'
 import * as destructiveComposition from './environment/destructive-composition.js'
+import * as lifecycleComposition from './environment/lifecycle-composition.js'
+import { observeProcessStart } from './environment/claims.js'
+import { executeProbe } from './environment-exec/execute.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -199,6 +203,35 @@ describe('lifecycle CLI composition', () => {
         const session = vi.fn(async () => ({ ...complete('stopped'), status }))
         expect(await runCli(['session', '--config', '/synthetic/cockpit.toml', '--', 'synthetic-agent'],
             captureIo().io, { session })).toBe(status)
+    })
+
+    // A command inside a session that ran `sleep` and then `up` re-added the session's hold with no
+    // process, so killing the wrapper left a hold that nothing would ever release.
+    it('ties the hold a session child takes to the wrapper process the session exported', async () => {
+        const factory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
+        const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        const started = await observeProcessStart(process.pid, executeProbe)
+        if (started.state !== 'present') throw new Error(JSON.stringify(started))
+
+        expect(await runCli(['session', '--config', '/synthetic/missing-cockpit.toml', '--', 'synthetic-agent'], captureIo().io, {}, { env: {} })).toBe(2)
+        const exported = factory.mock.calls[0]![0].env.COCKPIT_SESSION_PROCESS
+        expect(exported).toBe(`${process.pid}@${started.startedAt}`)
+
+        factory.mockClear()
+        expect(await runCli(['up', '--config', '/synthetic/missing-cockpit.toml', '--json'], captureIo().io, {},
+            { env: { COCKPIT_SESSION_ID: sessionId, COCKPIT_SESSION_PROCESS: exported! } })).toBe(2)
+        expect(factory).toHaveBeenCalledWith(expect.objectContaining({ sessionId, holderProcess: { pid: process.pid, processStartedAt: started.startedAt } }), expect.any(Function))
+
+        const exited = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
+        await new Promise<void>((resolve, reject) => { exited.once('error', reject); exited.once('exit', () => resolve()) })
+        for (const ended of [`${exited.pid}@${started.startedAt}`, `${process.pid}@2000-01-01T00:00:00.000Z`, 'not-a-process']) {
+            factory.mockClear()
+            const capture = captureIo()
+            expect(await runCli(['up', '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {},
+                { env: { COCKPIT_SESSION_ID: sessionId, COCKPIT_SESSION_PROCESS: ended } })).toBe(2)
+            expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{ code: 'CLI_USAGE_INVALID', target: 'COCKPIT_SESSION_PROCESS' }] })
+            expect(factory).not.toHaveBeenCalled()
+        }
     })
 
     it('refuses a malformed inherited lifecycle session instead of leaking a default holder', async () => {
