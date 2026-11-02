@@ -3756,6 +3756,10 @@
           "description": "Named gates that run stages before handing back changes."
         },
         "native_hooks": {
+          "default": {
+            "install": "inspect"
+          },
+          "description": "How the repository's own git hooks are handled.",
           "type": "object",
           "properties": {
             "install": {
@@ -3768,8 +3772,7 @@
               ]
             }
           },
-          "additionalProperties": false,
-          "description": "How the repository's own git hooks are handled."
+          "additionalProperties": false
         },
         "native_hook_policy": {
           "description": "Policy file for installing the repository's hooks; required for explicit-native.",
@@ -3796,8 +3799,7 @@
       },
       "required": [
         "stages",
-        "gates",
-        "native_hooks"
+        "gates"
       ],
       "additionalProperties": false,
       "oneOf": [
@@ -3835,6 +3837,7 @@
             }
           },
           "required": [
+            "native_hooks",
             "native_hook_policy"
           ]
         }

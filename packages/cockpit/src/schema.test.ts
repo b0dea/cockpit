@@ -432,6 +432,7 @@ describe('generated environment declarations', () => {
             await writeFile(path, stringify(undated('docs/runtime.md')))
             expect(await loadCockpitConfig(path)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
                 message: expect.stringContaining('environment.generated.services.0.provenance: provenance without observed_on must name this configuration file (cockpit.toml)'),
+                fix: expect.stringContaining('observed_on'),
             })] })
             const measured = undated('cockpit.toml')
             measured.environment.generated.services[0]!.provenance.kind = 'measured'
@@ -746,6 +747,10 @@ describe('work and browser declarations', () => {
         expect(Testing.safeParse({ ...testing, native_hooks: { install: 'automatic' } }).success).toBe(false)
         expect(Testing.safeParse({ ...testing, native_hooks: { install: 'explicit-native' } }).success).toBe(false)
         expect(Testing.safeParse({ ...testing, native_hooks: { install: 'explicit-native' }, native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) } }).success).toBe(true)
+        // Hooks are inspect-only unless declared otherwise, so the table may be left out, but not under a policy.
+        const { native_hooks: _hooks, ...undeclared } = testing
+        expect(Testing.parse(undeclared).native_hooks).toEqual({ install: 'inspect' })
+        expect(Testing.safeParse({ ...undeclared, native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) } }).success).toBe(false)
         expect(Testing.safeParse({ ...testing, extra: true }).success).toBe(false)
         const selecting = (select: unknown) => ({ ...testing, stages: [{ ...testing.stages[0], select }] })
         expect(Testing.safeParse(selecting({ file: ['{value}'], test: ['-t', '{value}'] })).success).toBe(true)

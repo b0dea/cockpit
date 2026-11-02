@@ -399,27 +399,29 @@ export async function loadCockpitConfig(
 ): Promise<EnvironmentCommandOutcome<LoadedCockpitConfig>> {
     const observed = await readConfigSource(inputPath)
     if (observed.kind === 'unavailable') {
+        // Each branch names its code literally so the diagnostic index reads the fix beside it.
         const synced = observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND
             ? await syncedConfigName(dirname(observed.source.path)) : undefined
         if (synced === basename(observed.source.path)) {
-            return refusal(observed.source.code,
+            return refusal(ENVIRONMENT_CODES.CONFIG_NOT_FOUND,
                 `${basename(observed.source.path)} is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it`,
                 observed.source.path, `${formatShellCommand(['git', '-C', dirname(observed.source.path), 'restore', '--', basename(observed.source.path)])} (it is committed), then retry`)
         }
         if (synced !== undefined) {
-            return refusal(observed.source.code,
+            return refusal(ENVIRONMENT_CODES.CONFIG_NOT_FOUND,
                 `${basename(observed.source.path)} does not exist; this cockpit checkout was synced from ${join(dirname(observed.source.path), synced)}`,
                 observed.source.path, 'check the --config path, then retry')
         }
-        return refusal(
-            observed.source.code,
-            observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND
-                ? 'cockpit configuration was not found'
-                : observed.tooLarge
-                    ? `cockpit configuration exceeds the ${STRUCTURED_INPUT_BYTE_LIMIT}-byte input limit`
-                    : 'cockpit configuration could not be read',
-            observed.source.path,
-        )
+        if (observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND) {
+            return refusal(ENVIRONMENT_CODES.CONFIG_NOT_FOUND, 'cockpit configuration was not found', observed.source.path,
+                'pass --config the path of an existing cockpit.toml, or create one with npx --no cockpit init <cockpit root> --target <target>')
+        }
+        if (observed.tooLarge) {
+            return refusal(ENVIRONMENT_CODES.CONFIG_UNREADABLE, `cockpit configuration exceeds the ${STRUCTURED_INPUT_BYTE_LIMIT}-byte input limit`, observed.source.path,
+                'cut the configuration below the input limit; it holds declarations, so move any embedded data into the files it names, then retry')
+        }
+        return refusal(ENVIRONMENT_CODES.CONFIG_UNREADABLE, 'cockpit configuration could not be read', observed.source.path,
+            'make --config name a regular file the user running cockpit can read, then retry')
     }
     const { bytes, source: provenance } = observed
     const { path } = provenance
@@ -428,26 +430,30 @@ export async function loadCockpitConfig(
     try {
         source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     } catch { // Fatal decoding throws only for invalid UTF-8, which the refusal names.
-        return refusal(ENVIRONMENT_CODES.CONFIG_ENCODING_INVALID, 'cockpit configuration is not valid UTF-8', path)
+        return refusal(ENVIRONMENT_CODES.CONFIG_ENCODING_INVALID, 'cockpit configuration is not valid UTF-8', path,
+            'save the configuration as UTF-8, then retry')
     }
 
     let parsed: unknown
     try {
         parsed = parse(source)
     } catch (error) {
-        return refusal(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `cockpit configuration is not valid TOML: ${tomlErrorSummary(error)}`, path)
+        return refusal(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `cockpit configuration is not valid TOML: ${tomlErrorSummary(error)}`, path,
+            'correct the TOML at the line and column named, then retry')
     }
 
     const validated = CockpitConfig.safeParse(parsed)
     if (!validated.success) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-            `cockpit configuration does not match the schema: ${schemaIssueSummary(validated.error.issues)}`, path)
+            `cockpit configuration does not match the schema: ${schemaIssueSummary(validated.error.issues)}`, path,
+            'correct each named key to the shape and values ./node_modules/@b0dea/cockpit/docs/configuration-reference.md gives for it, then retry')
     }
 
     const undated = undatedForeignProvenance(validated.data, basename(path))
     if (undated !== undefined) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-            `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source; add observed_on for any other source`, path)
+            `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source`, path,
+            'add observed_on with the date the source was read, or name this configuration file as the source, then retry')
     }
 
     // A sibling row's generated service joins environment.generated when the registry is derived, so
@@ -467,7 +473,8 @@ export async function loadCockpitConfig(
 
     const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))
     if (!reconstructed.success) {
-        return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'cockpit configuration does not match the schema', path)
+        return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'cockpit configuration does not match the schema', path,
+            'correct each named key to the shape and values ./node_modules/@b0dea/cockpit/docs/configuration-reference.md gives for it, then retry')
     }
     const writtenGuards = (parsed as { guards?: unknown }).guards
     const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'

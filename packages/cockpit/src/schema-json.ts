@@ -66,7 +66,7 @@ export function renderCockpitSchema(): string {
     ]
     testing.oneOf = [
         { properties: { native_hooks: { properties: { install: { enum: ['inspect'] } } } }, not: { required: ['native_hook_policy'] } },
-        { properties: { native_hooks: { properties: { install: { enum: ['explicit-native'] } }, required: ['install'] } }, required: ['native_hook_policy'] },
+        { properties: { native_hooks: { properties: { install: { enum: ['explicit-native'] } }, required: ['install'] } }, required: ['native_hooks', 'native_hook_policy'] },
     ]
 
     sibling.allOf = [

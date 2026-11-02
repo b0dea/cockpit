@@ -97,6 +97,7 @@ describe('canonical cockpit config loader', () => {
             diagnostics: [expect.objectContaining({
                 code: 'CONFIG_UNREADABLE',
                 message: 'cockpit configuration exceeds the 1048576-byte input limit',
+                fix: expect.stringContaining('below the input limit'),
             })],
         })
     })
@@ -380,6 +381,7 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
             label: 'missing',
             arrange: () => join(mkdtemp(), 'missing.toml'),
             code: 'CONFIG_NOT_FOUND',
+            fix: 'npx --no cockpit init <cockpit root> --target <target>',
         },
         {
             label: 'unreadable',
@@ -390,20 +392,22 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
                 return configPath
             },
             code: 'CONFIG_UNREADABLE',
+            fix: 'regular file',
         },
-        { label: 'invalid UTF-8', arrange: () => fixture(Buffer.from([0xff])), code: 'CONFIG_ENCODING_INVALID' },
-        { label: 'invalid TOML', arrange: () => fixture('[cockpit\nname ='), code: 'CONFIG_PARSE_INVALID' },
-        { label: 'unknown key', arrange: () => fixture(`${validConfig}\nunknown = true\n`), code: 'CONFIG_SCHEMA_INVALID' },
+        { label: 'invalid UTF-8', arrange: () => fixture(Buffer.from([0xff])), code: 'CONFIG_ENCODING_INVALID', fix: 'UTF-8' },
+        { label: 'invalid TOML', arrange: () => fixture('[cockpit\nname ='), code: 'CONFIG_PARSE_INVALID', fix: 'line and column' },
+        { label: 'unknown key', arrange: () => fixture(`${validConfig}\nunknown = true\n`), code: 'CONFIG_SCHEMA_INVALID', fix: 'configuration-reference.md' },
         {
             label: 'schema invalid',
             arrange: () => fixture(validConfig.replace('acquire = "auto"', 'acquire = "none"')),
             code: 'CONFIG_SCHEMA_INVALID',
+            fix: 'configuration-reference.md',
         },
-    ])('refuses $label input without a partial config', async ({ arrange, code }) => {
+    ])('refuses $label input without a partial config and says how to repair it', async ({ arrange, code, fix }) => {
         const outcome = await loadCockpitConfig(arrange())
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null, status: 2 }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code })])
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code, fix: expect.stringContaining(fix) })])
         expect(JSON.stringify(outcome)).not.toContain('ssh://example.invalid/api.git')
     })
 
@@ -455,8 +459,9 @@ health = { property = "the process answers", probe = { location = "in-stack", se
     it('tells a deleted configuration in a cockpit checkout apart from a mistyped path', async () => {
         const directory = mkdtemp()
         const configPath = join(directory, 'cockpit.toml')
+        const notFoundFix = 'pass --config the path of an existing cockpit.toml, or create one with npx --no cockpit init <cockpit root> --target <target>'
         expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
-            message: 'cockpit configuration was not found', target: configPath }])
+            message: 'cockpit configuration was not found', target: configPath, fix: notFoundFix }])
         recordSyncedConfig(directory, 'cockpit.toml')
         expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
             message: 'cockpit.toml is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it',
@@ -470,7 +475,7 @@ health = { property = "the process answers", probe = { location = "in-stack", se
         chmodSync(join(directory, '.cockpit', 'generated-environment-ownership.json'), 0o000)
         try {
             expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
-                message: 'cockpit configuration was not found', target: configPath }])
+                message: 'cockpit configuration was not found', target: configPath, fix: notFoundFix }])
         } finally { chmodSync(join(directory, '.cockpit', 'generated-environment-ownership.json'), 0o600) }
     })
 
