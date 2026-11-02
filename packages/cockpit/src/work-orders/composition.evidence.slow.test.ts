@@ -57,9 +57,31 @@ describe('configured durable work application composition', () => {
         expect(gapRecorded).toMatchObject({ kind: 'complete', value: { value: { gaps: [expect.objectContaining({ id: 'cache-owner' })] } } })
         if (gapRecorded.kind !== 'complete') throw new Error('Gap recording did not complete')
         expect(((gapRecorded.value as { value: { gaps: object[] } }).value.gaps)[0]).not.toHaveProperty('answer')
+        // A gap's answer and a decision speak for a person: work record refuses them, and work answer records
+        // them as the operator only after the person types the digest it showed with the open question.
         await writeFile(join(fixture.root, 'intents/resolve-gap.json'), JSON.stringify({ kind: 'resolve-gap', id: 'cache-owner', answer: 'The repository owner confirmed it.' }))
-        await expect(runWorkApplication({ operation: 'work-record', workOrderId: 'WO-001', eventFile: 'intents/resolve-gap.json' }, fixture.composition))
-            .resolves.toMatchObject({ kind: 'complete' })
+        await writeFile(join(fixture.root, 'intents/decision.json'), JSON.stringify({ kind: 'decision', decision: { date: new Date().toISOString().slice(0, 10),
+            decision: 'Keep the cache interface', disposition: 'accepted', reason: 'Callers depend on it.', impact: 'No migration.' } }))
+        for (const eventFile of ['intents/resolve-gap.json', 'intents/decision.json']) {
+            await expect(runWorkApplication({ operation: 'work-record', workOrderId: 'WO-001', eventFile }, fixture.composition))
+                .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('npx --no cockpit work answer --config ') })
+        }
+        await expect(runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'intents/gap.json' }, fixture.composition))
+            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('only resolve-gap and decision') })
+        const declined = await runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'intents/resolve-gap.json' }, fixture.composition)
+        if (declined.kind !== 'human-needed') throw new Error(`answer continuation unavailable: ${JSON.stringify(declined)}`)
+        expect(declined.continuation.prompt).toContain('Which owner confirms the cache boundary?')
+        expect(declined.continuation.prompt).toContain('The repository owner confirmed it.')
+        await expect(declined.continuation.decide('yes')).resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('Nothing was recorded') })
+        const answered = await runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'intents/resolve-gap.json' }, fixture.composition)
+        if (answered.kind !== 'human-needed') throw new Error('answer continuation unavailable')
+        await expect(answered.continuation.decide(`answer ${answered.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete', value: { value: {
+            gaps: [{ id: 'cache-owner', writer: { actor: 'author-generated-environment' }, answer: { detail: 'The repository owner confirmed it.', writer: { actor: 'operator-generated-environment' } } }] } } })
+        const decided = await runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'intents/decision.json' }, fixture.composition)
+        if (decided.kind !== 'human-needed') throw new Error('decision continuation unavailable')
+        expect(decided.continuation.prompt).toContain('decision: Keep the cache interface')
+        await expect(decided.continuation.decide(`answer ${decided.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete', value: { value: {
+            decisions: [{ decision: { decision: 'Keep the cache interface' }, writer: { actor: 'operator-generated-environment' } }] } } })
         await expect(runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-001' }, fixture.composition))
             .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('current checked proof for every step') })
         await expect(readFile(contractPath, 'utf8')).resolves.toMatch(/^---[\s\S]*^status: active$/m)
@@ -82,6 +104,27 @@ describe('configured durable work application composition', () => {
         expect(completedContract).toContain('1. [x] Reproduce the stale value through the cache interface.')
     }, 120_000)
 
+    it('names an unparseable intent, event file or programme ledger and where parsing stopped, never its bytes', async () => {
+        const fixture = await configuredFixture()
+        await reidentifyWorkOrder(fixture.root, 'WO-001', 'WO-603')
+        const accepted = await runWorkApplication({ operation: 'work-accept', workOrderId: 'WO-603' }, fixture.composition)
+        if (accepted.kind !== 'human-needed') throw new Error('unparseable-file fixture acceptance continuation unavailable')
+        await expect(accepted.continuation.decide(`accept ${accepted.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete' })
+        const marker = 'private-file-content'
+        await Promise.all([writeFile(join(fixture.root, 'intents/broken.json'), `{"version": 1,\n ${marker}}`),
+            writeFile(join(fixture.root, 'intents/broken-event.json'), `${marker} heartbeat`),
+            writeFile(join(fixture.root, 'workorders/programmes/cache.json'), `{"programme": "cache",\n  "items": [${marker}]}`)])
+        const outcomes = await Promise.all([
+            runWorkApplication({ operation: 'work-intake', intent: 'intents/broken.json' }, fixture.composition),
+            runWorkApplication({ operation: 'work-record', workOrderId: 'WO-603', eventFile: 'intents/broken-event.json' }, fixture.composition),
+            runWorkApplication({ operation: 'work-programme-mint', programmeId: 'cache' }, fixture.composition)])
+        expect(outcomes).toMatchObject([
+            { kind: 'refusal', reason: expect.stringMatching(/^intent intents\/broken\.json is not valid JSON at line 2, column 2; expected an object/) },
+            { kind: 'refusal', reason: expect.stringMatching(/^event file intents\/broken-event\.json is not valid JSON/) },
+            { kind: 'refusal', reason: expect.stringMatching(/^programme ledger workorders\/programmes\/cache\.json is not valid JSON; expected an object with programme and items$/) }])
+        for (const outcome of outcomes) expect(JSON.stringify(outcome)).not.toContain(marker)
+    }, 120_000)
+
     it('preserves selected source freshness after completion', async () => {
         const fixture = await configuredFixture()
         await reidentifyWorkOrder(fixture.root, 'WO-001', 'WO-602')
@@ -93,8 +136,9 @@ describe('configured durable work application composition', () => {
         await expect(runWorkApplication({ operation: 'work-record', workOrderId: 'WO-602', eventFile: 'intents/gap.json' }, fixture.composition))
             .resolves.toMatchObject({ kind: 'complete' })
         await writeFile(join(fixture.root, 'intents/resolve-gap.json'), JSON.stringify({ kind: 'resolve-gap', id: 'cache-owner', answer: 'The repository owner confirmed it.' }))
-        await expect(runWorkApplication({ operation: 'work-record', workOrderId: 'WO-602', eventFile: 'intents/resolve-gap.json' }, fixture.composition))
-            .resolves.toMatchObject({ kind: 'complete' })
+        const answered = await runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-602', eventFile: 'intents/resolve-gap.json' }, fixture.composition)
+        if (answered.kind !== 'human-needed') throw new Error('answer continuation unavailable')
+        await expect(answered.continuation.decide(`answer ${answered.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete' })
         await expect(runWorkApplication({ operation: 'work-record', workOrderId: 'WO-602', eventFile: 'intents/source-evidence.json' }, fixture.composition))
             .resolves.toMatchObject({ kind: 'complete' })
         for (const approach of ['reproduce current behavior', 'verify the correction']) {

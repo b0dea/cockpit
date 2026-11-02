@@ -222,6 +222,7 @@ describe('closed ordinary invocation metadata', () => {
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
             // A person answers the displayed digest, applies or reverses a sweep, takes a lock, binds a programme item or opens the debugger.
             ['work', 'accept', '--work-order', 'WO-001'], ['work', 'accept', '--work-order', 'WO-001', '--interactive'], ['work', 'renew', '--work-order', 'WO-001'],
+            ['work', 'answer', '--work-order', 'WO-001', '--event-file', 'workorders/events/answer.json', '--interactive'],
             ['work', 'reverse', '--work-order', 'WO-001'], ['work', 'sweep', '--apply'], ['work', 'recover', '--lock', 'WO-001', '--apply'],
             ['work', 'programme-mint', '--programme', 'release', '--candidate', 'drafts/task.md'], ['browser', 'debugger'],
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
@@ -517,6 +518,7 @@ describe('CLI help', () => {
             '  recover         Inspect or explicitly recover one interrupted work lock\n' +
             '  execute         Execute one accepted work-order step\n' +
             '  record          Persist current work-order progress\n' +
+            "  answer          Interactively record a person's answer to an open gap, or their decision\n" +
             '  review          Review the current accepted work order\n' +
             '  sweep           Inspect or apply a reversible work-order sweep\n' +
             '  reverse         Reverse a recorded work-order sweep\n' +
@@ -535,7 +537,7 @@ describe('CLI help', () => {
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
         expect(await envelope(['work'])).toMatchObject({ invocation: { verb: 'work', exitCode: 2 }, diagnostics: [{ code: 'CLI_COMMAND_REQUIRED',
-            message: 'work requires a subcommand: intake, status, accept, renew, resume, recover, execute, record, review, sweep, reverse, programme-mint, metrics, grade' }] })
+            message: 'work requires a subcommand: intake, status, accept, renew, resume, recover, execute, record, answer, review, sweep, reverse, programme-mint, metrics, grade' }] })
         expect(await envelope(['work', 'bogus'])).toMatchObject({ invocation: { verb: 'unknown' }, diagnostics: [{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "work bogus"' }] })
         // There are no hyphenated aliases; the refusal names the spelling that runs.
         const hyphenated = await runInProcess(['work-grade', '--config', 'cockpit.toml'])
@@ -2322,6 +2324,13 @@ describe('work command routing', () => {
         // The person who accepted sees what was recorded, not silence.
         expect(stdout).toBe('accepted: true\n')
         expect(humanStderr(stderr)).toBe('')
+        begin.mockClear(); decide.mockClear(); confirm.mockClear(); stdout = ''
+        // A person's answer to an open gap, or their decision, takes the same terminal continuation.
+        expect(await runCli(['work', 'answer', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--event-file', 'workorders/events/answer.json', '--interactive'],
+            io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
+        expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'workorders/events/answer.json' } })
+        expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
+        expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
         begin.mockClear(); decide.mockClear(); confirm.mockClear()
         expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)
         expect(begin).not.toHaveBeenCalled(); expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
@@ -2371,6 +2380,7 @@ describe('work command routing', () => {
         const cases = [
             ['work-accept', '--work-order', 'WO-001', '--interactive'],
             ['work-renew', '--work-order', 'WO-001', '--interactive'],
+            ['work-answer', '--work-order', 'WO-001', '--event-file', 'workorders/events/answer.json', '--interactive'],
             ['work-intake'],
             ['work-intake', '--intent', '../outside.json'],
             ['work-intake', '--intent', 'intents/task.json', '--work-order', 'WO-001'],

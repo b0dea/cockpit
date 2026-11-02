@@ -879,7 +879,7 @@ async function decodeRequest(
         const text = (key: string): string | undefined => typeof values[key] === 'string' ? values[key] as string : undefined
         const workOrderId = text('work-order')
         let request: WorkApplicationRequest
-        if (['work-accept', 'work-renew', 'work-grade', 'work-review', 'work-record', 'work-reverse', 'work-execute'].includes(handler) && !workOrderId) {
+        if (['work-accept', 'work-renew', 'work-grade', 'work-review', 'work-record', 'work-answer', 'work-reverse', 'work-execute'].includes(handler) && !workOrderId) {
             return usageOutcome('CLI_USAGE_INVALID', 'provide --work-order <id>', '--work-order')
         }
         if (handler === 'work-intake') {
@@ -893,7 +893,7 @@ async function decodeRequest(
                 if (!workOrderId || values.candidate !== undefined) return usageOutcome('CLI_USAGE_INVALID', 'provide --work-order <id> or --intent <relative-file> [--candidate <relative-file>]')
                 request = { operation: handler, workOrderId }
             }
-        } else if (handler === 'work-record') {
+        } else if (handler === 'work-record' || handler === 'work-answer') {
             const eventFile = text('event-file')
             if (!eventFile) return usageOutcome('CLI_USAGE_INVALID', 'provide --event-file <relative-file>', '--event-file')
             request = { operation: handler, workOrderId: workOrderId!, eventFile }
@@ -1265,10 +1265,10 @@ async function dispatchHandler(
         request.handler,
     )
     if (isWorkHandler(request.handler) && 'request' in request.input) {
-        if (request.handler === 'work-accept' || request.handler === 'work-renew') {
+        if (request.handler === 'work-accept' || request.handler === 'work-renew' || request.handler === 'work-answer') {
             const terminal = io.confirmWorkOrder !== undefined || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true
             if (!options.interactive || options.json || options.ci && options.ci.length > 0 || !terminal) {
-                return usageOutcome('WORK_OPERATOR_REQUIRED', 'Acceptance requires --interactive in a human terminal outside CI and JSON modes')
+                return usageOutcome('WORK_OPERATOR_REQUIRED', `${request.handler === 'work-answer' ? 'Answering' : 'Acceptance'} requires --interactive in a human terminal outside CI and JSON modes`)
             }
             const opened = await operators.beginOperatorWorkApplication?.(request.input)
             if (!opened) return unavailable()

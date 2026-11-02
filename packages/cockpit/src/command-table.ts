@@ -18,7 +18,7 @@ export function isRecordedAnswerField(value: string): boolean {
 
 export type WorkHandlerIdentifier =
     | 'work-intake' | 'work-status' | 'work-accept' | 'work-renew' | 'work-resume'
-    | 'work-recover' | 'work-execute' | 'work-record' | 'work-review' | 'work-sweep' | 'work-reverse' | 'work-programme-mint' | 'work-metrics' | 'work-grade'
+    | 'work-recover' | 'work-execute' | 'work-record' | 'work-answer' | 'work-review' | 'work-sweep' | 'work-reverse' | 'work-programme-mint' | 'work-metrics' | 'work-grade'
     | 'browser-drive' | 'browser-accessibility' | 'browser-screenshot' | 'browser-debugger' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
@@ -509,6 +509,10 @@ export const commands: readonly CommandDefinition[] = [
     { name: 'work record', handler: 'work-record', stage: 'test-and-grade', summary: 'Persist current work-order progress', visibility: 'public', experimental: true,
         ordinary: ordinary('work-record', { ...workOrderOptions, 'event-file': value('confined-path', true) }),
         options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' } } },
+    // A gap's answer and a decision speak for a person, so a person confirms them in a terminal.
+    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: "Interactively record a person's answer to an open gap, or their decision", visibility: 'public', experimental: true,
+        ordinary: unavailable("an answer or decision is a person's, typed in an interactive terminal against the digest it displays"),
+        options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' }, interactive: { type: 'boolean', default: false } } },
     { name: 'work review', handler: 'work-review', stage: 'test-and-grade', summary: 'Review the current accepted work order', visibility: 'public', experimental: true,
         ordinary: ordinary('work-review', workOrderOptions),
         options: { ...workOptions, ...workOrderOption } },

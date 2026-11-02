@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { isProxy } from 'node:util/types'
 import { executeBrowserCommand } from '../browser/commands.js'
 import { evaluateUiGate } from '../browser/ui-gate.js'
@@ -12,7 +13,7 @@ import { reviewWorkOrderWave } from './review.js'
 import { resumeWorkOrder } from './resume.js'
 import { persistWorkOrderProgress } from './state.js'
 import { projectWorkOrderStatus } from './status.js'
-import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
+import { isWorkApplicationComposition, type PreparedAnswer, type WorkApplicationComposition } from './composition.js'
 
 export const mechanism = {
     id: 'work-order-application',
@@ -28,7 +29,7 @@ export type WorkApplicationRequest =
     | Readonly<{ operation: 'work-resume' | 'work-metrics' }>
     | Readonly<{ operation: 'work-recover'; lockId: string; apply: boolean }>
     | Readonly<{ operation: 'work-execute'; workOrderId: string; approach: string }>
-    | Readonly<{ operation: 'work-record'; workOrderId: string; eventFile: string }>
+    | Readonly<{ operation: 'work-record' | 'work-answer'; workOrderId: string; eventFile: string }>
     | Readonly<{ operation: 'work-sweep'; apply: boolean }>
     | Readonly<{ operation: 'work-reverse'; workOrderId: string }>
     | Readonly<{ operation: 'work-programme-mint'; programmeId: string; itemKey?: string; candidate?: string }>
@@ -38,7 +39,7 @@ export type WorkApplicationRequest =
 export interface WorkApplicationContinuation { readonly digest: string; readonly prompt: string; readonly decide: (answer: string) => Promise<WorkApplicationOutcome> }
 export type WorkApplicationOutcome =
     | Readonly<{ kind: 'complete'; operation: WorkApplicationRequest['operation']; value: unknown }>
-    | Readonly<{ kind: 'human-needed'; operation: 'work-accept' | 'work-renew'; continuation: WorkApplicationContinuation }>
+    | Readonly<{ kind: 'human-needed'; operation: 'work-accept' | 'work-renew' | 'work-answer'; continuation: WorkApplicationContinuation }>
     | Readonly<{ kind: 'refusal'; operation: WorkApplicationRequest['operation'] | 'invalid'; reason: string }>
     // The operation ran and produced a result that does not meet its bar (a gate short of PASS, a grade
     // with an unmet criterion, a step whose verification failed); the result is the evidence to act on.
@@ -49,7 +50,7 @@ const operationKeys: Readonly<Record<WorkApplicationRequest['operation'], Operat
     'work-intake': { required: ['operation'], optional: ['workOrderId', 'intent', 'candidate'] }, 'work-accept': { required: ['operation', 'workOrderId'] },
     'work-renew': { required: ['operation', 'workOrderId'] }, 'work-status': { required: ['operation'], optional: ['workOrderId'] },
     'work-resume': { required: ['operation'] }, 'work-recover': { required: ['operation', 'lockId', 'apply'] }, 'work-execute': { required: ['operation', 'workOrderId', 'approach'] },
-    'work-record': { required: ['operation', 'workOrderId', 'eventFile'] },
+    'work-record': { required: ['operation', 'workOrderId', 'eventFile'] }, 'work-answer': { required: ['operation', 'workOrderId', 'eventFile'] },
     'work-sweep': { required: ['operation', 'apply'] }, 'work-reverse': { required: ['operation', 'workOrderId'] },
     'work-programme-mint': { required: ['operation', 'programmeId'], optional: ['itemKey', 'candidate'] }, 'work-metrics': { required: ['operation'] },
     'work-grade': { required: ['operation', 'workOrderId'] }, 'work-review': { required: ['operation', 'workOrderId'] }, 'browser-drive': { required: ['operation'], optional: ['role'] },
@@ -108,6 +109,19 @@ const complete = (operation: WorkApplicationRequest['operation'], value: unknown
 const unsatisfied = (operation: 'test-run' | 'work-grade' | 'work-execute', value: unknown, reason: string): WorkApplicationOutcome =>
     Object.freeze({ kind: 'unsatisfied', operation, value, reason })
 
+// The prompt shows a person what they are answering; agent-written text is printed with its control
+// characters replaced so it cannot drive the person's terminal.
+const shown = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/g, '\uFFFD')
+function answerPrompt(workOrderId: string, prepared: PreparedAnswer, digest: string): string {
+    const event = prepared.event
+    const lines = event.kind === 'resolve-gap' && prepared.question
+        ? [`Open question ${shown(prepared.question.id)} on step ${prepared.question.step} of ${workOrderId}:`, `  ${shown(prepared.question.question)}`, 'Answer to record:', `  ${shown(event.answer)}`]
+        : event.kind === 'decision'
+            ? [`Decision to record on ${workOrderId}:`, ...(['date', 'decision', 'disposition', 'reason', 'impact'] as const).map(field => `  ${field}: ${shown(String(event.decision[field]))}`)]
+            : []
+    return [...lines, `This is recorded as ${shown(prepared.writer.actor)}'s answer. To record it, type answer ${digest}`].join('\n')
+}
+
 export async function runWorkApplication(request: WorkApplicationRequest, composition: WorkApplicationComposition): Promise<WorkApplicationOutcome> {
     const captured = captureWorkApplicationRequest(request)
     if (!captured) return refusal('invalid', 'Work application requests require a closed selector-only shape')
@@ -161,6 +175,21 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         }
         if (operation === 'work-record') { const prepared = await composition.record(captured.workOrderId, captured.eventFile); const result = await persistWorkOrderProgress(prepared.contract, composition.policy,
             prepared.stateBytes, prepared.event, prepared.writer, prepared.store); return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.message) }
+        if (operation === 'work-answer') {
+            const prepared = await composition.answer(captured.workOrderId, captured.eventFile)
+            const shown = JSON.stringify({ workOrder: captured.workOrderId, contract: prepared.contract.digest, state: createHash('sha256').update(prepared.stateBytes).digest('hex'), event: prepared.event })
+            const digest = createHash('sha256').update(shown).digest('hex')
+            let consumed = false
+            const decide = async (answer: string): Promise<WorkApplicationOutcome> => {
+                if (consumed) return refusal(operation, 'This answer prompt was already used; rerun work answer')
+                consumed = true
+                if (answer.trim() !== `answer ${digest}`) return refusal(operation, `Nothing was recorded: the person did not type answer ${digest}`)
+                const result = await persistWorkOrderProgress(prepared.contract, composition.policy, prepared.stateBytes, prepared.event,
+                    { actor: prepared.writer.actor, at: new Date().toISOString() }, prepared.store)
+                return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.message)
+            }
+            return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest, prompt: answerPrompt(captured.workOrderId, prepared, digest), decide }) })
+        }
         if (operation === 'work-sweep') {
             const prepared = await composition.sweep(captured.apply)
             for (const row of prepared.sizes) { const size = assessWorkOrderSize(row.contract, row.path); if (size.kind === 'refusal') return refusal(operation, size.message) }

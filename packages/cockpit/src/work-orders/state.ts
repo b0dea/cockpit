@@ -153,7 +153,8 @@ export function readWorkOrderState(contract: ParsedWorkOrder, input: Uint8Array)
         // Requiring the codec's compact JSON prevents duplicate keys being erased by JSON.parse.
         if (JSON.stringify(value) !== source) return refuse('WO_STATE_INVALID', 'Execution state requires compact JSON without duplicate keys or alternate encodings; use the state codec')
     } catch (error) {
-        return refuse('WO_STATE_INVALID', `Execution state could not be decoded as UTF-8 JSON: ${error instanceof Error ? error.message : String(error)}`)
+        // The decoder's message quotes the bytes where it stopped; name the failure, not the content.
+        return refuse('WO_STATE_INVALID', `Execution state is not ${error instanceof SyntaxError ? 'valid JSON' : 'valid UTF-8'}; expected the compact object the state codec writes`)
     }
     return validateState(contract, value)
 }

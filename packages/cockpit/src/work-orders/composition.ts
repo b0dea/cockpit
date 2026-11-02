@@ -106,6 +106,7 @@ export interface WorkApplicationComposition {
     readonly persistAcceptance: (prepared: PreparedAcceptance, accepted: AcceptedWorkOrder) => Promise<void>
     readonly execution: (id: string, approach: string) => Promise<Readonly<{ input: WorkOrderExecutionInput; dependencies: WorkOrderExecutionDependencies }>>
     readonly record: (id: string, eventFile: string) => Promise<PreparedProgress>
+    readonly answer: (id: string, eventFile: string) => Promise<PreparedAnswer>
     readonly sweep: (apply: boolean) => Promise<PreparedSweep>
     readonly reversal: (id: string) => Promise<PreparedReversal>
     readonly programme: (programmeId: string, itemKey?: string) => Promise<PreparedProgrammeSelection>
@@ -162,6 +163,10 @@ export interface PreparedProgress {
     readonly event: WorkOrderProgressEvent
     readonly writer: Readonly<{ actor: string; at: string }>
     readonly store: WorkOrderStateStore
+}
+// The open question a resolve-gap event answers, shown to the person before they confirm it.
+export interface PreparedAnswer extends PreparedProgress {
+    readonly question?: Readonly<{ id: string; step: number; question: string }>
 }
 export interface PreparedReview {
     readonly input: WorkOrderReviewInput
@@ -431,6 +436,19 @@ function readExactFile(path: string, maximum: number): Buffer {
             return bytes
         } finally { closeSync(descriptor) }
     } finally { closeReadAnchors(anchored.anchors) }
+}
+
+// A JSON.parse error quotes the bytes where parsing stopped, and a refusal reaches an agent that may
+// not read that file; name the file, where parsing stopped and the shape expected, never the bytes.
+function parseJsonText(text: string, subject: string, expected: string): unknown {
+    try { return JSON.parse(text) }
+    catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        const position = Number(/\bposition (\d+)\b/.exec(error.message)?.[1])
+        const before = Number.isSafeInteger(position) ? text.slice(0, position) : undefined
+        const where = before === undefined ? '' : ` at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
+        throw new Error(`${subject} is not valid JSON${where}; expected ${expected}`)
+    }
 }
 
 function workOrderParseError(path: string, findings: readonly WorkOrderFinding[]): Error {
@@ -874,7 +892,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     }
 
     const parseManifest = (bytes: Uint8Array): GenerationManifest => {
-        const value = JSON.parse(Buffer.from(bytes).toString('utf8')) as GenerationManifest
+        const value = parseJsonText(Buffer.from(bytes).toString('utf8'), 'the work-order generation manifest', 'the generation manifest object cockpit writes') as GenerationManifest
         if (!value || typeof value !== 'object' || Array.isArray(value)
             || Object.keys(value).sort().join(',') !== 'contractDigest,contractPath,files,generation,version'
             || value.version !== 1 || !Number.isSafeInteger(value.generation) || value.generation < 1 || typeof value.contractPath !== 'string'
@@ -897,7 +915,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         return bytes
     }
     const parseHistory = (bytes: Uint8Array, id: string, contractDigest: string): DurableWorkOrderHistory => {
-        const value = JSON.parse(Buffer.from(bytes).toString('utf8')) as DurableWorkOrderHistory
+        const value = parseJsonText(Buffer.from(bytes).toString('utf8'), `the ${id} history record`, 'the history object cockpit writes') as DurableWorkOrderHistory
         if (!value || typeof value !== 'object' || Array.isArray(value)
             || Object.keys(value).sort().join(',') !== 'contractDigest,createdAt,everStarted,firstHeartbeatAt,id,version'
             || value.version !== 1 || value.id !== id || value.contractDigest !== contractDigest
@@ -909,7 +927,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     }
     const currentPark = (id: string): WorkOrderParkRecord | null => {
         const manifest = currentManifest(id); const bytes = manifest && generationFile(id, manifest, 'park.json')
-        return bytes ? JSON.parse(bytes.toString('utf8')) as WorkOrderParkRecord : null
+        return bytes ? parseJsonText(bytes.toString('utf8'), `the ${id} park record`, 'the park object a sweep writes') as WorkOrderParkRecord : null
     }
     const currentHistory = (id: string): DurableWorkOrderHistory | null => {
         const manifest = currentManifest(id)
@@ -1396,7 +1414,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const journalPath = join(directory, name)
             const text = readExactFile(journalPath, MAX_PRIVATE_BYTES).toString('utf8')
             const parsed = parseDocument(text, { uniqueKeys: true }); if (parsed.errors.length) throw new Error('durable transaction record is malformed')
-            const record = JSON.parse(text) as TransactionRecord
+            const record = parseJsonText(text, `transaction record ${name}`, 'the transaction object cockpit writes') as TransactionRecord
             if (!record || typeof record !== 'object' || Array.isArray(record)
                 || Object.keys(record).sort().join(',') !== 'entries,kind,owner,stage,version'
                 || record.version !== 1 || !['work-order', 'programme', 'intake'].includes(record.kind) || typeof record.owner !== 'string'
@@ -1521,7 +1539,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (!manifest) throw new Error('current acceptance generation is missing')
         const record = generationFile(row.contract.frontmatter.id, manifest, 'acceptance.json')
         if (!record) throw new Error('current acceptance record is missing')
-        const decoded = JSON.parse(record.toString('utf8')) as WorkOrderAcceptanceRecord
+        const decoded = parseJsonText(record.toString('utf8'), `the ${row.contract.frontmatter.id} acceptance record`, 'the acceptance object work accept writes') as WorkOrderAcceptanceRecord
         const retained = admittedAcceptances.get(row.contract.frontmatter.id)
         if (retained?.recordDigest === decoded.recordDigest && retained.contractDigest === row.contract.digest
             && isCurrentWorkOrderAcceptance(retained.accepted, row.contract)) return retained.accepted
@@ -1549,7 +1567,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     const sourceAudit = (row: OrderObservation): Readonly<{ audit: WorkOrderSourceAudit; installedSkills: readonly InstalledThinkingSkill[]; bytes: Buffer }> => {
         const extension = row.path.endsWith('.md') ? row.path.slice(0, -3) : row.path
         const bytes = readBounded(root, `${extension}.source-audit.json`, 262_144)
-        const value = JSON.parse(bytes.toString('utf8')) as WorkOrderSourceAudit & { readonly skills?: unknown }
+        const value = parseJsonText(bytes.toString('utf8'), `${extension}.source-audit.json`, 'an object with sources, gaps and skills') as WorkOrderSourceAudit & { readonly skills?: unknown }
         if (!value || Object.keys(value).sort().join(',') !== 'gaps,skills,sources'
             || !Array.isArray(value.sources) || !Array.isArray(value.gaps)) throw new Error('source audit has an invalid shape')
         const expected = JSON.stringify(row.contract.sources)
@@ -1599,7 +1617,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         executeGit: (cwd, argv) => executeBounded(cwd, ['git', ...argv], authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES) })
     const prepareIntent = async (intentPath: string, candidatePath?: string): Promise<PreparedIntentIntake> => {
         const intentBytes = readBounded(root, intentPath, 262_144)
-        const descriptor = JSON.parse(intentBytes.toString('utf8')) as Record<string, unknown>
+        const descriptor = parseJsonText(intentBytes.toString('utf8'), `intent ${intentPath}`, 'an object with version, kind, reference, certification, crossSession and programme') as Record<string, unknown>
         if (!descriptor || Object.keys(descriptor).sort().join(',') !== 'certification,crossSession,kind,programme,reference,version'
             || descriptor.version !== 1 || !['task', 'issue', 'spec', 'decision', 'programme'].includes(descriptor.kind as string)
             || typeof descriptor.reference !== 'string' || typeof descriptor.certification !== 'boolean' || typeof descriptor.crossSession !== 'boolean'
@@ -1684,7 +1702,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             if (JSON.stringify(currentRepositories) !== JSON.stringify(prepared.repositories)) throw new Error('repository revisions changed while awaiting operator acceptance')
             const createdAt = await creationTimestamp(row.path)
             const currentRecordBytes = current ? generationFile(row.contract.frontmatter.id, current, 'acceptance.json') : null
-            if (JSON.stringify(currentRecordBytes ? JSON.parse(currentRecordBytes.toString('utf8')) : undefined) !== JSON.stringify(prepared.predecessorRecord)) {
+            if (JSON.stringify(currentRecordBytes ? parseJsonText(currentRecordBytes.toString('utf8'), `the ${row.contract.frontmatter.id} acceptance record`, 'the acceptance object work accept writes') : undefined) !== JSON.stringify(prepared.predecessorRecord)) {
                 throw new Error('acceptance predecessor changed while awaiting operator acceptance')
             }
             if (accepted.binding.previousDigest !== undefined && prepared.previous && current) {
@@ -1794,7 +1812,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             }
             let threadId: string | undefined
             for (const line of new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).split('\n').filter(Boolean)) {
-                const event = JSON.parse(line) as Record<string, unknown>
+                const event = parseJsonText(line, 'a Codex CLI event line', 'one JSON event per line') as Record<string, unknown>
                 const candidate = event.type === 'thread.started' && typeof event.thread_id === 'string' ? event.thread_id
                     : event.type === 'thread.started' && typeof event.threadId === 'string' ? event.threadId : undefined
                 if (candidate) { if (threadId) return { kind: 'error', reason: 'Independent evaluator emitted duplicate native thread identities' }; threadId = candidate }
@@ -1806,7 +1824,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const responseText = new TextDecoder('utf-8', { fatal: true }).decode(readExactFile(responsePath, 65_536))
             const strictDocument = parseDocument(responseText, { uniqueKeys: true })
             if (strictDocument.errors.length) return { kind: 'error', reason: 'Independent evaluator response is not strict duplicate-free JSON' }
-            const response = JSON.parse(responseText) as Record<string, unknown>
+            const response = parseJsonText(responseText, 'the independent evaluator response', 'the object its output schema declares') as Record<string, unknown>
             const responseKeys = Object.keys(response).sort().join(',')
             const expectedKeys = role === 'grader' ? 'criteria,integrity,kind,runId' : 'artifactDigest,contractDigest,dispositions,evidence,findings,kind,runId'
             if (responseKeys !== expectedKeys || !Object.values(Object.getOwnPropertyDescriptors(response)).every(value => 'value' in value)) {
@@ -1833,7 +1851,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     const acceptance = async (id: string): Promise<PreparedAcceptance> => {
         const snapshot = await observe(); const row = order(snapshot.orders, id); const prior = currentManifest(id)
         const recordBytes = prior && generationFile(id, prior, 'acceptance.json')
-        const predecessorRecord = recordBytes ? JSON.parse(recordBytes.toString('utf8')) as WorkOrderAcceptanceRecord : undefined
+        const predecessorRecord = recordBytes ? parseJsonText(recordBytes.toString('utf8'), `the ${id} acceptance record`, 'the acceptance object work accept writes') as WorkOrderAcceptanceRecord : undefined
         const prepared: PreparedAcceptance = { id, row, intake: await prepareIntake(id), predecessorGeneration: prior?.generation ?? null,
             repositories: snapshot.repositories, ...(predecessorRecord ? { predecessorRecord } : {}) }
         const priorBytes = prior && generationFile(id, prior, 'contract.md')
@@ -1878,7 +1896,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             status: statusInput(snapshot), stateBytes, writer: { actor: authorities.actors.author, at: new Date().toISOString() }, approach }),
             dependencies: Object.freeze({ store: stateStore(id, row), execute: runDeclaredVerification }) })
     }
-    const record = async (id: string, eventFile: string): Promise<PreparedProgress> => {
+    // A gap's answer and a decision speak for a person, so only `work answer` records them, attributed to
+    // the operator once a person confirms them in a terminal. The rest is the agent's own progress.
+    const progress = async (id: string, eventFile: string, actor: 'author' | 'operator'): Promise<PreparedAnswer> => {
         const snapshot = await observe(); const row = order(snapshot.orders, id); currentAcceptance(row)
         const manifest = currentManifest(id); if (!manifest) throw new Error('progress generation is missing')
         const stateBytes = generationFile(id, manifest, 'state.json'); if (!stateBytes) throw new Error('progress state is missing')
@@ -1887,10 +1907,18 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             || state.value.repositories.some(repository => !snapshot.repositories.some(current => current.path === repository.path))) {
             throw new Error('progress repository identities changed from the accepted execution boundary')
         }
-        const eventBytes = readBounded(root, eventFile, 262_144); const document = parseDocument(eventBytes.toString('utf8'), { uniqueKeys: true })
-        if (document.errors.length) throw new Error('progress event file is invalid JSON')
-        const requested = JSON.parse(eventBytes.toString('utf8')) as WorkOrderProgressEvent
-        if (!requested || typeof requested !== 'object') throw new Error('progress event has an invalid shape')
+        const eventText = readBounded(root, eventFile, 262_144).toString('utf8')
+        const requested = parseJsonText(eventText, `event file ${eventFile}`, 'one object whose kind is a work record or work answer event') as WorkOrderProgressEvent
+        if (parseDocument(eventText, { uniqueKeys: true }).errors.length) throw new Error(`event file ${eventFile} repeats a key; give each key once`)
+        if (!requested || typeof requested !== 'object' || Array.isArray(requested)) throw new Error(`event file ${eventFile} must hold one JSON object`)
+        const configPath = shellQuote(config.source.path)
+        const personal = requested.kind === 'resolve-gap' || requested.kind === 'decision'
+        if (personal && actor === 'author') {
+            throw new Error(`a ${requested.kind} event is a person's answer, so work record refuses it; ask a person to review and record it with npx --no cockpit work answer --config ${configPath} --work-order ${id} --event-file ${eventFile} --interactive`)
+        }
+        if (!personal && actor === 'operator') {
+            throw new Error(`work answer records only resolve-gap and decision events; record this event with npx --no cockpit work record --config ${configPath} --work-order ${id} --event-file ${eventFile}`)
+        }
         let event: WorkOrderProgressEvent
         if (requested.kind === 'evidence') {
             const value = requested as unknown as Record<string, unknown>
@@ -1905,12 +1933,21 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 contractDigest: row.contract.digest, repositories: snapshot.repositories.map(repository => ({ ...repository })) })
         } else {
             if (!['heartbeat', 'root-cause', 'gap', 'resolve-gap', 'decision', 'reconcile-execution'].includes(requested.kind)) {
-                throw new Error('progress recording accepts only operator progress events or observed source evidence')
+                throw new Error('progress recording accepts only progress events, answers or observed source evidence')
             }
             event = requested
         }
-        return Object.freeze({ contract: row.contract, stateBytes, event, writer: Object.freeze({ actor: authorities.actors.operator, at: new Date().toISOString() }), store: stateStore(id, row) })
+        let question: PreparedAnswer['question']
+        if (event.kind === 'resolve-gap') {
+            const gap = state.value.gaps.find(entry => entry.id === event.id)
+            if (!gap || gap.answer) throw new Error(`work order ${id} has no open gap ${JSON.stringify(event.id)}; work status lists its open gaps`)
+            question = Object.freeze({ id: gap.id, step: gap.step, question: gap.question })
+        }
+        return Object.freeze({ contract: row.contract, stateBytes, event, writer: Object.freeze({ actor: authorities.actors[actor], at: new Date().toISOString() }),
+            store: stateStore(id, row), ...(question ? { question } : {}) })
     }
+    const record = (id: string, eventFile: string): Promise<PreparedProgress> => progress(id, eventFile, 'author')
+    const answer = (id: string, eventFile: string): Promise<PreparedAnswer> => progress(id, eventFile, 'operator')
     const sweep = async (apply: boolean): Promise<PreparedSweep> => {
         const snapshot = await observe(); const staged = new Map<string, WorkOrderParkRecord>()
         return Object.freeze({ capacity: capacity(snapshot.orders), sizes: snapshot.orders.map(row => ({ contract: row.contract, path: row.path })),
@@ -1960,7 +1997,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     }
     const programme = async (programmeId: string, requestedItemKey?: string): Promise<PreparedProgrammeSelection> => {
         const snapshot = await observe(); const ledgerPath = `workorders/programmes/${programmeId}.json`; const ledgerBytes = readBounded(root, ledgerPath, 262_144)
-        const ledger = JSON.parse(ledgerBytes.toString('utf8')) as ProgrammeLedger
+        const ledger = parseJsonText(ledgerBytes.toString('utf8'), `programme ledger ${ledgerPath}`, 'an object with programme and items') as ProgrammeLedger
         const preparedCapacity = capacity(snapshot.orders)
         if (!ledger || ledger.programme !== programmeId || !Array.isArray(ledger.items)) throw new Error('programme ledger is invalid')
         const next = ledger.items.find(item => item.orderId === null)
@@ -2059,7 +2096,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 if (current.contract.digest !== record.contractDigest || readmitted.binding.digest !== record.contractDigest) throw new Error('completion contract or acceptance changed')
                 if (!gradeBytes || digest(gradeBytes) !== record.gradeDigest) throw new Error('completion grade bytes changed')
                 if (generationFile(id, manifest!, 'completion.json')) throw new Error('completion sentinel already exists')
-                const persistedGrade = JSON.parse(gradeBytes.toString('utf8')) as { grade?: { runId?: string } }
+                const persistedGrade = parseJsonText(gradeBytes.toString('utf8'), `the ${id} grade record`, 'the grade object work grade writes') as { grade?: { runId?: string } }
                 if (persistedGrade.grade?.runId !== record.runId) throw new Error('completion grade run changed')
                 const completionSubject = await prepareWorkOrderVerification({ accepted: readmitted, author: authorities.actors.author, grader }, {
                     readWorkOrder: async () => current.contract, readArtifact: base.readArtifact,
@@ -2152,7 +2189,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     }
     const composition = Object.freeze({ operator: authorities.actors.operator, policy: config.workOrderPolicy, status, intake: prepareIntake, intent: prepareIntent, persistDraft,
         acceptance, persistAcceptance,
-        execution, record, sweep, reversal, programme, metrics, browser, gate, review: reviewing, grading, recovery: recoverLock })
+        execution, record, answer, sweep, reversal, programme, metrics, browser, gate, review: reviewing, grading, recovery: recoverLock })
     issuedCompositions.add(composition)
     return composition
 }
