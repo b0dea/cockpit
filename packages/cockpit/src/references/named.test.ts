@@ -1,11 +1,29 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
-import { inspectProseReferences, walkMarkdownProse } from '../../../../scripts/docs-lint.mjs'
+import { inspectProseReferences, walkMarkdownProse, type ProsePathState, type ProseReferenceAuthority } from '../../../../scripts/docs-lint.mjs'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
-import { resolveNamedPath, inspectNamedReferences as inspectWithWalker, type NamedReferenceInput } from './named.js'
+import { resolveNamedPath, type NamedPathInput } from './named.js'
 
-const inspectNamedReferences = (input: NamedReferenceInput) => inspectWithWalker(input, { inspectProseReferences, walkMarkdownProse })
+type NamedReferenceInput = Omit<NamedPathInput, 'path' | 'exists'> & {
+    documentPath: string; body: string; references: ProseReferenceAuthority
+    existing: readonly { path: string; body?: string }[]; today?: string
+}
+
+// The repository checker's composition: a path resolves through the generated-path authority, and an
+// existing document carrying a retired marker reads as retired.
+function inspectNamedReferences({ documentPath, body, references, existing, today, ...named }: NamedReferenceInput) {
+    const resolvePath = (path: string): ProsePathState => {
+        const entry = existing.find(candidate => candidate.path === path)
+        const resolution = resolveNamedPath({ ...named, path, exists: entry !== undefined })
+        if (resolution.kind === 'refusal') return 'missing'
+        if (resolution.kind !== 'resolved') return resolution.kind
+        if (entry?.body !== undefined && walkMarkdownProse(path, entry.body).lines
+            .some(row => row.comments.some(comment => /^cockpit:retired(?: |$)/.test(comment)))) return 'retired'
+        return 'present'
+    }
+    return inspectProseReferences({ path: documentPath, body, authority: references, resolvePath, ...(today === undefined ? {} : { today }) })
+}
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const authority = { root: '/synthetic/cockpit', cockpitId: 'synthetic', configPath: '/synthetic/cockpit/cockpit.toml' }

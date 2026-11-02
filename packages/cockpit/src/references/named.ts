@@ -1,6 +1,3 @@
-import type {
-    DocsLintDiagnostic, inspectProseReferences, ProsePathState, ProseReferenceAuthority, walkMarkdownProse,
-} from '../../../../scripts/docs-lint.mjs'
 import {
     projectGeneratedPathFacts,
     type GeneratedPathFact, type GeneratedPathProducer, type OwnershipAuthority, type OwnershipManifest,
@@ -9,7 +6,7 @@ import {
 export const mechanism = {
     id: 'named-reference-resolution',
     module: 'packages/cockpit/src/references/named.ts',
-    exports: ['resolveNamedPath', 'inspectNamedReferences'],
+    exports: ['resolveNamedPath'],
 } as const
 
 interface NamedAuthority {
@@ -49,34 +46,4 @@ export function resolveNamedPath(input: NamedPathInput): NamedPathResult {
     const projected = projectGeneratedPathFacts(input.manifest, input.authority, input.declarations)
     if (projected.kind === 'refusal') return Object.freeze({ kind: 'refusal', path: input.path, reason: 'generated path authority was refused' })
     return resolveProjectedPath(input.path, input.exists, projected.facts)
-}
-
-export interface NamedReferenceInput extends NamedAuthority {
-    readonly documentPath: string
-    readonly body: string
-    readonly references: ProseReferenceAuthority
-    readonly existing: readonly Readonly<{ path: string; body?: string }>[]
-    readonly today?: string
-}
-export interface NamedReferenceInspector {
-    readonly inspectProseReferences: typeof inspectProseReferences
-    readonly walkMarkdownProse: typeof walkMarkdownProse
-}
-
-// The repository checker supplies its walker; published runtime code has no dependency on development scripts.
-export function inspectNamedReferences(input: NamedReferenceInput, inspector: NamedReferenceInspector): DocsLintDiagnostic[] {
-    const projected = projectGeneratedPathFacts(input.manifest, input.authority, input.declarations)
-    if (projected.kind === 'refusal') return [{ path: input.documentPath, line: 1, code: 'DOCEV050_NAMED_REFERENCE_MISSING', message: 'generated path authority was refused' }]
-    const existing = new Map(input.existing.map(entry => [entry.path, entry]))
-    const resolvePath = (path: string): ProsePathState => {
-        const entry = existing.get(path)
-        const resolution = resolveProjectedPath(path, entry !== undefined, projected.facts)
-        if (resolution.kind === 'refusal') return 'missing'
-        if (resolution.kind !== 'resolved') return resolution.kind
-        if (entry?.body !== undefined && inspector.walkMarkdownProse(path, entry.body).lines
-            .some(row => row.comments.some(comment => /^cockpit:retired(?: |$)/.test(comment)))) return 'retired'
-        return 'present'
-    }
-    return inspector.inspectProseReferences({ path: input.documentPath, body: input.body, authority: input.references, resolvePath,
-        ...(input.today === undefined ? {} : { today: input.today }) })
 }

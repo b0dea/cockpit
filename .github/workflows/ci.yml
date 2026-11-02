@@ -132,7 +132,7 @@ jobs:
       # The documentation tests read docs/ directly. On a code change the full matrix runs
       # them again; this keeps them on the docs-only path the matrix is skipped for.
       - name: documentation contracts
-        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.contracts.test.ts packages/cockpit/src/docs-lint.evidence.test.ts packages/cockpit/src/docs-lint.prose.test.ts packages/cockpit/src/docs-lint.reference.test.ts
+        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.contracts.test.ts packages/cockpit/src/docs-lint.prose.test.ts packages/cockpit/src/docs-lint.reference.test.ts
 
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }})
