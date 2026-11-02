@@ -69,49 +69,49 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 ### Top-level keys
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `unconfirmed` | array of string |  | 1–12 items; each item: one of `"cockpit.name"`, `"sibling"`, `"estate.runnable"`, `"ports.bases"`, `"environment.install_policies"`, `"environment.test_data"`, `"environment.generated"`, `"environment.compose_files"`, `"environment.machine"`, `"environment.posture"`, `"testing"`, `"guards"` |
-| `cockpit` | table: [`[cockpit]`](#cockpit) |  | required |
-| `sibling` | array of table: [`[[sibling]]`](#sibling) |  | required; at least 1 item |
-| `ports` | table: [`[ports]`](#ports) |  | required |
-| `guards` | table: [`[guards]`](#guards) | `{}` |  |
-| `mcp` | table: [`[mcp]`](#mcp) | `{}` |  |
-| `workorders` | table: [`[workorders]`](#workorders) | `{}` |  |
-| `browser` | table: [`[browser]`](#browser) |  |  |
-| `testing` | table: [`[testing]`](#testing) |  |  |
-| `environment` | table: [`[environment]`](#environment) | `{}` |  |
-| `surfaces` | table: [`[surfaces]`](#surfaces) | `{}` |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `unconfirmed` | Answers no person has stated yet; init writes them and doctor reports them. | array of string |  | 1–12 items; each item: one of `"cockpit.name"`, `"sibling"`, `"estate.runnable"`, `"ports.bases"`, `"environment.install_policies"`, `"environment.test_data"`, `"environment.generated"`, `"environment.compose_files"`, `"environment.machine"`, `"environment.posture"`, `"testing"`, `"guards"` |
+| `cockpit` | Identity and layout of this cockpit. | table: [`[cockpit]`](#cockpit) |  | required |
+| `sibling` | Product repositories the cockpit works across. | array of table: [`[[sibling]]`](#sibling) |  | required; at least 1 item |
+| `ports` | Port leasing for running stacks side by side. | table: [`[ports]`](#ports) |  | required |
+| `guards` | Rules that restrict what agents may run. | table: [`[guards]`](#guards) | `{}` |  |
+| `mcp` | Approval of MCP servers. | table: [`[mcp]`](#mcp) | `{}` |  |
+| `workorders` | Limits for work orders. | table: [`[workorders]`](#workorders) | `{}` |  |
+| `browser` | Browser automation for the stack. | table: [`[browser]`](#browser) |  |  |
+| `testing` | Test stages and gates. | table: [`[testing]`](#testing) |  |  |
+| `environment` | How the stack is reached, signed in to, built and kept. | table: [`[environment]`](#environment) | `{}` |  |
+| `surfaces` | Instructions, skills and settings generated for agent tools. | table: [`[surfaces]`](#surfaces) | `{}` |  |
 
 - Must match `{"anyOf":[{"not":{"required":["browser"],"properties":{"browser":{"required":["resources"]}}}},{"required":["environment"],"properties":{"environment":{"required":["generated"]}}}]}`.
 
 ### `[cockpit]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `name` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
-| `siblings_root` | string | `".."` |  |
-| `guide_cap` | integer | `200` | greater than 0; at most 9007199254740991 |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `name` | Name of this cockpit. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
+| `siblings_root` | Directory holding the sibling checkouts, relative to the cockpit. | string | `".."` |  |
+| `guide_cap` | Most lines of always-loaded guidance; preflight fails above it. | integer | `200` | greater than 0; at most 9007199254740991 |
 
 ### `[[sibling]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `slug` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
-| `dir` | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns)) |
-| `remote` | string |  | at least 1 character |
-| `branch` | string |  | at least 1 character |
-| `mount` | string |  | required; either (one of `"always"`, `"host"`, `"none"`) or (pattern `^profile:[a-z0-9-]+$`) |
-| `acquire` | string |  | required; one of `"auto"`, `"manual"`, `"none"` |
-| `var` | string |  | required; pattern `^(?!(?:DOCKER_\|COMPOSE_\|LD_\|DYLD_\|LIBPATH$\|SHLIB_PATH$\|NODE_OPTIONS$\|NODE_PATH$\|BASH_ENV$\|ENV$\|PATH$\|IFS$))[A-Z][A-Z0-9_]*$` |
-| `toolchain` | string | `"none"` | one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"`, `"none"` |
-| `gate` | string |  | exactly `"operator"` |
-| `host_reason` | string |  | at least 1 character |
-| `guides` | array of string | `["CLAUDE.md","AGENTS.md"]` | each item: pattern [P1](#patterns) |
-| `instruction_pointer` | boolean | `false` |  |
-| `purpose` | string |  | required; at least 1 character |
-| `environment_files` | array of table: [`[[sibling.environment_files]]`](#siblingenvironment_files) |  |  |
-| `derives` | table: [`[sibling.derives]`](#siblingderives) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `slug` | Short name of the sibling; also the prefix of its projected guide files. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
+| `dir` | Checkout directory under the siblings root, or . for the siblings root itself. | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns)) |
+| `remote` | Git remote to clone from; required when acquire is auto or manual and not allowed when none. | string |  | at least 1 character |
+| `branch` | Branch to check out when cloning. | string |  | at least 1 character |
+| `mount` | How the stack uses the checkout: always mounted, mounted under a profile, host only, or not mounted. | string |  | required; either (one of `"always"`, `"host"`, `"none"`) or (pattern `^profile:[a-z0-9-]+$`) |
+| `acquire` | How the checkout reaches disk: cloned by setup, cloned by a person, or not a repository. | string |  | required; one of `"auto"`, `"manual"`, `"none"` |
+| `var` | Name of the exported *_DIR environment variable that points at the checkout. | string |  | required; pattern `^(?!(?:DOCKER_\|COMPOSE_\|LD_\|DYLD_\|LIBPATH$\|SHLIB_PATH$\|NODE_OPTIONS$\|NODE_PATH$\|BASH_ENV$\|ENV$\|PATH$\|IFS$))[A-Z][A-Z0-9_]*$` |
+| `toolchain` | Toolchain that installs and tests the sibling; none for a directory of data. | string | `"none"` | one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"`, `"none"` |
+| `gate` | Set to operator for a lane that touches live data or local hardware; it never runs by default and asks first. | string |  | exactly `"operator"` |
+| `host_reason` | Why the sibling cannot join the stack; required when mount is host. | string |  | at least 1 character |
+| `guides` | Guide files the sibling publishes, linked into the cockpit as symlinks. | array of string | `["CLAUDE.md","AGENTS.md"]` | each item: pattern [P1](#patterns) |
+| `instruction_pointer` | Let setup add a pointer to the cockpit guide in this sibling, when the command line also approves it. | boolean | `false` |  |
+| `purpose` | What the sibling is for; printed when its checkout is missing. | string |  | required; at least 1 character |
+| `environment_files` | Template and instance environment file pairs the sibling needs. | array of table: [`[[sibling.environment_files]]`](#siblingenvironment_files) |  |  |
+| `derives` | Facts about the sibling that cockpit derives rows or MCP servers from. | table: [`[sibling.derives]`](#siblingderives) |  |  |
 
 - Must match `{"oneOf":[{"properties":{"acquire":{"enum":["none"]}},"not":{"required":["remote"]}},{"properties":{"acquire":{"enum":["auto","manual"]}},"required":["remote"]}]}`.
 - Must match `{"anyOf":[{"properties":{"mount":{"enum":["host"]}},"required":["host_reason"]},{"properties":{"mount":{"not":{"enum":["host"]}}}}]}`.
@@ -120,642 +120,622 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 ### `[[sibling.environment_files]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `template` | string |  | required; pattern [P1](#patterns) |
-| `instance` | string |  | required; pattern [P1](#patterns) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `template` | Tracked template file the instance is created from. | string |  | required; pattern [P1](#patterns) |
+| `instance` | Machine-local file created from the template and left out of version control. | string |  | required; pattern [P1](#patterns) |
 
 ### `[sibling.derives]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `generated` | table: [`[sibling.derives.generated]`](#siblingderivesgenerated) |  |  |
-| `mcp_sources` | array of table: [`[[sibling.derives.mcp_sources]]`](#siblingderivesmcp_sources) | `[]` | at most 256 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `generated` | Generated-stack rows this sibling contributes. | table: [`[sibling.derives.generated]`](#siblingderivesgenerated) |  |  |
+| `mcp_sources` | MCP server declaration files this sibling publishes. | array of table: [`[[sibling.derives.mcp_sources]]`](#siblingderivesmcp_sources) | `[]` | at most 256 items |
 
 - Must match at least one of `[{"required":["generated"]},{"required":["mcp_sources"],"properties":{"mcp_sources":{"minItems":1}}}]`.
 
 ### `[sibling.derives.generated]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `service` | table: [`[sibling.derives.generated.service]`](#siblingderivesgeneratedservice) |  | required |
-| `checkout_mount` | table: [`[sibling.derives.generated.checkout_mount]`](#siblingderivesgeneratedcheckout_mount) |  | required |
-| `additional_mounts` | array of table: [`additional_mounts` shape](#additional_mounts-shape) | `[]` | at most 256 items |
-| `port_defaults` | table of integer |  | required; each key: pattern `^(?=[\s\S]{0,128}$)(?:^[A-Z][A-Z0-9_]*$)`; each value: 1–65535 |
-| `entrypoints` | array of table: [`entrypoints` shape](#entrypoints-shape) |  | required; at most 256 items |
-| `volumes` | array of table: [`volumes` shape](#volumes-shape) |  | at most 256 items |
-| `install_policies` | array of table: [`install_policies` shape](#install_policies-shape) |  | at most 256 items |
-| `decisions` | array of table: [`decisions` shape](#decisions-shape) |  | required; 1–512 items |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `service` | Generated service that runs this sibling's checkout. | table: [`[sibling.derives.generated.service]`](#siblingderivesgeneratedservice) |  | required |
+| `checkout_mount` | Mount of the sibling checkout into the service. | table: [`[sibling.derives.generated.checkout_mount]`](#siblingderivesgeneratedcheckout_mount) |  | required |
+| `additional_mounts` | Extra mounts for the service beyond the checkout. | array of table: [`additional_mounts` shape](#additional_mounts-shape) | `[]` | at most 256 items |
+| `port_defaults` | Default host port for each of the service's host variables. | table of integer |  | required; any key; each value: 1–65535 |
+| `entrypoints` | Addresses derived from this service's ports. | array of table: [`entrypoints` shape](#entrypoints-shape) |  | required; at most 256 items |
+| `volumes` | Named volumes this row adds to the stack. | array of table: [`volumes` shape](#volumes-shape) |  | at most 256 items |
+| `install_policies` | Install policies this row adds to the stack. | array of table: [`install_policies` shape](#install_policies-shape) |  | at most 256 items |
+| `decisions` | Decision records for the structure this row adds. | array of table: [`decisions` shape](#decisions-shape) |  | required; 1–512 items |
+| `provenance` | Where this row's declaration came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `[sibling.derives.generated.service]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `role` | string | `"service"` | one of `"service"`, `"one-shot"` |
-| `resources` | table: [`resources` shape](#resources-shape) |  |  |
-| `command` | array of string |  | required; 1–256 items; each item: pattern `^[^\x00]+$`, 1–8192 characters |
-| `image` | table: [`image` shape](#image-shape) |  |  |
-| `build` | table: [`build` shape](#build-shape) |  |  |
-| `ports` | array of table: [`ports` shape](#ports-shape) | `[]` | at most 256 items |
-| `host_aliases` | array of table: [`host_aliases` shape](#host_aliases-shape) |  | at most 64 items |
-| `dependencies` | array of table: [`dependencies` shape](#dependencies-shape) | `[]` | at most 256 items |
-| `health` | table: [`health` shape](#health-shape) |  | required |
-| `toolchain_pins` | array of table: [`toolchain_pins` shape](#toolchain_pins-shape) | `[]` | at most 32 items |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `role` | Whether the service stays running or runs once and exits. | string | `"service"` | one of `"service"`, `"one-shot"` |
+| `resources` | Memory and CPU ceilings for the service. | table: [`resources` shape](#resources-shape) |  |  |
+| `command` | Command the service runs, as an argument list. | array of string |  | required; 1–256 items; each item: pattern `^[^\x00]+$`, 1–8192 characters |
+| `image` | Pinned prebuilt image to run; declare exactly one of image and build. | table: [`image` shape](#image-shape) |  |  |
+| `build` | Build the image from the sibling checkout; declare exactly one of image and build. | table: [`build` shape](#build-shape) |  |  |
+| `ports` | Ports the service publishes on the host. | array of table: [`ports` shape](#ports-shape) | `[]` | at most 256 items |
+| `host_aliases` | Extra host names the service resolves to fixed addresses. | array of table: [`host_aliases` shape](#host_aliases-shape) |  | at most 64 items |
+| `dependencies` | Other services that must reach a state before this one starts. | array of table: [`dependencies` shape](#dependencies-shape) | `[]` | at most 256 items |
+| `health` | How cockpit decides the service is healthy. | table: [`health` shape](#health-shape) |  | required |
+| `toolchain_pins` | Toolchain version pins read from files in the sibling. | array of table: [`toolchain_pins` shape](#toolchain_pins-shape) | `[]` | at most 32 items |
+| `provenance` | Where the service declaration came from; omit when this file declares it. | table: [`provenance` shape](#provenance-shape) |  |  |
 
 - Must match `{"oneOf":[{"required":["image"],"not":{"required":["build"]}},{"required":["build"],"not":{"required":["image"]}}]}`.
 
 ### `[sibling.derives.generated.checkout_mount]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `target` | string |  | required; pattern [P6](#patterns); at most 4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `target` | Absolute path inside the container where the checkout is mounted. | string |  | required; pattern [P6](#patterns); at most 4096 characters |
 
 ### `[[sibling.derives.mcp_sources]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | JSON file in the sibling with a top-level mcpServers object, as agent tools read from .mcp.json. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
+| `provenance` | Where this MCP source declaration came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `[ports]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `step` | integer | `100` | greater than 0; at most 9007199254740991 |
-| `count` | integer | `27` | greater than 0; at most 9007199254740991 |
-| `bases` | table of integer |  | required; each key: pattern `^[A-Z][A-Z0-9_]*$`; each value: 1–65535 |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `step` | Offset between consecutive stacks' published ports. | integer | `100` | greater than 0; at most 9007199254740991 |
+| `count` | Number of stacks that can run side by side. | integer | `27` | greater than 0; at most 9007199254740991 |
+| `bases` | Base host port for each port variable; stack n publishes base plus n times step. | table of integer |  | required; any key; each value: 1–65535 |
 
 ### `[guards]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `hosted_db_hosts` | array of string | `[]` | at most 128 items; each item: pattern [P10](#patterns); Declared guard hosts; uniqueness after removing one leading wildcard is enforced at runtime. |
-| `vendor_endpoint_hosts` | array of string | `[]` | at most 128 items; each item: pattern [P10](#patterns); Declared guard hosts; uniqueness after removing one leading wildcard is enforced at runtime. |
-| `protected_branches` | array of string | `["main","master"]` |  |
-| `allow` | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
-| `deny` | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `hosted_db_hosts` | Hosted database host names the guards keep agents away from. | array of string | `[]` | at most 128 items; each item: pattern [P10](#patterns) |
+| `vendor_endpoint_hosts` | Real vendor endpoint host names the guards keep agents away from. | array of string | `[]` | at most 128 items; each item: pattern [P10](#patterns) |
+| `protected_branches` | Branches the guards keep agents from pushing to or rewriting. | array of string | `["main","master"]` |  |
+| `allow` | Commands allowed in addition to the built-in rules. | array of table: [`[[guards.allow]]`](#guardsallow) | `[]` | at most 64 items |
+| `deny` | Commands refused in addition to the built-in rules. | array of table, one of: [`[[guards.deny]]` form 1](#guardsdeny-form-1), [`[[guards.deny]]` form 2](#guardsdeny-form-2) | `[]` | at most 64 items |
 
 ### `[[guards.allow]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `argv` | array of string |  | required; 1–32 items; each item: pattern [P9](#patterns) |
-| `reason` | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
-| `cwd` | string |  | either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `argv` | Command prefix, as an argument list, that is allowed. | array of string |  | required; 1–32 items; each item: pattern [P9](#patterns) |
+| `reason` | Why the command is allowed. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+| `cwd` | Allow only when run from this directory, relative to the cockpit. | string |  | either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
 
 ### `[[guards.deny]]` form 1
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `prefix` | array of string |  | required; 1–32 items; each item: pattern [P9](#patterns) |
-| `reason` | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
-| `fix` | string |  | 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `prefix` | Command prefix, as an argument list, that is refused. | array of string |  | required; 1–32 items; each item: pattern [P9](#patterns) |
+| `reason` | Why the command is refused. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+| `fix` | Safer command or step to suggest instead. | string |  | 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
 
 ### `[[guards.deny]]` form 2
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `contains` | array of string |  | required; 1–32 items; each item: pattern [P9](#patterns) |
-| `reason` | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
-| `fix` | string |  | 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `contains` | Argument sequence that is refused wherever it appears in a command. | array of string |  | required; 1–32 items; each item: pattern [P9](#patterns) |
+| `reason` | Why the command is refused. | string |  | required; 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
+| `fix` | Safer command or step to suggest instead. | string |  | 1–512 characters; pattern `\S`; pattern `^[^\x00-\x1f\x7f-\x9f]+$` |
 
 ### `[mcp]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `approved` | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | any key; each value: pattern `^[a-f0-9]{64}$` |
 
 ### `[workorders]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `attempt_cap` | integer | `2` | 1–2 |
-| `wip_cap` | integer | `3` | 1–3 |
-| `verification_timeout_seconds` | integer | `1800` | 1–7200; Seconds one declared work-order verification command may run before it is stopped and reported as not run. |
-| `evaluator_timeout_seconds` | integer | `900` | 1–7200; Seconds one independent review or grading run of the evaluator may take before it is stopped. |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `attempt_cap` | Repeated failures allowed before a work order stops; may be lowered but not raised. | integer | `2` | 1–2 |
+| `wip_cap` | Work orders that may be in progress at once; may be lowered but not raised. | integer | `3` | 1–3 |
+| `verification_timeout_seconds` | Seconds one declared work-order verification command may run before it is stopped and reported as not run. | integer | `1800` | 1–7200 |
+| `evaluator_timeout_seconds` | Seconds one independent review or grading run of the evaluator may take before it is stopped. | integer | `900` | 1–7200 |
 
 ### `[browser]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `engine` | string | `"chromium"` | one of `"chromium"`, `"firefox"`, `"webkit"` |
-| `network_exposure` | string | `"<loopback>"` | pattern `^[a-z0-9.*:<>\[\],-]+$`; 1–512 characters |
-| `network_exposure_reason` | string |  | 1–512 characters |
-| `harnesses` | array of table: [`[[browser.harnesses]]`](#browserharnesses) |  | required; 1–3 items; unique items |
-| `images` | table: [`[browser.images]`](#browserimages) |  | required |
-| `runner_health_measurement` | table: [`[browser.runner_health_measurement]`](#browserrunner_health_measurement) |  |  |
-| `resources` | table: [`resources` shape](#resources-shape) |  |  |
-| `project` | table: [`[browser.project]`](#browserproject) |  | required |
-| `endpoint` | string |  | format `uri` |
-| `max_clients` | integer |  | required; 1–64 |
-| `proxy` | table: [`[browser.proxy]`](#browserproxy) |  | required |
-| `resolver` | array of table: [`host_aliases` shape](#host_aliases-shape) | `[]` | at most 64 items |
-| `authentication` | table: [`[browser.authentication]`](#browserauthentication) |  | required |
-| `data` | table: [`[browser.data]`](#browserdata) |  | required |
-| `request_preapproval` | boolean | `false` |  |
-| `headed` | boolean | `false` |  |
-| `artifacts` | table: [`[browser.artifacts]`](#browserartifacts) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `engine` | Browser engine to drive. | string | `"chromium"` | one of `"chromium"`, `"firefox"`, `"webkit"` |
+| `network_exposure` | Network rules the browser may reach beyond loopback; the default is loopback only. | string | `"<loopback>"` | pattern `^[a-z0-9.*:<>\[\],-]+$`; 1–512 characters |
+| `network_exposure_reason` | Why the browser needs wider network access; required when network_exposure is wider than loopback. | string |  | 1–512 characters |
+| `harnesses` | Agent tools, with versions, that are wired to the browser. | array of table: [`[[browser.harnesses]]`](#browserharnesses) |  | required; 1–3 items; unique items |
+| `images` | Pinned container images for the browser. | table: [`[browser.images]`](#browserimages) |  | required |
+| `runner_health_measurement` | Measured time for the browser runner to become healthy. | table: [`measurement` shape](#measurement-shape) |  |  |
+| `resources` | Memory and CPU ceilings for the browser runner. | table: [`resources` shape](#resources-shape) |  |  |
+| `project` | Node project the runner installs its driver from. | table: [`[browser.project]`](#browserproject) |  | required |
+| `endpoint` | WebSocket address of the browser server, using an allowed host. | string |  | format `uri` |
+| `max_clients` | Most browser clients that may connect at once. | integer |  | required; 1–64 |
+| `proxy` | Proxy the browser reaches the application through. | table: [`[browser.proxy]`](#browserproxy) |  | required |
+| `resolver` | Fixed host name to address mappings the browser uses. | array of table: [`[[browser.resolver]]`](#browserresolver) | `[]` | at most 64 items |
+| `authentication` | How browser sessions sign in to the application. | table: [`[browser.authentication]`](#browserauthentication) |  | required |
+| `data` | Statement about the data the browser touches; cockpit cannot observe it. | table: [`[browser.data]`](#browserdata) |  | required |
+| `request_preapproval` | Run browser tools without prompts; allowed only on isolated, non-production, non-restored data. | boolean | `false` |  |
+| `headed` | Show the browser window instead of running it headless. | boolean | `false` |  |
+| `artifacts` | Generated host paths for browser output. | table: [`[browser.artifacts]`](#browserartifacts) |  | required |
 
 - Must match `{"anyOf":[{"not":{"required":["resources"]}},{"required":["endpoint"]}]}`.
 - Must match `{"anyOf":[{"properties":{"request_preapproval":{"enum":[false]}}},{"properties":{"data":{"required":["mode","isolated","reaches_production"],"properties":{"mode":{"enum":["empty","seeded"]},"isolated":{"enum":[true]},"reaches_production":{"enum":[false]}}}}}]}`.
 
 ### `[[browser.harnesses]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `target` | string |  | required; one of `"claudecode"`, `"codexcli"`, `"opencode"` |
-| `version` | string |  | required; pattern `^\d+\.\d+\.\d+$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `target` | Agent tool the browser is wired to. | string |  | required; one of `"claudecode"`, `"codexcli"`, `"opencode"` |
+| `version` | Version of the agent tool the wiring was checked against. | string |  | required; pattern `^\d+\.\d+\.\d+$` |
 
 ### `[browser.images]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `runner` | table: [`[browser.images.runner]`](#browserimagesrunner) |  | required |
-| `mcp` | table: [`[browser.images.mcp]`](#browserimagesmcp) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `runner` | Image that runs the browser. | table: [`[browser.images.runner]`](#browserimagesrunner) |  | required |
+| `mcp` | Image that serves the browser MCP server. | table: [`[browser.images.mcp]`](#browserimagesmcp) |  | required |
 
 ### `[browser.images.runner]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `reference` | string |  | required; pattern [P11](#patterns) |
-| `driver_version` | string |  | required; pattern [P12](#patterns); at most 128 characters |
-| `architectures` | array of string |  | 1–2 items; each item: one of `"amd64"`, `"arm64"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `reference` | Image reference pinned by sha256 digest. | string |  | required; pattern [P11](#patterns) |
+| `driver_version` | Playwright driver version the image carries. | string |  | required; pattern [P12](#patterns); at most 128 characters |
+| `architectures` | CPU architectures the runner image must support. | array of string |  | 1–2 items; each item: one of `"amd64"`, `"arm64"` |
 
 ### `[browser.images.mcp]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `reference` | string |  | required; pattern [P11](#patterns) |
-| `driver_version` | string |  | required; pattern [P12](#patterns); at most 128 characters |
-
-### `[browser.runner_health_measurement]`
-
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `duration_seconds` | number |  | required; greater than 0; at most 3600 |
-| `provenance` | table: [`[browser.runner_health_measurement.provenance]`](#browserrunner_health_measurementprovenance) |  | required |
-
-### `[browser.runner_health_measurement.provenance]`
-
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `source` | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `observed_on` | string |  | format `date`; pattern [P2](#patterns) |
-| `kind` | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `confirmed` | boolean |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `reference` | Image reference pinned by sha256 digest. | string |  | required; pattern [P11](#patterns) |
+| `driver_version` | Playwright driver version the image carries. | string |  | required; pattern [P12](#patterns); at most 128 characters |
 
 ### `[browser.project]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `manifest` | string |  | pattern [P1](#patterns) |
-| `manifest_sha256` | string |  | pattern `^[a-f0-9]{64}$` |
-| `lockfile` | string |  | required; pattern [P1](#patterns) |
-| `sha256` | string |  | required; pattern `^[a-f0-9]{64}$` |
-| `driver_version` | string |  | required; pattern [P12](#patterns); at most 128 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `manifest` | package.json for the project; omit to use the one beside the lockfile. | string |  | pattern [P1](#patterns) |
+| `manifest_sha256` | SHA-256 of the manifest; required when manifest is set. | string |  | pattern `^[a-f0-9]{64}$` |
+| `lockfile` | Lockfile the runner installs from. | string |  | required; pattern [P1](#patterns) |
+| `sha256` | SHA-256 of the lockfile. | string |  | required; pattern `^[a-f0-9]{64}$` |
+| `driver_version` | Playwright driver version the lockfile pins. | string |  | required; pattern [P12](#patterns); at most 128 characters |
 
 ### `[browser.proxy]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `host_variable` | string |  | pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
-| `server_port` | integer |  | required; 1–65535 |
-| `proxy_port` | integer |  | required; 1–65535 |
-| `allowed_hosts` | array of string |  | required; 1–64 items; unique items; each item: 1–260 characters |
-| `bind` | string | `"127.0.0.1"` | one of `"127.0.0.1"`, `"::1"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `host_variable` | Port variable in [ports.bases] that leases the proxy port. | string |  | pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
+| `server_port` | Port the browser server listens on. | integer |  | required; 1–65535 |
+| `proxy_port` | Port the proxy listens on; differs from server_port. | integer |  | required; 1–65535 |
+| `allowed_hosts` | Host and port pairs the proxy allows. | array of string |  | required; 1–64 items; unique items; each item: 1–260 characters |
+| `bind` | Loopback address the proxy binds to. | string | `"127.0.0.1"` | one of `"127.0.0.1"`, `"::1"` |
+
+### `[[browser.resolver]]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `hostname` | Host name to resolve. | string |  | required; pattern [P3](#patterns) |
+| `address` | Address the host name resolves to. | string |  | required; either (format `ipv4`, pattern [P4](#patterns)) or (format `ipv6`, pattern [P5](#patterns)) |
 
 ### `[browser.authentication]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `policy` | string |  | required; one of `"none"`, `"serialized"`, `"per-worker"` |
-| `states` | array of table: [`[[browser.authentication.states]]`](#browserauthenticationstates) | `[]` | at most 64 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `policy` | Whether sessions share no sign-in, take turns on one, or each keep their own. | string |  | required; one of `"none"`, `"serialized"`, `"per-worker"` |
+| `states` | Saved sign-in states, one per worker. | array of table: [`[[browser.authentication.states]]`](#browserauthenticationstates) | `[]` | at most 64 items |
 
 ### `[[browser.authentication.states]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `worker` | string |  | required; pattern `^[a-z0-9][a-z0-9_-]{0,63}$` |
-| `path` | string |  | required; pattern [P1](#patterns) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `worker` | Name of the worker the state belongs to. | string |  | required; pattern `^[a-z0-9][a-z0-9_-]{0,63}$` |
+| `path` | Saved sign-in state file under the auth artifact root. | string |  | required; pattern [P1](#patterns) |
 
 ### `[browser.data]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `mode` | string |  | required; one of `"empty"`, `"seeded"`, `"restored"` |
-| `isolated` | boolean |  | required |
-| `reaches_production` | boolean |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `mode` | Data mode the stack runs in while the browser is used. | string |  | required; one of `"empty"`, `"seeded"`, `"restored"` |
+| `isolated` | True when the data is separate from anyone else's. | boolean |  | required |
+| `reaches_production` | True when browser actions can affect production. | boolean |  | required |
 
 ### `[browser.artifacts]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `runner` | string |  | required; pattern [P1](#patterns) |
-| `mcp` | string |  | required; pattern [P1](#patterns) |
-| `cli` | string |  | required; pattern [P1](#patterns) |
-| `auth` | string |  | required; pattern [P1](#patterns) |
-| `debugger` | string |  | required; pattern [P1](#patterns) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `runner` | Generated host path for the browser runner's files. | string |  | required; pattern [P1](#patterns) |
+| `mcp` | Generated host path for the browser MCP server's files. | string |  | required; pattern [P1](#patterns) |
+| `cli` | Generated host path for command-line browser output. | string |  | required; pattern [P1](#patterns) |
+| `auth` | Generated host path for saved sign-in state. | string |  | required; pattern [P1](#patterns) |
+| `debugger` | Generated host path for debugger sessions. | string |  | required; pattern [P1](#patterns) |
 
 ### `[testing]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `stages` | array of table: [`[[testing.stages]]`](#testingstages) |  | required; 1–128 items |
-| `gates` | array of table: [`[[testing.gates]]`](#testinggates) |  | required; 1–128 items |
-| `native_hooks` | table: [`[testing.native_hooks]`](#testingnative_hooks) |  | required |
-| `native_hook_policy` | table: [`[testing.native_hook_policy]`](#testingnative_hook_policy) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `stages` | Commands that make up the test gates. | array of table: [`[[testing.stages]]`](#testingstages) |  | required; 1–128 items |
+| `gates` | Named gates that run stages before handing back changes. | array of table: [`[[testing.gates]]`](#testinggates) |  | required; 1–128 items |
+| `native_hooks` | How the repository's own git hooks are handled. | table: [`[testing.native_hooks]`](#testingnative_hooks) |  | required |
+| `native_hook_policy` | Policy file for installing the repository's hooks; required for explicit-native. | table: [`[testing.native_hook_policy]`](#testingnative_hook_policy) |  |  |
 
 - Must match exactly one of `[{"properties":{"native_hooks":{"properties":{"install":{"enum":["inspect"]}}}},"not":{"required":["native_hook_policy"]}},{"properties":{"native_hooks":{"properties":{"install":{"enum":["explicit-native"]}},"required":["install"]}},"required":["native_hook_policy"]}]`.
 
 ### `[[testing.stages]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z][a-z0-9-]{0,63}$` |
-| `command` | array of string |  | required; 1–128 items; each item: 1–4096 characters |
-| `requires_stack` | boolean |  | required |
-| `timeout_seconds` | integer | `1800` | 1–7200; Seconds the stage may run before it is stopped and the gate reports DEGRADED. |
-| `select` | table: [`[testing.stages.select]`](#testingstagesselect) |  | Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value. |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Name of the stage. | string |  | required; pattern `^[a-z][a-z0-9-]{0,63}$` |
+| `command` | Command to run, as an argument list. | array of string |  | required; 1–128 items; each item: 1–4096 characters |
+| `requires_stack` | True when the stage needs the stack running. | boolean |  | required |
+| `timeout_seconds` | Seconds the stage may run before it is stopped and the gate reports DEGRADED. | integer | `1800` | 1–7200 |
+| `select` | Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value. | table: [`[testing.stages.select]`](#testingstagesselect) |  |  |
 
 ### `[testing.stages.select]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `spec` | array of string |  | 1–32 items; each item: 1–4096 characters |
-| `file` | array of string |  | 1–32 items; each item: 1–4096 characters |
-| `test` | array of string |  | 1–32 items; each item: 1–4096 characters |
-| `route` | array of string |  | 1–32 items; each item: 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `spec` | Arguments that select tests by spec; {value} becomes the selection. | array of string |  | 1–32 items; each item: 1–4096 characters |
+| `file` | Arguments that select tests by file; {value} becomes the selection. | array of string |  | 1–32 items; each item: 1–4096 characters |
+| `test` | Arguments that select tests by test name; {value} becomes the selection. | array of string |  | 1–32 items; each item: 1–4096 characters |
+| `route` | Arguments that select tests by route; {value} becomes the selection. | array of string |  | 1–32 items; each item: 1–4096 characters |
 
 ### `[[testing.gates]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z][a-z0-9-]{0,63}$` |
-| `tier` | string |  | required; one of `"targeted"`, `"full"` |
-| `stages` | array of string |  | required; 1–128 items; each item: pattern `^[a-z][a-z0-9-]{0,63}$` |
-| `changes` | string |  | required; 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Name of the gate. | string |  | required; pattern `^[a-z][a-z0-9-]{0,63}$` |
+| `tier` | Whether the gate covers targeted changes or the full suite. | string |  | required; one of `"targeted"`, `"full"` |
+| `stages` | Stages the gate runs, by id. | array of string |  | required; 1–128 items; each item: pattern `^[a-z][a-z0-9-]{0,63}$` |
+| `changes` | Kind of change that calls for this gate. | string |  | required; 1–4096 characters |
 
 ### `[testing.native_hooks]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `install` | string | `"inspect"` | one of `"inspect"`, `"explicit-native"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `install` | Inspect the repository's hooks, or install them as the policy file declares. | string | `"inspect"` | one of `"inspect"`, `"explicit-native"` |
 
 ### `[testing.native_hook_policy]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `sha256` | string |  | required; pattern `^[a-f0-9]{64}$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | Policy file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
+| `sha256` | SHA-256 of the policy file. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[environment]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `addressing` | string |  | one of `"hostname"`, `"port"` |
-| `authentication` | string |  | one of `"real"`, `"bypassed"`, `"none"` |
-| `posture_requirements` | array of table: [`[[environment.posture_requirements]]`](#environmentposture_requirements) |  | 1–128 items |
-| `machine` | table: [`[environment.machine]`](#environmentmachine) |  |  |
-| `resettable_volumes` | array of string | `[]` | unique items; each item: pattern `^[a-z0-9][a-z0-9_.-]*$` |
-| `generated_host_paths` | array of string | `[]` | unique items; each item: pattern [P1](#patterns) |
-| `compose_files` | array of string | `[]` | unique items; each item: pattern [P1](#patterns), pattern `^[^:]+$` |
-| `entrypoint_derivatives` | array of table: [`entrypoints` shape](#entrypoints-shape) | `[]` |  |
-| `install_policies` | array of table: [`install_policies` shape](#install_policies-shape) | `[]` |  |
-| `generated` | table: [`[environment.generated]`](#environmentgenerated) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `addressing` | How the product is reached locally: by host name or by leased port. | string |  | one of `"hostname"`, `"port"` |
+| `authentication` | How the product signs in locally: real sign-in, bypassed, or none. | string |  | one of `"real"`, `"bypassed"`, `"none"` |
+| `posture_requirements` | Posture facts the product relies on, each tagged with the posture it depends on. | array of table: [`[[environment.posture_requirements]]`](#environmentposture_requirements) |  | 1–128 items |
+| `machine` | Least the container runtime must offer before the stack starts. | table: [`[environment.machine]`](#environmentmachine) |  |  |
+| `resettable_volumes` | Compose volumes that reset may delete and recreate, named by their Compose key. | array of string | `[]` | unique items; each item: pattern `^[a-z0-9][a-z0-9_.-]*$` |
+| `generated_host_paths` | Host paths cockpit generates and owns, relative to the cockpit. | array of string | `[]` | unique items; each item: pattern [P1](#patterns) |
+| `compose_files` | Existing Compose files, relative to the cockpit, that make up the stack; use this or generated. | array of string | `[]` | unique items; each item: pattern [P1](#patterns), pattern `^[^:]+$` |
+| `entrypoint_derivatives` | Addresses derived from leased ports, such as application origins and callback URLs. | array of table: [`entrypoints` shape](#entrypoints-shape) | `[]` |  |
+| `install_policies` | How dependencies are installed for each toolchain. | array of table: [`install_policies` shape](#install_policies-shape) | `[]` |  |
+| `generated` | Stack that cockpit generates instead of using existing Compose files; use this or compose_files. | table: [`[environment.generated]`](#environmentgenerated) |  |  |
 
 ### `[[environment.posture_requirements]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `requirement` | string |  | required; pattern `^[a-z][a-z0-9-]*$`; 1–64 characters |
-| `addressing` | string |  | one of `"hostname"`, `"port"` |
-| `authentication` | string |  | one of `"real"`, `"bypassed"`, `"none"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `requirement` | Name of the posture requirement the product relies on. | string |  | required; pattern `^[a-z][a-z0-9-]*$`; 1–64 characters |
+| `addressing` | Addressing posture this requirement depends on; set at least one of addressing and authentication. | string |  | one of `"hostname"`, `"port"` |
+| `authentication` | Authentication posture this requirement depends on; set at least one of addressing and authentication. | string |  | one of `"real"`, `"bypassed"`, `"none"` |
 
 - Must match at least one of `[{"required":["addressing"]},{"required":["authentication"]}]`.
 
 ### `[environment.machine]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `runtime_memory_mb` | integer |  | required; greater than 0; at most 9007199254740991 |
-| `runtime_cpus` | number |  | required; greater than 0 |
-| `free_disk_mb` | integer |  | required; greater than 0; at most 9007199254740991 |
-| `cold_start_seconds` | integer |  | required; greater than 0; at most 3600 |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `runtime_memory_mb` | Least memory in megabytes the container runtime must offer before the stack starts. | integer |  | required; greater than 0; at most 9007199254740991 |
+| `runtime_cpus` | Least number of CPUs the container runtime must offer before the stack starts. | number |  | required; greater than 0 |
+| `free_disk_mb` | Least free disk space in megabytes the stack needs before it starts. | integer |  | required; greater than 0; at most 9007199254740991 |
+| `cold_start_seconds` | Seconds a first start may take; start fails and reports unhealthy beyond it. At most one hour. | integer |  | required; greater than 0; at most 3600 |
 
 ### `[environment.generated]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `compose_file` | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `services` | array of table: [`[[environment.generated.services]]`](#environmentgeneratedservices) |  | required; 1–256 items |
-| `volumes` | array of table: [`volumes` shape](#volumes-shape) | `[]` | at most 256 items |
-| `data` | table: [`[environment.generated.data]`](#environmentgenerateddata) |  |  |
-| `vendors` | array of table: [`[[environment.generated.vendors]]`](#environmentgeneratedvendors) | `[]` | at most 256 items |
-| `decisions` | table: [`[environment.generated.decisions]`](#environmentgenerateddecisions) | `{}` |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `compose_file` | Path, relative to the cockpit, where the generated Compose file is written. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
+| `services` | Services of the generated stack. | array of table: [`[[environment.generated.services]]`](#environmentgeneratedservices) |  | required; 1–256 items |
+| `volumes` | Named volumes of the generated stack. | array of table: [`volumes` shape](#volumes-shape) | `[]` | at most 256 items |
+| `data` | Product data step for the stack; omit when there is none and up and reset skip it. | table: [`[environment.generated.data]`](#environmentgenerateddata) |  |  |
+| `vendors` | Third-party vendors and how the stack handles each locally. | array of table: [`[[environment.generated.vendors]]`](#environmentgeneratedvendors) | `[]` | at most 256 items |
+| `decisions` | Recorded design decisions about the stack. | table: [`[environment.generated.decisions]`](#environmentgenerateddecisions) | `{}` |  |
 
 ### `[[environment.generated.services]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `sibling` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `role` | string | `"service"` | one of `"service"`, `"one-shot"` |
-| `profiles` | array of string | `[]` | at most 64 items; each item: pattern `^[a-z0-9][a-z0-9-]*$`, at most 128 characters |
-| `resources` | table: [`resources` shape](#resources-shape) |  |  |
-| `command` | array of string |  | required; 1–256 items; each item: pattern `^[^\x00]+$`, 1–8192 characters |
-| `image` | table: [`image` shape](#image-shape) |  |  |
-| `build` | table: [`build` shape](#build-shape) |  |  |
-| `ports` | array of table: [`ports` shape](#ports-shape) | `[]` | at most 256 items |
-| `host_aliases` | array of table: [`host_aliases` shape](#host_aliases-shape) |  | at most 64 items |
-| `mounts` | array of table: [`additional_mounts` shape](#additional_mounts-shape) | `[]` | at most 256 items |
-| `dependencies` | array of table: [`dependencies` shape](#dependencies-shape) | `[]` | at most 256 items |
-| `health` | table: [`health` shape](#health-shape) |  | required |
-| `toolchain_pins` | array of table: [`toolchain_pins` shape](#toolchain_pins-shape) | `[]` | at most 32 items |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Identifier of the generated service. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `sibling` | Sibling checkout the service is built from or mounts. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `role` | Whether the service stays running or runs once and exits. | string | `"service"` | one of `"service"`, `"one-shot"` |
+| `profiles` | Compose profiles the service belongs to; it starts only when one is active. | array of string | `[]` | at most 64 items; each item: pattern `^[a-z0-9][a-z0-9-]*$`, at most 128 characters |
+| `resources` | Memory and CPU ceilings for the service. | table: [`resources` shape](#resources-shape) |  |  |
+| `command` | Command the service runs, as an argument list. | array of string |  | required; 1–256 items; each item: pattern `^[^\x00]+$`, 1–8192 characters |
+| `image` | Pinned prebuilt image to run; declare exactly one of image and build. | table: [`image` shape](#image-shape) |  |  |
+| `build` | Build the image from the sibling checkout; declare exactly one of image and build. | table: [`build` shape](#build-shape) |  |  |
+| `ports` | Ports the service publishes on the host. | array of table: [`ports` shape](#ports-shape) | `[]` | at most 256 items |
+| `host_aliases` | Extra host names the service resolves to fixed addresses. | array of table: [`host_aliases` shape](#host_aliases-shape) |  | at most 64 items |
+| `mounts` | Files, directories and volumes mounted into the service. | array of table: [`additional_mounts` shape](#additional_mounts-shape) | `[]` | at most 256 items |
+| `dependencies` | Other services that must reach a state before this one starts. | array of table: [`dependencies` shape](#dependencies-shape) | `[]` | at most 256 items |
+| `health` | How cockpit decides the service is healthy. | table: [`health` shape](#health-shape) |  | required |
+| `toolchain_pins` | Toolchain version pins read from files in the sibling. | array of table: [`toolchain_pins` shape](#toolchain_pins-shape) | `[]` | at most 32 items |
+| `provenance` | Where the service declaration came from; omit when this file declares it. | table: [`provenance` shape](#provenance-shape) |  |  |
 
 - Must match `{"oneOf":[{"required":["image"],"not":{"required":["build"]}},{"required":["build"],"not":{"required":["image"]}}]}`.
 
 ### `[environment.generated.data]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `volume` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `default_mode` | string |  | required; one of `"empty"`, `"seeded"`, `"restored"` |
-| `modes` | array of table: [`[[environment.generated.data.modes]]`](#environmentgenerateddatamodes) |  | required; 1–3 items |
-| `fixtures` | table: [`[environment.generated.data.fixtures]`](#environmentgenerateddatafixtures) |  |  |
-| `restore` | table: [`[environment.generated.data.restore]`](#environmentgenerateddatarestore) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `volume` | Product-data volume the data step fills. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `default_mode` | Data mode used when none is chosen. | string |  | required; one of `"empty"`, `"seeded"`, `"restored"` |
+| `modes` | Data modes the stack supports, each with its steps. | array of table: [`[[environment.generated.data.modes]]`](#environmentgenerateddatamodes) |  | required; 1–3 items |
+| `fixtures` | Fixture generation; required by a seeded mode. | table: [`[environment.generated.data.fixtures]`](#environmentgenerateddatafixtures) |  |  |
+| `restore` | Restore handling; required by, and only for, a restored mode. | table: [`[environment.generated.data.restore]`](#environmentgenerateddatarestore) |  |  |
 
 ### `[[environment.generated.data.modes]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `mode` | string |  | required; one of `"empty"`, `"seeded"`, `"restored"` |
-| `operations` | array of table: [`[[environment.generated.data.modes.operations]]`](#environmentgenerateddatamodesoperations) |  | required; 1–256 items |
-| `probes` | array of table: [`probe` shape](#probe-shape) |  | required; 1–64 items |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `mode` | Data mode: empty, seeded or restored. | string |  | required; one of `"empty"`, `"seeded"`, `"restored"` |
+| `operations` | Ordered steps that create the data for this mode. | array of table: [`[[environment.generated.data.modes.operations]]`](#environmentgenerateddatamodesoperations) |  | required; 1–256 items |
+| `probes` | Commands that check the data is in the expected state. | array of table: [`probe` shape](#probe-shape) |  | required; 1–64 items |
+| `provenance` | Where the mode came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `[[environment.generated.data.modes.operations]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `kind` | string |  | required; one of `"schema"`, `"sweep"`, `"fixtures"`, `"restore"`, `"rewrite"` |
-| `operation` | table: [`probe` shape](#probe-shape) |  | required |
-| `prerequisites` | array of table: [`probe` shape](#probe-shape) |  | required; at most 64 items |
-| `after` | array of string |  | required; at most 256 items; each item: pattern `^[a-z0-9][a-z0-9-]*$`, at most 128 characters |
-| `fresh_volume_only` | boolean |  | required |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Identifier of the step, referenced by other steps' after list. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `kind` | What the step does to the product data. | string |  | required; one of `"schema"`, `"sweep"`, `"fixtures"`, `"restore"`, `"rewrite"` |
+| `operation` | Command the step runs. | table: [`probe` shape](#probe-shape) |  | required |
+| `prerequisites` | Commands that must succeed before the step runs. | array of table: [`probe` shape](#probe-shape) |  | required; at most 64 items |
+| `after` | Earlier steps in the same mode that must finish first. | array of string |  | required; at most 256 items; each item: pattern `^[a-z0-9][a-z0-9-]*$`, at most 128 characters |
+| `fresh_volume_only` | Run the step only when the data volume is new. | boolean |  | required |
+| `provenance` | Where the step came from; omit to use the data mode's provenance. | table: [`provenance` shape](#provenance-shape) |  |  |
 
 ### `[environment.generated.data.fixtures]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `persona_source` | string |  | required; pattern [P1](#patterns) |
-| `persona_outputs` | array of table: [`[[environment.generated.data.fixtures.persona_outputs]]`](#environmentgenerateddatafixturespersona_outputs) |  | required; at most 64 items |
-| `volume_tag` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `pagination_warning` | string |  | required; pattern `\S`; 1–4096 characters |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
-| `volume_operations` | array of table: [`probe` shape](#probe-shape) |  | required; 1–256 items |
-| `volume_probes` | array of table: [`probe` shape](#probe-shape) |  | required; 1–64 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `persona_source` | File, relative to the cockpit, that describes the fixture personas. | string |  | required; pattern [P1](#patterns) |
+| `persona_outputs` | Files generated from the personas for tests and tools. | array of table: [`[[environment.generated.data.fixtures.persona_outputs]]`](#environmentgenerateddatafixturespersona_outputs) |  | required; at most 64 items |
+| `volume_tag` | Tag recorded with the fixture data on the volume. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `pagination_warning` | Warning shown with the fixtures about data beyond one page. | string |  | required; pattern `\S`; 1–4096 characters |
+| `provenance` | Where the fixture setup came from. | table: [`provenance` shape](#provenance-shape) |  | required |
+| `volume_operations` | Commands that write the fixtures to the volume. | array of table: [`probe` shape](#probe-shape) |  | required; 1–256 items |
+| `volume_probes` | Commands that check the fixtures are on the volume. | array of table: [`probe` shape](#probe-shape) |  | required; 1–64 items |
 
 ### `[[environment.generated.data.fixtures.persona_outputs]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; pattern [P1](#patterns) |
-| `format` | string |  | required; one of `"json"`, `"typescript"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | Output file path, relative to the cockpit. | string |  | required; pattern [P1](#patterns) |
+| `format` | Output format, json or typescript. | string |  | required; one of `"json"`, `"typescript"` |
+| `reason` | Why this output is generated. | string |  | required; pattern `\S`; 1–4096 characters |
 
 ### `[environment.generated.data.restore]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `rewrites` | array of table: [`[[environment.generated.data.restore.rewrites]]`](#environmentgenerateddatarestorerewrites) |  | required; at most 256 items |
-| `untouched` | array of string |  | required; 1–256 items; each item: pattern `\S`, 1–4096 characters |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `rewrites` | Commands that rewrite restored data so it is safe locally. | array of table: [`[[environment.generated.data.restore.rewrites]]`](#environmentgenerateddatarestorerewrites) |  | required; at most 256 items |
+| `untouched` | Restored data deliberately left as it is, with the reason for each. | array of string |  | required; 1–256 items; each item: pattern `\S`, 1–4096 characters |
+| `provenance` | Where the restore handling came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `[[environment.generated.data.restore.rewrites]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `category` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `operation` | table: [`probe` shape](#probe-shape) |  | required |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `category` | Kind of sensitive data the rewrite covers. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `operation` | Command that performs the rewrite. | table: [`probe` shape](#probe-shape) |  | required |
+| `reason` | Why the data needs rewriting. | string |  | required; pattern `\S`; 1–4096 characters |
 
 ### `[[environment.generated.vendors]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `posture` | string |  | required; one of `"bypassed"`, `"stubbed"`, `"substituted"`, `"vendor-sandbox"`, `"record-replay"`, `"absent-and-gated"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
-| `endpoints` | array of table: [`[[environment.generated.vendors.endpoints]]`](#environmentgeneratedvendorsendpoints) |  | required; 1–256 items |
-| `nonempty_variables` | array of string |  | 1–256 items; unique items; each item: pattern `^[A-Z][A-Z0-9_]*$`, at most 128 characters |
-| `egress_guard` | table: [`[environment.generated.vendors.egress_guard]`](#environmentgeneratedvendorsegress_guard) |  |  |
-| `loader_probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `route_probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `egress_probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `placeholder` | string |  | required; pattern `^cockpit:absent:[a-z0-9-]+$`; at most 256 characters |
-| `shadow_files` | array of table: [`[[environment.generated.vendors.shadow_files]]`](#environmentgeneratedvendorsshadow_files) |  | at most 64 items |
-| `expiry` | table: [`[environment.generated.vendors.expiry]`](#environmentgeneratedvendorsexpiry) |  |  |
-| `callback_reachability` | table: [`[environment.generated.vendors.callback_reachability]`](#environmentgeneratedvendorscallback_reachability) |  | required |
-| `callback` | table: [`[environment.generated.vendors.callback]`](#environmentgeneratedvendorscallback) |  |  |
-| `tls` | table: [`[environment.generated.vendors.tls]`](#environmentgeneratedvendorstls) |  |  |
-| `stub` | table: [`[environment.generated.vendors.stub]`](#environmentgeneratedvendorsstub) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Identifier of the third-party vendor. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `posture` | How the stack handles this vendor locally: bypassed, stubbed, substituted, vendor sandbox, record-replay or absent and gated. | string |  | required; one of `"bypassed"`, `"stubbed"`, `"substituted"`, `"vendor-sandbox"`, `"record-replay"`, `"absent-and-gated"` |
+| `reason` | Why this posture was chosen. | string |  | required; pattern `\S`; 1–4096 characters |
+| `provenance` | Where the posture came from. | table: [`provenance` shape](#provenance-shape) |  | required |
+| `endpoints` | Vendor endpoints the product reads from the environment and the local sink each is pointed at. | array of table: [`[[environment.generated.vendors.endpoints]]`](#environmentgeneratedvendorsendpoints) |  | required; 1–256 items |
+| `nonempty_variables` | Environment variables that must hold a value for the product to start. | array of string |  | 1–256 items; unique items; each item: pattern `^[A-Z][A-Z0-9_]*$`, at most 128 characters |
+| `egress_guard` | Flag that makes the product refuse real vendor traffic. | table: [`[environment.generated.vendors.egress_guard]`](#environmentgeneratedvendorsegress_guard) |  |  |
+| `loader_probe` | Command that checks the product loads the vendor configuration. | table: [`probe` shape](#probe-shape) |  | required |
+| `route_probe` | Command that checks vendor calls reach the local sink. | table: [`probe` shape](#probe-shape) |  | required |
+| `egress_probe` | Command that checks no vendor call leaves the machine. | table: [`probe` shape](#probe-shape) |  | required |
+| `placeholder` | Value written in place of the vendor credential, of the form cockpit:absent:<name>. | string |  | required; pattern `^cockpit:absent:[a-z0-9-]+$`; at most 256 characters |
+| `shadow_files` | Instance files that must not override the vendor configuration. | array of table: [`[[environment.generated.vendors.shadow_files]]`](#environmentgeneratedvendorsshadow_files) |  | at most 64 items |
+| `expiry` | Expiry of the vendor sandbox; required for the vendor-sandbox posture. | table: [`[environment.generated.vendors.expiry]`](#environmentgeneratedvendorsexpiry) |  |  |
+| `callback_reachability` | Whether the vendor can call back into the local stack. | table: [`[environment.generated.vendors.callback_reachability]`](#environmentgeneratedvendorscallback_reachability) |  | required |
+| `callback` | Signed callback rehearsal: enable, timestamp, sign, dispatch, then a tamper check. | table: [`[environment.generated.vendors.callback]`](#environmentgeneratedvendorscallback) |  |  |
+| `tls` | Local certificate setup for the vendor host name. | table: [`[environment.generated.vendors.tls]`](#environmentgeneratedvendorstls) |  |  |
+| `stub` | Probes for a stubbed vendor; required for the stubbed posture. | table: [`[environment.generated.vendors.stub]`](#environmentgeneratedvendorsstub) |  |  |
 
 - Must match `{"anyOf":[{"properties":{"posture":{"not":{"enum":["vendor-sandbox"]}}}},{"required":["expiry"]}]}`.
 - Must match `{"anyOf":[{"properties":{"posture":{"not":{"enum":["stubbed"]}}}},{"required":["stub"]}]}`.
 
 ### `[[environment.generated.vendors.endpoints]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `variable` | string |  | required; pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
-| `sink` | string |  | required; pattern `^https?://[a-z0-9][a-z0-9-]*(?::(?:0\|[1-9]\d{0,3}\|[1-5]\d{4}\|6[0-4]\d{3}\|65[0-4]\d{2}\|655[0-2]\d\|6553[0-5]))?(?:/[^\s?#]*)?$`; at most 4096 characters |
-| `runtime_service` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `supplier` | table: [`[environment.generated.vendors.endpoints.supplier]`](#environmentgeneratedvendorsendpointssupplier) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `variable` | Environment variable that carries the vendor endpoint. | string |  | required; pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
+| `sink` | Local URL the endpoint is redirected to. | string |  | required; pattern `^https?://[a-z0-9][a-z0-9-]*(?::(?:0\|[1-9]\d{0,3}\|[1-5]\d{4}\|6[0-4]\d{3}\|65[0-4]\d{2}\|655[0-2]\d\|6553[0-5]))?(?:/[^\s?#]*)?$`; at most 4096 characters |
+| `runtime_service` | Stack service that serves the sink. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `supplier` | Sibling environment template that supplies the variable. | table: [`[environment.generated.vendors.endpoints.supplier]`](#environmentgeneratedvendorsendpointssupplier) |  | required |
 
 ### `[environment.generated.vendors.endpoints.supplier]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `sibling` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `template` | string |  | required; pattern [P1](#patterns) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `sibling` | Sibling that owns the template. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `template` | Template file, relative to the sibling, that supplies the variable. | string |  | required; pattern [P1](#patterns) |
 
 ### `[environment.generated.vendors.egress_guard]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `flag` | string |  | required; pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
-| `enabled_value` | string |  | required; pattern `^[A-Za-z0-9_.:-]+$`; 1–128 characters |
-| `local_service` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `flag` | Environment variable that turns the guard on. | string |  | required; pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
+| `enabled_value` | Value the flag must hold for the guard to be on. | string |  | required; pattern `^[A-Za-z0-9_.:-]+$`; 1–128 characters |
+| `local_service` | Local service that stands in for the vendor. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
 
 ### `[[environment.generated.vendors.shadow_files]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `sibling` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `instance` | string |  | required; pattern [P1](#patterns) |
-| `probe` | table: [`probe` shape](#probe-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `sibling` | Sibling that owns the file. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `instance` | Instance file, relative to the sibling. | string |  | required; pattern [P1](#patterns) |
+| `probe` | Command that checks the file does not shadow the declared configuration. | table: [`probe` shape](#probe-shape) |  | required |
 
 ### `[environment.generated.vendors.expiry]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `expires_on` | string |  | required; format `date`; pattern [P2](#patterns) |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `probe` | table: [`probe` shape](#probe-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `expires_on` | Date the sandbox stops being valid. | string |  | required; format `date`; pattern [P2](#patterns) |
+| `reason` | Why the sandbox expires on that date. | string |  | required; pattern `\S`; 1–4096 characters |
+| `probe` | Command that checks whether the sandbox is still valid. | table: [`probe` shape](#probe-shape) |  | required |
 
 ### `[environment.generated.vendors.callback_reachability]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `reachable` | boolean |  | required |
-| `alternative` | string |  | required; pattern `\S`; 1–4096 characters |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `reachable` | True when the vendor can reach the local stack. | boolean |  | required |
+| `alternative` | How callbacks are exercised when the vendor cannot reach the stack. | string |  | required; pattern `\S`; 1–4096 characters |
+| `reason` | Why the vendor can or cannot reach the stack. | string |  | required; pattern `\S`; 1–4096 characters |
 
 ### `[environment.generated.vendors.callback]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `enable` | table: [`probe` shape](#probe-shape) |  | required |
-| `timestamp_source` | table: [`probe` shape](#probe-shape) |  | required |
-| `fresh_window_seconds` | integer |  | required; 1–3600 |
-| `fixture` | table: [`[environment.generated.vendors.callback.fixture]`](#environmentgeneratedvendorscallbackfixture) |  | required |
-| `sign` | table: [`probe` shape](#probe-shape) |  | required |
-| `dispatch` | table: [`probe` shape](#probe-shape) |  | required |
-| `tamper_probe` | table: [`probe` shape](#probe-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `enable` | Command that turns callbacks on. | table: [`probe` shape](#probe-shape) |  | required |
+| `timestamp_source` | Command that supplies the timestamp the signature covers. | table: [`probe` shape](#probe-shape) |  | required |
+| `fresh_window_seconds` | Seconds a signed callback stays acceptable. | integer |  | required; 1–3600 |
+| `fixture` | Callback payload file and its digest. | table: [`[environment.generated.vendors.callback.fixture]`](#environmentgeneratedvendorscallbackfixture) |  | required |
+| `sign` | Command that signs the payload. | table: [`probe` shape](#probe-shape) |  | required |
+| `dispatch` | Command that delivers the signed payload to the product. | table: [`probe` shape](#probe-shape) |  | required |
+| `tamper_probe` | Command that checks the product rejects a tampered payload. | table: [`probe` shape](#probe-shape) |  | required |
 
 ### `[environment.generated.vendors.callback.fixture]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; pattern [P1](#patterns) |
-| `sha256` | string |  | required; pattern `^[a-f0-9]{64}$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | Payload file, relative to the sibling. | string |  | required; pattern [P1](#patterns) |
+| `sha256` | SHA-256 digest of the payload, checked before each use. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[environment.generated.vendors.tls]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `generate_at_start` | table: [`probe` shape](#probe-shape) |  | required |
-| `append_trust_probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `hostname_probe` | table: [`probe` shape](#probe-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `generate_at_start` | Command that creates the certificate when the stack starts. | table: [`probe` shape](#probe-shape) |  | required |
+| `append_trust_probe` | Command that checks the product trusts the generated certificate. | table: [`probe` shape](#probe-shape) |  | required |
+| `hostname_probe` | Command that checks the certificate matches the vendor host name. | table: [`probe` shape](#probe-shape) |  | required |
 
 ### `[environment.generated.vendors.stub]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `rejection_probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `outage_probe` | table: [`probe` shape](#probe-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `rejection_probe` | Command that checks the stub rejects an invalid request. | table: [`probe` shape](#probe-shape) |  | required |
+| `outage_probe` | Command that checks the product copes with the stub being down. | table: [`probe` shape](#probe-shape) |  | required |
 
 ### `[environment.generated.decisions]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `entries` | array of table: [`decisions` shape](#decisions-shape) | `[]` | at most 512 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `entries` | Decision records; a structure without one is shown as undecided. | array of table: [`decisions` shape](#decisions-shape) | `[]` | at most 512 items |
 
 ### `[surfaces]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `overlays` | array of table: [`[[surfaces.overlays]]`](#surfacesoverlays) | `[]` | at most 256 items |
-| `harnesses` | array of table: [`[[surfaces.harnesses]]`](#surfacesharnesses) | `[]` | at most 64 items |
-| `bundles` | array of string | `[]` | at most 1 item; each item: exactly `"claudecode-plugin"` |
-| `adopted` | array of table: [`[[surfaces.adopted]]`](#surfacesadopted) | `[]` | at most 3 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `overlays` | Team-owned rules, subagents, skills and hooks added to the generated surfaces. | array of table: [`[[surfaces.overlays]]`](#surfacesoverlays) | `[]` | at most 256 items |
+| `harnesses` | Agent tools beyond the shipped ones, with measured capabilities. | array of table: [`[[surfaces.harnesses]]`](#surfacesharnesses) | `[]` | at most 64 items |
+| `bundles` | Bundle formats to publish, such as a Claude plugin bundle. | array of string | `[]` | at most 1 item; each item: exactly `"claudecode-plugin"` |
+| `adopted` | Harness settings files cockpit merges with its own output. | array of table: [`[[surfaces.adopted]]`](#surfacesadopted) | `[]` | at most 3 items |
 
 ### `[[surfaces.overlays]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `name` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `feature` | string |  | required; one of `"rules"`, `"subagents"`, `"skills"`, `"hooks"` |
-| `sources` | array of table: [`[[surfaces.overlays.sources]]`](#surfacesoverlayssources) |  | required; 1–256 items |
-| `source` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `replaces` | table: [`[surfaces.overlays.replaces]`](#surfacesoverlaysreplaces) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `name` | Name of the declaration; an overlay that reuses a core name replaces it. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `feature` | Kind of surface the overlay provides. | string |  | required; one of `"rules"`, `"subagents"`, `"skills"`, `"hooks"` |
+| `sources` | Files that make up the declaration. | array of table: [`[[surfaces.overlays.sources]]`](#surfacesoverlayssources) |  | required; 1–256 items |
+| `source` | Where the declaration was read from. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `replaces` | Core declaration this overlay replaces; required when the name matches a core one. | table: [`[surfaces.overlays.replaces]`](#surfacesoverlaysreplaces) |  |  |
 
 ### `[[surfaces.overlays.sources]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `bytes` | string |  | required; at most 65536 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | Path of the source file. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `bytes` | Full text of the source. | string |  | required; at most 65536 characters |
 
 ### `[surfaces.overlays.replaces]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `name` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `sha256` | string |  | required; pattern `^[a-f0-9]{64}$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `name` | Name of the core declaration being replaced. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `sha256` | SHA-256 of the original core declaration, recorded so a later change to it is reported. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[[surfaces.harnesses]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `name` | string |  | required; at most 128 characters; pattern `^[a-z0-9][a-z0-9-]*$`; pattern `^(?!(?:claudecode\|codexcli\|opencode\|cursor\|grokcli)$)` |
-| `capabilities` | array of table, one of: [`[[surfaces.harnesses.capabilities]]` form 1](#surfacesharnessescapabilities-form-1), [`[[surfaces.harnesses.capabilities]]` form 2](#surfacesharnessescapabilities-form-2), [`[[surfaces.harnesses.capabilities]]` form 3](#surfacesharnessescapabilities-form-3) |  | required; exactly 6 items |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `name` | Name of the custom harness; cannot reuse a shipped one. | string |  | required; at most 128 characters; pattern `^[a-z0-9][a-z0-9-]*$`; pattern `^(?!(?:claudecode\|codexcli\|opencode\|cursor\|grokcli)$)` |
+| `capabilities` | One row per surface feature saying what the harness supports. | array of table, one of: [`[[surfaces.harnesses.capabilities]]` form 1](#surfacesharnessescapabilities-form-1), [`[[surfaces.harnesses.capabilities]]` form 2](#surfacesharnessescapabilities-form-2), [`[[surfaces.harnesses.capabilities]]` form 3](#surfacesharnessescapabilities-form-3) |  | required; exactly 6 items |
 
 ### `[[surfaces.harnesses.capabilities]]` form 1
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `feature` | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
-| `measured_on` | string |  | required; format `date`; pattern [P2](#patterns) |
-| `spelling` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `control` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `mechanism` | table: [`mechanism` shape](#mechanism-shape) |  | required |
-| `state` | string |  | required; exactly `"enforced"` |
-| `evidence` | table: [`[surfaces.harnesses.capabilities.evidence]`](#surfacesharnessescapabilitiesevidence) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
+| `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
+| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `mechanism` | Code that emits the surface. | table: [`mechanism` shape](#mechanism-shape) |  | required |
+| `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"enforced"` |
+| `evidence` | Evidence that the harness enforces the capability. | table: [`[surfaces.harnesses.capabilities.evidence]`](#surfacesharnessescapabilitiesevidence) |  | required |
 
 ### `[surfaces.harnesses.capabilities.evidence]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `reference` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `sha256` | string |  | required; pattern `^[a-f0-9]{64}$` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `reference` | Probe record or file, relative to the cockpit. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `sha256` | SHA-256 of the evidence. | string |  | required; pattern `^[a-f0-9]{64}$` |
 
 ### `[[surfaces.harnesses.capabilities]]` form 2
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `feature` | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
-| `measured_on` | string |  | required; format `date`; pattern [P2](#patterns) |
-| `spelling` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `control` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `mechanism` | table: [`mechanism` shape](#mechanism-shape) |  | required |
-| `state` | string |  | required; exactly `"instructed"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
+| `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
+| `spelling` | File the harness reads for this feature. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `control` | Path of the deliberately broken control file the capability was measured against. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `mechanism` | Code that emits the surface. | table: [`mechanism` shape](#mechanism-shape) |  | required |
+| `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"instructed"` |
 
 ### `[[surfaces.harnesses.capabilities]]` form 3
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `feature` | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
-| `measured_on` | string |  | required; format `date`; pattern [P2](#patterns) |
-| `state` | string |  | required; exactly `"unavailable"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `feature` | Surface feature this row describes. | string |  | required; one of `"rules"`, `"mcp"`, `"subagents"`, `"skills"`, `"hooks"`, `"permissions"` |
+| `measured_on` | Date the capability was measured. | string |  | required; format `date`; pattern [P2](#patterns) |
+| `state` | Whether the harness enforces, only instructs, or lacks this capability. | string |  | required; exactly `"unavailable"` |
+| `reason` | Why the capability is unavailable. | string |  | required; pattern `\S`; 1–4096 characters |
 
 ### `[[surfaces.adopted]]`
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; one of `".claude/settings.json"`, `".codex/config.toml"`, `".codex/hooks.json"` |
-| `source` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `sha256` | string |  | required; pattern `^[a-f0-9]{64}$` |
-| `adopted_on` | string |  | required; format `date`; pattern [P2](#patterns) |
-| `provenance` | table: [`[surfaces.adopted.provenance]`](#surfacesadoptedprovenance) |  | required |
-
-### `[surfaces.adopted.provenance]`
-
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `source` | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `observed_on` | string |  | format `date`; pattern [P2](#patterns) |
-| `kind` | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `confirmed` | boolean |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | Harness settings file that was adopted. | string |  | required; one of `".claude/settings.json"`, `".codex/config.toml"`, `".codex/hooks.json"` |
+| `source` | Where the adopted copy now lives, under cockpit/adopted/. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `sha256` | SHA-256 of the bytes that were moved, as a record for review. | string |  | required; pattern `^[a-f0-9]{64}$` |
+| `adopted_on` | Date the file was adopted. | string |  | required; format `date`; pattern [P2](#patterns) |
+| `provenance` | Where the adoption came from; its kind must be declared. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ## Shapes
 
@@ -763,170 +743,170 @@ These tables recur in several places; each place links here instead of repeating
 
 ### `additional_mounts` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `kind` | string |  | required; one of `"bind"`, `"volume"`, `"environment-file"` |
-| `source` | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
-| `target` | string |  | required; pattern [P6](#patterns); at most 4096 characters |
-| `source_type` | string |  | one of `"file"`, `"directory"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `kind` | Whether the source is a bind-mounted path, a named volume or an environment file. | string |  | required; one of `"bind"`, `"volume"`, `"environment-file"` |
+| `source` | Path in the sibling, or the declared volume id when kind is volume. | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
+| `target` | Absolute path inside the container. | string |  | required; pattern [P6](#patterns); at most 4096 characters |
+| `source_type` | Whether a bind source is a file or a directory; required for bind mounts. | string |  | one of `"file"`, `"directory"` |
 
 - Must match exactly one of `[{"properties":{"kind":{"enum":["volume"]},"source":{"not":{"enum":["."]}}},"not":{"required":["source_type"]}},{"properties":{"kind":{"enum":["bind"]}},"required":["source_type"]},{"properties":{"kind":{"enum":["environment-file"]},"source_type":{"enum":["file"]}},"required":["source_type"]}]`.
 
 ### `build` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `context` | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
-| `dockerfile` | string |  | pattern [P1](#patterns); at most 4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `context` | Build context directory, relative to the sibling. | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
+| `dockerfile` | Dockerfile path, relative to the build context. | string |  | pattern [P1](#patterns); at most 4096 characters |
 
 ### `decisions` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `subject` | string |  | required; one of `"service"`, `"volume"`, `"data-default"`, `"data-mode"`, `"restore"`, `"mount"`, `"port"`, `"vendor"` |
-| `subject_id` | string |  | required; 1–4096 characters |
-| `decided_on` | string |  | required; format `date`; pattern [P2](#patterns) |
-| `decision` | string |  | required; pattern `\S`; 1–4096 characters |
-| `rejected` | array of string |  | required; 1–64 items; each item: pattern `\S`, 1–4096 characters |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Identifier of the decision record. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `subject` | Kind of structure the decision is about. | string |  | required; one of `"service"`, `"volume"`, `"data-default"`, `"data-mode"`, `"restore"`, `"mount"`, `"port"`, `"vendor"` |
+| `subject_id` | Identity of the structure the decision is about. | string |  | required; 1–4096 characters |
+| `decided_on` | Date the decision was made. | string |  | required; format `date`; pattern [P2](#patterns) |
+| `decision` | What was decided. | string |  | required; pattern `\S`; 1–4096 characters |
+| `rejected` | Alternatives that were considered and rejected. | array of string |  | required; 1–64 items; each item: pattern `\S`, 1–4096 characters |
+| `reason` | Why this was decided. | string |  | required; pattern `\S`; 1–4096 characters |
+| `provenance` | Where the decision came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `dependencies` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `service` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `condition` | string |  | required; one of `"service_started"`, `"service_healthy"`, `"service_completed_successfully"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `service` | Service this one waits for. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `condition` | State the other service must reach: started, healthy or completed successfully. | string |  | required; one of `"service_started"`, `"service_healthy"`, `"service_completed_successfully"` |
+| `reason` | Why the service needs this dependency. | string |  | required; pattern `\S`; 1–4096 characters |
 
 ### `entrypoints` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `name` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
-| `kind` | string |  | required; one of `"entrypoint"`, `"origin"`, `"callback_url"`, `"advertised_listener"`, `"cors_origin"`, `"public_base_url"` |
-| `port` | string |  | required; pattern `^[A-Z][A-Z0-9_]*$` |
-| `path` | string |  | required; pattern [P7](#patterns) |
-| `hostname` | string |  | pattern [P8](#patterns); at most 253 characters |
-| `scheme` | string |  | one of `"http"`, `"https"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `name` | Name that identifies this entrypoint in command output. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
+| `kind` | What the address is used for, such as an application origin or a callback URL. | string |  | required; one of `"entrypoint"`, `"origin"`, `"callback_url"`, `"advertised_listener"`, `"cors_origin"`, `"public_base_url"` |
+| `port` | Port-base variable from [ports.bases] whose leased port this address uses. | string |  | required; pattern `^[A-Z][A-Z0-9_]*$` |
+| `path` | Absolute URL path appended to the origin. | string |  | required; pattern [P7](#patterns) |
+| `hostname` | Named local URL host, a subdomain of .localhost; omit to use 127.0.0.1. | string |  | pattern [P8](#patterns); at most 253 characters |
+| `scheme` | URL scheme, http or https; omit to use http. | string |  | one of `"http"`, `"https"` |
 
 ### `health` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `property` | string |  | required; pattern `\S`; 1–4096 characters |
-| `probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `tool_probe` | table: [`probe` shape](#probe-shape) |  |  |
-| `interval_seconds` | integer |  | required; 1–3600 |
-| `timeout_seconds` | integer |  | required; 1–3600 |
-| `retries` | integer |  | required; 1–100 |
-| `start_period_seconds` | integer |  | required; 1–3600 |
-| `measurement` | table: [`health` shape: `[measurement]`](#health-shape-measurement) |  |  |
-
-### `health` shape: `[measurement]`
-
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `duration_seconds` | number |  | required; greater than 0; at most 3600 |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `property` | What the probe proves about the product. | string |  | required; pattern `\S`; 1–4096 characters |
+| `probe` | Command that checks the property; it runs in the service's own image. | table: [`probe` shape](#probe-shape) |  | required |
+| `tool_probe` | Command that checks the probe's own tool exists, so a failure names the missing tool. | table: [`probe` shape](#probe-shape) |  |  |
+| `interval_seconds` | Seconds between probe runs. | integer |  | required; 1–3600 |
+| `timeout_seconds` | Seconds one probe run may take. | integer |  | required; 1–3600 |
+| `retries` | Failed probe runs tolerated before the service is unhealthy. | integer |  | required; 1–100 |
+| `start_period_seconds` | Seconds after start during which failures are not counted; at least the measured start time. | integer |  | required; 1–3600 |
+| `measurement` | Measured start time the start period is checked against. | table: [`measurement` shape](#measurement-shape) |  |  |
 
 ### `host_aliases` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `hostname` | string |  | required; pattern [P3](#patterns) |
-| `address` | string |  | required; either (format `ipv4`, pattern [P4](#patterns)) or (format `ipv6`, pattern [P5](#patterns)) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `hostname` | Host name the service resolves to the given address. | string |  | required; pattern [P3](#patterns) |
+| `address` | IPv4 or IPv6 address the host name resolves to. | string |  | required; either (format `ipv4`, pattern [P4](#patterns)) or (format `ipv6`, pattern [P5](#patterns)) |
 
 ### `image` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `reference` | string |  | required; pattern `^[^\s@]+@sha256:[a-f0-9]{64}$`; at most 4096 characters |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `architectures` | array of string |  | required; 1–2 items; each item: one of `"amd64"`, `"arm64"` |
-| `manifest_probe` | table: [`probe` shape](#probe-shape) |  | required |
-| `registry_auth_probe` | table: [`probe` shape](#probe-shape) |  |  |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `reference` | Image reference pinned by sha256 digest. | string |  | required; pattern `^[^\s@]+@sha256:[a-f0-9]{64}$`; at most 4096 characters |
+| `reason` | Why this image is used. | string |  | required; pattern `\S`; 1–4096 characters |
+| `architectures` | CPU architectures the image must support. | array of string |  | required; 1–2 items; each item: one of `"amd64"`, `"arm64"` |
+| `manifest_probe` | Command that checks the image manifest lists the declared architectures. | table: [`probe` shape](#probe-shape) |  | required |
+| `registry_auth_probe` | Command that checks the registry sign-in the image needs. | table: [`probe` shape](#probe-shape) |  |  |
+| `provenance` | Where the image choice came from; omit to use the service's provenance. | table: [`provenance` shape](#provenance-shape) |  |  |
 
 ### `install_policies` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `toolchain` | string |  | required; one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"` |
-| `volume` | string |  | required; pattern `^[a-z0-9][a-z0-9_.-]*$` |
-| `lockfile` | string |  | required; pattern [P1](#patterns) |
-| `install` | array of string |  | required; at least 1 item; each item: at least 1 character |
-| `load_probe` | array of string |  | required; at least 1 item; each item: at least 1 character |
-| `build` | array of string |  | 1–32 items; each item: pattern [P9](#patterns) |
-| `test` | array of string |  | 1–32 items; each item: pattern [P9](#patterns) |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `toolchain` | Toolchain whose dependencies this policy installs. | string |  | required; one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"` |
+| `volume` | Resettable volume that holds the installed dependencies. | string |  | required; pattern `^[a-z0-9][a-z0-9_.-]*$` |
+| `lockfile` | Lockfile, relative to the sibling, that this policy applies to. | string |  | required; pattern [P1](#patterns) |
+| `install` | Command, as an argument list, that installs the dependencies. | array of string |  | required; at least 1 item; each item: at least 1 character |
+| `load_probe` | Command, as an argument list, that proves the installed dependencies load. | array of string |  | required; at least 1 item; each item: at least 1 character |
+| `build` | Build command, as an argument list, when the product owns one. | array of string |  | 1–32 items; each item: pattern [P9](#patterns) |
+| `test` | Test command, as an argument list, when the product owns one. | array of string |  | 1–32 items; each item: pattern [P9](#patterns) |
+
+### `measurement` shape
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `duration_seconds` | Measured seconds the service took to become healthy. | number |  | required; greater than 0; at most 3600 |
+| `provenance` | Where the measurement came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `mechanism` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `module` | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
-| `export` | string |  | required; pattern `^[A-Za-z_$][A-Za-z0-9_$]*$`; at most 128 characters |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `module` | Module that implements the capability. | string |  | required; pattern [P1](#patterns); pattern [P13](#patterns); at most 4096 characters |
+| `export` | Export of the module that implements the capability. | string |  | required; pattern `^[A-Za-z_$][A-Za-z0-9_$]*$`; at most 128 characters |
 
 ### `ports` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `name` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `host_variable` | string |  | required; pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
-| `internal` | integer |  | required; 1–65535 |
-| `host_ip` | string | `"127.0.0.1"` | one of `"127.0.0.1"`, `"::1"`, `"0.0.0.0"`, `"::"` |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `name` | Name of the published port. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `host_variable` | Environment variable that carries the leased host port. | string |  | required; pattern `^[A-Z][A-Z0-9_]*$`; at most 128 characters |
+| `internal` | Port the service listens on inside the container. | integer |  | required; 1–65535 |
+| `host_ip` | Host address the port is published on; defaults to loopback. | string | `"127.0.0.1"` | one of `"127.0.0.1"`, `"::1"`, `"0.0.0.0"`, `"::"` |
 
 ### `probe` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `location` | string |  | required; one of `"host"`, `"in-stack"` |
-| `service` | string |  | pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `cwd` | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
-| `argv` | array of string |  | required; 1–256 items; each item: pattern `^[^\x00]+$`, 1–8192 characters |
-| `timeout_seconds` | integer |  | required; 1–3600 |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `location` | Where the command runs: on the host or inside a stack service. | string |  | required; one of `"host"`, `"in-stack"` |
+| `service` | Stack service the command runs in; required when location is in-stack and not allowed otherwise. | string |  | pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `cwd` | Working directory for the command, relative to the sibling, or . for its root. | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns), at most 4096 characters) |
+| `argv` | Command to run, as an argument list. | array of string |  | required; 1–256 items; each item: pattern `^[^\x00]+$`, 1–8192 characters |
+| `timeout_seconds` | Seconds the command may run before it is stopped. | integer |  | required; 1–3600 |
+| `provenance` | Where this command came from; omit to use the enclosing declaration's provenance. | table: [`provenance` shape](#provenance-shape) |  |  |
 
 - Must match exactly one of `[{"properties":{"location":{"enum":["host"]}},"not":{"required":["service"]}},{"properties":{"location":{"enum":["in-stack"]}},"required":["service"]}]`.
 
 ### `provenance` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `source` | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `observed_on` | string |  | format `date`; pattern [P2](#patterns) |
-| `kind` | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
-| `reason` | string |  | required; pattern `\S`; 1–4096 characters |
-| `confirmed` | boolean |  |  |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `source` | File or place the value came from, relative to the repository. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
+| `observed_on` | Date the source was looked at; required unless kind is declared. | string |  | format `date`; pattern [P2](#patterns) |
+| `kind` | How the value was established: declared by this file, measured, or inferred. | string |  | required; one of `"declared"`, `"measured"`, `"inferred"` |
+| `reason` | Why the value is what it is. | string |  | required; pattern `\S`; 1–4096 characters |
+| `confirmed` | Set to true once a person has confirmed an inferred value; inferred values require it. | boolean |  |  |
 
 - Must match at least one of `[{"properties":{"kind":{"enum":["declared"]}}},{"properties":{"kind":{"enum":["measured"]}},"required":["observed_on"]},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed","observed_on"]}]`.
 
 ### `resources` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `memory_mb` | integer |  | required; 6–8589934591 |
-| `cpus` | number |  | required; 0.01–92233 |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `memory_mb` | Memory limit in megabytes. | integer |  | required; 6–8589934591 |
+| `cpus` | CPU limit as a number of CPUs, fractions allowed. | number |  | required; 0.01–92233 |
+| `provenance` | Where the ceilings came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `toolchain_pins` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `path` | string |  | required; pattern [P1](#patterns) |
-| `pinned` | string |  | required; 1–256 characters |
-| `observed` | string |  | required; 1–256 characters |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `path` | Pin file in the sibling that names the toolchain version. | string |  | required; pattern [P1](#patterns) |
+| `pinned` | Version the pin file declares. | string |  | required; 1–256 characters |
+| `observed` | Version actually observed for the pin. | string |  | required; 1–256 characters |
+| `provenance` | Where the observed version came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 ### `volumes` shape
 
-| Key | Type | Default | Constraints |
-| --- | --- | --- | --- |
-| `id` | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
-| `purpose` | string |  | required; one of `"dependencies"`, `"product-data"` |
-| `install_policy` | string |  | pattern `^[a-z0-9][a-z0-9_.-]*$` |
-| `provenance` | table: [`provenance` shape](#provenance-shape) |  | required |
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `id` | Identifier of the named volume. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$`; at most 128 characters |
+| `purpose` | Whether the volume holds installed dependencies or product data. | string |  | required; one of `"dependencies"`, `"product-data"` |
+| `install_policy` | Install policy volume that fills it; required for dependency volumes. | string |  | pattern `^[a-z0-9][a-z0-9_.-]*$` |
+| `provenance` | Where the volume declaration came from. | table: [`provenance` shape](#provenance-shape) |  | required |
 
 - Must match exactly one of `[{"properties":{"purpose":{"enum":["dependencies"]}},"required":["install_policy"]},{"properties":{"purpose":{"enum":["product-data"]}},"not":{"required":["install_policy"]}}]`.
 
