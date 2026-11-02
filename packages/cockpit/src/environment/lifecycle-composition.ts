@@ -118,8 +118,8 @@ function environmentCode(code: string): code is EnvironmentDiagnostic['code'] {
     return (Object.values(ENVIRONMENT_CODES) as readonly string[]).includes(code)
 }
 
-function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string): readonly EnvironmentDiagnostic[] {
-    return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target })])
+function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string, fix?: string): readonly EnvironmentDiagnostic[] {
+    return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) })])
 }
 
 function runtimeUnavailable(reason: string, target: string): readonly EnvironmentDiagnostic[] {
@@ -986,7 +986,7 @@ export function createLifecycleCommandAdapters(
             }, execute)
             : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
                 ?? Object.freeze({ kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' })
-        if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId))
+        if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId, 'fix' in observed ? observed.fix : undefined))
         const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(context.namespace.root))
         const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
         if (measured.kind !== 'admitted' && !certifiedProbe) return refuse?.(ownerDiagnostics(measured.code, measured.reason, context.stackId))

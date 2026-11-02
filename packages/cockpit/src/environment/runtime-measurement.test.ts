@@ -258,6 +258,17 @@ describe('runtime measurement recording', () => {
             message: expect.stringContaining('"nosuch:latest" is not a local image'),
             fix: expect.stringContaining('docker pull <image>'),
         }] })
+
+        // A Compose that answers with a version floors cannot compare is an installation to change, not a runtime to start.
+        await writeFile(docker, (await readFile(docker, 'utf8')).replace('printf "5.1.2\\n"', 'printf "dev\\n"'))
+        const unparseable = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
+            { execute: executeProbe, probe: async (request) => { probed = true; return verdict(true, request.executable.sha256) } })
+        expect(probed).toBe(false)
+        expect(unparseable).toMatchObject({ status: 2, diagnostics: [{
+            code: 'RUNTIME_UNAVAILABLE',
+            message: 'Docker Compose reported version "dev" from `docker compose version --short`, which has no numeric X.Y.Z core',
+            fix: expect.stringMatching(/^install a Docker Engine and Docker Compose release whose .*docker compose version --short` print X\.Y\.Z/),
+        }] })
     })
 
     it('records nothing when the candidate fails', async () => {
