@@ -545,14 +545,12 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const truncated = result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
         || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes
     if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the 64 KiB probe capture` }
-    // A kept tail can start inside a multi-byte character, so only a declared run decodes leniently.
+    // A probe parses its output, so it refuses invalid UTF-8; a declared command's output is evidence to read.
     const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' }).decode(bytes)
-    // A tail cut inside a character decodes its leading continuation bytes to U+FFFD; they carry nothing.
-    const tail = (bytes: Buffer, cut: boolean) => { const text = decode(bytes); return cut ? text.replace(/^\uFFFD+/, '') : text }
     let stdout: string; let stderr: string
     try {
-        stdout = tail(result.stdout, result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes)
-        stderr = tail(result.stderr, result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes)
+        stdout = decode(result.stdout)
+        stderr = decode(result.stderr)
     }
     catch (error) { return { kind: 'error', reason: `${argv[0]} returned invalid UTF-8: ${error instanceof Error ? error.message : String(error)}` } }
     return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout, stderr, truncated,

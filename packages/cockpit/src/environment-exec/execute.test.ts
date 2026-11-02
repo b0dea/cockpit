@@ -1112,6 +1112,17 @@ done
         expect(executionOutcomeMatches(outcome, nodeStep(`limit-${stream}`, script, limits))).toBe(true)
     })
 
+    it('keeps the newest bytes of a tail-retaining step from the first whole character', async () => {
+        // 'é' is two bytes, so a 4-byte tail of "abéxyz" would begin with its continuation byte.
+        const step = nodeStep('tail-boundary', "process.stdout.write(Buffer.from('abéxyz'))", { stdoutLimitBytes: 4, outputOverflow: 'retain-tail' })
+        const outcome = await executeProbe(step)
+
+        expect(outcome).toEqual(expect.objectContaining({ kind: 'complete' }))
+        expect(outcome.execution).toEqual(expect.objectContaining({ stdoutObservedBytes: 7, stdoutRetainedBytes: 3 }))
+        expect(new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout)).toBe('xyz')
+        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+    })
+
     it('never classifies a signal-terminated child as successful', async () => {
         const step = nodeStep('signal-control', "process.kill(process.pid, 'SIGKILL')")
         const outcome = await executeProbe(step)
