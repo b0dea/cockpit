@@ -79,7 +79,7 @@ const observed = <T>(value: T, producer: string): Observation<T> => ({
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
-    ({ kind: 'read', path: '/synthetic/.cockpit/local/runtime-measurements.json', rows })
+    ({ kind: 'read', path: '/synthetic/state/machine/runtime-measurements.json', rows })
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 async function admitCleanStartup(plan: Extract<ReturnType<typeof createRuntimeServicePlan>, { kind: 'planned' }>) {
@@ -195,7 +195,7 @@ fi
                 [measured([{ ...row, daemon: 'other-daemon' }]), /has not been measured on this machine/],
                 [measured([{ ...row, engineVersion: '29.3.9' }]), /measured with engine 29\.3\.9 and now runs engine 29\.4\.0/],
                 [measured([{ ...row, composeFloor: '5.2.0' }]), /below the measured floor 5\.2\.0/],
-                [{ kind: 'unreadable', path: '/synthetic/.cockpit/local/runtime-measurements.json', reason: 'the file is not UTF-8 JSON' } as const,
+                [{ kind: 'unreadable', path: '/synthetic/state/machine/runtime-measurements.json', reason: 'the file is not UTF-8 JSON' } as const,
                     /record is unreadable: the file is not UTF-8 JSON; a new measurement replaces it/],
             ] as const) {
                 const refused = admitRuntimeMeasurement(observed, measurements)
@@ -252,7 +252,7 @@ fi
             expect(admission).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
             const reason = admission.kind === 'unavailable' ? admission.reason : ''
             expect(reason).toContain('OperatingSystem "Windows Server 2022", Name "build-host", OSType "windows"')
-            expect(reason).toContain('measured in /synthetic/.cockpit/local/runtime-measurements.json: docker-desktop on "docker-desktop" (engine 29.4.0, Compose floor 5.1.0)')
+            expect(reason).toContain('measured in /synthetic/state/machine/runtime-measurements.json: docker-desktop on "docker-desktop" (engine 29.4.0, Compose floor 5.1.0)')
             expect(reason).toMatch(/Report these docker info values/)
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })

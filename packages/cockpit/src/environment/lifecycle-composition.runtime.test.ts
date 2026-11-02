@@ -32,7 +32,6 @@ import {
 } from './runtime.js'
 import { createLifecycleCompositionFixtureSupport } from '../../test-support/lifecycle-composition-fixture.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
-import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
 const roots: string[] = []
@@ -100,8 +99,6 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const candidate = await fixture()
         const cockpitRoot = join(candidate.checkout, 'control')
         await mkdir(cockpitRoot)
-        // A measurement belongs to the directory holding cockpit.toml, so the moved configuration needs its own.
-        await recordSyntheticMeasurement(cockpitRoot)
         const configPath = join(cockpitRoot, 'cockpit.toml')
         const composePath = join(cockpitRoot, 'compose.yml')
         await rename(candidate.composePath, composePath)
@@ -393,7 +390,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const message = up.diagnostics[0]?.message ?? ''
         expect(message).toContain('Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine')
         expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"; engine 27.1.2')
-        expect(message).toContain(`measured in ${join(candidate.checkout, '.cockpit', 'local', 'runtime-measurements.json')}: none`)
+        expect(message).toMatch(new RegExp(`measured in ${candidate.home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/.*/state/v1/machine/runtime-measurements\\.json: none`))
         // The remedy runs as printed: runtime measure selects the daemon up uses, with no prefix.
         expect(message).toMatch(/Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)

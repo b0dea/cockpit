@@ -27,7 +27,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     const artifacts = { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' }
     const declarations = Object.values(artifacts)
     const configPath = join(root, 'cockpit.toml')
-    await recordSyntheticMeasurement(root)
+    await recordSyntheticMeasurement(stateHome)
     await writeFile(configPath, [
         '[cockpit]', 'name = "synthetic-browser"', 'siblings_root = "siblings"',
         '[[sibling]]', 'slug = "web"', 'dir = "web"', 'mount = "always"', 'acquire = "none"', 'var = "WEB_DIR"', 'toolchain = "none"', 'purpose = "Synthetic web"',

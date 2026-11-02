@@ -69,7 +69,7 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
         '',
     ].join('\n'))
     await writeFile(composePath, 'services: {}\n')
-    if (runtimeMeasurement === 'supported') await recordSyntheticMeasurement(checkout)
+    if (runtimeMeasurement === 'supported') await recordSyntheticMeasurement(home)
     const dockerPath = join(root, 'docker')
     await writeFile(dockerPath, [
         '#!/bin/sh',
@@ -196,7 +196,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
         base,
     ].join('\n'))
     await writeFile(join(checkout, 'fixtures/personas.json'), '[{"id":"first"}]\n')
-    await recordSyntheticMeasurement(checkout)
+    await recordSyntheticMeasurement(home)
     await writeFile(join(checkout, 'app/.env'), [
         'MESSAGES_TOKEN=synthetic-token',
         'MESSAGES_URL=https://app:3000/messages',
