@@ -252,6 +252,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `CLI_PLATFORM_UNSUPPORTED` | see the message |
 | `CLI_UNKNOWN_COMMAND` | see the message |
 | `CLI_USAGE_INVALID` | see the message |
+| `COCKPIT_NOT_INSTALLED` | see the message |
 | `COCKPIT_REVISION_INVALID` | depends on what failed; see the message |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
@@ -317,7 +318,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `ENV_SCHEMA_UNHEALTHY` | see the message |
 | `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `EVIDENCE_BASELINE_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
+| `EVIDENCE_UNAVAILABLE` | depends on what failed; see the message |
 | `EXECUTION_ABORTED` | see the message |
 | `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
 | `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
@@ -501,6 +502,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `RUNTIME_PROBE_TIMEOUT` | see the message |
 | `RUNTIME_UNAVAILABLE` | depends on what failed; see the message |
 | `RUNTIME_UNMEASURED` | see the message |
+| `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
 | `SELFTEST_EXECUTION_INVALID` | see the message |
 | `SELFTEST_SOURCE_INVALID` | depends on what failed; see the message |
@@ -531,6 +533,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `SIBLING_PATH_NOT_EMPTY` | see the message |
 | `SIBLING_REFERENCED` | see the message |
 | `SIBLING_REMOTE_MISSING` | see the message |
+| `SIBLING_REMOTE_UNRECORDED` | see the message |
 | `SIBLING_SLUG_DUPLICATE` | see the message |
 | `SIBLING_STACK_RECORDED` | see the message |
 | `SIBLING_VAR_DUPLICATE` | see the message |
