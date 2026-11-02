@@ -1482,17 +1482,28 @@ async function projectBrowserRunner(
     if (stale.length > 0) return Object.freeze({ kind: 'refusal' as const,
         message: `the declared browser project digests differ from the files: ${stale.join('; ')}`,
         fix: 'review the browser project change, set the declared digest to the file\'s current sha256, then run npx --no cockpit up --config <your cockpit.toml>' })
-    let packageJson: unknown
-    let lockJson: unknown
-    try {
-        const decoder = new TextDecoder('utf-8', { fatal: true })
-        packageJson = JSON.parse(decoder.decode(manifest.bytes))
-        lockJson = JSON.parse(decoder.decode(lockfile.bytes))
-    } catch (error) {
-        return Object.freeze({ kind: 'refusal' as const,
-            message: `the browser project ${manifestPath} or ${browser.project.lockfile} is not valid UTF-8 JSON: ${error instanceof Error ? error.message : String(error)}`,
-            fix: 'regenerate the browser project lockfile with npm install in its directory, then update both digests' })
+    // A JSON.parse error quotes the bytes where parsing stopped, and this refusal reaches an agent; name
+    // the file, where parsing stopped and the shape expected, never the bytes.
+    const parseProjectJson = (bytes: Uint8Array, path: string, expected: string): Readonly<{ value: unknown }> | string => {
+        let text: string
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+        catch (error) { if (!(error instanceof TypeError)) throw error; return `the browser project ${path} is not valid UTF-8; expected ${expected}` }
+        try { return { value: JSON.parse(text) } }
+        catch (error) {
+            if (!(error instanceof SyntaxError)) throw error
+            const position = Number(/\bposition (\d+)\b/.exec(error.message)?.[1])
+            const before = Number.isSafeInteger(position) ? text.slice(0, position) : undefined
+            const where = before === undefined ? '' : ` at line ${before.split('\n').length}, column ${before.length - before.lastIndexOf('\n')}`
+            return `the browser project ${path} is not valid JSON${where}; expected ${expected}`
+        }
     }
+    const parsedManifest = parseProjectJson(manifest.bytes, manifestPath, 'an npm package.json object')
+    const parsedLock = parseProjectJson(lockfile.bytes, browser.project.lockfile, 'an npm package-lock.json object')
+    if (typeof parsedManifest === 'string' || typeof parsedLock === 'string') return Object.freeze({ kind: 'refusal' as const,
+        message: [parsedManifest, parsedLock].filter(value => typeof value === 'string').join('; '),
+        fix: 'regenerate the browser project lockfile with npm install in its directory, then update both digests' })
+    const packageJson = parsedManifest.value
+    const lockJson = parsedLock.value
     const dependencies = ownRecord(packageJson)?.dependencies
     const devDependencies = ownRecord(packageJson)?.devDependencies
     const declared = ownRecord(dependencies)?.['@playwright/test'] ?? ownRecord(devDependencies)?.['@playwright/test']

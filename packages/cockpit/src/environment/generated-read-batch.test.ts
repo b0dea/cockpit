@@ -498,6 +498,18 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
                 message: expect.stringContaining('browser.resolver maps app.example.invalid to 127.0.0.1'),
                 fix: expect.stringContaining('map a .localhost hostname to 127.0.0.1 or ::1'),
             })] })
+            // An unparseable project file is named with where parsing stopped, never quoted.
+            const unparseable = '{\n  "name": "secret-token"\n  "private": true\n}\n', unparseableLock = '{ "lockfileVersion": secret-token }\n'
+            await writeFile(join(root, 'app/package.json'), unparseable)
+            await writeFile(join(root, 'app/package-lock.json'), unparseableLock)
+            await writeFile(configPath, declared.replace(digest(manifestBytes), digest(unparseable)).replace(digest(lockBytes), digest(unparseableLock)))
+            const unparsed = await syncGeneratedEnvironment({ configPath }, {}, ports)
+            expect(unparsed).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ target: 'browser',
+                message: 'the browser project app/package.json is not valid JSON at line 3, column 3; expected an npm package.json object; '
+                    + 'the browser project app/package-lock.json is not valid JSON; expected an npm package-lock.json object' })] })
+            expect(JSON.stringify(unparsed)).not.toContain('secret-tok')
+            await writeFile(join(root, 'app/package.json'), manifestBytes)
+            await writeFile(join(root, 'app/package-lock.json'), lockBytes)
             await writeFile(configPath, declared)
             const result = await syncGeneratedEnvironment({ configPath }, {}, ports)
             expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
