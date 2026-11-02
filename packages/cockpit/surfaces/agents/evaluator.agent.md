@@ -26,7 +26,9 @@ Tie every observation to the current criterion and its source, the exact Authori
 the current artifact digest, the command's argv and the rerun output you were given. Return the run identity and
 verification digests the verifier gave you. Each verification citation must quote the
 actual stdout or stderr at the range you were given. When you cite a symbol, quote its
-declaration and give the exact character range; a nearby mention does not count. Quoting a file
+declaration and give the exact character range; a nearby mention does not count. Every quote
+must be at least eight characters and occur exactly once in the text it cites; a shorter or
+repeated quote is rejected as unsupported, so quote a longer, distinctive span. Quoting a file
 shows what the file contains; explain why what you saw supports the
 criterion. Say plainly when you are unsure, when output was truncated or contaminated, when something errored, and when you abstain.
 

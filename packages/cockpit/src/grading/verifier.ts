@@ -5,7 +5,7 @@ import { isCurrentWorkOrderAcceptance, type AcceptedWorkOrder } from '../work-or
 export const mechanism = {
     id: 'work-order-verification',
     module: 'packages/cockpit/src/grading/verifier.ts',
-    exports: ['CRITERION_OUTCOMES', 'checkGradeCurrency', 'isIssuedWorkOrderGrade', 'checkPreparedWorkOrderCurrency', 'normalizeVerificationObservation', 'prepareWorkOrderVerification', 'verificationObservationPassed', 'verifyPreparedWorkOrder', 'verifyWorkOrder'],
+    exports: ['CRITERION_OUTCOMES', 'checkGradeCurrency', 'isIssuedWorkOrderGrade', 'checkPreparedWorkOrderCurrency', 'normalizeVerificationObservation', 'prepareWorkOrderVerification', 'verificationObservationPassed', 'verifyPreparedWorkOrder'],
 } as const
 
 export const CRITERION_OUTCOMES = Object.freeze([
@@ -202,15 +202,18 @@ function declarationContains(body: string, symbol: string, start: number, end: n
 
 // The quote is the evidence; the cited range only says where to look. A real model miscounts
 // character offsets (an 83-character quote cited as ending at 78), and requiring them exactly made
-// every real grade read as unsupported. The quote must still appear verbatim in the cited text: when
-// the range does not hold it, the occurrence nearest the cited start is used, and none means rejected.
-function locateQuote(text: string, quote: string, start: number, end: number): { start: number; end: number } | undefined {
-    if (text.slice(start, end) === quote) return { start, end }
-    let nearest: number | undefined
-    for (let index = text.indexOf(quote); index !== -1; index = text.indexOf(quote, index + 1)) {
-        if (nearest === undefined || Math.abs(index - start) < Math.abs(nearest - start)) nearest = index
-    }
-    return nearest === undefined ? undefined : { start: nearest, end: nearest + quote.length }
+// every real grade read as unsupported. So the quote is located by content: it must be long enough to
+// be specific and occur exactly once, because a short or repeated quote matches almost any text and
+// would let a grader "verify" a claim it never observed. A short quote is still specific when it is
+// the whole text, as with a command that prints only `passed`.
+const MIN_QUOTE_LENGTH = 8
+
+function locateQuote(text: string, quote: string): { start: number; end: number } | undefined {
+    const trimmed = quote.trim()
+    if (!trimmed || trimmed.length < MIN_QUOTE_LENGTH && trimmed !== text.trim()) return undefined
+    const start = text.indexOf(quote)
+    if (start === -1 || text.indexOf(quote, start + 1) !== -1) return undefined
+    return { start, end: start + quote.length }
 }
 
 function supportingEvidence(assessment: CriterionAssessment, context: GraderContext): boolean {
@@ -220,7 +223,7 @@ function supportingEvidence(assessment: CriterionAssessment, context: GraderCont
             || evidence.start < 0 || evidence.end <= evidence.start || !text(evidence.quote)) return false
         const artifact = context.artifacts.find(item => item.path === evidence.path)
         if (artifact === undefined || artifact.digest !== evidence.digest) return false
-        const located = locateQuote(artifact.text, evidence.quote, evidence.start, evidence.end)
+        const located = locateQuote(artifact.text, evidence.quote)
         return located !== undefined && (evidence.symbol === undefined || typeof evidence.symbol === 'string'
             && declarationContains(artifact.text, evidence.symbol, located.start, located.end))
     })
@@ -235,7 +238,7 @@ function supportingVerification(assessment: CriterionAssessment, records: readon
             || !Number.isSafeInteger(evidence.start) || !Number.isSafeInteger(evidence.end)
             || evidence.start < 0 || evidence.end <= evidence.start || !text(evidence.quote)) return false
         const output = evidence.stream === 'stdout' ? record.result.stdout : record.result.stderr
-        return locateQuote(output, evidence.quote, evidence.start, evidence.end) !== undefined
+        return locateQuote(output, evidence.quote) !== undefined
     })
 }
 
@@ -267,13 +270,6 @@ function gradeCriterion(criterion: WorkOrderCriterion, response: GraderResponse,
         return outcome(1, 'Evidence does not support the current criterion, artifact declaration or rerun verification')
     }
     return { criterion: criterion.id, outcome: CRITERION_OUTCOMES[0], reasons: [], assessment: structuredClone(assessment) }
-}
-
-function refusedGrade(input: GradingInput, artifactDigest: string, runId: string, reason: string): WorkOrderGrade {
-    const contract = input.accepted.contract
-    return immutable({ workOrderId: contract.frontmatter.id, contractDigest: contract.digest,
-        artifactDigest, runId, author: input.author, grader: input.grader, verification: [],
-        criteria: contract.criteria.map(criterion => ({ criterion: criterion.id, outcome: CRITERION_OUTCOMES[1], reasons: [reason] })) })
 }
 
 export async function prepareWorkOrderVerification(input: GradingInput, dependencies: WorkOrderSubjectDependencies): Promise<PreparedWorkOrderVerification> {
@@ -352,15 +348,6 @@ export async function verifyPreparedWorkOrder(subject: PreparedWorkOrderVerifica
         return grade
     } catch (error) {
         return refused(`Current grading evidence could not be established: ${errorMessage(error)}`)
-    }
-}
-
-export async function verifyWorkOrder(input: GradingInput, dependencies: GradingDependencies): Promise<WorkOrderGrade> {
-    const runId = randomUUID()
-    try {
-        return await verifyPreparedWorkOrder(await prepareWorkOrderVerification(input, dependencies), dependencies)
-    } catch (error) {
-        return refusedGrade(input, '', runId, `Current grading evidence could not be established: ${errorMessage(error)}`)
     }
 }
 

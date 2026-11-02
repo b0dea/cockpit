@@ -5,7 +5,7 @@ import { workOrderFixture } from '../test-support/work-order.js'
 import { acceptWorkOrder, beginWorkOrderAcceptance, intakeWorkOrder, routeWorkOrder, validateWorkOrderPolicy } from '../work-orders/intake.js'
 import { reviewWorkOrderWave, type WorkOrderReviewDependencies } from '../work-orders/review.js'
 import { completeWorkOrder, type CompletionDependencies, type CompletionRecord, type CompletionReview } from './completion.js'
-import { checkGradeCurrency, CRITERION_OUTCOMES, isIssuedWorkOrderGrade, verifyWorkOrder, type CriterionAssessment, type GraderContext, type GraderResponse, type VerificationObservation } from './verifier.js'
+import { checkGradeCurrency, CRITERION_OUTCOMES, isIssuedWorkOrderGrade, prepareWorkOrderVerification, verifyPreparedWorkOrder, type CriterionAssessment, type GraderContext, type GraderResponse, type VerificationObservation } from './verifier.js'
 
 function harness() {
     const parsed = parseWorkOrder(Buffer.from(workOrderFixture().replaceAll('[ ]', '[x]')))
@@ -95,7 +95,7 @@ describe('production grading and completion', () => {
         const h = harness()
         // A long run keeps only the tail of its output; its exit status still decides the criterion.
         h.run(async argv => ({ kind: 'executed', exitCode: 0, stdout: `${argv.at(-1)}: fresh value observed`, stderr: '', truncated: true }))
-        const grade = await verifyWorkOrder(h.input, h.deps)
+        const grade = await verifyPreparedWorkOrder(await prepareWorkOrderVerification(h.input, h.deps), h.deps)
         expect(grade.criteria.map(row => row.outcome)).toEqual(Array(3).fill(CRITERION_OUTCOMES[0]))
         h.order.length = 0
         const result = await completeWorkOrder(h.input, h.deps)
@@ -148,15 +148,28 @@ describe('production grading and completion', () => {
         ['symbol in a string', h => { h.artifacts.set('src/cache.ts', 'const note = "function refresh() {}"\n') }],
         ['symbol in a template', h => { h.artifacts.set('src/cache.ts', '`\nexport function refresh() {}\n`\n') }],
         ['symbol use instead of declaration', h => { h.artifacts.set('src/cache.ts', 'refresh()\n') }],
+        // A short or repeated quote matches almost any text, so it cannot be evidence of a specific observation.
+        ['one-character artifact quote', h => alterClaim(h, claim => ({ ...claim, evidence: claim.evidence.map(row => ({ ...row, symbol: undefined, quote: 'x', start: 1, end: 2 })) }))],
+        ['one-character verification quote', h => alterClaim(h, claim => ({ ...claim, verificationEvidence: claim.verificationEvidence.map(row => ({ ...row, quote: 'f', start: 0, end: 1 })) }))],
+        ['repeated artifact quote', h => { h.artifacts.set('src/cache.ts', "export function refresh() { return 'fresh' }\nexport function refresh() { return 'fresh' }\n") }],
+        ['repeated verification quote', h => {
+            h.run(async () => ({ kind: 'executed', exitCode: 0, stdout: 'stale cache hit; stale cache hit', stderr: '', truncated: false }))
+            alterClaim(h, claim => ({ ...claim, verificationEvidence: claim.verificationEvidence.map(row => ({ ...row, quote: 'stale cache hit', start: 0, end: 15 })) }))
+        }],
         ['unsupported outcome', h => alterClaim(h, claim => ({ ...claim, outcome: JSON.parse('"PASS"') }))],
     ]
     for (const outcome of CRITERION_OUTCOMES.slice(1)) adversaries.push([outcome, h => alterClaim(h, claim => ({ ...claim, outcome }))])
     it.each(adversaries)('refuses %s through the verifier and completion gate', async (_name, configure) => {
         const h = harness()
         configure(h)
-        const grade = await verifyWorkOrder(h.input, h.deps)
-        expect(grade.criteria.every(row => CRITERION_OUTCOMES.includes(row.outcome))).toBe(true)
-        expect(grade.criteria.some(row => row.outcome !== CRITERION_OUTCOMES[0])).toBe(true)
+        // Self grading is refused when the subject is prepared, before any grade can exist.
+        const prepared = await prepareWorkOrderVerification(h.input, h.deps).catch((error: Error) => error)
+        if (prepared instanceof Error) expect(prepared.message).toContain('independent named author and grader')
+        else {
+            const grade = await verifyPreparedWorkOrder(prepared, h.deps)
+            expect(grade.criteria.every(row => CRITERION_OUTCOMES.includes(row.outcome))).toBe(true)
+            expect(grade.criteria.some(row => row.outcome !== CRITERION_OUTCOMES[0])).toBe(true)
+        }
         const result = await completeWorkOrder(h.input, h.deps)
         expect(result.completed).toBe(false)
         expect(h.sentinel()).toBeUndefined()
@@ -274,7 +287,7 @@ describe('production grading and completion', () => {
 
     it('refuses a copied or hand-edited success as a current grade', async () => {
         const h = harness()
-        const grade = await verifyWorkOrder(h.input, h.deps)
+        const grade = await verifyPreparedWorkOrder(await prepareWorkOrderVerification(h.input, h.deps), h.deps)
         expect(await checkGradeCurrency(grade, h.deps)).toBeUndefined()
         expect(await checkGradeCurrency(structuredClone(grade), h.deps)).toBe('Grade is not an issued strict success')
         expect(Object.isFrozen(grade.criteria[0].assessment?.evidence)).toBe(true)
