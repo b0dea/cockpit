@@ -14,7 +14,11 @@
 // error text: page content, URLs and storage state must not leak into cockpit's output.
 //
 // Requests to cockpit's own browser-control authorities and nested top-level navigations are blocked
-// so the page under test cannot reach the control plane that drives it.
+// so the page under test cannot reach the control plane that drives it. Requests to a loopback or
+// resolver-mapped host outside the application origin are blocked too: such an address is the host
+// (through the remote runner's network exposure, or directly for a local browser), and the operation
+// was given only the application. Playwright does not route a request the browser follows as a
+// redirect, so a redirect to another loopback port still reaches it; this blocks direct requests only.
 const fs = require('node:fs')
 const crypto = require('node:crypto')
 const path = require('node:path')
@@ -62,9 +66,19 @@ async function main() {
             return controlAuthorities.has(parsed.hostname + ':' + port) || controlPorts.has(port)
         } catch { return true } }
         const origin = one('--origin')
+        const mappedHosts = new Set((resolverRule || '').split(',').map(rule => rule.trim().split(/\s+/))
+            .filter(parts => parts[0] === 'MAP' && parts[1]).map(parts => parts[1].toLowerCase()))
+        const isForeignHost = value => { try {
+            const parsed = new URL(value)
+            const scheme = { 'ws:': 'http:', 'wss:': 'https:' }[parsed.protocol] || parsed.protocol
+            if (!['http:', 'https:'].includes(scheme) || new URL(scheme + '//' + parsed.host).origin === origin) return false
+            const hostname = parsed.hostname
+            return hostname === 'localhost' || hostname.endsWith('.localhost') || /^127\./.test(hostname) || hostname === '0.0.0.0'
+                || hostname === '[::1]' || hostname.startsWith('[::ffff:7f') || mappedHosts.has(hostname)
+        } catch { return true } }
         let mainNavigationAttempts = 0
         await context.route('**/*', async (route, request) => {
-            if (isControlAuthority(request.url())) return route.abort('blockedbyclient')
+            if (isControlAuthority(request.url()) || isForeignHost(request.url())) return route.abort('blockedbyclient')
             const frame = request.frame()
             const mainNavigation = request.isNavigationRequest() && page && frame === page.mainFrame()
             if (request.isNavigationRequest() && !mainNavigation
@@ -74,7 +88,7 @@ async function main() {
         })
         if (typeof context.routeWebSocket !== 'function') throw new Error('browser module lacks WebSocket routing')
         await context.routeWebSocket(() => true, webSocket => {
-            if (isControlAuthority(webSocket.url())) return webSocket.close({ code: 1008, reason: 'browser control authority blocked' })
+            if (isControlAuthority(webSocket.url()) || isForeignHost(webSocket.url())) return webSocket.close({ code: 1008, reason: 'blocked by the cockpit browser operation' })
             webSocket.connectToServer()
         })
         phase = 'navigation'

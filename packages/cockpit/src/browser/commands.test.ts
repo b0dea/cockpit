@@ -40,10 +40,12 @@ const browser = () => ({
         goto: async url => { log(['goto', url]); ${input.mode === 'goto' ? "throw new Error('synthetic goto failure');"
           : input.mode === 'refused' ? "throw new Error('page.goto: net::ERR_SOCKS_CONNECTION_FAILED at ' + url + ' synthetic page text');" : 'current = url'};
           if (${JSON.stringify(input.mode)} === 'control-plane-attempts') {
-            for (const target of ['http://localhost:3001/control', 'http://127.0.0.1:3000/control', 'http://0.0.0.0:3000/control', 'http://loopback-alias.example.invalid:3000/control', 'https://cdn.example.invalid/asset.js']) await contextHandler({
+            for (const target of ['http://localhost:3001/control', 'http://127.0.0.1:3000/control', 'http://0.0.0.0:3000/control', 'http://loopback-alias.example.invalid:3000/control', 'https://cdn.example.invalid/asset.js',
+              'http://127.0.0.1:5432/private', 'http://api.localhost:4000/data', 'http://[::1]:8080/private', 'http://app.localhost:4000/asset.js', 'data:text/plain,inline']) await contextHandler({
               abort: async () => log(['blocked-http', target]), continue: async () => log(['network', target])
             }, { url: () => target, isNavigationRequest: () => false, frame: () => ({}) })
-            for (const target of ['ws://localhost:3001/control', 'ws://127.0.0.1:3000/control', 'ws://[::ffff:127.0.0.1]:3000/control', 'ws://loopback-alias.example.invalid:3000/control', 'wss://cdn.example.invalid/socket']) await webSocketHandler({
+            for (const target of ['ws://localhost:3001/control', 'ws://127.0.0.1:3000/control', 'ws://[::ffff:127.0.0.1]:3000/control', 'ws://loopback-alias.example.invalid:3000/control', 'wss://cdn.example.invalid/socket',
+              'ws://localhost:6000/socket', 'ws://app.localhost:4000/live']) await webSocketHandler({
               url: () => target, close: async () => log(['blocked-ws', target]), connectToServer: () => log(['network-ws', target])
             })
           }
@@ -357,7 +359,7 @@ describe('browser driving commands', () => {
         expect(await calls(popup.logPath)).not.toContainEqual(['blocked-child-frame', 'https://cdn.example.invalid/frame'])
     })
 
-    it('blocks browser control-plane HTTP and WebSocket traffic while retaining external application traffic', async () => {
+    it('blocks browser control-plane and other host traffic while retaining application and external traffic', async () => {
         const attempted = await fixture({ mode: 'control-plane-attempts' })
         await expect(executeBrowserCommand({ runtime: attempted.runtime, client: attempted.client,
             policy: attempted.policy, kind: 'drive' })).resolves.toMatchObject({ kind: 'complete' })
@@ -376,6 +378,20 @@ describe('browser driving commands', () => {
         expect(observed).not.toContainEqual(['network-ws', 'ws://127.0.0.1:3000/control'])
         expect(observed).toContainEqual(['network', 'https://cdn.example.invalid/asset.js'])
         expect(observed).toContainEqual(['network-ws', 'wss://cdn.example.invalid/socket'])
+
+        // Another loopback origin is the host, through the runner's tunnel or directly for a local
+        // browser, and the operation was given only the application's origin on it.
+        const local = await fixture({ mode: 'control-plane-attempts', local: true })
+        await expect(executeBrowserCommand({ runtime: local.runtime, client: local.client,
+            policy: local.policy, kind: 'drive' })).resolves.toMatchObject({ kind: 'complete' })
+        for (const host of [observed, await calls(local.logPath)]) {
+            for (const target of ['http://127.0.0.1:5432/private', 'http://api.localhost:4000/data', 'http://[::1]:8080/private']) {
+                expect(host).toContainEqual(['blocked-http', target]); expect(host).not.toContainEqual(['network', target])
+            }
+            expect(host).toContainEqual(['blocked-ws', 'ws://localhost:6000/socket'])
+            for (const target of ['http://app.localhost:4000/asset.js', 'data:text/plain,inline']) expect(host).toContainEqual(['network', target])
+            expect(host).toContainEqual(['network-ws', 'ws://app.localhost:4000/live'])
+        }
     })
 
     it('follows same-origin redirects and reports the validated terminal response URL', async () => {
