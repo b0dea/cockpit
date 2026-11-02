@@ -13,6 +13,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/schema.ts',
     exports: [
         'UNCONFIRMABLE_ANSWERS',
+        'TestingName',
         'Mount',
         'Acquire',
         'AddressingPosture',
@@ -990,7 +991,7 @@ export const Browser = z.object({
     }
 })
 
-const TestingName = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
+export const TestingName = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const TestingCommand = z.array(z.string().min(1).max(4096).refine((value) => !/[\x00-\x1f\x7f]/.test(value))).min(1).max(128)
 // Stock runners reject an unknown option, so a selection reaches a stage only through arguments the
 // stage declares in its tool's own spelling, such as ["-t", "{value}"] for vitest or ["-k", "{value}"] for pytest.

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { deriveInferredFacts } from './derive.js'
-import { GeneratedService, Sibling } from '../schema.js'
+import { GeneratedService, Sibling, Testing } from '../schema.js'
 
 const scratch: string[] = []
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -195,7 +195,7 @@ describe('inferred interview answers', () => {
             '    volumes: ["./api:/app", "cache:/cache"]',
             '  web:',
             '    image: synthetic.invalid/web:1',
-            '    ports: ["${WEB_HOST_PORT}:80"]',
+            '    ports: ["${WEB_HOST_PORT}:80", "8080:8080", { target: 81, published: 8081 }, "9000"]',
             'volumes: { cache: {} }', ''].join('\n') })
         const root = join(parent, 'shop')
         const { facts, skipped } = await deriveInferredFacts({ root, repositories: [{ slug: 'shop', path: '.' }] })
@@ -206,6 +206,19 @@ describe('inferred interview answers', () => {
             provenance: expect.objectContaining({ kind: 'inferred', source: 'compose.yml' }) })
         expect(skipped).toContainEqual({ source: 'compose.yml',
             reason: expect.stringContaining('publishes a host port from ${WEB_HOST_PORT} with no default') })
+        // A literal host port is the same port in every stack; a container-only port gets an ephemeral one.
+        expect(skipped.filter(row => row.reason.includes('not read from a variable')).map(row => row.reason.split(' that ')[0])).toEqual([
+            'publishes host port 8080', 'publishes host port 8081'])
+
+        // Bases read from several Compose files name each file and the variables it publishes.
+        const several = estate({ 'api/compose.yml': 'services:\n  api:\n    ports: ["${API_PORT:-3000}:3000", "${DB_PORT:-5432}:5432"]\n',
+            'web/compose.yml': 'services:\n  web:\n    ports: ["${WEB_PORT:-4000}:80", "${API_PORT:-3000}:3000", "${DB_PORT:-5433}:5432"]\n' })
+        const merged = await deriveInferredFacts({ root: several, repositories: [{ slug: 'api', path: 'api' }, { slug: 'web', path: 'web' }] })
+        expect(byTarget(merged.facts, 'ports.bases')).toMatchObject({ value: { API_PORT: 3000, WEB_PORT: 4000 },
+            provenance: { source: 'api/compose.yml, web/compose.yml',
+                reason: expect.stringMatching(/^api\/compose\.yml publishes API_PORT; web\/compose\.yml publishes API_PORT, WEB_PORT from variables/) } })
+        expect(merged.skipped).toContainEqual({ source: 'api/compose.yml, web/compose.yml',
+            reason: expect.stringContaining('publishes ${DB_PORT} with different defaults') })
 
         // Binding only a named volume, or a directory outside the repository, does not mount it.
         const unmounted = estate({ 'shop/compose.yml': 'services:\n  db:\n    image: synthetic.invalid/db:1\n    volumes: ["data:/var/lib/db", "../elsewhere:/x"]\n' })
@@ -238,10 +251,10 @@ describe('inferred interview answers', () => {
     it('proposes a test script as both gates, run by the lockfile package manager from the cockpit root', async () => {
         const root = estate({ 'api/package.json': JSON.stringify({ scripts: { test: 'vitest run', 'test:e2e': 'playwright test' } }), 'api/pnpm-lock.yaml': '' })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
-        const stage = { id: 'api-test', command: ['sh', '-c', 'cd api && exec pnpm test'], requires_stack: false }
+        const stage = { id: 'test-api', command: ['sh', '-c', 'cd api && exec pnpm test'], requires_stack: false }
         expect(byTarget(facts, 'testing.api')).toEqual({ fields: ['testing'], target: 'testing.api', value: { stages: [stage], gates: [
-            { id: 'api-targeted', tier: 'targeted', stages: ['api-test'], changes: 'Isolated behavior in api' },
-            { id: 'api-full', tier: 'full', stages: ['api-test'], changes: 'Shared or cross-system behavior in api' },
+            { id: 'targeted-api', tier: 'targeted', stages: ['test-api'], changes: 'Isolated behavior in api' },
+            { id: 'full-api', tier: 'full', stages: ['test-api'], changes: 'Shared or cross-system behavior in api' },
         ] }, provenance: { kind: 'inferred', source: 'api/package.json', reason: expect.stringMatching(
             /pnpm-lock\.yaml selects pnpm.*targeted gate runs the same command.*test:e2e are not proposed.*requires_stack is false/) } })
         // The same lockfile proposes the node toolchain, naming the install policy row setup then needs.
@@ -254,11 +267,25 @@ describe('inferred interview answers', () => {
         const root = estate({ 'api/nx.json': '{}', 'api/package.json': JSON.stringify({ scripts: { test: 'nx run-many -t test' } }) })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
         expect(byTarget(facts, 'testing.api')).toMatchObject({ value: {
-            stages: [{ id: 'api-affected', command: ['sh', '-c', 'cd api && exec npx --no nx affected -t test'] },
-                { id: 'api-test', command: ['sh', '-c', 'cd api && exec npx --no nx run-many -t test'] }],
-            gates: [{ id: 'api-targeted', stages: ['api-affected'], changes: 'Isolated behavior in api; Nx selects the affected tests' },
-                { id: 'api-full', stages: ['api-test'] }],
+            stages: [{ id: 'affected-api', command: ['sh', '-c', 'cd api && exec npx --no nx affected -t test'] },
+                { id: 'test-api', command: ['sh', '-c', 'cd api && exec npx --no nx run-many -t test'] }],
+            gates: [{ id: 'targeted-api', stages: ['affected-api'], changes: 'Isolated behavior in api; Nx selects the affected tests' },
+                { id: 'full-api', stages: ['test-api'] }],
         }, provenance: { source: 'api/nx.json', reason: expect.stringContaining('defaultBase') } })
+    })
+
+    // Sibling slugs may start with a digit and run long; [testing] ids may not, so a proposal the
+    // schema would reject after acceptance is never made.
+    it('proposes only [testing] ids the schema accepts, and says why when a slug cannot form one', async () => {
+        const long = `a${'b'.repeat(59)}`
+        const root = estate({ '3d-viewer/Makefile': 'test:\n\ttrue\n', [`${long}/Makefile`]: 'test:\n\ttrue\n' })
+        const { facts, skipped } = await deriveInferredFacts({ root, repositories: [{ slug: '3d-viewer', path: '3d-viewer' }, { slug: long, path: long }] })
+        const proposed = byTarget(facts, 'testing.3d-viewer')?.value as { stages: unknown[]; gates: unknown[] }
+        expect(Testing.safeParse({ ...proposed, native_hooks: {} }).success).toBe(true)
+        expect(proposed.gates).toMatchObject([{ id: 'targeted-3d-viewer', stages: ['test-3d-viewer'] }, { id: 'full-3d-viewer' }])
+        expect(byTarget(facts, `testing.${long}`)).toBeUndefined()
+        expect(skipped).toContainEqual({ source: `${long}/Makefile`, reason: expect.stringMatching(
+            new RegExp(`^Makefile has a test entry point, but the \\[testing\\] id test-${long} formed from the slug ${long} is not .* at most 64 characters`)) })
     })
 
     it('proposes no gate and names what it looked for when a repository has no test entry point', async () => {

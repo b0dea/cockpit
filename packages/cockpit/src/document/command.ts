@@ -716,7 +716,7 @@ function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined,
             }]
             : []),
         ...(inferredValue(inference, 'ports.bases') ? []
-            : [{ slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map and no Compose file at the cockpit root publishes one', blocking: true }]),
+            : [{ slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map and no Compose file at the cockpit root publishes a host port from a variable with a default', blocking: true }]),
         // A Compose file whose host ports cannot all be read leaves bases that check would refuse.
         ...(inference?.skipped ?? []).filter(row => (COMPOSE_NAMES as readonly string[]).includes(row.source))
             .map(row => ({ slug: 'ports', field: 'bases', why: `${row.source} ${row.reason}`, blocking: true })),

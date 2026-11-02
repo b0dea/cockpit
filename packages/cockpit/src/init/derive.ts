@@ -13,7 +13,7 @@ import { readBoundedInput } from '../config/load.js'
 import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
 import { initCommand } from '../fix-catalogue.js'
-import { deriveSiblingVariable } from '../schema.js'
+import { deriveSiblingVariable, TestingName } from '../schema.js'
 
 export const mechanism = {
     id: 'init-inference',
@@ -315,11 +315,11 @@ function composeFacts(
     root: string,
     variables: Readonly<Record<string, string>>,
     skipped: SkippedInference[],
-): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, number>; basesSource?: string }> {
+): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, Readonly<{ base: number; sources: readonly string[] }>> }> {
     const binds: { source: string; path: string }[] = []
-    const bases = new Map<string, number>()
+    // Each base keeps every file that publishes it, so the proposal names where each value came from.
+    const bases = new Map<string, { base: number; sources: string[] }>()
     const conflicting = new Set<string>()
-    let basesSource: string | undefined
     for (const { source, document } of files) {
         const services = (document as { services?: unknown } | null)?.services
         if (!services || typeof services !== 'object' || Array.isArray(services)) continue
@@ -337,25 +337,31 @@ function composeFacts(
                 const segments = typeof port === 'string' ? splitComposeShort(port) : undefined
                 const published = segments && segments.length >= 2 ? segments[segments.length - 2]
                     : port && typeof port === 'object' ? (port as { published?: unknown }).published : undefined
+                // A port with no host side is published on an ephemeral host port, which never collides.
+                if (published === undefined || published === '') continue
                 const match = typeof published === 'string' ? PORT_VARIABLE.exec(published) : null
-                if (!match) continue
+                if (!match) {
+                    skipped.push({ source, reason: `publishes host port ${String(published)} that is not read from a variable with a default, so every stack would bind the same host port and check refuses it; publish it as \${NAME:-<port>} and declare NAME under [ports.bases]` })
+                    continue
+                }
                 const name = (match[1] ?? match[4])!
                 const base = match[3] === undefined ? undefined : Number(match[3])
                 if (base === undefined || base < 1 || base > 65_535) {
                     skipped.push({ source, reason: `publishes a host port from \${${name}} with no default, so its base port cannot be read; declare ${name} under [ports.bases]` })
                     continue
                 }
-                if (bases.has(name) && bases.get(name) !== base) conflicting.add(name)
-                bases.set(name, base)
-                basesSource ??= source
+                const known = bases.get(name)
+                if (known && known.base !== base) conflicting.add(name)
+                if (!known) bases.set(name, { base, sources: [source] })
+                else if (!known.sources.includes(source)) known.sources.push(source)
             }
         }
     }
     for (const name of conflicting) {
+        skipped.push({ source: bases.get(name)!.sources.join(', '), reason: `publishes \${${name}} with different defaults, so its base port cannot be read; declare ${name} under [ports.bases]` })
         bases.delete(name)
-        skipped.push({ source: basesSource!, reason: `publishes \${${name}} with different defaults, so its base port cannot be read; declare ${name} under [ports.bases]` })
     }
-    return Object.freeze({ binds: Object.freeze(binds), bases, ...(basesSource === undefined ? {} : { basesSource }) })
+    return Object.freeze({ binds: Object.freeze(binds), bases })
 }
 
 async function detectTestEntry(
@@ -432,16 +438,20 @@ function carriesCredentials(url: string): boolean {
     return at >= 0 && url.slice(0, at).includes(':')
 }
 
+// The role leads, so an id starts with a letter even where a sibling slug starts with a digit.
+const TESTING_ROLES = ['test', 'affected', 'targeted', 'full'] as const
+const testingId = (role: typeof TESTING_ROLES[number], slug: string) => `${role}-${slug}`
+
 /** The [testing] proposal for one repository: a full gate, and a targeted gate on the tool's affected run when it has one. */
 function testingProposal(slug: string, entry: TestEntry, directory: string): Readonly<{ stages: unknown[]; gates: unknown[] }> {
-    const full = { id: `${slug}-test`, command: stageCommand(directory, entry.full), requires_stack: false }
-    const affected = entry.affected ? { id: `${slug}-affected`, command: stageCommand(directory, entry.affected), requires_stack: false } : undefined
+    const full = { id: testingId('test', slug), command: stageCommand(directory, entry.full), requires_stack: false }
+    const affected = entry.affected ? { id: testingId('affected', slug), command: stageCommand(directory, entry.affected), requires_stack: false } : undefined
     return {
         stages: affected ? [affected, full] : [full],
         gates: [
-            { id: `${slug}-targeted`, tier: 'targeted', stages: [(affected ?? full).id],
+            { id: testingId('targeted', slug), tier: 'targeted', stages: [(affected ?? full).id],
                 changes: affected ? `Isolated behavior in ${slug}; ${entry.tool} selects the affected tests` : `Isolated behavior in ${slug}` },
-            { id: `${slug}-full`, tier: 'full', stages: [full.id], changes: `Shared or cross-system behavior in ${slug}` },
+            { id: testingId('full', slug), tier: 'full', stages: [full.id], changes: `Shared or cross-system behavior in ${slug}` },
         ],
     }
 }
@@ -515,7 +525,10 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             const readable = (await inspectDirectory(input.root, directory.path)).kind === 'complete'
             const node = readable ? await nodeLockfile(present) : undefined
             const entry = readable ? await detectTestEntry(readHere, present, node) : undefined
-            if (entry) facts.push({ fields: ['testing'], target: `testing.${slug}`, value: testingProposal(slug, entry, relative(directory.path)),
+            const invalidId = entry === undefined ? undefined : TESTING_ROLES.map(role => testingId(role, slug)).find(id => !TestingName.safeParse(id).success)
+            if (entry && invalidId) skipped.push({ source: relative(directory.path, entry.file),
+                reason: `${entry.file} has a test entry point, but the [testing] id ${invalidId} formed from the slug ${slug} is not lowercase letters, digits and hyphens of at most 64 characters starting with a letter, so no gate is proposed for ${slug}; declare its stages and gates under [testing] with ids of that form` })
+            else if (entry) facts.push({ fields: ['testing'], target: `testing.${slug}`, value: testingProposal(slug, entry, relative(directory.path)),
                 provenance: { kind: 'inferred', source: relative(directory.path, entry.file),
                     reason: `${entry.reason}; requires_stack is false because nothing on disk says these tests need the running stack` } })
             else if (readable) skipped.push({ source: relative(directory.path),
@@ -680,9 +693,13 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                     ? `${placed}; acquire "auto" with its origin remote, so setup clones it where a checkout is absent; add its purpose`
                     : `${placed}; acquire "none" because ${origin.reason}; add its purpose` } })
     }
-    if (compose.bases.size > 0) facts.push({ fields: ['ports.bases'], target: 'ports.bases', value: Object.fromEntries(compose.bases),
-        provenance: { kind: 'inferred', source: compose.basesSource!,
-            reason: 'the Compose file publishes these host ports from variables with these defaults; check requires every published host port to come from a [ports.bases] variable, so each stack leases its own' } })
+    if (compose.bases.size > 0) {
+        const sources = [...new Set([...compose.bases.values()].flatMap(row => row.sources))]
+        const publishers = sources.map(source => `${source} publishes ${[...compose.bases].filter(([, row]) => row.sources.includes(source)).map(([name]) => name).join(', ')}`)
+        facts.push({ fields: ['ports.bases'], target: 'ports.bases', value: Object.fromEntries([...compose.bases].map(([name, row]) => [name, row.base])),
+            provenance: { kind: 'inferred', source: sources.join(', '),
+                reason: `${publishers.join('; ')} from variables with these defaults; check requires every published host port to come from a [ports.bases] variable, so each stack leases its own` } })
+    }
     // compose-first resolves every relative path against the first listed file's directory, so one
     // product Compose file can be run in place but several cannot be listed together.
     if (composeFiles.length === 1) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: [composeFiles[0]!.source],

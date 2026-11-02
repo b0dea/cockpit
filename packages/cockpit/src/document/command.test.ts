@@ -733,16 +733,24 @@ describe('document round trip inventory', () => {
     it('reads the port map and Compose file a registry cockpit runs from its own root', async () => {
         const { input } = sourceInput('X_SIBLINGS=(\n  "web|web|web|app|WEB_DIR|Storefront"\n)\n', 'root')
         writeFileSync(join(input.root!, 'compose.yml'),
-            'services:\n  web:\n    build: ${WEB_DIR}\n    ports: ["${WEB_HOST_PORT:-3000}:3000", "${ADMIN_HOST_PORT}:9000"]\n')
+            'services:\n  web:\n    build: ${WEB_DIR}\n    ports: ["${WEB_HOST_PORT:-3000}:3000", "${ADMIN_HOST_PORT}:9000", "8080:80"]\n')
         const outcome = await documentCommand(input)
         const draft = parseToml(outcome.artifact!) as { ports: Record<string, unknown>; environment: Record<string, unknown> }
         expect(draft.ports.bases).toEqual({ WEB_HOST_PORT: 3000 })
         expect(draft.environment.compose_files).toEqual(['compose.yml'])
-        expect(outcome.artifact).toContain('# [inferred] ports.bases = {"WEB_HOST_PORT":3000}: compose.yml: the Compose file publishes')
+        expect(outcome.artifact).toContain('# [inferred] ports.bases = {"WEB_HOST_PORT":3000}: compose.yml: compose.yml publishes WEB_HOST_PORT from variables')
         expect(outcome.artifact).toContain('# [inferred] environment.compose_files = ["compose.yml"]: compose.yml: a Compose file already exists')
-        // The variable with no default is still a required gap; the map itself is no longer one.
+        // The variable with no default and the literal host port are still required gaps; the map itself is no longer one.
         expect(outcome.diagnostics.filter(item => item.code === 'DOCUMENT_GAP' && item.target === 'ports.bases')).toEqual([
-            expect.objectContaining({ severity: 'error', message: expect.stringMatching(/^compose\.yml publishes a host port from \$\{ADMIN_HOST_PORT\} with no default/) })])
+            expect.objectContaining({ severity: 'error', message: expect.stringMatching(/^compose\.yml publishes a host port from \$\{ADMIN_HOST_PORT\} with no default/) }),
+            expect.objectContaining({ severity: 'error', message: expect.stringMatching(/^compose\.yml publishes host port 8080 that is not read from a variable/) })])
+
+        // A Compose file that publishes only literal host ports is named as the reason, not passed over as publishing none.
+        writeFileSync(join(input.root!, 'compose.yml'), 'services:\n  web:\n    build: ${WEB_DIR}\n    ports: ["8080:80"]\n')
+        const literal = await documentCommand(input)
+        expect(literal.diagnostics.filter(item => item.code === 'DOCUMENT_GAP' && item.target === 'ports.bases').map(item => item.message)).toEqual([
+            expect.stringContaining('no Compose file at the cockpit root publishes a host port from a variable with a default'),
+            expect.stringMatching(/^compose\.yml publishes host port 8080 that is not read from a variable/)])
     })
 
     const dialects = [
