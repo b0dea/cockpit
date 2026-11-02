@@ -547,8 +547,13 @@ async function executeBounded(root: string, argv: readonly string[], directories
     if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the 64 KiB probe capture` }
     // A kept tail can start inside a multi-byte character, so only a declared run decodes leniently.
     const decode = (bytes: Buffer) => new TextDecoder('utf-8', { fatal: mode.kind === 'probe' }).decode(bytes)
+    // A tail cut inside a character decodes its leading continuation bytes to U+FFFD; they carry nothing.
+    const tail = (bytes: Buffer, cut: boolean) => { const text = decode(bytes); return cut ? text.replace(/^\uFFFD+/, '') : text }
     let stdout: string; let stderr: string
-    try { stdout = decode(result.stdout); stderr = decode(result.stderr) }
+    try {
+        stdout = tail(result.stdout, result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes)
+        stderr = tail(result.stderr, result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes)
+    }
     catch (error) { return { kind: 'error', reason: `${argv[0]} returned invalid UTF-8: ${error instanceof Error ? error.message : String(error)}` } }
     return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout, stderr, truncated,
         observedBytes: result.execution.stdoutObservedBytes + result.execution.stderrObservedBytes })
@@ -1659,7 +1664,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES)
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.stderr) return undefined
         const rows = observed.stdout.trim().split('\n').filter(Boolean)
-        if (rows.length !== 1 || !/^\d{1,12}$/.test(rows[0]!)) return undefined
+        if (!rows.length || !/^\d{1,12}$/.test(rows[0]!)) return undefined
         const seconds = Number(rows[0]); const milliseconds = seconds * 1_000
         return Number.isSafeInteger(milliseconds) ? milliseconds : undefined
     }

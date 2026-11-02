@@ -534,9 +534,11 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(readdir(join(fixture.root, '.cockpit/actors'))).resolves.toEqual([])
 
         await writeFile(join(fixture.root, '.native-mode'), 'complete')
-        await writeFile(join(fixture.root, '.completion-artifact-race'), 'armed')
+        const armedManifest = JSON.parse(await readFile(join(fixture.root, '.cockpit/work-orders/WO-003/current.json'), 'utf8')) as { files: Record<string, string> }
+        await writeFile(join(fixture.root, '.completion-artifact-race'), armedManifest.files['grade.json'] ?? 'none')
         const race = runWorkApplication({ operation: 'work-grade', workOrderId: 'WO-003' }, fixture.composition)
-        await expect(race).resolves.toMatchObject({ kind: 'refusal' })
+        // A subject that changes while completion publishes is a refusal, not an unmet grade.
+        await expect(race).resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('Completion failed') })
         await expect(readFile(join(fixture.root, '.completion-observations'), 'utf8')).resolves.toBe('2')
         await expect(readFile(join(fixture.root, 'src/cache.ts'), 'utf8')).resolves.toContain('changed-at-completion')
         const thirdManifest = JSON.parse(await readFile(join(fixture.root, '.cockpit/work-orders/WO-003/current.json'), 'utf8')) as { generation: number }

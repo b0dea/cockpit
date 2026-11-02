@@ -35,7 +35,8 @@ export interface CompletionDependencies extends GradingDependencies {
 }
 export type CompletionResult =
     | Readonly<{ completed: true; grade: WorkOrderGrade; record: CompletionRecord }>
-    | Readonly<{ completed: false; reason: string; grade?: WorkOrderGrade }>
+    // unmet: the grade was issued and kept, and at least one criterion did not pass; any other failure is a refusal.
+    | Readonly<{ completed: false; reason: string; grade?: WorkOrderGrade; unmet?: true }>
 
 export async function completeWorkOrder(input: GradingInput, dependencies: CompletionDependencies): Promise<CompletionResult> {
     input = Object.freeze({ ...input })
@@ -71,7 +72,7 @@ export async function completeWorkOrder(input: GradingInput, dependencies: Compl
                 const bytes = JSON.stringify({ grade: verifiedGrade, reviews })
                 await writer.writeGrade(bytes)
                 if (await writer.readGrade() !== bytes) return { completed: false, reason: 'The persisted grade does not match current grading and review evidence', grade: verifiedGrade }
-                return { completed: false, grade: verifiedGrade, reason: `Grade did not pass: ${unmet.map(criterion =>
+                return { completed: false, unmet: true, grade: verifiedGrade, reason: `Grade did not pass: ${unmet.map(criterion =>
                     `${criterion.criterion} ${criterion.outcome}${criterion.reasons.length ? ` (${criterion.reasons.join('; ')})` : ''}`).join('; ')}` }
             }
             const currency = await checkGradeCurrency(verifiedGrade, dependencies)

@@ -156,8 +156,9 @@ if (argv[0] === 'status' && argv.includes('--branch') && fs.existsSync('.reposit
   process.stdout.write(result.stdout.replace(/# branch\\.oid [a-f0-9]+\\0/, '# branch.oid ' + 'a'.repeat(41) + '\\0')); process.exit(0)
 }
 if (fs.existsSync('.completion-artifact-race') && argv[0] === 'status' && argv.includes('--porcelain=v2')) {
+  // Armed with the grade digest current when the race starts, so only the grade this run writes counts.
   const current = JSON.parse(fs.readFileSync('.cockpit/work-orders/WO-003/current.json', 'utf8'))
-  if (Object.hasOwn(current.files, 'grade.json')) {
+  if (Object.hasOwn(current.files, 'grade.json') && current.files['grade.json'] !== fs.readFileSync('.completion-artifact-race', 'utf8')) {
     const count = fs.existsSync('.completion-observations') ? Number(fs.readFileSync('.completion-observations', 'utf8')) + 1 : 1
     fs.writeFileSync('.completion-observations', String(count))
     if (count === 2) { fs.writeFileSync('src/cache.ts', "export function refresh() { return 'changed-at-completion' }\\n"); fs.unlinkSync('.completion-artifact-race') }

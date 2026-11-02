@@ -2186,7 +2186,8 @@ describe('work command routing', () => {
         expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-accept', workOrderId: 'WO-001' } })
         expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
         expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
-        expect(stdout).toBe('')
+        // The person who accepted sees what was recorded, not silence.
+        expect(stdout).toBe('accepted: true\n')
         expect(humanStderr(stderr)).toBe('')
         begin.mockClear(); decide.mockClear(); confirm.mockClear()
         expect(await runCli(['work-accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)

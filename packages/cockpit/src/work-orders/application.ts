@@ -181,7 +181,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         if (operation === 'work-grade') {
             const prepared = await composition.grading(captured.workOrderId); const result = await completeWorkOrder(prepared.input, prepared.dependencies)
             if (result.completed) return complete(operation, result)
-            if (!result.grade) return refusal(operation, result.reason)
+            if (!result.unmet || !result.grade) return refusal(operation, result.reason)
             const grade = result.grade
             return unsatisfied(operation, { workOrderId: grade.workOrderId, runId: grade.runId,
                 criteria: grade.criteria.map(({ criterion, outcome, reasons }) => ({ criterion, outcome, reasons })),

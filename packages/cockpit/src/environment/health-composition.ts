@@ -1,4 +1,4 @@
-import { lstat } from 'node:fs/promises'
+import { lstat, realpath } from 'node:fs/promises'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -616,8 +616,15 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([])
         throw error
     }
+    // work-review searches only canonical PATH directories, so doctor does too.
     for (const directory of (env.PATH ?? '').split(delimiter)) {
-        if (directory && isAbsolute(directory) && (await resolveExecutablePath(join(directory, 'codex'))).state === 'available') return Object.freeze([])
+        if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
+        let canonical: string
+        try { canonical = await realpath(directory) } catch (error) {
+            if (['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) continue
+            throw error
+        }
+        if (canonical === directory && (await resolveExecutablePath(join(directory, 'codex'))).state === 'available') return Object.freeze([])
     }
     return Object.freeze([Object.freeze({
         severity: 'warning' as const,
