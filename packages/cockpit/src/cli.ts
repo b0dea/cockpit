@@ -53,6 +53,7 @@ import { isProcessStart, observeProcessStart, processHost, type HolderProcess } 
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
+import { runToolChange, type ToolChangeInput } from './environment/tool-registration.js'
 import {
     issueSetupRunContext,
     setupEnvironment,
@@ -174,6 +175,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     reset: ResetCommandInput
     runtime: Readonly<{ configPath: string; image: string }>
     sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
+    tool: ToolChangeInput
     setup: SetupCommandInput
     selftest: Readonly<{
         configPath: string
@@ -690,6 +692,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
             : runSiblingRemove({ ...request.input, env }),
+        tool: runToolChange,
         logs: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
@@ -1125,6 +1128,16 @@ async function decodeRequest(
         } } }
     }
 
+    if (handler === 'tool') {
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean }
+        const [operation, tool, ...extra] = parsed.positionals
+        if ((operation !== 'add' && operation !== 'remove') || !tool || extra.length > 0) {
+            return usageOutcome('CLI_USAGE_INVALID', `tool requires an operation and one tool: npx --no cockpit tool add|remove <${SURFACE_TARGETS.join('|')}> --config <your cockpit.toml> [--dry-run]`)
+        }
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        return { handler, input: { operation, configPath: values.config, tool, dryRun: values['dry-run'] === true } }
+    }
+
     const values = parsed.values as {
         registry?: string
         'siblings-root'?: string
@@ -1268,6 +1281,7 @@ async function dispatchHandler(
     if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
     if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
     if (request.handler === 'sibling') return handlers.sibling?.(request.input) ?? unavailable()
+    if (request.handler === 'tool') return handlers.tool?.(request.input) ?? unavailable()
     return unavailable()
 }
 

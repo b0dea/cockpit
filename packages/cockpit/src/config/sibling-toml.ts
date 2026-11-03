@@ -13,7 +13,7 @@
 export const mechanism = {
     id: 'sibling-toml-edit',
     module: 'packages/cockpit/src/config/sibling-toml.ts',
-    exports: ['locateSiblingTables', 'appendSiblingTable', 'removeSiblingTable', 'recordSiblingRemote', 'siblingTable'],
+    exports: ['scanHeaders', 'locateSiblingTables', 'appendSiblingTable', 'removeSiblingTable', 'recordSiblingRemote', 'siblingTable'],
 } as const
 
 export interface SiblingTableRow {
@@ -65,9 +65,10 @@ function delimiterCount(line: string, delimiter: string): number {
     return line.split(delimiter).length - 1
 }
 
-interface Header { readonly line: number; readonly array: boolean; readonly path: string }
+export interface Header { readonly line: number; readonly array: boolean; readonly path: string }
 
-function scanHeaders(lines: readonly string[]): Header[] {
+/** Every table header outside multi-line strings and open arrays, by zero-based line. */
+export function scanHeaders(lines: readonly string[]): Header[] {
     const headers: Header[] = []
     let multiline: '"""' | "'''" | null = null
     let depth = 0

@@ -35,6 +35,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'setup'
     | 'selftest'
     | 'sibling'
+    | 'tool'
     | 'session'
     | 'sleep'
     | 'sync'
@@ -241,6 +242,21 @@ export const commands: readonly CommandDefinition[] = [
             purpose: { type: 'string' },
             mount: { type: 'string' },
             'instruction-pointer': { type: 'boolean', default: false },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'tool',
+        stage: 'set-up',
+        summary: 'Add or remove an agent tool in cockpit.toml (tool add, tool remove)',
+        usage: `add|remove <${SURFACE_TARGETS.join('|')}> [options]`,
+        handler: 'tool',
+        visibility: 'public',
+        // Classified with sibling add and remove: both rewrite cockpit.toml.
+        ordinary: unavailable('tool add and remove rewrite cockpit.toml'),
+        options: {
+            config: { type: 'string' },
+            'dry-run': { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
     },

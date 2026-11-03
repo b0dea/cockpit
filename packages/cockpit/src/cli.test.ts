@@ -449,6 +449,7 @@ describe('CLI help', () => {
             '  init              Preview, then accept, a first cockpit setup for one agent tool\n' +
             '  setup             Clone or locate the declared sibling repositories and link them\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
+            '  tool              Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
             '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
             '  upgrade           Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +

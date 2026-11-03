@@ -128,7 +128,7 @@ To set cockpit up for your own product, start at [Getting started](docs/getting-
 
 | Stage | Commands |
 |---|---|
-| Set up | `init`, `setup`, `sibling add` / `sibling remove`, `registry-resolve`, `upgrade` |
+| Set up | `init`, `setup`, `sibling add` / `sibling remove`, `tool add` / `tool remove`, `registry-resolve`, `upgrade` |
 | Generate and verify | `sync`, `check`, `selftest` |
 | Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
 | Diagnose | `doctor` |
