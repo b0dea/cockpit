@@ -797,7 +797,7 @@ describe('reset planning', () => {
             expect(await planReset(resetInput(root, {
                 ...declared, confirmationDigest: preview.digest, consent: preview.consent,
                 discovery: await authenticatedDiscovery(root, discovered()), coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'complete', actionAuthority: expect.any(Object), remaining: 0 }))
+            }))).toEqual(expect.objectContaining({ kind: 'complete', actionAuthority: { kind: 'reset-action-authority' }, remaining: 0 }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -867,7 +867,7 @@ describe('reset planning', () => {
                 confirmationDigest: preview.digest, consent: preview.consent, discovery: actionDiscovery, coordinationAddress,
             }))
             expect(accepted).toEqual(expect.objectContaining({
-                kind: 'complete', step: null, actionAuthority: expect.any(Object), remaining: 2,
+                kind: 'complete', step: null, actionAuthority: { kind: 'reset-action-authority' }, remaining: 2,
             }))
             if (accepted.kind !== 'complete') return
             expect(JSON.stringify(accepted)).not.toContain('-rf')
@@ -907,20 +907,27 @@ describe('reset planning', () => {
             await mkdir(join(root, 'generated', 'session'), { recursive: true })
             const previewDiscovery = await authenticatedDiscovery(root, [resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
             const preview = await planReset(resetInput(root, { discovery: previewDiscovery }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            expect(await planReset(resetInput(root, { confirmationDigest: sha('wrong') }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
             const fresh = await authenticatedDiscovery(root, snapshot([
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
             ]).resources)
-            expect(await planReset(resetInput(root, { confirmationDigest: preview.digest, expectedCoordinationRevision: 6, discovery: fresh }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            // Every request carries valid consent and coordination evidence, so each refusal comes
+            // from the one mutated input; the unmutated request is the control that proceeds.
+            const consented = { confirmationDigest: preview.digest, consent: preview.consent, discovery: fresh, coordinationAddress: await writeCoordination(root) }
+            const refusedWith = (code: string, message: string) => ({ kind: 'refusal', diagnostics: [expect.objectContaining({ code, message })] })
+            expect(await planReset(resetInput(root, { ...consented, confirmationDigest: sha('wrong') })))
+                .toEqual(refusedWith('RESET_CONFIRMATION_MISMATCH', 'reset consent does not match the fresh complete preview'))
+            expect(await planReset(resetInput(root, { ...consented, expectedCoordinationRevision: 6 })))
+                .toEqual(refusedWith('RESET_CONFIRMATION_MISMATCH', 'coordination revision does not match the destructive request'))
             const coTenantRecord = stateRecord()
             coTenantRecord.value = {
                 holders: [{ holderId: `holder:${sha('holder')}:session`, checkoutId: `checkout:${sha('checkout')}`, claimedAt: '2026-09-08T00:00:00.000Z' }],
                 lease: { offset: 0, ports: { WEB: 4100 }, released: false, declaration: { step: 100, count: 1, bases: { WEB: 4100 } } },
                 lastReleasedHolder: null,
             }
-            expect(await planReset(resetInput(root, { coordinationRecord: coTenantRecord, confirmationDigest: preview.digest, discovery: fresh }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            expect(await planReset(resetInput(root, { ...consented, coordinationRecord: coTenantRecord })))
+                .toEqual(refusedWith('RESET_CO_TENANT', 'reset requires an exact requester claim and zero co-tenants'))
+            expect(await planReset(resetInput(root, consented))).toEqual(expect.objectContaining({ kind: 'complete' }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -930,12 +937,17 @@ describe('reset planning', () => {
             await mkdir(join(root, 'generated', 'session'), { recursive: true })
             const previewDiscovery = await authenticatedDiscovery(root, [resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
             const preview = await planReset(resetInput(root, { discovery: previewDiscovery }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            expect(await planReset(resetInput(root, {
-                confirmationDigest: preview.digest,
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
+            const fresh = await authenticatedDiscovery(root, previewDiscovery.resources)
+            const consented = resetInput(root, {
+                confirmationDigest: preview.digest, consent: preview.consent, discovery: fresh,
                 coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            })
+            // A copy of an issued discovery, with everything else valid, is not that discovery.
+            expect(await planReset({ ...consented, discovery: { ...fresh } })).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset execution authority is malformed',
+            })] })
+            expect(await planReset(consented)).toEqual(expect.objectContaining({ kind: 'complete' }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -944,19 +956,21 @@ describe('reset planning', () => {
         try {
             const previewDiscovery = await authenticatedDiscovery(root, [resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
             const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: previewDiscovery }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
             const fresh = await authenticatedDiscovery(root, [resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
+            const consented = resetInput(root, {
+                generatedHostPaths: [], confirmationDigest: preview.digest, consent: preview.consent,
+                discovery: fresh, coordinationAddress: await writeCoordination(root),
+            })
             await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: 'unix:///tmp/rebound.sock' })}\n`)
             const reboundSelection = await issuedSelection(root, runtimeByDiscovery.get(fresh)!)
-            expect(await planReset(resetInput(root, {
-                generatedHostPaths: [], confirmationDigest: preview.digest, consent: preview.consent,
-                discovery: fresh, selectionAuthority: reboundSelection, coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
-            expect(await planReset(resetInput(root, {
-                generatedHostPaths: [], confirmationDigest: preview.digest, discovery: fresh,
-                runtimeExecutable: executable('/tmp/other-docker'),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            const consentMismatch = { kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset consent does not match the fresh complete preview',
+            })] }
+            expect(await planReset({ ...consented, selectionAuthority: reboundSelection })).toEqual(consentMismatch)
+            // The same Docker path holding a different binary is a different runtime identity.
+            expect(await planReset({ ...consented, runtimeExecutable: { ...consented.runtimeExecutable, sha256: sha('replaced docker') } })).toEqual(consentMismatch)
+            expect(await planReset(consented)).toEqual(expect.objectContaining({ kind: 'complete' }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -967,15 +981,16 @@ describe('reset planning', () => {
                 resource({ id: 'volume-original', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
             ])
             const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: first }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
             const replacement = await authenticatedDiscovery(root, [
                 resource({ id: 'volume-replacement', name: 'session-data-replaced', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
             ])
             expect(await planReset(resetInput(root, {
-                generatedHostPaths: [], discovery: replacement, confirmationDigest: preview.digest,
+                generatedHostPaths: [], discovery: replacement, confirmationDigest: preview.digest, consent: preview.consent,
                 coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
+            }))).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset consent does not match the fresh complete preview',
+            })] })
 
             const stale = stateRecord()
             stale.updatedAt = '2026-09-07T23:58:00.000Z'
@@ -1302,7 +1317,7 @@ describe('reset planning', () => {
                                 value: { value: { holders: [{ holderId }], drain: { attempt: { status: 'active' } } } } })
                             return
                         }
-                        expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.any(Object), authority: expect.any(Object) })
+                        expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything(), authority: expect.anything() })
                         if (reconciled.kind !== 'complete' || !reconciled.authority || !reconciled.continuation) throw new Error('absent teardown continuation unavailable')
                         const success = freshReclaim.consumeReclaimCompleted(reconciled.authority)
                         if (!success) throw new Error('absent teardown completion unavailable')
@@ -1314,7 +1329,7 @@ describe('reset planning', () => {
                             discovery: post, executable: runtimeByDiscovery.get(post)!, selectionAuthority: selectionByDiscovery.get(post),
                             expectedDiscoveryDigest: preview.discoveryDigest, continuation: reconciled.continuation,
                             coordinationAddress: selected.value.paths.coordination(stackId) })
-                        expect(continued, JSON.stringify(continued)).toMatchObject({ kind: 'complete', actionAuthority: expect.any(Object), noop: false })
+                        expect(continued, JSON.stringify(continued)).toMatchObject({ kind: 'complete', actionAuthority: expect.anything(), noop: false })
                         return
                     }
                     const coldExecution = await freshReclaim.redeemTeardownAction({ actionAuthority: coldPlan.actionAuthority, attempt: coldAttempt.authority })
@@ -1341,7 +1356,7 @@ describe('reset planning', () => {
                 }
                 const postDiscovery = await authenticatedDiscovery(root, usesCaches ? [] : [observedRemaining])
                 const reconciled = reconcileReclaimAction({ authority: execution.authority, outcome, discovery: postDiscovery })
-                if (mode === 'two-action-success') expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.any(Object) })
+                if (mode === 'two-action-success') expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything() })
                 expect(reconciled).toMatchObject({
                     kind: mode === 'remaining-identity-changes' || mode === 'completed-cache-reappears'
                         || mode === 'remaining-cache-is-replaced' ? 'refusal' : 'complete',
@@ -1483,7 +1498,7 @@ describe('reset planning', () => {
                 selectionAuthority: selectionByDiscovery.get(actionDiscovery),
                 coordinationAddress: await writeCoordination(root),
             })
-            expect(accepted).toEqual(expect.objectContaining({ kind: 'complete', step: null, actionAuthority: expect.any(Object) }))
+            expect(accepted).toEqual(expect.objectContaining({ kind: 'complete', step: null, actionAuthority: { kind: 'reset-action-authority' } }))
             if (accepted.kind !== 'complete') return
             expect(JSON.stringify(accepted)).not.toContain('-rf')
         } finally { await rm(root, { recursive: true, force: true }) }
@@ -1671,26 +1686,24 @@ describe('reset planning', () => {
             ])
             const coordinationAddress = await writeCoordination(root)
             const preview = await planReset(resetInput(root, { discovery: firstDiscovery }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
+            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
             const actionDiscovery = await authenticatedDiscovery(root, [
                 resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
             ])
-            const first = await planReset(resetInput(root, {
+            const consented = resetInput(root, {
                 discovery: actionDiscovery, confirmationDigest: preview.digest, consent: preview.consent, coordinationAddress,
-            }))
-            expect(first.kind).toBe('complete')
-            if (first.kind !== 'complete') return
+            })
+            // A receipt the planner never issued is refused even beside valid consent, rather than
+            // ignored; the same request without it is the control that proceeds.
+            expect(await planReset({
+                ...consented, continuation: Object.freeze({ kind: 'reset-continuation', digest: preview.digest }),
+            })).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset continuation receipt is invalid or already consumed',
+            })] })
+            const first = await planReset(consented)
+            expect(first).toEqual(expect.objectContaining({ kind: 'complete', actionAuthority: { kind: 'reset-action-authority' } }))
+            if (first.kind !== 'complete') throw new Error(JSON.stringify(first))
             expect(first.continuation).toBeNull()
-            await rm(target, { recursive: true })
-            const secondDiscovery = await authenticatedDiscovery(root, [
-                resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ])
-            const second = await planReset(resetInput(root, {
-                discovery: secondDiscovery, confirmationDigest: preview.digest, coordinationAddress,
-                continuation: Object.freeze({ kind: 'fabricated-reset-continuation' }),
-            }))
-            expect(second).toEqual(expect.objectContaining({ kind: 'refusal' }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -1869,7 +1882,7 @@ describe('reset planning', () => {
                     expect(failed).toMatchObject({ kind: 'unavailable' })
                     return
                 }
-                expect(failed).toMatchObject({ kind: 'complete', authority: expect.any(Object) })
+                expect(failed).toMatchObject({ kind: 'complete', authority: expect.anything() })
                 if (failed.kind !== 'complete') return
                 const preCommitDiscovery = retryMode
                     ? await authenticatedDiscovery(root, resetVolumes) : undefined
@@ -1978,7 +1991,7 @@ describe('reset planning', () => {
                             if (!absent) throw new Error('absent reset reconciliation unavailable')
                             const post = await authenticatedDiscovery(root, [], freshApi)
                             const completed = await freshReclaim.reconcileAbsentReclaimAction({ authority: absent.authority, discovery: post })
-                            expect(completed).toMatchObject({ kind: 'complete', continuation: null, authority: expect.any(Object) })
+                            expect(completed).toMatchObject({ kind: 'complete', continuation: null, authority: expect.anything() })
                             if (completed.kind !== 'complete' || !completed.authority) throw new Error('absent reset completion unavailable')
                             const success = freshReclaim.consumeReclaimCompleted(completed.authority)
                             if (!success) throw new Error('absent reset publication unavailable')
@@ -2067,8 +2080,8 @@ describe('reset planning', () => {
                 expect(reconciled).toMatchObject({ kind: 'refusal' })
                 return
             }
-            expect(reconciled).toMatchObject({ kind: 'complete', authority: expect.any(Object) })
-            if (mode === 'two-action-success') expect(reconciled).toMatchObject({ continuation: expect.any(Object) })
+            expect(reconciled).toMatchObject({ kind: 'complete', authority: expect.anything() })
+            if (mode === 'two-action-success') expect(reconciled).toMatchObject({ continuation: expect.anything() })
             if (reconciled.kind !== 'complete' || !reconciled.authority) return
             expect(consumeReclaimCompleted({ ...reconciled.authority })).toBeUndefined()
             const reclaimSuccess = consumeReclaimCompleted(reconciled.authority)
