@@ -3,7 +3,6 @@ import { isIP } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { BROWSER_DRIVER_VERSION, browserDriversCompatible, GeneratedHostPath, parseBrowserNetworkExposure } from '../schema.js'
 import { authenticateObservationPostureContext, type PreflightContext } from '../environment/posture-observation.js'
-import { inspectPortLeaseProjection, type PortLeaseProjection } from '../environment/ports.js'
 import { authenticateStateNamespace, type StateNamespace } from '../environment/state.js'
 import { browserHostAllowed, resolveBrowserProxy, type BrowserProxyInput } from './proxy.js'
 import { RefusalError } from '../environment/contract.js'
@@ -39,8 +38,6 @@ export interface BrowserRuntimeInput {
 interface BrowserRuntimeBinding {
     readonly storage: readonly Readonly<{ path: string; identity: string }>[]
     readonly stackId: import('../environment/contract.js').StackId
-    readonly executable: boolean
-    readonly remote?: Readonly<{ configuredEndpoint: string; baseProxyPort: number; hostVariable?: string }>
     readonly coordination?: Readonly<{ namespace: StateNamespace; stackId: import('../environment/contract.js').StackId }>
 }
 
@@ -180,18 +177,11 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         cliArtifactRoot: input.artifacts.cli,
     }
     issuedRuntimes.set(projection, Object.freeze({ storage: Object.freeze(storage), stackId: authority.stackId,
-        executable: connection.kind === 'local-fallback',
-        ...(connection.kind === 'remote' ? { remote: Object.freeze({ configuredEndpoint: connection.endpoint,
-            baseProxyPort: proxy.proxy.port, ...(input.hostVariable ? { hostVariable: input.hostVariable } : {}) }) } : {}),
         ...(namespace ? { coordination: Object.freeze({ namespace, stackId: authority.stackId }) } : {}) }))
     return projection
 }
 
 export type BrowserRuntimeProjection = ReturnType<typeof resolveBrowserRuntime>
-
-export function browserRuntimeExecutionReady(runtime: BrowserRuntimeProjection): boolean {
-    return issuedRuntimes.get(runtime)?.executable === true
-}
 
 function controlAuthority(value: string, defaultPort: number): string {
     const parsed = new URL(value.includes('://') ? value : `http://${value}`)
@@ -210,34 +200,6 @@ export function browserRuntimeControlAuthorities(runtime: BrowserRuntimeProjecti
 export function browserRuntimeControlPorts(runtime: BrowserRuntimeProjection): readonly number[] | undefined {
     if (!issuedRuntimes.has(runtime)) return undefined
     return runtime.connection.kind === 'remote' ? [runtime.server.port] : []
-}
-
-export function bindBrowserRuntimePortLease(runtime: BrowserRuntimeProjection,
-    projection: PortLeaseProjection): BrowserRuntimeProjection | undefined {
-    const binding = issuedRuntimes.get(runtime)
-    const ports = inspectPortLeaseProjection(projection)
-    if (!binding?.remote || binding.executable || !ports || ports.lease.stackId !== binding.stackId) return undefined
-    const candidates = Object.entries(ports.lease.ports)
-        .filter(([, value]) => value - ports.lease.offset === binding.remote!.baseProxyPort)
-    const selected = binding.remote.hostVariable === undefined
-        ? candidates.length === 1 ? candidates[0] : undefined
-        : candidates.find(([name]) => name === binding.remote!.hostVariable)
-    if (!selected || selected[1] - ports.lease.offset !== binding.remote.baseProxyPort) return undefined
-    const configured = new URL(binding.remote.configuredEndpoint)
-    const endpoint = `${configured.protocol}//${configured.hostname}:${selected[1]}${configured.pathname}`
-    const authority = (value: string) => {
-        const parsed = new URL(`http://${value}`)
-        return `${parsed.hostname}:${selected[1]}`
-    }
-    const rebound = {
-        ...runtime,
-        connection: { kind: 'remote' as const, endpoint, launchLocal: false as const },
-        mcp: { ...runtime.mcp, endpoint },
-        proxy: { ...runtime.proxy, port: selected[1],
-            allowedHosts: runtime.proxy.allowedHosts.map(authority) },
-    }
-    issuedRuntimes.set(rebound, Object.freeze({ ...binding, executable: true }))
-    return rebound
 }
 
 export function browserRuntimeCoordination(runtime: BrowserRuntimeProjection): Readonly<{ namespace: StateNamespace; stackId: import('../environment/contract.js').StackId }> | undefined {

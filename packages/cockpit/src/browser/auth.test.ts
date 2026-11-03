@@ -9,7 +9,7 @@ import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { resolveObservationPostures } from '../environment/observations.js'
 import { abortStateTransaction, observeConfiguration, readState, selectStateRoot, transactState } from '../environment/state.js'
 import { executeBrowserCommand, issueBrowserRoutePolicy } from './commands.js'
-import { bindBrowserRuntimePortLease, resolveBrowserRuntime } from './runtime.js'
+import { resolveBrowserRuntime } from './runtime.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { executeBrowserProjectOperation, renderBrowserSurfaces, withBrowserProjectOperationAdmission,
@@ -97,9 +97,8 @@ async function fixture(authentication: 'real' | 'bypassed', mutateState: false |
     if (lease.kind !== 'complete') throw new Error(`browser authentication lease fixture refused: ${JSON.stringify(lease)}`)
     const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
     if (entrypoints.kind !== 'complete') throw new Error('browser authentication entrypoint fixture refused')
-    const projection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-    const runtime = projection && bindBrowserRuntimePortLease(unresolved, projection)
-    if (!runtime) throw new Error('browser authentication runtime lease binding refused')
+    // The lease fixture records the coordination state serialized authentication reads.
+    const runtime = unresolved
     if (runtime.connection.kind !== 'remote') throw new Error('fixture expected a remote browser endpoint')
     const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: root, harnesses: [{ target: 'opencode', version: '1.18.15' }],
         mcp: { name: 'playwright', command: 'docker', args: ['run', '--rm', '-i', image, '--endpoint', runtime.connection.endpoint], cwd: root, envNames: [], source: { kind: 'core', path: 'mcp.jsonc', sha256: digest('synthetic declaration') } }, approved: true,

@@ -13,7 +13,7 @@ import type { RenderedSurfaceFile } from '../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { collectMcpDeclarations, mcpApprovalDigest, type McpDeclaration } from '../surfaces/mcp.js'
 import { isPackageDescendant } from './package-paths.js'
-import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
+import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, type BrowserRuntimeProjection } from './runtime.js'
 import { readBoundedFile } from '../bounded-read.js'
 
 export type BrowserTestPackage = Readonly<{
@@ -153,7 +153,6 @@ function projectPackagePaths(root: string, runtime: BrowserRuntimeProjection): R
     projectManifestPath: string
     packageRoot: string
 }> {
-    if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('browser project package requires an issued executable runtime')
     const declaredManifest = runtime.project.manifest
     const projectManifestPath = resolve(root, declaredManifest ?? 'package.json')
     if (!isPackageDescendant(root, projectManifestPath)) throw new RefusalError('browser project manifest escaped its cockpit root')
@@ -505,7 +504,6 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const data = parsed.data
     const runtime = input.runtime
     assertBrowserStorageStateCurrent(runtime)
-    if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('remote browser surfaces require an authenticated retained port lease')
     const cli = pinnedCli(data.testPackage, runtime, data.cockpitDirectory)
     // `approved` says the caller matched the declared server against [mcp.approved]; this one may carry a bound endpoint.
     const approval = { playwright: mcpApprovalDigest(data.mcp as McpDeclaration, data.cockpitDirectory) }

@@ -2,14 +2,11 @@ import { chmod, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cockpitId, checkoutId, holderId, stackId } from '../environment/identity.js'
+import { cockpitId, checkoutId, stackId } from '../environment/identity.js'
 import { observeConfiguration, selectStateRoot } from '../environment/state.js'
 import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { resolveObservationPostures } from '../environment/observations.js'
-import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
-import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeCoordination, resolveBrowserRuntime, type BrowserRuntimeInput } from './runtime.js'
-import { bindBrowserRuntimePortLease, browserRuntimeExecutionReady } from './runtime.js'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -118,45 +115,11 @@ describe('shared browser runtime', () => {
         ]) await expect(attempt({ ...input, ...candidate })).rejects.toThrow('network exposure')
     })
 
-    it('binds a remote endpoint to the exact retained checkout lease before execution', async () => {
-        const { input, namespace, stack, checkout } = await fixture('port', 'bypassed')
-        const runtime = await attempt({ ...input, hostVariable: 'BROWSER_PROXY' })
-        expect(browserRuntimeExecutionReady(runtime)).toBe(false)
-        const observedAt = new Date().toISOString()
-        const lease = await leasePortFamilyFixture({ namespace, stackId: stack,
-            holderId: holderId({ stackId: stack, checkoutId: checkout, sessionId: 'browser-runtime-fixture' }), checkoutId: checkout,
-            config: { step: 100, count: 2, bases: { BROWSER_PROXY: 3001 } }, now: observedAt, listenerTimeoutMs: 100,
-            listenerEvidence: [
-                { ports: [3001], observation: { state: 'available', value: [3001], observedAt, producer: 'browser-runtime-fixture' } },
-                { ports: [3101], observation: { state: 'available', value: [], observedAt, producer: 'browser-runtime-fixture' } },
-            ],
-        })
-        if (lease.kind !== 'complete') throw new Error('browser runtime lease fixture refused')
-        const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
-        if (entrypoints.kind !== 'complete') throw new Error('browser runtime entrypoint fixture refused')
-        const projection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-        if (!projection) throw new Error('browser runtime projection fixture refused')
-        const bound = bindBrowserRuntimePortLease(runtime, projection)
-        expect(bound).toMatchObject({ connection: { kind: 'remote', endpoint: 'ws://localhost:3101/' },
-            proxy: { port: 3101, allowedHosts: ['localhost:3101'] } })
-        expect(browserRuntimeControlAuthorities(bound!)).toContain('localhost:3101')
-        expect(browserRuntimeExecutionReady(bound!)).toBe(true)
-        expect(bindBrowserRuntimePortLease(runtime, { ...projection } as never)).toBeUndefined()
-
+    it('authorizes the declared endpoint authority and its standard-port spellings', async () => {
         const standard = await fixture('port', 'bypassed')
         const standardRuntime = await attempt({ ...standard.input, endpoint: 'ws://localhost:80/session', hostVariable: 'BROWSER_PROXY',
             proxy: { ...standard.input.proxy, proxyPort: 80, allowedHosts: ['localhost:80', '[::1]:80'] } })
-        const standardObservedAt = new Date().toISOString()
-        const standardLease = await leasePortFamilyFixture({ namespace: standard.namespace, stackId: standard.stack,
-            holderId: holderId({ stackId: standard.stack, checkoutId: standard.checkout, sessionId: 'browser-standard-port-fixture' }), checkoutId: standard.checkout,
-            config: { step: 100, count: 1, bases: { BROWSER_PROXY: 80 } }, now: standardObservedAt, listenerTimeoutMs: 100,
-            listenerEvidence: [{ ports: [80], observation: { state: 'available', value: [], observedAt: standardObservedAt, producer: 'browser-standard-port-fixture' } }],
-        })
-        if (standardLease.kind !== 'complete') throw new Error('browser standard port lease fixture refused')
-        const standardEntrypoints = deriveEntrypoints({ lease: standardLease.lease, declarations: [] })
-        if (standardEntrypoints.kind !== 'complete') throw new Error('browser standard port entrypoint fixture refused')
-        const standardProjection = projectPortLeaseResult({ leaseResult: standardLease, entrypointResult: standardEntrypoints })
-        const standardBound = bindBrowserRuntimePortLease(standardRuntime, standardProjection!)!
+        const standardBound = standardRuntime
         expect(standardBound).toMatchObject({ connection: { endpoint: 'ws://localhost:80/session' },
             proxy: { port: 80, allowedHosts: ['localhost:80', '[::1]:80'] } })
         expect(browserRuntimeControlAuthorities(standardBound)).toEqual(expect.arrayContaining(['localhost:80', '[::1]:80']))

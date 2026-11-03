@@ -13,7 +13,7 @@ import { gradingDocument, gradingSchema, readGradingAnswer, type ChangedFile, ty
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
-import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
+import { type BrowserRuntimeProjection } from '../browser/runtime.js'
 import { measuredBrowserHarnessVersions, observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
 import { isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -866,7 +866,6 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             if (entrypoints.kind !== 'complete') throw new RefusalError('declared application routes are unavailable')
             const runtime = browserAuthority.runtime
             const mcp = browserAuthority.mcp
-            if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('browser runtime authority is unavailable')
             const connection = runtime.connection
             if (connection.kind === 'remote' && mcp.args.filter(argument => argument === connection.endpoint).length !== 1) {
                 throw new RefusalError('browser MCP declaration does not uniquely bind its current endpoint')

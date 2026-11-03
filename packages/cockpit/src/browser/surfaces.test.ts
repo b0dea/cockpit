@@ -11,7 +11,7 @@ import { resolveObservationPostures } from '../environment/observations.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { isPackageDescendant } from './package-paths.js'
-import { bindBrowserRuntimePortLease, resolveBrowserRuntime } from './runtime.js'
+import { resolveBrowserRuntime } from './runtime.js'
 import { executeBrowserProjectOperation, observeBrowserProjectPackage, renderBrowserSurfaces, withBrowserProjectOperationAdmission,
     type BrowserSurfaceInput } from './surfaces.js'
 
@@ -73,9 +73,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
     if (lease.kind !== 'complete') throw new Error('browser surface lease fixture refused')
     const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
     if (entrypoints.kind !== 'complete') throw new Error('browser surface entrypoint fixture refused')
-    const projection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-    const runtime = localHostname ? unresolved : projection && bindBrowserRuntimePortLease(unresolved, projection)
-    if (!runtime) throw new Error('browser surface runtime lease binding refused')
+    const runtime = unresolved
     if (!localHostname && runtime.connection.kind !== 'remote') throw new Error('fixture expected a remote browser endpoint')
     const manifest = JSON.stringify({ name: '@playwright/test', version: '1.2.3', main: moduleEntry, bin: { playwright: 'cli.js' } })
     const moduleBytes = localHostname ? `module.exports = { chromium: { launch: async options => {

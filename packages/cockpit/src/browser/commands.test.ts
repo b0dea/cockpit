@@ -10,7 +10,7 @@ import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { observeConfiguration, selectStateRoot } from '../environment/state.js'
 import { executeBrowserCommand, isIssuedBrowserCommandReceipt, issueBrowserRoutePolicy } from './commands.js'
-import { bindBrowserRuntimePortLease, resolveBrowserRuntime } from './runtime.js'
+import { resolveBrowserRuntime } from './runtime.js'
 import { renderBrowserSurfaces } from './surfaces.js'
 import { evaluateUiGate } from './ui-gate.js'
 
@@ -143,7 +143,7 @@ async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'fire
     await writeFile(join(root, 'node_modules/@playwright/test/cli.js'), '/* synthetic pinned CLI */')
     await writeFile(join(root, 'node_modules/@playwright/test/index.js'), moduleBytes)
     const image = `synthetic.invalid/browser@sha256:${'a'.repeat(64)}`
-    let runtime = resolveBrowserRuntime({
+    const runtime = resolveBrowserRuntime({
         postures: { authorities: [authority], stages: [stage.authority] }, images: { mcp: { reference: image, driverVersion: '1.2.3' } },
         project: { lockfile: 'package-lock.json', sha256: digest(lock), driverVersion: '1.2.3' },
         ...(!options.local ? { endpoint: 'ws://localhost:3001/' } : {}), ...(options.engine ? { engine: options.engine } : {}), maxClients: 1,
@@ -160,10 +160,6 @@ async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'fire
         if (lease.kind !== 'complete') throw new Error('browser command lease fixture refused')
         const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
         if (entrypoints.kind !== 'complete') throw new Error('browser command entrypoint fixture refused')
-        const projection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-        const bound = projection && bindBrowserRuntimePortLease(runtime, projection)
-        if (!bound) throw new Error('browser command runtime lease binding refused')
-        runtime = bound
     }
     const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: root, harnesses: [{ target: 'claudecode', version: '2.1.220' }],
         mcp: { name: 'playwright', command: 'docker', args: runtime.connection.kind === 'remote'
