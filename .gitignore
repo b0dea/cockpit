@@ -93,7 +93,6 @@ blob-report/
 **/*-auth.json
 
 # ── Test and analysis output ─────────────────────────────────────────────────
-.vitest-reports/
 junit.xml
 *.lcov
 .stryker-tmp/
