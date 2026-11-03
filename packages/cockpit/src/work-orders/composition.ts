@@ -541,7 +541,10 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const filesystemCheck: FilesystemCheck = Object.freeze({ path: root, expected: 'directory' })
     const stepArgv: readonly [string, ...string[]] = Object.freeze([resolved.path, ...argv.slice(1)])
     const step: ExecutionStep = Object.freeze({ id: `work-${randomUUID()}`, argv: stepArgv, argv0: resolved.path,
-        cwd: root, env: Object.freeze({ ...(mode.kind === 'declared' ? mode.env : {}), PATH: directories.join(delimiter) }), timeoutMs,
+        // macOS's /usr/bin/git looks up a temporary directory when TMPDIR is unset, and inside Codex's
+        // workspace-write sandbox that lookup fails and git warns on stderr, which fails a probe that
+        // requires silence; a probe therefore names the temporary directory Node already resolved.
+        cwd: root, env: Object.freeze({ ...(mode.kind === 'declared' ? mode.env : { TMPDIR: tmpdir() }), PATH: directories.join(delimiter) }), timeoutMs,
         spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
         ...(mode.kind === 'declared' ? { outputOverflow: 'retain-tail' as const } : {}),
         paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ owner: 'work-application' }), expected: Object.freeze([]),
@@ -720,11 +723,23 @@ function repositoryEnvironmentInstancePaths(repositoryRoot: string, siblingsRoot
     return paths
 }
 
+// Why a probe that must exit 0 silently did not, in words a person can act on: the first line of
+// what it wrote to stderr is usually the whole story (a sandbox denial, a missing repository).
+function probeFailure(command: string, observed: VerificationObservation): string {
+    if (observed.kind !== 'executed') return `${command} did not run: ${observed.reason}`
+    const stderr = observed.stderr.trim().split('\n', 1)[0]?.slice(0, 240)
+    if (observed.exitCode !== 0) return `${command} exited ${observed.exitCode}${stderr ? `: ${stderr}` : ''}`
+    if (stderr) return `${command} wrote to stderr: ${stderr}`
+    return observed.truncated ? `${command} output exceeded the probe capture` : `${command} printed no newline-terminated answer`
+}
+
 async function observeRepositorySubject(repository: Readonly<{ identity: string; root: string }>, excluded: ReadonlySet<string>,
     directories: readonly string[], sensitivePaths: ReadonlySet<string> = new Set(), forbiddenTargets: ReadonlySet<string> = new Set()): Promise<WorkOrderRepository> {
     const prefixResult = await executeBounded(repository.root, ['git', 'rev-parse', '--show-prefix'], directories)
     if (prefixResult.kind !== 'executed' || prefixResult.exitCode !== 0 || prefixResult.stderr || prefixResult.truncated
-        || !prefixResult.stdout.endsWith('\n')) throw new Error(`repository subject ${repository.identity} root is unavailable`)
+        || !prefixResult.stdout.endsWith('\n')) {
+        throw new Error(`repository subject ${repository.identity} root is unavailable: ${probeFailure('git rev-parse --show-prefix', prefixResult)}`)
+    }
     const prefix = prefixResult.stdout.slice(0, -1)
     if (prefix && (!prefix.endsWith('/') || isAbsolute(prefix) || prefix.slice(0, -1).split('/').some(part => !part || part === '.' || part === '..'))) {
         throw new Error(`repository subject ${repository.identity} root prefix is unsafe`)
@@ -736,7 +751,7 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
     }
     const status = await executeBounded(repository.root, ['git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
     if (status.kind !== 'executed' || status.exitCode !== 0 || status.stderr || status.truncated) {
-        throw new Error(`repository subject ${repository.identity} is unavailable`)
+        throw new Error(`repository subject ${repository.identity} is unavailable: ${probeFailure('git status', status)}`)
     }
     const parseStatus = (stdout: string) => {
         const records = stdout.split('\0'); if (records.at(-1) !== '') throw new Error('repository status is not NUL terminated')

@@ -272,14 +272,13 @@ describe('cockpits without a generated environment', () => {
         const doctor = run(root, ['cockpit', 'doctor', '--config', 'cockpit.toml', '--json'])
         // A docs-only cockpit still depends on its Git working tree, and this copy has no commit yet.
         expect(doctor.response.result.verdict).toBe('fail')
-        // The surfaces publish a Codex hook that no person has trusted in this fresh home, and the
-        // copied example has no cockpit installed in it.
+        // The copied example has no cockpit installed in it. The surfaces publish a Codex hook, but
+        // Codex has never run in this fresh home, so no Codex session can skip it and nothing warns.
         expect(doctor.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }),
             expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', message: expect.stringContaining('no commits yet') }),
-            expect.objectContaining({ code: 'CODEX_HOOK_UNTRUSTED', severity: 'warning' }),
             expect.objectContaining({ code: 'COCKPIT_NOT_INSTALLED', severity: 'warning' })])
         expect(doctor.response.result.readiness.gaps.map((gap: { id: string }) => gap.id))
-            .toEqual(['cockpit-committed', 'cockpit-installed', 'codex-hook-trusted'])
+            .toEqual(['cockpit-committed', 'cockpit-installed'])
         expect(doctor.response.result.declarations).toContainEqual(expect.objectContaining({ subject: 'runtime', state: 'not-declared' }))
     })
 

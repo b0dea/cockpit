@@ -351,6 +351,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `GENERATED_DECISION_STALE` | see the message |
 | `GENERATED_DECLARATION_INVALID` | see the message |
 | `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
+| `GENERATED_DEPENDENCY_VOLUME_MISSING` | set toolchain = "none" on the sibling if its image already holds its dependencies; otherwise give the sibling exactly one generated service and mount one dependency volume in it: a [[environment.generated.volumes]] row whose id and install_policy are the volume of an install policy for the sibling's toolchain, with purpose = "dependencies", and a mounts row in that service with kind = "volume", that source, and the target where the toolchain reads its dependencies; then run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` | depends on what failed; see the message |
 | `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |

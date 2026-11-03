@@ -356,6 +356,23 @@ else process.exit(64)
                     reason: expect.stringContaining('observed only while the stack runs') }),
             ]))
         }
+
+        // A home directory this process cannot write, as inside a sandbox, is named with the check it
+        // failed; doctor and up used to report only that their evidence was unavailable.
+        const readOnlyHome = join(candidate.root, 'read-only-home')
+        await mkdir(readOnlyHome, { mode: 0o500 })
+        try {
+            const env = { PATH: `${candidate.root}:${process.env.PATH}`, HOME: readOnlyHome }
+            const configPath = candidate.configPath
+            const refusedDoctor = await runDoctor({ configPath }, createHealthCommandAdapters({ configPath, env, timeoutMs: 5_000 }, executeProbe))
+            const refusedUp = await runUp({ configPath }, createLifecycleCommandAdapters({ configPath, env, sessionId: 'read-only-home', timeoutMs: 5_000 }, executeProbe))
+            for (const outcome of [refusedDoctor, refusedUp]) {
+                expect(outcome.diagnostics, JSON.stringify(outcome.diagnostics)).toContainEqual(expect.objectContaining({
+                    severity: 'error', code: 'STATE_ROOT_UNAVAILABLE', message: expect.stringContaining(`${readOnlyHome} is not writable by its owner`) }))
+            }
+        } finally {
+            await chmod(readOnlyHome, 0o700)
+        }
     })
 
     it('says a sleeping stack is asleep and to run up, and still checks what needs no running stack', async () => {
@@ -465,6 +482,8 @@ else process.exit(64)
         await mkdir(join(candidate.checkout, '.codex'))
         await writeFile(join(candidate.checkout, '.codex/hooks.json'), JSON.stringify({ hooks: { PreToolUse: [
             { matcher: 'Bash', hooks: [{ type: 'command', command: 'exit 0' }] }] } }))
+        // Codex has run as this user, so it has a home, but has recorded no trust.
+        await mkdir(join(candidate.home, '.codex'))
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },

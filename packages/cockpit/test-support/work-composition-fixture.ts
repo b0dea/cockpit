@@ -103,7 +103,7 @@ purpose = "Synthetic root declaration"
         declaration = stringifyToml(CockpitConfig.parse(external))
     }
     await writeFile(configPath, declaration)
-    await writeFile(join(root, '.gitignore'), '.native-calls\n.native-mode\n.native-expect-artifact\n.verification-fail\n.gate-mutate\n.completion-observations\n.completion-artifact-race\n.execution-hold\n.execution-started\n.identity-inventory-unavailable\n.identity-inventory-malformed\n.identity-worktree-malformed\n.identity-inventory-change\n.identity-inventory-count\n.repository-status-malformed\n')
+    await writeFile(join(root, '.gitignore'), '.native-calls\n.native-mode\n.native-expect-artifact\n.verification-fail\n.gate-mutate\n.completion-observations\n.completion-artifact-race\n.execution-hold\n.execution-started\n.identity-inventory-unavailable\n.identity-inventory-malformed\n.identity-worktree-malformed\n.identity-inventory-change\n.identity-inventory-count\n.repository-status-malformed\n.git-temp-warning\n')
     await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
     await writeFile(join(applicationRoot, 'package-lock.json'), '{}\n')
     await mkdir(join(applicationRoot, 'src'))
@@ -112,7 +112,12 @@ purpose = "Synthetic root declaration"
     await writeFile(join(root, 'tests/cache.test.ts'), "export const proof = 'fresh'\n")
     const skillBytes = Buffer.from('Use the inspected source to plan the smallest current change.\n')
     await writeFile(join(root, 'skills/planning.md'), skillBytes)
+    // macOS's /usr/bin/git prints this warning inside Codex's workspace-write sandbox when TMPDIR is
+    // unset; a non-empty marker prints it whatever the environment.
     await writeFile(join(tools, 'git'), `#!/bin/sh
+if [ -e .git-temp-warning ] && { [ -z "\${TMPDIR:-}" ] || [ -s .git-temp-warning ]; }; then
+  echo "git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead" >&2
+fi
 case "$1" in
   for-each-ref)
     if [ -e .identity-inventory-unavailable ] || [ -e .identity-inventory-malformed ] || [ -e .identity-inventory-change ]; then

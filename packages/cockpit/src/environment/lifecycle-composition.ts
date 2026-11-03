@@ -252,14 +252,15 @@ interface CompositionBinding {
     readonly generatedRuntime?: GeneratedObservationRuntime
 }
 
-function refusal(target: string, message = 'lifecycle composition authority is unavailable'): EnvironmentCommandOutcome<LifecycleRunContext> {
+function refusal(target: string, message = 'lifecycle composition authority is unavailable',
+    code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID): EnvironmentCommandOutcome<LifecycleRunContext> {
     return Object.freeze({
         kind: 'refusal' as const,
         status: 2 as const,
         result: null,
         diagnostics: Object.freeze([Object.freeze({
             severity: 'error' as const,
-            code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
+            code,
             message,
             target,
         })]),
@@ -509,6 +510,9 @@ export function createLifecycleCommandAdapters(
             checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath],
             cockpitId: checkout.cockpitId,
         })
+        // The state root's own refusal names the directory and the failed check; replacing it with a
+        // generic one left a sandboxed agent no way to tell why every lifecycle command refused.
+        if (namespace.kind === 'refusal') return refusal(namespace.target, namespace.message, namespace.code)
         if (namespace.kind !== 'complete') return refusal(loaded.result.source.path, 'state namespace is unavailable')
         const currentStackId = stackId({
             cockpitId: checkout.cockpitId,

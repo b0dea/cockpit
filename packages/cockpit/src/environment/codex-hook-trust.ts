@@ -6,7 +6,7 @@
 // hooks.json and compares. It never writes Codex's configuration and never reports a value from it;
 // anything it cannot read or reproduce is reported as unverified, not as trusted.
 import { createHash } from 'node:crypto'
-import { readFile, realpath } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { parse as parseToml, TomlError } from 'smol-toml'
 
@@ -123,7 +123,8 @@ function warning(message: string): EnvironmentDiagnostic {
 
 /**
  * A warning when Codex will skip the generated guard hook on this machine, or when that cannot be
- * verified; nothing when every hook is trusted or no Codex hook is published.
+ * verified; nothing when every hook is trusted, no Codex hook is published, or Codex has never run
+ * as this user.
  */
 export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise<readonly EnvironmentDiagnostic[]> {
     const root = resolve(input.root)
@@ -138,6 +139,12 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     if (hooks.length === 0) return Object.freeze([])
     const home = input.env.CODEX_HOME || (input.env.HOME ? join(input.env.HOME, '.codex') : undefined)
     if (!home) return unverified('neither CODEX_HOME nor HOME is set, so Codex\'s configuration cannot be found')
+    // Every cockpit publishes the Codex hook, so a person who never runs Codex here saw this warning on
+    // every check. Codex creates its home on first run; without one no Codex session can skip the hook.
+    try { await stat(home) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([])
+        return unverified(`reading ${home} failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'}`)
+    }
     const codexConfig = join(home, 'config.toml')
     let states: Record<string, unknown> = {}
     try {

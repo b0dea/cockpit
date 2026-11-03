@@ -379,6 +379,18 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
             kind: 'complete', operation: 'test-run', value: { verdict: 'PASS', satisfiesGate: true },
         })
+        // A Git that warns when TMPDIR is unset, as macOS's does inside Codex's sandbox, still passes;
+        // one that warns regardless degrades the gate, and the reason quotes the warning.
+        await writeFile(join(fixture.root, '.git-temp-warning'), '')
+        await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'complete', operation: 'test-run', value: { verdict: 'PASS', satisfiesGate: true },
+        })
+        await writeFile(join(fixture.root, '.git-temp-warning'), 'always')
+        await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
+            kind: 'unsatisfied', operation: 'test-run', value: { verdict: 'DEGRADED', satisfiesGate: false },
+            reason: expect.stringContaining("root is unavailable: git rev-parse --show-prefix wrote to stderr: git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR"),
+        })
+        await rm(join(fixture.root, '.git-temp-warning'))
         await writeFile(join(fixture.root, '.gate-mutate'), 'mutate')
         await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, fixture.composition)).resolves.toMatchObject({
             kind: 'unsatisfied', operation: 'test-run', reason: expect.stringContaining('VOID'), value: { verdict: 'VOID', satisfiesGate: false,

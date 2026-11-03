@@ -429,7 +429,8 @@ describe('lifecycle application contracts', () => {
             expect(await session('./node_modules/.bin/tool')).toMatchObject({ kind: 'complete', status: 3, result: { child: { exitCode: 3 } } })
             expect(up).toHaveBeenCalledOnce()
             for (const [argv0, reason] of [['../outside', /outside the session working directory/], ['./node_modules/.bin/missing', /unavailable/]] as const) {
-                expect(await session(argv0)).toMatchObject({ kind: 'refusal', diagnostics: [{ message: expect.stringMatching(reason), target: argv0 }] })
+                expect(await session(argv0)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED',
+                    message: expect.stringMatching(reason), target: argv0, fix: expect.stringContaining('name the command after --') }] })
             }
             expect(up).toHaveBeenCalledOnce()
         } finally {
@@ -686,10 +687,11 @@ describe('lifecycle application contracts', () => {
         expect(replay).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID', target: fresh.result.source.path }] })
     })
 
-    it('warns once on up about every other cockpit namespace it cannot read, with one cleanup command, and not on sleep', async () => {
+    it('leaves other cockpits\' unreadable namespaces to doctor, and says nothing about them on up or sleep', async () => {
         const { configPath, context } = await lifecycleContextFixture()
-        // A machine that ran older development builds carries several such directories; one warning
-        // per directory on every command buried each command's own result.
+        // A machine that ran older development builds carries several such directories; naming them
+        // on every up (and so every session) buried each result under lines about other cockpits.
+        // Doctor names them once, with one cleanup command.
         const cockpits = dirname(context.namespace.cockpitRoot)
         const legacy = [`cockpit:legacy:${'a'.repeat(64)}`, `cockpit:legacy:${'b'.repeat(64)}`].map(name => join(cockpits, name))
         for (const path of legacy) mkdirSync(path, { recursive: true, mode: 0o700 })
@@ -699,13 +701,8 @@ describe('lifecycle application contracts', () => {
             ...unavailableRuntimeUpAdapters(context, async () => undefined),
         } as never)
 
-        expect(result.diagnostics.filter(({ code }) => code === 'STATE_RECORD_MALFORMED')).toEqual([{
-            severity: 'warning', code: 'STATE_RECORD_MALFORMED', target: cockpits,
-            message: expect.stringMatching(/^2 state folders of other cockpits under .* cannot be read by this cockpit version \(state inventory contains an invalid cockpit namespace\)/),
-            fix: expect.stringContaining(`rm -rf ${legacy.map(path => `'${path}'`).join(' ')}`),
-        }])
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: expect.arrayContaining([
-            expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID' })]) })
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID' })] })
+        expect(result.diagnostics.filter(({ code }) => code === 'STATE_RECORD_MALFORMED')).toEqual([])
 
         const sleeping = await lifecycleContextFixture()
         for (const path of legacy) mkdirSync(join(dirname(sleeping.context.namespace.cockpitRoot), basename(path)), { recursive: true, mode: 0o700 })

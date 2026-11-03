@@ -84,5 +84,9 @@ describe('Codex hook trust', () => {
         expect(await inspectCodexHookTrust({ root: homeless.root, env: {} })).toEqual(unverified)
         // No published Codex hook means nothing to trust.
         expect(await (await estate(null)).inspect()).toEqual([])
+        // Nor does a machine where Codex has never run as this user: no Codex home, no session to skip it.
+        const codexless = await estate()
+        await rm(codexless.home, { recursive: true })
+        expect(await codexless.inspect()).toEqual([])
     })
 })
