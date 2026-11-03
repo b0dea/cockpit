@@ -1475,6 +1475,34 @@ describe('dead session holders', () => {
         expect((await holders(state)).holders.map(({ holderId }) => holderId)).toEqual([holderD, holderA])
     })
 
+    it('refuses a malformed or oversized holder list without observing any process', async () => {
+        const observed: number[] = []
+        const observe = async (pid: number) => { observed.push(pid); return { state: 'unknown' as const, reason: 'must not be asked' } }
+        const successor = { holderId: holderA, checkoutId: checkoutA }
+        const overLimit = Array.from({ length: STRUCTURED_INPUT_ENTRY_LIMIT + 1 }, (_, index) => ({
+            holderId: `holder:${index.toString(16).padStart(64, '0')}:session`, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 1 + index,
+        }))
+        const malformed = [
+            [{ holderId: 'holder:invalid:session', checkoutId: checkoutA, claimedAt: 'not-a-date', pid: 4242 }],
+            [{ holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 2_147_483_648 }],
+            overLimit,
+        ]
+        for (const holders of malformed) {
+            const state = await namespace()
+            const seeded = await transactState(state, state.paths.coordination(stackId), { ownerId: holderA }, () => {
+                const record = claimRecord([])
+                record.value = { holders, lease: { offset: 0, ports: { WEB: 3000 }, released: false, declaration: { step: 100, count: 3, bases: { WEB: 3000 } } }, lastReleasedHolder: null }
+                return { ...record, cockpitId: state.paths.coordination(stackId).cockpitId }
+            })
+            if (seeded.kind !== 'complete') throw new Error(JSON.stringify(seeded))
+            const before = await readFile(state.paths.coordination(stackId).path)
+            expect(await releaseDeadSessionHolders({ namespace: state, stackId, successor, now: '2026-09-07T12:00:00.000Z', observe }))
+                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
+            expect(await readFile(state.paths.coordination(stackId).path)).toEqual(before)
+        }
+        expect(observed).toEqual([])
+    })
+
     // procps derives a wall-clock start from the boot time, which moves when the wall clock is
     // stepped (NTP, a resumed VM): a running session read that way looked like a stranger, lost its
     // hold, and another session's down stopped its stack.
