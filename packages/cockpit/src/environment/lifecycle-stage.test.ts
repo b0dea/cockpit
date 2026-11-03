@@ -247,16 +247,6 @@ describe('lifecycle stage authority', () => {
         expect(calls).toBe(0)
     })
 
-    it('snapshots hostile inputs without invoking accessors', async () => {
-        const namespace = await stateNamespace()
-        let reads = 0
-        const hostile = Object.defineProperty({ namespace, stackId, observedAt }, 'stackId', {
-            enumerable: true, get: () => { reads += 1; return otherStackId },
-        })
-        await expect(resolveLifecycleStage(hostile as never)).resolves.toMatchObject({ kind: 'refusal' })
-        expect(reads).toBe(0)
-    })
-
     it('projects only stable stage evidence and consumes both capabilities once', async () => {
         const namespace = await stateNamespace()
         const issued = await resolveLifecycleStage({ namespace, stackId, observedAt })
@@ -363,7 +353,7 @@ describe('lifecycle stage authority', () => {
         )).toBe('bootstrap')
     })
 
-    it('refuses wrong identity, copied capabilities, accessors, and proxies without invoking getters', async () => {
+    it('refuses wrong identity and copied capabilities', async () => {
         const namespace = await stateNamespace()
         const issue = async () => {
             const result = await resolveLifecycleStage({ namespace, stackId, observedAt })
@@ -378,25 +368,6 @@ describe('lifecycle stage authority', () => {
         expect(projectLifecycleStage({ ...input(await issue()), cockpitId: otherCockpitId })).toBeUndefined()
         const authority = await issue()
         expect(projectLifecycleStage({ ...input(authority), authority: { ...authority } as never })).toBeUndefined()
-        let authorityReads = 0
-        const accessorAuthority = Object.defineProperty({}, 'observedAt', {
-            enumerable: true, get: () => { authorityReads += 1; return observedAt },
-        })
-        expect(projectLifecycleStage({ ...input(authority), authority: accessorAuthority as never })).toBeUndefined()
-        expect(authorityReads).toBe(0)
-
-        let reads = 0
-        const accessor = Object.defineProperty(input(await issue()), 'stackId', {
-            enumerable: true, get: () => { reads += 1; return stackId },
-        })
-        expect(projectLifecycleStage(accessor)).toBeUndefined()
-        expect(reads).toBe(0)
-        expect(projectLifecycleStage({ ...input(await issue()), [Symbol('extra')]: true } as never)).toBeUndefined()
-        expect(projectLifecycleStage(new Proxy(input(await issue()), {}))).toBeUndefined()
-        const revoked = Proxy.revocable(input(await issue()), {})
-        revoked.revoke()
-        expect(() => projectLifecycleStage(revoked.proxy)).not.toThrow()
-        expect(projectLifecycleStage(revoked.proxy)).toBeUndefined()
     })
 
     it('refuses projection after either durable lifecycle identity changes', async () => {

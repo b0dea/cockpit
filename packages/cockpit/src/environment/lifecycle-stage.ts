@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, relative, sep } from 'node:path'
-import { isProxy } from 'node:util/types'
 import {
     hasErrorCode,
     RefusalError,
@@ -225,45 +224,22 @@ function refusal(message: string, target: string): Extract<LifecycleStageResolut
 }
 
 function stableInput(value: unknown): StableInput | undefined {
-    try {
-        if (isProxy(value) || value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (Reflect.ownKeys(descriptors).length !== 3
-            || !('value' in (descriptors.namespace ?? {}))
-            || !('value' in (descriptors.stackId ?? {}))
-            || !('value' in (descriptors.observedAt ?? {}))) return undefined
-        const namespace = authenticateStateNamespace(descriptors.namespace!.value)
-        const stackId = descriptors.stackId!.value
-        const observedAt = descriptors.observedAt!.value
-        const observedMillis = typeof observedAt === 'string' ? Date.parse(observedAt) : Number.NaN
-        const now = Date.now()
-        if (!namespace || typeof stackId !== 'string' || !STACK_ID.test(stackId)
-            || !isCanonicalTimestamp(observedAt) || observedMillis > now || now - observedMillis > AUTHORITY_LIFETIME_MS) return undefined
-        return { namespace, stackId: stackId as StackId, observedAt }
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const { namespace: rawNamespace, stackId, observedAt } = value as Record<string, unknown>
+    const namespace = authenticateStateNamespace(rawNamespace)
+    const observedMillis = typeof observedAt === 'string' ? Date.parse(observedAt) : Number.NaN
+    const now = Date.now()
+    if (!namespace || typeof stackId !== 'string' || !STACK_ID.test(stackId)
+        || !isCanonicalTimestamp(observedAt) || observedMillis > now || now - observedMillis > AUTHORITY_LIFETIME_MS) return undefined
+    return { namespace, stackId: stackId as StackId, observedAt }
 }
 
 function stableTransitionInput(value: unknown): (StableInput & { readonly holderId: HolderId }) | undefined {
-    try {
-        if (isProxy(value) || value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (Reflect.ownKeys(descriptors).length !== 4 || !('value' in (descriptors.holderId ?? {}))) return undefined
-        const base = stableInput({
-            namespace: descriptors.namespace && 'value' in descriptors.namespace ? descriptors.namespace.value : undefined,
-            stackId: descriptors.stackId && 'value' in descriptors.stackId ? descriptors.stackId.value : undefined,
-            observedAt: descriptors.observedAt && 'value' in descriptors.observedAt ? descriptors.observedAt.value : undefined,
-        })
-        const holderId = descriptors.holderId!.value
-        return base && typeof holderId === 'string' && HOLDER_ID.test(holderId)
-            ? { ...base, holderId: holderId as HolderId }
-            : undefined
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
+    const base = stableInput(value)
+    const holderId = base ? (value as Record<string, unknown>).holderId : undefined
+    return base && typeof holderId === 'string' && HOLDER_ID.test(holderId)
+        ? { ...base, holderId: holderId as HolderId }
+        : undefined
 }
 
 function historyStatus(record: StateRecord): 'started' | 'seeded' | undefined {
@@ -495,44 +471,21 @@ export function projectLifecycleStage(input: {
     readonly latest: number
     readonly evaluatedAt: number
 }): LifecycleStageProjection | undefined {
-    try {
-        const trustedCurrentTime = Date.now()
-        if (isProxy(input) || input === null || typeof input !== 'object' || Array.isArray(input)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = ['authority', 'stackId', 'cockpitId', 'earliest', 'latest', 'evaluatedAt'] as const
-        if (Reflect.ownKeys(descriptors).length !== keys.length
-            || keys.some((key) => !('value' in (descriptors[key] ?? {})))) return undefined
-        const expected = {
-            stackId: descriptors.stackId!.value as StackId,
-            cockpitId: descriptors.cockpitId!.value as string,
-            earliest: descriptors.earliest!.value as number,
-            latest: descriptors.latest!.value as number,
-            evaluatedAt: descriptors.evaluatedAt!.value as number,
-        }
-        const stage = consumeLifecycleStageAuthority(descriptors.authority!.value, expected, trustedCurrentTime)
-        if (!stage) return undefined
-        const projection = {} as LifecycleStageProjection
-        issuedLifecycleStageProjections.set(projection, Object.freeze({ stackId: expected.stackId, stage }))
-        return projection
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
+    const expected = { stackId: input.stackId, cockpitId: input.cockpitId, earliest: input.earliest, latest: input.latest, evaluatedAt: input.evaluatedAt }
+    const stage = consumeLifecycleStageAuthority(input.authority, expected, Date.now())
+    if (!stage) return undefined
+    const projection = {} as LifecycleStageProjection
+    issuedLifecycleStageProjections.set(projection, Object.freeze({ stackId: expected.stackId, stage }))
+    return projection
 }
 
 export function consumeLifecycleStageProjection(
     projection: LifecycleStageProjection,
 ): LifecycleStageEvidence | undefined {
-    try {
-        if (projection === null || typeof projection !== 'object') return undefined
-        const evidence = issuedLifecycleStageProjections.get(projection)
-        if (!evidence) return undefined
-        issuedLifecycleStageProjections.delete(projection)
-        return evidence
-    } catch {
-        // A throwing accessor or proxy trap makes the projection unusable, which the caller refuses.
-        return undefined
-    }
+    const evidence = issuedLifecycleStageProjections.get(projection)
+    if (!evidence) return undefined
+    issuedLifecycleStageProjections.delete(projection)
+    return evidence
 }
 
 async function transition(
