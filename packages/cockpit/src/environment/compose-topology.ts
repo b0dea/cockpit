@@ -295,21 +295,26 @@ export function bindHolder(bind: string, declared: readonly string[]): string | 
 /**
  * Pairs each bind with the deepest declared mount source holding it. A bind of a directory inside
  * a mount = "always" checkout (`./api` of the repository) mounts that checkout, so it counts for
- * it; a bind inside no declared source is undeclared, and a declared source no bind lands in is
- * missing. Both `check` and `up` judge their binds with this one rule.
+ * it; a bind inside no declared source is undeclared. A declared source is mounted when a bind
+ * lands in it or when an admitted bind holds it: a generated host path inside a checkout bound
+ * whole reaches the container through that bind, and nothing it is declared for (reset deleting
+ * it, the ignore block, the browser writing there) needs a mount of its own. Any other declared
+ * source is missing. Both `check` and `up` judge their binds with this one rule.
  */
 export function compareBindSources(binds: readonly string[], declared: readonly string[]): Readonly<{
     missing: readonly string[]; unexpected: readonly string[]
 }> {
     const used = new Set<string>()
+    const admitted: string[] = []
     const unexpected: string[] = []
     for (const bind of new Set(binds)) {
         const owner = bindHolder(bind, declared)
         if (owner === undefined) unexpected.push(bind)
-        else used.add(owner)
+        else { used.add(owner); admitted.push(bind) }
     }
     return Object.freeze({
-        missing: Object.freeze([...new Set(declared)].filter(source => !used.has(source)).sort()),
+        missing: Object.freeze([...new Set(declared)]
+            .filter(source => !used.has(source) && !admitted.some(bind => contains(bind, source))).sort()),
         unexpected: Object.freeze(unexpected.sort()),
     })
 }
@@ -390,7 +395,7 @@ export async function assessComposeTopology(
         diagnostics.push(Object.freeze({
             severity: 'error' as const, code: 'GENERATED_HOST_PATH_UNMOUNTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_PATH_UNMOUNTED,
             target: `environment.generated_host_paths:${hostPath.declared}`,
-            message: `environment.generated_host_paths lists ${hostPath.declared}, but no Compose service bind-mounts ${hostPath.path} or a path inside it; up admits a stack only when every declared host path is mounted, so it would refuse to start`,
+            message: `environment.generated_host_paths lists ${hostPath.declared}, but no Compose service bind-mounts ${hostPath.path}, a path inside it or a directory that holds it; up admits a stack only when every declared host path is mounted, so it would refuse to start`,
             fix: `bind-mount ${hostPath.declared} in a service of the Compose file, or remove "${hostPath.declared}" from environment.generated_host_paths in cockpit.toml; then run ${cockpitCommand('check')}`,
         }))
     }

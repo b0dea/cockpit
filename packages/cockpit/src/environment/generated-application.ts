@@ -4052,7 +4052,7 @@ export async function checkGeneratedEnvironment(
         ...(currentness.unmountedHostPaths ?? []).map((path) => ({
             severity: 'error' as const, code: 'GENERATED_HOST_PATH_UNMOUNTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_PATH_UNMOUNTED,
             target: `environment.generated_host_paths:${path}`,
-            message: `environment.generated_host_paths lists ${path}, but no generated service bind-mounts it or a path inside it and no [browser] writes there, so the entry hands nothing to a container`,
+            message: `environment.generated_host_paths lists ${path}, but no generated service bind-mounts it, a path inside it or a directory that holds it, and no [browser] writes there, so the entry hands nothing to a container`,
             fix: `remove "${path}" from environment.generated_host_paths in cockpit.toml, or bind-mount it from a generated service whose sibling directory contains it; then run npx --no cockpit check --config <your cockpit.toml>`,
         })),
     ] : []

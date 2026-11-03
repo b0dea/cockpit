@@ -59,6 +59,11 @@ describe('compose topology mount posture', () => {
         })).map(row => [row.code, row.target])
         expect(await withHostPath([join(root, 'api'), join(outside, 'seed.sql')])).toEqual([])
         expect(await withHostPath([join(root, 'api')])).toEqual([['GENERATED_HOST_PATH_UNMOUNTED', 'environment.generated_host_paths:seed.sql']])
+        // One inside a checkout bound whole reaches the container through that bind.
+        expect((await assessComposeTopology([service([root])], {
+            projectDirectory: root, portVariables: [], hostPaths: [{ declared: 'api/cache', path: join(root, 'api', 'cache') }],
+            siblings: [{ slug: 'shop', var: 'SHOP_DIR', mount: 'always', path: root }],
+        })).map(row => row.code)).toEqual([])
     })
 })
 

@@ -180,7 +180,7 @@ describe('the public synthetic cockpit', () => {
         expect(unmounted.status, unmounted.stdout).toBe(2)
         expect(unmounted.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([{
             severity: 'error', code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
-            message: 'environment.generated_host_paths lists .cache, but no generated service bind-mounts it or a path inside it and no [browser] writes there, so the entry hands nothing to a container',
+            message: 'environment.generated_host_paths lists .cache, but no generated service bind-mounts it, a path inside it or a directory that holds it, and no [browser] writes there, so the entry hands nothing to a container',
         }])
         expect(unmounted.response.guidance).toContainEqual({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
             text: expect.stringMatching(/^remove "\.cache" from environment\.generated_host_paths in cockpit\.toml, .*then run npx --no cockpit check --config /) })
