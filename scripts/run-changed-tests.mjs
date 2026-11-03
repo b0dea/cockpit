@@ -295,8 +295,8 @@ function ownerTests(root, paths, extras, wide) {
             continue
         }
         if (TEST_PATH.test(path)) {
+            // A deleted test has nothing left to run.
             if (existingFile(root, path)) selected.add(path)
-            else unmapped.push(path)
             continue
         }
         if (SOURCE_PATH.test(path)) {
