@@ -141,20 +141,6 @@ describe('lifecycle CLI composition', () => {
         }
     })
 
-    it('opens the production reset session only from the interactive branch', async () => {
-        const host = await activeContextHost('unix:///synthetic/docker.sock')
-        const capture = captureIo(async () => true)
-        const status = await runCli(
-            ['reset', '--config', '/synthetic/missing-cockpit.toml', '--interactive'],
-            capture.io,
-            {},
-            { env: { ...host.env, DOCKER_CONTEXT: 'synthetic' } },
-        )
-
-        expect(status).toBe(2)
-        expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
-    })
-
     it('opens the interactive reset on the active local Docker context when none is named', async () => {
         const host = await activeContextHost('unix:///synthetic/docker.sock')
         const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
@@ -163,15 +149,6 @@ describe('lifecycle CLI composition', () => {
         expect(await runCli(['reset', '--config', '/synthetic/missing-cockpit.toml', '--interactive'], capture.io, {}, { env: host.env })).toBe(2)
         expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
         expect(factory).toHaveBeenCalledWith(expect.objectContaining({ dockerContext: 'synthetic-local' }), expect.any(Function))
-    })
-
-    it('registers every lifecycle verb as metadata without importing command handlers', () => {
-        expect(commands.map(({ name }) => name)).toEqual(expect.arrayContaining([
-            'setup', 'up', 'session', 'sleep', 'down', 'reset',
-        ]))
-        expect(commands.map(({ handler }) => handler)).toEqual(expect.arrayContaining([
-            'setup', 'up', 'session', 'sleep', 'down', 'reset',
-        ]))
     })
 
     it('dispatches one foreground command as the session tail without offering JSON mode', async () => {

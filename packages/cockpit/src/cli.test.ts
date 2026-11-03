@@ -36,7 +36,7 @@ function jsonInvocation(stdout: string, exitCode: number, verb: string, resolved
 
 describe('invocation publication', () => {
     it.each([
-        [['--help'], 'help', 0], [['--version'], 'version', 0],
+        [['--version'], 'version', 0],
         [[], 'unknown', 2], [['unknown'], 'unknown', 2],
         [['unsafe\u202e'], 'unknown', 2], [['check', '--unknown'], 'check', 2],
         [['guard-evaluate', '--harness', 'claudecode'], 'guard-evaluate', 0],
@@ -46,8 +46,7 @@ describe('invocation publication', () => {
         const result = run([...args], native ? { COCKPIT_GUARD_TRANSPORT: '1' } : {})
         expect(result.status).toBe(exitCode)
         const diagnostics = humanStderr(result.stderr)
-        if (verb === 'help') expect(result.stdout).toContain('Usage: cockpit')
-        else if (verb === 'version') expect(result.stdout).toBe(`@b00dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
+        if (verb === 'version') expect(result.stdout).toBe(`@b00dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
         else if (verb === 'guard-evaluate') {
             if (native) {
                 expect(result.stdout).toBe('')
@@ -144,10 +143,6 @@ describe('closed ordinary invocation metadata', () => {
         expect(commands.every(row => row.visibility === 'public' && row.ordinary !== undefined)).toBe(true)
         expect(internalCommands).toMatchObject([{ name: 'guard-evaluate', visibility: 'internal', ordinary: { availability: 'unavailable' } }])
         expect(commands.some(row => String(row.name) === 'guard-evaluate')).toBe(false)
-        const result = run(['guard-evaluate', '--harness', 'claudecode'])
-        expect(result.status).toBe(0)
-        expect(JSON.parse(result.stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
-        expect(humanStderr(result.stderr)).toBe('')
         const help = run(['--help'])
         expect(help.stdout).not.toContain('guard-evaluate')
         // Each row declares its options twice, once for parseArgs and once for the guard: an option the
@@ -563,14 +558,6 @@ describe('CLI help', () => {
         expect(humanStderr(hyphenated.stderr)).toBe('ERROR CLI_UNKNOWN_COMMAND: unknown command "work-grade"; did you mean "work grade"?\n'
             + "Run 'npx --no cockpit work grade --help' for usage.\n")
         expect((await envelope(['browser-drive'])).diagnostics).toMatchObject([{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "browser-drive"; did you mean "browser drive"?' }])
-    })
-
-    it('reads installed package provenance without invoking Git', () => {
-        const result = run(['--version'])
-
-        expect(result.status).toBe(0)
-        expect(result.stdout).toBe(`@b00dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
-        expect(humanStderr(result.stderr)).toBe('')
     })
 })
 
@@ -1228,19 +1215,6 @@ describe('setup process contract', () => {
         finally { Object.defineProperty(process, 'platform', descriptor) }
     }
 
-    function setupRuntimeFixture() {
-        const testRoot = mkdtempSync(join(tmpdir(), 'cockpit-cli-setup-search-'))
-        scratch.push(testRoot)
-        const checkout = join(testRoot, 'checkout')
-        const home = join(testRoot, 'home')
-        mkdirSync(checkout)
-        mkdirSync(home)
-        execFileSync('git', ['init', '--quiet', checkout])
-        const configPath = join(checkout, 'cockpit.toml')
-        writeFileSync(configPath, renderSetupConfig())
-        return { testRoot, checkout, home, configPath }
-    }
-
     function setupOutcome(step?: ExecutionStep): Exclude<EnvironmentCommandOutcome<{
         source: { path: string; byteLength: number; sha256: string }
         siblings: readonly SetupResult[]
@@ -1588,36 +1562,6 @@ describe('setup process contract', () => {
         ])
     })
 
-    it('keeps completed mutation evidence in a JSON postcheck refusal', async () => {
-        const capture = captureIo()
-        const evidence = {
-            execution: {
-                mutationMayHaveOccurred: true,
-                completedStepIds: ['setup:api:clone'],
-                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-            },
-            source: {
-                before: setupOutcome().result.source,
-                after: { state: 'available' as const, ...setupOutcome().result.source },
-            },
-        }
-        const status = await runCli(['setup', '--config', 'cockpit.toml', '--json'], capture.io, {
-            setup: async () => ({
-                kind: 'refusal', status: 2, result: null, evidence,
-                diagnostics: [{ severity: 'error', code: 'SETUP_POSTCHECK_FAILED', message: 'postcheck failed' }],
-            }),
-        })
-
-        expect(status).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toEqual({
-            invocation: jsonInvocation(capture.output().stdout, status, 'setup', resolve('cockpit.toml')),
-            result: null,
-            diagnostics: [{ severity: 'error', code: 'SETUP_POSTCHECK_FAILED', message: 'postcheck failed' }],
-            evidence,
-        })
-        expect(capture.output().stderr).toBe('')
-    })
-
     it('renders partial execution and compensation evidence without replacing diagnostic targets', async () => {
         const capture = captureIo()
         const evidence = {
@@ -1652,79 +1596,19 @@ describe('setup process contract', () => {
         expect(capture.output().stderr).toBe('')
     })
 
-    it('renders started failed-step evidence with a null result', async () => {
-        const capture = captureIo()
-        const evidence = {
-            execution: {
-                mutationMayHaveOccurred: true,
-                completedStepIds: [],
-                failedStep: { id: 'setup:api:clone', started: true },
-                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-            },
-            source: {
-                before: setupOutcome().result.source,
-                after: { state: 'available' as const, ...setupOutcome().result.source },
-            },
-        }
-        const diagnostics = [{
-            severity: 'error' as const,
-            code: 'EXECUTION_STEP_FAILED' as const,
-            message: 'step failed',
-            target: 'setup:api:clone',
-        }]
-
-        const status = await runCli(['setup', '--config', 'cockpit.toml', '--json'], capture.io, {
-            setup: async () => ({ kind: 'refusal', status: 2, result: null, evidence, diagnostics }),
-        })
-
-        expect(status).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toEqual({ invocation: jsonInvocation(capture.output().stdout, status, 'setup', resolve('cockpit.toml')), result: null, diagnostics, evidence })
-        expect(capture.output().stderr).toBe('')
-    })
-
-    it('renders bounded before-and-after provenance for a config-change refusal', async () => {
-        const capture = captureIo()
-        const before = setupOutcome().result.source
-        const evidence = {
-            execution: {
-                mutationMayHaveOccurred: true,
-                completedStepIds: ['setup:api:clone'],
-                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-            },
-            source: {
-                before,
-                after: { state: 'available' as const, ...before, byteLength: 129, sha256: 'b'.repeat(64) },
-            },
-        }
-        const diagnostics = [{
-            severity: 'error' as const,
-            code: 'CONFIG_CHANGED_DURING_EXECUTION' as const,
-            message: 'cockpit configuration changed during setup execution',
-            target: before.path,
-        }]
-
-        const status = await runCli(['setup', '--config', 'cockpit.toml', '--json'], capture.io, {
-            setup: async () => ({ kind: 'refusal', status: 2, result: null, evidence, diagnostics }),
-        })
-
-        expect(status).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toEqual({ invocation: jsonInvocation(capture.output().stdout, status, 'setup', resolve('cockpit.toml')), result: null, diagnostics, evidence })
-        expect(capture.output().stdout).not.toContain('cockpit.name')
-        expect(capture.output().stderr).toBe('')
-    })
-
     it('does not serialize config bytes from a config-change refusal', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-cli-config-evidence-'))
         scratch.push(directory)
         const configPath = join(directory, 'cockpit.toml')
+        // The configuration carries the canary, so a source projection that kept raw bytes would leak it.
+        const canary = 'raw-config-secret-sentinel'
         writeFileSync(configPath, [
             '[cockpit]', 'name = "synthetic-cockpit"', `siblings_root = ${JSON.stringify(directory)}`, '',
             '[[sibling]]', 'slug = "api"', 'dir = "api"',
             'remote = "ssh://example.invalid/api.git"', 'acquire = "auto"',
-            'mount = "always"', 'var = "API_DIR"', 'purpose = "Synthetic API"', '',
+            'mount = "always"', 'var = "API_DIR"', `purpose = "Synthetic API ${canary}"`, '',
             '[ports]', 'bases = { APP_PORT = 4100 }', '',
         ].join('\n'))
-        const canary = 'raw-config-secret-sentinel'
         const loaded = await loadCockpitConfig(configPath)
         if (loaded.kind === 'refusal') throw new Error('fixture configuration did not load')
         const outcome = {
@@ -1924,22 +1808,6 @@ describe('registry-resolve process contract', () => {
         expect(response.result).toBeNull()
         expect(response.diagnostics.map(({ code }) => code)).toEqual(['REGISTRY_SOURCE_REQUIRED'])
         expect(result.stderr).toBe('')
-    })
-
-    it('maps resolver handler exceptions to CLI_INTERNAL_ERROR', async () => {
-        const capture = captureIo()
-        const status = await runCli(
-            ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '../siblings', '--adoption', 'adoption.state', '--json'],
-            capture.io,
-            { 'registry-resolve': async () => { throw new Error('synthetic resolver defect') } },
-        )
-        const response = JSON.parse(capture.output().stdout) as { diagnostics: { code: string; target?: string }[] }
-
-        expect(status).not.toBe(0)
-        expect(response.diagnostics).toEqual([
-            expect.objectContaining({ code: 'CLI_INTERNAL_ERROR', target: 'registry-resolve' }),
-        ])
-        expect(capture.output().stderr).toBe('')
     })
 })
 

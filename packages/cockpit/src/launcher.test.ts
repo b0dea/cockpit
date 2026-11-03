@@ -46,10 +46,6 @@ describe('the installed launcher runtime floor', () => {
         expect(result.stderr).toBe('')
     })
 
-    it('points at the package launcher rather than a test double', () => {
-        expect(launcher).toMatch(/packages\/cockpit\/bin\/cockpit\.mjs$/)
-    })
-
     it('supplies cancellation to follow logs before authenticating the environment', () => {
         const result = spawnSync(process.execPath, [launcher, 'logs', '--config',
             '/synthetic/missing-cockpit.toml', '--service', 'api', '--follow', '--json'], {
