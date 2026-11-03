@@ -19,6 +19,8 @@ const roots: string[] = []
 const run = promisify(execFile)
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 
+// The operator reset runs end to end through dozens of real process steps: 13 s at a load average
+// of 18, so the 30 s bound it had failed whenever a full suite shared the machine.
 it('wipes produced browser artifacts through operator reset and preserves an undeclared output that fails registration', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-reset-')))
     const stateHome = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-home-')))
@@ -112,4 +114,4 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     for (const declaration of runtime.generatedHostPaths) await expect(access(join(root, declaration))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readFile(join(root, control), 'utf8')).toBe('{"synthetic":"undeclared control"}')
     await expect(session.decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
-}, 30_000)
+}, 120_000)
