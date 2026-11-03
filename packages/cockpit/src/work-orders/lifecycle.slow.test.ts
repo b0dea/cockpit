@@ -63,8 +63,9 @@ const record = (root: string, id: string) => JSON.parse(readFileSync(join(root, 
 
 describe('work-order lifecycle', () => {
     it('grades a criteria file against the uncommitted change without counting the file itself as outside scope', async () => {
-        const root = await cockpit('[work]\nevaluators = ["claudecode"]')
-        const env = { ...process.env, PATH: `${syntheticEvaluator()}:${process.env.PATH ?? ''}` }
+        const root = await cockpit('[work]\nevaluators = ["claudecode", "codexcli"]')
+        // Only the synthetic Claude Code answers: a Codex installed on this machine is left off PATH.
+        const env = { ...process.env, PATH: [syntheticEvaluator(), ...(process.env.PATH ?? '').split(':').filter(dir => dir && !existsSync(join(dir, 'codex')))].join(':') }
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
         writeFileSync(join(root, 'criteria.md'), '---\nscope: [src/]\ncriteria:\n  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n---\n')
         const graded = await work(root, ['grade', '--criteria', 'criteria.md'], env)
@@ -72,6 +73,9 @@ describe('work-order lifecycle', () => {
             result: { outOfScope: [], checks: [{ criterion: 'AC1', passed: true }], criteria: [{ id: 'AC1', verdict: 'unclear' }], evaluator: { tool: 'claudecode' } } })
         // The fix names the command that was run, not an order this grade does not have.
         expect(graded.guidance?.[0]?.text).toContain(`npx --no cockpit grade --config ${join(root, 'cockpit.toml')} --criteria <file>`)
+        // A person who names the grader gets that tool or a refusal, never another listed tool that is available.
+        const named = await work(root, ['grade', '--criteria', 'criteria.md', '--evaluator', 'codexcli'], env)
+        expect(named).toMatchObject({ status: 2, result: null, diagnostics: [{ message: expect.stringMatching(/^EVALUATOR_UNAVAILABLE: the Codex CLI \(codex\) is not on PATH/) }] })
         expect(existsSync(join(root, '.cockpit/work-orders'))).toBe(false)
     })
 
