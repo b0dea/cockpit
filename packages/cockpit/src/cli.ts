@@ -484,6 +484,9 @@ function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'
     if (operation === 'work-verify') return { severity: 'error', message,
         code: 'WORK_VERIFY_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_VERIFY_FAILED,
         fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade' }
+    if (operation === 'grade-criteria') return { severity: 'error', message,
+        code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
+        fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit grade --config <your cockpit.toml> --criteria <file>' }
     return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
         fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }

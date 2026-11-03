@@ -4,6 +4,7 @@
 // the CLI completes only with the digest a person types in a terminal. It also routes the browser and
 // test-gate operations that share the work composition.
 import { createHash } from 'node:crypto'
+import { posix } from 'node:path'
 import { z } from 'zod'
 
 import { decide, policyWeakening, runningInCi, type WorkGate } from '../autonomy.js'
@@ -349,7 +350,8 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
     if (!parsed.ok) return refusal(operation, `${request.criteriaFile} is not a criteria file: ${parsed.problems.join('; ')}`)
     const file = parsed.value
     const checks = await runChecks(file)
-    const changes = await composition.changes(await composition.heads())
+    // The criteria file is the request, not part of the change it grades.
+    const changes = (await composition.changes(await composition.heads())).filter(change => change.path !== posix.normalize(request.criteriaFile))
     const outOfScope = file.scope.length ? changes.map(change => change.path).filter(path => !scopeMatches(file.scope, path)) : []
     const subject: GradingSubject = { ...file.objective ? { objective: file.objective } : {}, criteria: file.criteria, nonGoals: [], scope: file.scope, checks, changes, outOfScope }
     const graded = await composition.evaluate(subject)

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -29,11 +29,30 @@ async function cockpit(policy: string): Promise<string> {
     return root
 }
 
-async function work(root: string, args: readonly string[]) {
+async function work(root: string, args: readonly string[], env: NodeJS.ProcessEnv = process.env) {
     let stdout = ''
     const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true } }
-    const status = await runCli([...args, '--config', join(root, 'cockpit.toml'), '--json'], io, {}, { env: process.env })
-    return { status, ...JSON.parse(stdout) as { result: Record<string, unknown> | null; diagnostics: readonly { code: string; message: string }[] } }
+    const status = await runCli([...args, '--config', join(root, 'cockpit.toml'), '--json'], io, {}, { env })
+    return { status, ...JSON.parse(stdout) as { result: Record<string, unknown> | null; diagnostics: readonly { code: string; message: string }[];
+        guidance?: readonly { code: string; text: string }[] } }
+}
+
+// A synthetic Claude Code on PATH that answers every criterion `unclear`, so a grade runs end to end
+// without a model and never passes.
+function syntheticEvaluator(): string {
+    const tools = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-work-evaluator-')))
+    roots.push(tools)
+    symlinkSync(process.execPath, join(tools, 'node'))
+    writeFileSync(join(tools, 'claude'), `#!/usr/bin/env node
+const fs = require('node:fs'); const argv = process.argv.slice(2)
+if (argv[0] === '--version') { process.stdout.write('claude 1.0.0\\n'); process.exit(0) }
+if (argv.at(-1) === '--help') { process.stdout.write('--print --output-format --json-schema --no-session-persistence --safe-mode --strict-mcp-config --tools --permission-mode --add-dir\\n'); process.exit(0) }
+const request = JSON.parse(fs.readFileSync(/request JSON at (\\S+) with SHA-256/.exec(argv.at(-1))[1], 'utf8'))
+const answer = { criteria: request.order.criteria.map(row => ({ id: row.id, verdict: 'unclear', note: 'synthetic', evidence: [] })) }
+process.stdout.write(JSON.stringify({ type: 'result', is_error: false, session_id: require('node:crypto').randomUUID(), result: JSON.stringify(answer), structured_output: answer }))
+`)
+    chmodSync(join(tools, 'claude'), 0o700)
+    return tools
 }
 // A person at a terminal: no JSON, --interactive, and the answer they type to the prompt they read.
 async function asPerson(root: string, args: readonly string[], answer: (prompt: string, digest: string) => string): Promise<number> {
@@ -43,6 +62,19 @@ async function asPerson(root: string, args: readonly string[], answer: (prompt: 
 const record = (root: string, id: string) => JSON.parse(readFileSync(join(root, `.cockpit/work-orders/${id}.json`), 'utf8')) as Record<string, any>
 
 describe('work-order lifecycle', () => {
+    it('grades a criteria file against the uncommitted change without counting the file itself as outside scope', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]')
+        const env = { ...process.env, PATH: `${syntheticEvaluator()}:${process.env.PATH ?? ''}` }
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
+        writeFileSync(join(root, 'criteria.md'), '---\nscope: [src/]\ncriteria:\n  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n---\n')
+        const graded = await work(root, ['grade', '--criteria', 'criteria.md'], env)
+        expect(graded).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }],
+            result: { outOfScope: [], checks: [{ criterion: 'AC1', passed: true }], criteria: [{ id: 'AC1', verdict: 'unclear' }], evaluator: { tool: 'claudecode' } } })
+        // The fix names the command that was run, not an order this grade does not have.
+        expect(graded.guidance?.[0]?.text).toContain(`npx --no cockpit grade --config ${join(root, 'cockpit.toml')} --criteria <file>`)
+        expect(existsSync(join(root, '.cockpit/work-orders'))).toBe(false)
+    })
+
     it('closes an order as checks-passed only after cockpit ran every check, failing changes outside scope and stale contracts', async () => {
         const root = await cockpit('[work]\ngrading = "checks"\n\n[work.gates]\naccept = "agent"')
         writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1'))
