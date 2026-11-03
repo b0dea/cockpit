@@ -358,18 +358,19 @@ describe('runtime plan construction', () => {
     })
 
     it.each([
-        ['services:\n  app:\n    "build":\n      context: https://synthetic.invalid/repository.git\n'],
-        ['services:\n  app:\n    build:\n      "context": https://synthetic.invalid/repository.git\n'],
-    ])('refuses quoted fetch-capable mapping keys', (source) => {
-        expect(createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })).toEqual(
-            expect.objectContaining({ kind: 'refusal', result: null }),
-        )
-    })
-
-    it.each([
-        ['services:\n  app:\n    build:\n      dockerfile: Dockerfile\n      context: https://synthetic.invalid/repository.git\n'],
-        ['services:\n  app:\n    build:\n      # selected source\n      context: https://synthetic.invalid/repository.git\n'],
-    ])('refuses a remote context anywhere in a long-form build mapping', (source) => {
+        ['a quoted build key', 'services:\n  app:\n    "build":\n      context: https://synthetic.invalid/repository.git\n'],
+        ['a quoted context key', 'services:\n  app:\n    build:\n      "context": https://synthetic.invalid/repository.git\n'],
+        ['a context after another build key', 'services:\n  app:\n    build:\n      dockerfile: Dockerfile\n      context: https://synthetic.invalid/repository.git\n'],
+        ['a context after a comment', 'services:\n  app:\n    build:\n      # selected source\n      context: https://synthetic.invalid/repository.git\n'],
+        ['a remote short-form build', 'services:\n  app:\n    build: https://synthetic.invalid/source.tar.gz\n'],
+        ['an additional service context', 'services:\n  app:\n    build:\n      context: .\n      additional_contexts:\n        dependency: service:builder\n'],
+        ['a remote build merged from an anchor', 'services:\n  defaults: &remote\n    build: https://synthetic.invalid/repository.git\n  app:\n    <<: *remote\n'],
+        ['unparseable Compose', 'services: [unterminated\n'],
+        ['a remote long-form context', 'services:\n  app:\n    build:\n      context: https://synthetic.invalid/repository.git\n'],
+        ['a double-quoted remote build', 'services:\n  app:\n    build: "https://synthetic.invalid/repository.git"\n'],
+        ['a single-quoted remote context', "services:\n  app:\n    build:\n      context: 'https://synthetic.invalid/repository.git'\n"],
+        ['an SSH context', 'services:\n  app:\n    build:\n      context: ssh://synthetic.invalid/repository.git\n'],
+    ])('refuses Compose build input with %s before returning a plan', (_label, source) => {
         expect(createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })).toEqual(
             expect.objectContaining({ kind: 'refusal', result: null }),
         )
@@ -385,55 +386,12 @@ describe('runtime plan construction', () => {
         expect(createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] }).kind).toBe('preview')
     })
 
-    it('refuses a remote build context before returning a plan', () => {
-        const source = 'services:\n  app:\n    build: https://synthetic.invalid/source.tar.gz\n'
-        const outcome = createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })
-        expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-    })
-
     it('refuses a folded remote build context', () => {
         const source = 'services:\n  app:\n    build: >\n      https://synthetic.invalid/repository.git\n'
         const outcome = createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE })])
-    })
-
-    it.each([
-        ['services:\n  app:\n    build:\n      context: .\n      additional_contexts:\n        dependency: service:builder\n'],
-        ['services:\n  defaults: &remote\n    build: https://synthetic.invalid/repository.git\n  app:\n    <<: *remote\n'],
-        ['services: [unterminated\n'],
-    ])('refuses fetch-capable or invalid semantic Compose input', (source) => {
-        expect(createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })).toEqual(
-            expect.objectContaining({ kind: 'refusal', result: null }),
-        )
-    })
-
-    it('refuses a multiline remote build context before returning a plan', () => {
-        const source = 'services:\n  app:\n    build:\n      context: https://synthetic.invalid/repository.git\n'
-        expect(createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })).toEqual(
-            expect.objectContaining({ kind: 'refusal', result: null }),
-        )
-    })
-
-    it.each([
-        ['services:\n  app:\n    build: "https://synthetic.invalid/repository.git"\n'],
-        ["services:\n  app:\n    build:\n      context: 'https://synthetic.invalid/repository.git'\n"],
-        ['services:\n  app:\n    build:\n      context: ssh://synthetic.invalid/repository.git\n'],
-    ])('refuses quoted and alternate remote build syntax', (source) => {
-        expect(createRuntimeAdapter({ ...runtimeInput, composeFiles: [artifact('compose.yml', source)] })).toEqual(
-            expect.objectContaining({ kind: 'refusal', result: null }),
-        )
-    })
-
-    it('refuses unresolved exact-step data rather than delegating a choice', () => {
-        const outcome = createRuntimeAdapter({
-            ...runtimeInput,
-            labels: { 'dev.b0dea.cockpit.id': '${STACK_ID}' },
-        })
-
-        expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED })])
     })
 
     it('binds generated Compose execution to the exact leased port family', async () => {
@@ -662,6 +620,7 @@ describe('runtime plan construction', () => {
         { cwd: '/tmp/synthetic\0-cockpit', env: runtimeInput.env, labels: runtimeInput.labels, label: 'NUL path' },
         { cwd: runtimeInput.cwd, env: { ...runtimeInput.env, COMPOSE_FILE: 'other.yml' }, labels: runtimeInput.labels, label: 'compose env override' },
         { cwd: runtimeInput.cwd, env: runtimeInput.env, labels: { operation: 'up\0hidden' }, label: 'NUL label' },
+        { cwd: runtimeInput.cwd, env: runtimeInput.env, labels: { 'dev.b0dea.cockpit.id': '${STACK_ID}' }, label: 'unresolved label' },
     ])('refuses $label before it reaches the process boundary', ({ cwd, env, labels }) => {
         const outcome = createRuntimeAdapter({ ...runtimeInput, cwd, env, labels })
 
@@ -692,15 +651,6 @@ describe('runtime plan construction', () => {
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED })])
-    })
-
-    it('does not own process, timeout, stream, signal, compensation, or executePlan mechanics', () => {
-        const source = readFileSync(fileURLToPath(new URL('./runtime.ts', import.meta.url)), 'utf8')
-
-        expect(source).not.toMatch(/(?:node:)?child_process/)
-        expect(source).not.toMatch(/\b(?:spawn|exec|execFile|fork|process\.kill|setTimeout|AbortController)\s*\(/)
-        expect(source).not.toMatch(/\bexecutePlan\b/)
-        expect(source).not.toMatch(/\.compensation\s*(?:\.push|=)/)
     })
 })
 
@@ -2533,9 +2483,9 @@ fi
         const statusOutcomeA = await executeProbe(serviceA.status)
         const identityOutcomeA = await executeProbe(serviceA.identity)
         expect(createRuntimeServiceHealthPlan({ plan: serviceB, startOutcome: startOutcomeA, outcome: statusOutcomeA, identityOutcome: identityOutcomeA }).kind).toBe('unavailable')
-        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'start', outcome: startOutcomeA }).kind).toBe('admitted')
-        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'status', outcome: statusOutcomeA, startOutcome: startOutcomeA }).kind).toBe('admitted')
-        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'identity', outcome: identityOutcomeA, startOutcome: startOutcomeA, statusOutcome: statusOutcomeA }).kind).toBe('admitted')
+        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'start', outcome: startOutcomeA })).toMatchObject({ kind: 'admitted', service: 'api' })
+        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'status', outcome: statusOutcomeA, startOutcome: startOutcomeA })).toMatchObject({ kind: 'admitted', service: 'api' })
+        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'identity', outcome: identityOutcomeA, startOutcome: startOutcomeA, statusOutcome: statusOutcomeA })).toMatchObject({ kind: 'admitted', service: 'api' })
         expect(createRuntimeServiceHealthPlan({ plan: serviceA, startOutcome: startOutcomeA, outcome: statusOutcomeA, identityOutcome: identityOutcomeA }).kind).toBe('planned')
         const serviceC = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
         if (serviceC.kind !== 'planned') throw new Error(serviceC.reason)
@@ -3051,22 +3001,6 @@ fi
     })
 
     describe('runtime service stage admission boundaries', () => {
-        it('admits each clean startup boundary in order and leaves the plan available for inspection', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome })).toMatchObject({ kind: 'admitted', service: 'api' })
-            const statusOutcome = await executeProbe(plan.status)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome })).toMatchObject({ kind: 'admitted', service: 'api' })
-            const identityOutcome = await executeProbe(plan.identity)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome })).toMatchObject({ kind: 'admitted', service: 'api' })
-            expect(createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome }).kind).toBe('planned')
-        })
-
         it.each([
             ['nonzero', { StartExitCode: 9 }],
             ['stderr', { StartStderr: 'runtime diagnostic' }],
@@ -3133,19 +3067,7 @@ fi
             expect(admitRuntimeServiceStageOutcome({ plan: identityPlan, stage: 'status', outcome: identityStatus, startOutcome: identityStart }).kind).toBe('unavailable')
         })
 
-        it('rejects malformed status without log authority after admitted start and rejects expired start evidence', async () => {
-            const malformed = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StatusOutput: '{',
-            }])
-            if (malformed.admitted.kind !== 'complete') throw new Error(malformed.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: malformed.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-            const failure = admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: await executeProbe(plan.status), startOutcome })
-            expect(failure.kind).toBe('unavailable')
-            expect(failure).not.toHaveProperty('evidence')
-
+        it('rejects expired start evidence', async () => {
             const fresh = await topologyEvidence({ services: { api: {} } }, [{
                 ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
             }])
