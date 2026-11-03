@@ -199,6 +199,33 @@ describe('sync --adopt', () => {
         }
     })
 
+    it('leaves a cockpit.toml edited while the adoption is recorded alone and names the adopt command to rerun', async () => {
+        const { root, configPath } = await teamConsumer('adopt-config-race')
+        const edited = `${await readFile(configPath, 'utf8')}\n# another editor's change\n`
+        const mkdirOriginal = fsPromises.mkdir
+        const mkdirSpy = vi.spyOn(fsPromises, 'mkdir').mockImplementation(async (path, options) => {
+            if (typeof path === 'string' && path.startsWith(join(root, '.cockpit.toml.adopt-'))) await writeFile(configPath, edited)
+            return mkdirOriginal(path, options)
+        })
+        syncBuiltinESMExports()
+        try {
+            const refused = await runSyncAdoption({ configPath, adopt: ['.claude/settings.json'] }, async () => {
+                throw new Error('synchronize must not run after the config write is refused')
+            })
+
+            expect(refused).toMatchObject({ status: 2, diagnostics: [
+                expect.objectContaining({ code: 'CONFIG_CHANGED_DURING_EXECUTION',
+                    fix: 'let the other edit finish, then have a human approve npx --no cockpit sync --config <your cockpit.toml> --adopt .claude/settings.json again' }),
+                expect.objectContaining({ code: 'SURFACE_ADOPTION_REFUSED' }),
+            ] })
+            expect(await readFile(configPath, 'utf8')).toBe(edited)
+            expect(await readFile(join(root, '.claude/settings.json'), 'utf8')).toBe(TEAM_SETTINGS)
+        } finally {
+            mkdirSpy.mockRestore()
+            syncBuiltinESMExports()
+        }
+    })
+
     it('keeps rollback indeterminate when a post-link helper fault retains private recovery links', async () => {
         const { root, configPath } = await teamConsumer('adopt-post-link-fault')
         const sourcePath = join(root, '.claude/settings.json')

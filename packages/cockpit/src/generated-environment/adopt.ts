@@ -53,10 +53,12 @@ function tomlFailure(error: unknown): string {
     return error instanceof TomlError ? `TOML error at line ${error.line}, column ${error.column}` : errorCause(error)
 }
 
-function refused(code: string, message: string, target?: string): SyncAdoptionOutcome {
+function refused(code: string, message: string, target?: string, fix?: string): SyncAdoptionOutcome {
     return Object.freeze({ status: 2, result: null, diagnostics: Object.freeze([Object.freeze({
-        severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }) })]) })
+        severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) })]) })
 }
+
+const ADOPT_BY_HAND_FIX = 'move the settings file to cockpit/adopted/<the same path>, add its [[surfaces.adopted]] row to cockpit.toml by hand with the fields the configuration reference lists, then run npx --no cockpit sync --config <your cockpit.toml>'
 
 /** Key order must not matter when two parsed configurations are compared. */
 function canonical(value: unknown): string {
@@ -197,10 +199,10 @@ export async function runSyncAdoption(
     const expected = { ...config, surfaces: { ...config.surfaces, adopted: [...config.surfaces.adopted, ...rows] } }
     let candidateConfig
     try { candidateConfig = CockpitConfig.safeParse(parse(nextText)) } catch (error) {
-        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `recording the adoption would leave cockpit.toml unparseable (${tomlFailure(error)}); nothing was moved. Add the [[surfaces.adopted]] row by hand`, configPath)
+        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `recording the adoption would leave cockpit.toml unparseable (${tomlFailure(error)}); nothing was moved`, configPath, ADOPT_BY_HAND_FIX)
     }
     if (!candidateConfig.success || canonical(candidateConfig.data) !== canonical(expected)) {
-        return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'recording the adoption would change more than the [[surfaces.adopted]] rows; nothing was moved. Add the rows by hand', configPath)
+        return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'recording the adoption would change more than the [[surfaces.adopted]] rows; nothing was moved', configPath, ADOPT_BY_HAND_FIX)
     }
 
     const moved: Candidate[] = []
@@ -227,15 +229,18 @@ export async function runSyncAdoption(
                     path: configPath, expectedSha256: digest(nextText), temporaryTag: 'adopt',
                     edit: () => originalText,
                     isExactChange: (value) => canonical(value) === canonical(config),
-                    messages: {
-                        changedBefore: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place',
-                        changedDuring: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place',
-                        invalid: (detail) => `undoing the adoption would leave cockpit.toml invalid (${detail})`,
-                        notExact: 'undoing the adoption would change more than the [[surfaces.adopted]] rows',
-                        writtenMismatch: 'cockpit.toml was restored, but re-reading it shows a further change',
-                    },
+                    messages: (() => {
+                        const fix = `restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`
+                        return {
+                            changedBefore: { message: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place', fix },
+                            changedDuring: { message: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place', fix },
+                            invalid: (detail: string) => ({ message: `undoing the adoption would leave cockpit.toml invalid (${detail})`, fix }),
+                            notExact: { message: 'undoing the adoption would change more than the [[surfaces.adopted]] rows', fix },
+                            writtenMismatch: { message: 'cockpit.toml was restored, but re-reading it shows a further change', fix },
+                        }
+                    })(),
                 })
-                if (restored.kind !== 'complete') failures.push(`${restored.message}. Restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`)
+                if (restored.kind !== 'complete') failures.push(`${restored.message}. ${restored.fix}`)
             } catch (error) {
                 failures.push(`cockpit.toml restoration failed (${errorCause(error)}). Restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`)
             }
@@ -260,6 +265,7 @@ export async function runSyncAdoption(
         }
         moved.push(item)
     }
+    const rerun = `npx --no cockpit sync --config <your cockpit.toml> ${input.adopt.map(path => `--adopt ${path}`).join(' ')}`
     let written
     try {
         written = await writeVerifiedConfig({
@@ -267,17 +273,19 @@ export async function runSyncAdoption(
             edit: () => nextText,
             isExactChange: (value) => canonical(value) === canonical(expected),
             messages: {
-                changedBefore: 'cockpit.toml changed since it was read; re-run npx --no cockpit sync --config <your cockpit.toml> --adopt',
-                changedDuring: 'cockpit.toml changed while the adoption was being recorded; re-run npx --no cockpit sync --config <your cockpit.toml> --adopt',
-                invalid: (detail) => `recording the adoption would leave cockpit.toml invalid (${detail})`,
-                notExact: 'recording the adoption would change more than the [[surfaces.adopted]] rows; add the rows by hand',
-                writtenMismatch: 'the adoption was recorded, but re-reading cockpit.toml shows a further change; inspect it before running sync',
+                changedBefore: { message: 'cockpit.toml changed since it was read', fix: `let the other edit finish, then have a human approve ${rerun} again` },
+                changedDuring: { message: 'cockpit.toml changed while the adoption was being recorded', fix: `let the other edit finish, then have a human approve ${rerun} again` },
+                invalid: (detail) => ({ message: `recording the adoption would leave cockpit.toml invalid (${detail})`,
+                    fix: `correct what the message names in cockpit.toml, then have a human approve ${rerun} again` }),
+                notExact: { message: 'recording the adoption would change more than the [[surfaces.adopted]] rows', fix: ADOPT_BY_HAND_FIX },
+                writtenMismatch: { message: 'the adoption was recorded, but re-reading cockpit.toml shows a further change',
+                    fix: 'review cockpit.toml for the change you did not make before running npx --no cockpit sync --config <your cockpit.toml>' },
             },
         })
     } catch (error) {
         return rollback(refused('SURFACE_ADOPTION_REFUSED', `writing cockpit.toml failed (${errorCause(error)}); owned recovery was attempted. Verify cockpit.toml has SHA-256 ${digest(originalText)} before retrying`, configPath), 'unknown')
     }
-    if (written.kind !== 'complete') return rollback(refused(written.code, written.message, configPath), 'unknown')
+    if (written.kind !== 'complete') return rollback(refused(written.code, written.message, configPath, written.fix), 'unknown')
 
     let synced: SyncAdoptionOutcome
     try { synced = await synchronize({ configPath }) } catch (error) {

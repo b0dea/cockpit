@@ -71,9 +71,9 @@ export interface SiblingOutcome {
 const STEP_TIMEOUT_MS = 10_000
 const FREE_TEXT_UNSAFE = /[\u0000-\u001f\u007f]/
 
-function refused(code: string, message: string, target?: string): SiblingOutcome {
+function refused(code: string, message: string, target?: string, fix?: string): SiblingOutcome {
     return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }) })]) })
+        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) })]) })
 }
 
 function usage(message: string, target?: string): SiblingOutcome {
@@ -221,41 +221,46 @@ interface Prepared {
  * Build the edited text and the exact configuration it must parse to. The schema is run on the
  * candidate before any directory is touched, so a refusal never leaves a stray repository behind.
  */
+const EDIT_BY_HAND_FIX = 'make the [[sibling]] change in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
+const CORRECT_OPTION_FIX = 'correct the value the message names in the sibling options and run the command again, or make the [[sibling]] change in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
+
 function prepare(base: CockpitConfig, edit: SiblingEdit, siblings: readonly unknown[]): Prepared | SiblingOutcome {
-    if (edit.kind === 'unsupported') return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, `cockpit.toml cannot be edited safely: ${edit.reason}; nothing was written`, 'sibling')
+    if (edit.kind === 'unsupported') return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, `cockpit.toml cannot be edited safely: ${edit.reason}; nothing was written`, 'sibling', EDIT_BY_HAND_FIX)
     const expected = { ...base, sibling: siblings } as CockpitConfig
     let parsed
     try { parsed = CockpitConfig.safeParse(parse(edit.text)) } catch (error) {
         const where = error instanceof TomlError ? `at line ${error.line}, column ${error.column}` : errorCause(error)
-        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `the edit would leave cockpit.toml unparseable (${where}); nothing was written`, 'sibling')
+        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `the edit would leave cockpit.toml unparseable (${where}); nothing was written`, 'sibling', CORRECT_OPTION_FIX)
     }
     if (!parsed.success) {
         const issue = parsed.error.issues[0]
         return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-            `the edit would leave cockpit.toml invalid (${issue ? `${issue.path.join('.') || '(root)'}: ${issue.message}` : 'schema'}); nothing was written`, 'sibling')
+            `the edit would leave cockpit.toml invalid (${issue ? `${issue.path.join('.') || '(root)'}: ${issue.message}` : 'schema'}); nothing was written`, 'sibling', CORRECT_OPTION_FIX)
     }
     if (canonical(parsed.data) !== canonical(expected)) {
-        return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'the edit would change more than the one sibling table; nothing was written. Edit cockpit.toml by hand', 'sibling')
+        return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'the edit would change more than the one sibling table; nothing was written', 'sibling', EDIT_BY_HAND_FIX)
     }
     return { text: edit.text, expected }
 }
 
 const isOutcome = (value: Prepared | SiblingOutcome): value is SiblingOutcome => 'diagnostics' in value
 
-async function commit(path: string, sha256: string, prepared: Prepared, verb: string): Promise<SiblingOutcome | null> {
+async function commit(path: string, sha256: string, prepared: Prepared, verb: 'add' | 'remove'): Promise<SiblingOutcome | null> {
+    const rerun = `let the other edit finish, then run the same npx --no cockpit sibling ${verb} command again`
     const written = await writeVerifiedConfig({
         path, expectedSha256: sha256, temporaryTag: 'sibling',
         edit: () => prepared.text,
         isExactChange: (config) => canonical(config) === canonical(prepared.expected),
         messages: {
-            changedBefore: `cockpit.toml changed since it was read; nothing was written. Re-run sibling ${verb}`,
-            changedDuring: `cockpit.toml changed while the edit was being prepared; nothing was written. Re-run sibling ${verb}`,
-            invalid: (reason) => `the edit would leave cockpit.toml invalid (${reason}); nothing was written`,
-            notExact: `the edit would change more than the one sibling table; nothing was written. Edit cockpit.toml by hand`,
-            writtenMismatch: 'the table was written, but re-reading cockpit.toml shows a change beyond it; inspect the file before running sync',
+            changedBefore: { message: 'cockpit.toml changed since it was read; nothing was written', fix: rerun },
+            changedDuring: { message: 'cockpit.toml changed while the edit was being prepared; nothing was written', fix: rerun },
+            invalid: (reason) => ({ message: `the edit would leave cockpit.toml invalid (${reason}); nothing was written`, fix: CORRECT_OPTION_FIX }),
+            notExact: { message: 'the edit would change more than the one sibling table; nothing was written', fix: EDIT_BY_HAND_FIX },
+            writtenMismatch: { message: 'the table was written, but re-reading cockpit.toml shows a change beyond it',
+                fix: 'review cockpit.toml for the change you did not make before running npx --no cockpit sync --config <your cockpit.toml> --dry-run' },
         },
     })
-    return written.kind === 'complete' ? null : refused(written.code, written.message, path)
+    return written.kind === 'complete' ? null : refused(written.code, written.message, path, written.fix)
 }
 
 type LoadedConfig = Extract<Awaited<ReturnType<typeof loadCockpitConfig>>, { kind: 'complete' }>['result']

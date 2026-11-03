@@ -178,6 +178,22 @@ describe('sibling add', () => {
         expect(outcome.artifact).toContain(publish.recordRemote)
     })
 
+    it('leaves a cockpit.toml edited during --create alone and says to rerun once that edit finishes', async () => {
+        const { configPath } = await estate()
+        const edited = `${CONFIG}\n# another editor's change\n`
+        const outcome = await runSiblingAdd({ configPath, slug: 'billing-api', create: true, purpose: 'Billing service', env }, {
+            execute: async (step) => {
+                if (step.id === 'sibling:init') await writeFile(configPath, edited)
+                return executeProbe(step)
+            },
+        })
+
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'CONFIG_CHANGED_DURING_EXECUTION',
+            message: expect.stringContaining('nothing was written'),
+            fix: 'let the other edit finish, then run the same npx --no cockpit sibling add command again' }] })
+        expect(await readFile(configPath, 'utf8')).toBe(edited)
+    })
+
     it('derives a safe sibling variable and refuses an explicit runtime control', async () => {
         const { configPath, siblings } = await estate()
         await mkdir(join(siblings, 'compose-product'))
