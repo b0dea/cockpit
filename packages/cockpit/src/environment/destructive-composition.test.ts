@@ -10,7 +10,6 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import * as lifecycleComposition from './lifecycle-composition.js'
 import * as ports from './ports.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
-import { consumeRuntimeLifecycleProjection } from './runtime.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
@@ -243,7 +242,7 @@ describe('destructive command composition', () => {
         })
 
         const observation = await adapters.observe(destructive.result)
-        const runtime = observation && !('diagnostics' in observation) ? consumeRuntimeLifecycleProjection(observation.runtime) : undefined
+        const runtime = observation && !('diagnostics' in observation) ? observation.runtime : undefined
 
         expect(observation).toMatchObject({
             instance: { launcher: { stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId } },

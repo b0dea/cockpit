@@ -12,7 +12,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { createHash } from 'node:crypto'
 import { cockpitId, checkoutId as deriveCheckoutId, stackId as deriveStackId } from './identity.js'
-import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan } from './runtime.js'
+import { createRuntimeAdapter, observeRuntimeTopology } from './runtime.js'
 import {
     createComparisonRemoteRefStep,
     createGitAncestryObservationStep,
@@ -224,10 +224,8 @@ describe('Git adjacency evidence', () => {
             timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 30_000, expectedMountSources: [],
         })
         if (runtime.kind !== 'preview') throw new Error(JSON.stringify(runtime.diagnostics))
-        const plan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId,
+        const topology = await observeRuntimeTopology({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId, execute: executeProbe,
             observationWindow: { startedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + ttlMs).toISOString() } })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const topology = admitRuntimeTopology({ plan, outcome: await executeProbe(plan.step) })
         if (topology.kind !== 'complete') throw new Error(topology.reason)
         return topology.topology
     }

@@ -46,11 +46,9 @@ import {
 } from './ports.js'
 import {
     admitRuntimeMeasurement,
-    admitRuntimeTopology,
-    collectMachineFloorEvidence,
-    createMachineFloorPlan,
+    measureMachineFloor,
     createRuntimeAdapter,
-    createRuntimeTopologyPlan,
+    observeRuntimeTopology,
     issueMachineFloorAuthority,
     OBSERVATION_WINDOW_HEADROOM_MS,
     observeDockerRuntime,
@@ -624,7 +622,7 @@ export function createLifecycleCommandAdapters(
             ...(ports ? { portLeaseProjection: ports } : {}), siblingDirectories })
         if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
-        const topologyPlan = createRuntimeTopologyPlan({
+        const topology = await observeRuntimeTopology({
             runtimePlan: runtime.plan,
             stackId: context.stackId,
             configSha256: context.runtimeSha256,
@@ -633,10 +631,8 @@ export function createLifecycleCommandAdapters(
                 startedAt,
                 expiresAt: new Date(Date.parse(startedAt) + machine.cold_start_seconds * 1_000 + OBSERVATION_WINDOW_HEADROOM_MS).toISOString(),
             },
+            execute,
         })
-        if (topologyPlan.kind !== 'planned') return undefined
-        const topologyOutcome = await execute(topologyPlan.step)
-        const topology = admitRuntimeTopology({ plan: topologyPlan, outcome: topologyOutcome })
         if (topology.kind !== 'complete') {
             const mismatch = topology.mounts
             if (!mismatch) return undefined
@@ -653,19 +649,14 @@ export function createLifecycleCommandAdapters(
         }
         const disk = await resolveDiskCapacityExecutable()
         if (disk.state !== 'available') return undefined
-        const floorPlan = createMachineFloorPlan({
+        const floor = await measureMachineFloor({
             runtimePlan: runtime.plan,
             diskExecutable: disk.value,
             timeoutMs: input.timeoutMs,
             authority: currentBinding.machineFloorAuthority!,
-        })
-        if (floorPlan.kind !== 'preview') return undefined
-        const machineEvidence = collectMachineFloorEvidence(floorPlan.plan, [
-            await execute(floorPlan.plan.steps[0]!),
-            await execute(floorPlan.plan.steps[1]!),
-        ])
-        if (!machineEvidence) return undefined
-        const hostObservations = observeHostCapacity({ evidence: machineEvidence })
+        }, execute)
+        if (floor.kind !== 'complete') return undefined
+        const hostObservations = observeHostCapacity({ evidence: floor.evidence })
         const lifecycle = projectRuntimeLifecycle(topology.topology)
         if (!lifecycle) return undefined
         const readiness = {
@@ -690,20 +681,16 @@ export function createLifecycleCommandAdapters(
         ])
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
         if (disk.state !== 'available') return refuse?.(runtimeUnavailable(disk.reason, context.stackId))
-        const plan = createMachineFloorPlan({
+        const machine = await measureMachineFloor({
             runtimeExecutable: docker.value,
             diskExecutable: disk.value,
             cwd: binding.checkoutRoot,
             env,
             timeoutMs: input.timeoutMs,
             authority: binding.machineFloorAuthority,
-        })
-        if (plan.kind !== 'preview') return plan.kind === 'refusal' ? refuse?.(plan.diagnostics) : undefined
-        const evidence = collectMachineFloorEvidence(plan.plan, [
-            await execute(plan.plan.steps[0]!),
-            await execute(plan.plan.steps[1]!),
-        ])
-        return evidence ? use(observeHostCapacity({ evidence })) : undefined
+        }, execute)
+        if (machine.kind === 'refusal') return refuse?.(machine.diagnostics)
+        return machine.kind === 'complete' ? use(observeHostCapacity({ evidence: machine.evidence })) : undefined
     }
 
     const withLifecycleStage: LifecycleCommandAdapterComposition['withLifecycleStage'] = async (context, use, refuse) => {

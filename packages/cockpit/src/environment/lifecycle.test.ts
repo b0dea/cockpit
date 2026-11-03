@@ -4,7 +4,7 @@ import type { RuntimeLifecycleSemantics, RuntimeServiceEvidence } from './runtim
 
 const owners = vi.hoisted(() => ({
     stages: new WeakMap<object, unknown>(),
-    runtimes: new WeakMap<object, unknown>(),
+    topologies: new WeakSet<object>(),
     ports: new WeakMap<object, unknown>(),
     reclaims: new WeakMap<object, unknown>(),
     services: new WeakSet<object>(),
@@ -18,11 +18,7 @@ vi.mock('./lifecycle-stage.js', () => ({
     },
 }))
 vi.mock('./runtime.js', () => ({
-    consumeRuntimeLifecycleProjection: (value: object) => {
-        const result = owners.runtimes.get(value)
-        owners.runtimes.delete(value)
-        return result
-    },
+    isRuntimeTopologyEvidence: (value: object) => owners.topologies.has(value),
     isRuntimeServiceEvidence: (value: object) => owners.services.has(value),
 }))
 vi.mock('./ports.js', () => ({
@@ -87,13 +83,14 @@ function semantics(serviceIds = ['db', 'api']): RuntimeLifecycleSemantics {
 }
 
 function projections(options: { holders?: number; services?: string[]; change?: 'acquired' | 'unchanged' } = {}) {
-    const stage = Object.freeze({}); const runtime = Object.freeze({}); const ports = Object.freeze({})
+    const stage = Object.freeze({}); const ports = Object.freeze({})
     const values = semantics(options.services)
     owners.stages.set(stage, Object.freeze({ stackId, stage: 'steady' }))
     const topology = Object.freeze({ batchId: 'batch', executableSha256: '6'.repeat(64), ...values,
         observationWindow: Object.freeze({ startedAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 30_000).toISOString() }),
     })
-    owners.runtimes.set(runtime, Object.freeze({ topology, semantics: values }))
+    owners.topologies.add(topology)
+    const runtime = { topology, semantics: values }
     const holderCount = options.holders ?? 1
     owners.ports.set(ports, Object.freeze({
         lease: Object.freeze({ stackId, offset: 0, ports: Object.freeze({ APP_PORT: 8080 }) }),
@@ -133,7 +130,7 @@ describe('lifecycle planning', () => {
             ...input.semantics,
             topology: { ...input.semantics.topology, services: [...input.semantics.topology.services].reverse() },
         }
-        owners.runtimes.set(input.runtime, Object.freeze({ topology: input.topology, semantics: reordered }))
+        Object.assign(input.runtime, ({ topology: input.topology, semantics: reordered }))
         const result = planUp({
             lifecycleStage: input.stage as never, runtime: input.runtime as never, ports: input.ports as never,
             progress: null, completedServices: [], operationGeneration: generation,
@@ -264,7 +261,6 @@ describe('lifecycle planning', () => {
             operationGeneration: generation }
         expect(admitUpProgress(input)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID' }] })
         expect(owners.stages.has(fresh.stage)).toBe(false)
-        expect(owners.runtimes.has(fresh.runtime)).toBe(false)
         expect(owners.ports.has(fresh.ports)).toBe(false)
         expect(admitUpProgress(input)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
@@ -311,12 +307,12 @@ describe('lifecycle planning', () => {
         const composed = projections()
         const composedSemantics = { ...composed.semantics, services: composed.semantics.services.map((service, index) => index === 0
             ? { ...service, start: { ...service.start, cwd: '/workspace/caf\u00e9' } } : service) }
-        owners.runtimes.set(composed.runtime, Object.freeze({ topology: composed.topology, semantics: composedSemantics }))
+        Object.assign(composed.runtime, ({ topology: composed.topology, semantics: composedSemantics }))
         const first = planUp({ lifecycleStage: composed.stage as never, runtime: composed.runtime as never, ports: composed.ports as never, progress: null, completedServices: [], operationGeneration: generation })
         const decomposed = projections()
         const decomposedSemantics = { ...decomposed.semantics, services: decomposed.semantics.services.map((service, index) => index === 0
             ? { ...service, start: { ...service.start, cwd: '/workspace/cafe\u0301' } } : service) }
-        owners.runtimes.set(decomposed.runtime, Object.freeze({ topology: decomposed.topology, semantics: decomposedSemantics }))
+        Object.assign(decomposed.runtime, ({ topology: decomposed.topology, semantics: decomposedSemantics }))
         const second = planUp({ lifecycleStage: decomposed.stage as never, runtime: decomposed.runtime as never, ports: decomposed.ports as never, progress: null, completedServices: [], operationGeneration: generation })
         expect(first.kind).toBe('execute')
         expect(second.kind).toBe('execute')
@@ -352,7 +348,7 @@ describe('lifecycle planning', () => {
                 start: { ...service.start, paths: [...service.start.paths].reverse(), ports: [...service.start.ports].reverse() },
             } : service),
         }
-        owners.runtimes.set(second.runtime, Object.freeze({ topology: second.topology, semantics: reordered }))
+        Object.assign(second.runtime, ({ topology: second.topology, semantics: reordered }))
         const right = planUp({ lifecycleStage: second.stage as never, runtime: second.runtime as never, ports: second.ports as never, progress: null, completedServices: [], operationGeneration: generation })
         expect(left.kind).toBe('execute')
         expect(right.kind).toBe('execute')
@@ -368,7 +364,7 @@ describe('lifecycle planning', () => {
         ]
         const digest = (expected: typeof checks, filesystemChecks: readonly FilesystemCheck[] = []) => {
             const input = projections()
-            owners.runtimes.set(input.runtime, Object.freeze({
+            Object.assign(input.runtime, ({
                 topology: input.topology,
                 semantics: {
                     ...input.semantics,
@@ -421,7 +417,7 @@ describe('lifecycle planning', () => {
                         ? { ...service, start: { ...service.start, argv: [...service.start.argv, '--changed'] } } : service)
                         : input.semantics.services,
                 }
-            owners.runtimes.set(input.runtime, Object.freeze({ topology: input.topology, semantics: changed }))
+            Object.assign(input.runtime, ({ topology: input.topology, semantics: changed }))
             if (change === 'port') {
                 owners.ports.set(input.ports, Object.freeze({
                     lease: Object.freeze({ stackId, offset: 1, ports: Object.freeze({ APP_PORT: 8081 }) }),
@@ -459,14 +455,14 @@ describe('lifecycle planning', () => {
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
 
-    it('rejects wrong-stack and copied owner projections', () => {
+    it('rejects wrong-stack owner projections, a copied topology and copied port and reclaim projections', () => {
         const wrongStage = projections()
         owners.stages.set(wrongStage.stage, Object.freeze({ stackId: `stack:${'9'.repeat(64)}`, stage: 'steady' }))
         expect(planUp({ lifecycleStage: wrongStage.stage as never, runtime: wrongStage.runtime as never, ports: wrongStage.ports as never, progress: null, completedServices: [], operationGeneration: generation }))
             .toMatchObject({ kind: 'refusal' })
 
         const copiedRuntime = projections()
-        expect(planSleep({ runtime: { ...copiedRuntime.runtime } as never, ports: copiedRuntime.ports as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
+        expect(planSleep({ runtime: { ...copiedRuntime.runtime, topology: { ...copiedRuntime.runtime.topology } } as never, ports: copiedRuntime.ports as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
             .toMatchObject({ kind: 'refusal' })
         const copiedPorts = projections()
         expect(planSleep({ runtime: copiedPorts.runtime as never, ports: { ...copiedPorts.ports } as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
@@ -586,7 +582,7 @@ describe('lifecycle planning', () => {
             { ...input.semantics.topology.services[0]!, dependsOn: [] },
             { ...input.semantics.topology.services[1]!, dependsOn: ['db', 'db'] },
         ] } }
-        owners.runtimes.set(input.runtime, Object.freeze({ topology: input.topology, semantics: bad }))
+        Object.assign(input.runtime, ({ topology: input.topology, semantics: bad }))
         expect(planUp({ lifecycleStage: input.stage as never, runtime: input.runtime as never, ports: input.ports as never, progress: null, completedServices: [], operationGeneration: generation }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
@@ -594,7 +590,7 @@ describe('lifecycle planning', () => {
     it('enforces the semantic envelope, service, and edge bounds', () => {
         const oversized = projections()
         const huge = 'x'.repeat(1_048_576)
-        owners.runtimes.set(oversized.runtime, Object.freeze({
+        Object.assign(oversized.runtime, ({
             topology: oversized.topology,
             semantics: { ...oversized.semantics, services: oversized.semantics.services.map((service, index) => index === 0
                 ? { ...service, start: { ...service.start, argv: ['/usr/bin/docker', huge] } } : service) },
@@ -608,7 +604,7 @@ describe('lifecycle planning', () => {
 
         const edged = projections({ services: Array.from({ length: 130 }, (_, index) => `service-${index}`) })
         const allIds = edged.semantics.topology.order
-        owners.runtimes.set(edged.runtime, Object.freeze({
+        Object.assign(edged.runtime, ({
             topology: edged.topology,
             semantics: {
                 ...edged.semantics,

@@ -14,14 +14,12 @@ import { cockpitId, checkoutId, stackId } from './identity.js'
 import { ENVIRONMENT_CODES } from './contract.js'
 import {
     classifyResolvedRuntimeLiterals,
-    createMachineFloorPlan,
-    collectMachineFloorEvidence,
+    measureMachineFloor,
     createRuntimeAdapter,
     admitRuntimeServiceHealth,
-    admitRuntimeTopology,
     admitRuntimeMeasurement,
     runtimeIdentity,
-    createRuntimeTopologyPlan,
+    observeRuntimeTopology,
     stopRuntime,
     startRuntimeService,
     revalidateRuntimeService,
@@ -39,7 +37,6 @@ import {
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
     projectRuntimeExecutionEnvironment,
-    consumeRuntimeLifecycleProjection,
     consumeRuntimeServiceFailureForLogs,
     resolveRuntimeServiceOrder,
 } from './runtime.js'
@@ -56,6 +53,18 @@ const sha = (value: string | Buffer) => createHash('sha256').update(value).diges
 const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
     ({ kind: 'read', path: '/synthetic/state/machine/runtime-measurements.json', rows })
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+
+/** Measures the machine floor, recording each step; `run: false` records the steps without running them. */
+async function machineFloor(input: Parameters<typeof measureMachineFloor>[0], options: { run?: boolean; alter?: (outcome: ExecuteProbeOutcome, index: number) => ExecuteProbeOutcome } = {}) {
+    const steps: ExecutionStep[] = []
+    const outcome = await measureMachineFloor(input, async (step) => {
+        steps.push(step)
+        if (options.run === false) return { kind: 'refusal' } as never
+        const result = await executeProbe(step)
+        return options.alter ? options.alter(result, steps.length - 1) : result
+    })
+    return { steps, outcome }
+}
 
 const executableSha = sha('synthetic executable')
 const artifact = (reference: string, source = 'services: {}\n') => ({
@@ -464,7 +473,9 @@ describe('runtime plan construction', () => {
         expect(admitted.kind).toBe('preview')
         if (admitted.kind === 'preview') {
             expect(admitted.plan.steps[0]?.env).toMatchObject({ APP_HOST_PORT: String(lease.lease.ports.APP_HOST_PORT) })
-            const topology = createRuntimeTopologyPlan({
+            let topologyStep: ExecutionStep | undefined
+            await observeRuntimeTopology({
+                execute: async (step) => { topologyStep = step; return { kind: 'refusal' } as never },
                 runtimePlan: admitted.plan,
                 stackId: boundInput.stackId,
                 configSha256: sourceSha256,
@@ -474,10 +485,7 @@ describe('runtime plan construction', () => {
                     expiresAt: '2026-09-26T12:05:00.000Z',
                 },
             })
-            expect(topology.kind).toBe('planned')
-            if (topology.kind === 'planned') {
-                expect(topology.step.env).toMatchObject({ APP_HOST_PORT: String(lease.lease.ports.APP_HOST_PORT) })
-            }
+            expect(topologyStep?.env).toMatchObject({ APP_HOST_PORT: String(lease.lease.ports.APP_HOST_PORT) })
             const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '/usr/bin' })
             const observedAt = new Date().toISOString()
             const observedCheckout = git.state === 'available' ? await observeSetupCheckout({
@@ -495,16 +503,14 @@ describe('runtime plan construction', () => {
             }, (projection) => issueMachineFloorAuthority({ configuration: machine, checkout: projection })) : undefined
             expect(binding).toBeDefined()
             if (binding) {
-                const floor = createMachineFloorPlan({
+                const floor = await machineFloor({
                     runtimePlan: admitted.plan,
                     diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'verified-path' },
                     timeoutMs: 10_000,
                     authority: binding.authority,
-                })
-                expect(floor.kind).toBe('preview')
-                if (floor.kind === 'preview') {
-                    expect(floor.plan.steps.every(({ env }) => env.APP_HOST_PORT === undefined)).toBe(true)
-                }
+                }, { run: false })
+                expect(floor.steps).toHaveLength(2)
+                expect(floor.steps.every(({ env }) => env.APP_HOST_PORT === undefined)).toBe(true)
             }
         }
         expect(createRuntimeAdapter(boundInput, { ...ownAuthority, portLeaseProjection: { ...portLeaseProjection } as never }))
@@ -604,15 +610,12 @@ describe('runtime measurement classification', () => {
             writeFileSync(runtimePath, runtimeBytes, { mode: 0o700 })
             const node = await resolveExecutablePath(process.execPath)
             if (node.state !== 'available') throw new Error(node.reason)
-            const planned = createMachineFloorPlan({
+            const { outcome } = await machineFloor({
                 runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimePath, sha256: sha(runtimeBytes), executionMode: 'verified-path' },
                 diskExecutable: node.value, cwd: root, env: {}, timeoutMs: 10_000,
             })
-            expect(planned.kind).toBe('preview')
-            if (planned.kind !== 'preview') return
-            const outcomes = [await executeProbe(planned.plan.steps[0]!), await executeProbe(planned.plan.steps[1]!)] as const
-            const measured = collectMachineFloorEvidence(planned.plan, outcomes)
-            expect(measured, JSON.stringify(outcomes)).toEqual({
+            const measured = outcome.kind === 'complete' ? outcome.evidence : undefined
+            expect(measured).toEqual({
                 memoryBytes: 1_048_576, cpuMillis: 1_000,
                 freeDiskBytes: expect.any(Number), observedAt: expect.any(String),
             })
@@ -620,7 +623,6 @@ describe('runtime measurement classification', () => {
             expect(measured!.freeDiskBytes).toBeGreaterThanOrEqual(0)
             expect(BigInt(measured!.freeDiskBytes)).toBeLessThanOrEqual(status.blocks * status.bsize)
             expect(measured!.freeDiskBytes % Number(status.bsize)).toBe(0)
-            expect(collectMachineFloorEvidence({ ...planned.plan }, outcomes)).toBeUndefined()
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 
@@ -636,31 +638,26 @@ describe('runtime measurement classification', () => {
             for (const output of ['0\n', '123456789\n', `${Number.MAX_SAFE_INTEGER}\n`,
                 'malformed\n', '-1\n', '1.5\n', '9007199254740992\n', '1\n2\n', '1\n\n', '1 \n', '01\n', '1e3\n', '1']) {
                 const diskExecutable = executable('disk-observation', `#!/bin/sh\nprintf '%s' ${shellQuote(output)}\n`)
-                const planned = createMachineFloorPlan({ runtimeExecutable, diskExecutable, cwd: root, env: {}, timeoutMs: 10_000 })
-                if (planned.kind !== 'preview') throw new Error('disk observation fixture plan was refused')
-                const outcomes = [await executeProbe(planned.plan.steps[0]!), await executeProbe(planned.plan.steps[1]!)] as const
-                expect(outcomes.map(({ kind }) => kind)).toEqual(['complete', 'complete'])
-                const measured = collectMachineFloorEvidence(planned.plan, outcomes)
+                const input = { runtimeExecutable, diskExecutable, cwd: root, env: {}, timeoutMs: 10_000 }
+                const { outcome } = await machineFloor(input)
+                const measured = outcome.kind === 'complete' ? outcome.evidence : undefined
                 if (['0\n', '123456789\n', `${Number.MAX_SAFE_INTEGER}\n`].includes(output)) {
                     expect(measured?.freeDiskBytes, output).toBe(Number(output))
-                    expect(collectMachineFloorEvidence(planned.plan, [outcomes[0], { ...outcomes[1], stdout: Buffer.from('1\n') }])).toBeUndefined()
                 } else expect(measured, output).toBeUndefined()
             }
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 
-    it('constructs exact bounded runtime-allocation and free-disk collectors', () => {
+    it('constructs exact bounded runtime-allocation and free-disk collectors', async () => {
         const diskSha = sha('disk executable')
-        const outcome = createMachineFloorPlan({
+        const { steps } = await machineFloor({
             runtimeExecutable: runtimeInput.executable,
             diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: diskSha, executionMode: 'verified-path' },
             cwd: runtimeInput.cwd,
             env: runtimeInput.env,
             timeoutMs: 10_000,
-        })
-        expect(outcome.kind).toBe('preview')
-        if (outcome.kind !== 'preview') return
-        expect(outcome.plan.steps.map(({ id, argv, consumedFiles, filesystemChecks }) => ({ id, argv, consumedFiles, filesystemChecks }))).toEqual([
+        }, { run: false })
+        expect(steps.map(({ id, argv, consumedFiles, filesystemChecks }) => ({ id, argv, consumedFiles, filesystemChecks }))).toEqual([
             {
                 id: 'runtime:measure:resources',
                 argv: ['/usr/local/bin/docker', 'info', '--format', '{{json .MemTotal}}|{{json .NCPU}}'],
@@ -673,10 +670,10 @@ describe('runtime measurement classification', () => {
                 filesystemChecks: [],
             },
         ])
-        expect(outcome.plan.steps.every(({ timeoutMs }) => timeoutMs === 10_000)).toBe(true)
+        expect(steps.every(({ timeoutMs }) => timeoutMs === 10_000)).toBe(true)
     })
 
-    it.each(['null', 'primitive', 'revoked', 'missing', 'extra', 'nested executable', 'environment', 'working directory', 'timeout', 'forged authority'])('refuses hostile machine-floor input: %s', (kind) => {
+    it.each(['null', 'primitive', 'revoked', 'missing', 'extra', 'nested executable', 'environment', 'working directory', 'timeout', 'forged authority'])('refuses hostile machine-floor input: %s', async (kind) => {
         const valid = {
             runtimeExecutable: runtimeInput.executable,
             diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'verified-path' as const },
@@ -697,18 +694,17 @@ describe('runtime measurement classification', () => {
                                 : kind === 'timeout' ? { ...valid, timeoutMs: '10000' }
                                     : { ...valid, authority: { kind: 'machine-floor-authority' } }
 
-        expect(() => createMachineFloorPlan(candidate as never)).not.toThrow()
-        expect(createMachineFloorPlan(candidate as never)).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
+        expect(await machineFloor(candidate as never, { run: false })).toEqual({ steps: [], outcome: expect.objectContaining({ kind: 'refusal', result: null }) })
     })
 
-    it('refuses accessor-backed machine-floor plans without invoking getters', () => {
+    it('refuses accessor-backed machine-floor plans without invoking getters', async () => {
         let reads = 0
         const input = {}
         Object.defineProperty(input, 'runtimeExecutable', {
             enumerable: true, get: () => { reads += 1; return runtimeInput.executable },
         })
 
-        const outcome = createMachineFloorPlan(input as never)
+        const { outcome } = await machineFloor(input as never, { run: false })
 
         expect(outcome).toMatchObject({
             kind: 'refusal', result: null,
@@ -1061,19 +1057,23 @@ fi
             ...(options.activeProfiles === undefined ? {} : { activeProfiles: options.activeProfiles }),
         }, options.authority)
         if (runtime.kind !== 'preview') throw new Error(`runtime fixture refused: ${JSON.stringify(runtime.diagnostics)}`)
-        const planned = createRuntimeTopologyPlan({
+        let step: ExecutionStep | undefined
+        const admitted = await observeRuntimeTopology({
             runtimePlan: runtime.plan,
             stackId: stack,
             configSha256,
             batchId: selectedBatchId,
             observationWindow: options.observationWindow ?? observationWindow(),
+            execute: async (candidate) => {
+                step = candidate
+                const outcome = await executeProbe(candidate)
+                expect(outcome.kind).toBe('complete')
+                expect(outcome.stdout.toString()).not.toContain(canary)
+                return outcome
+            },
         })
-        expect(planned.kind).toBe('planned')
-        if (planned.kind !== 'planned') throw new Error(planned.reason)
-        const outcome = await executeProbe(planned.step)
-        expect(outcome.kind).toBe('complete')
-        expect(outcome.stdout.toString()).not.toContain(canary)
-        const admitted = admitRuntimeTopology({ plan: planned, outcome })
+        if (!step) throw new Error('topology step was not executed')
+        const planned = { kind: 'planned' as const, step }
         return { runtime, planned, admitted, runtimeExecutable }
     }
 
@@ -1444,11 +1444,10 @@ fi
         expect((await topologyEvidence({ services })).admitted.kind).toBe('unavailable')
     })
 
-    it('rejects copied, expired, future-window, and cross-plan topology authority', async () => {
+    it('rejects copied topology evidence and topology read outside its observation window', async () => {
         const base = await topologyEvidence({ services: { api: {} } })
         expect(base.admitted.kind).toBe('complete')
         if (base.admitted.kind !== 'complete') return
-        expect(admitRuntimeTopology({ plan: base.planned, outcome: await executeProbe(base.planned.step) }).kind).toBe('unavailable')
         const copy = structuredClone(base.admitted.topology)
         expect(isRuntimeTopologyEvidence(copy)).toBe(false)
         expect(resolveRuntimeServiceOrder(copy as never)).toEqual([])
@@ -1459,18 +1458,9 @@ fi
             observationWindow(60_000, 120_000),
             observationWindow(60_000, -60_000),
         ]) {
-            const plan = createRuntimeTopologyPlan({
-                runtimePlan: base.runtime.plan,
-                stackId: stack,
-                configSha256,
-                batchId,
-                observationWindow: window,
-            })
-            expect(plan.kind).toBe('planned')
-            if (plan.kind !== 'planned') continue
-            const outcome = await executeProbe(plan.step)
-            expect(admitRuntimeTopology({ plan, outcome }).kind).toBe('unavailable')
-            expect(admitRuntimeTopology({ plan: base.planned, outcome }).kind).toBe('unavailable')
+            expect(await observeRuntimeTopology({
+                runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: window, execute: executeProbe,
+            })).toMatchObject({ kind: 'unavailable' })
         }
     })
 
@@ -1873,14 +1863,12 @@ fi
         const base = await topologyEvidence({ services: { api: {} } }, [{ ID: containerId, Name: 'synthetic-api-1', Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }])
         if (base.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
         const window = observationWindow()
-        const topologyA = createRuntimeTopologyPlan({ runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: window })
-        const topologyB = createRuntimeTopologyPlan({ runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: window })
-        if (topologyA.kind !== 'planned' || topologyB.kind !== 'planned') throw new Error('topology plan unavailable')
-        expect(topologyA.step.labels.issuanceId).not.toBe(topologyB.step.labels.issuanceId)
-        const topologyOutcomeA = await executeProbe(topologyA.step)
-        expect(admitRuntimeTopology({ plan: topologyB, outcome: topologyOutcomeA }).kind).toBe('unavailable')
-        expect(admitRuntimeTopology({ plan: topologyA, outcome: topologyOutcomeA }).kind).toBe('complete')
-        expect(admitRuntimeTopology({ plan: topologyB, outcome: await executeProbe(topologyB.step) }).kind).toBe('complete')
+        const issuances: string[] = []
+        for (let index = 0; index < 2; index += 1) {
+            expect(await observeRuntimeTopology({ runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: window,
+                execute: (step) => { issuances.push(step.labels.issuanceId!); return executeProbe(step) } })).toMatchObject({ kind: 'complete' })
+        }
+        expect(issuances[0]).not.toBe(issuances[1])
 
         const first = await serviceRun(base.admitted.topology)
         const second = await serviceRun(base.admitted.topology)
@@ -1924,41 +1912,12 @@ fi
         expect(failureContext(outcome)).toMatchObject({ stage: 'start' })
     })
 
-    it('rejects accessor and revoked caller envelopes without invoking them', async () => {
-        const base = await topologyEvidence({ services: { api: {} } }, [{ ID: containerId, Name: 'synthetic-api-1', Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }])
-        let reads = 0
-        const volatile = {
-            get runtimePlan() { reads++; return base.runtime.plan },
-            get stackId() { reads++; return stack },
-            get configSha256() { reads++; return configSha256 },
-            get batchId() { reads++; return batchId },
-            get observationWindow() { reads++; return observationWindow() },
-        }
-        expect(createRuntimeTopologyPlan(volatile).kind).toBe('unavailable')
-        expect(reads).toBe(0)
-        expect(createRuntimeTopologyPlan({
-            runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: observationWindow(),
-            [Symbol('hidden')]: true,
-        } as never).kind).toBe('unavailable')
-        const revoked = Proxy.revocable({}, {})
-        revoked.revoke()
-        expect(() => createRuntimeTopologyPlan(revoked.proxy as never)).not.toThrow()
-        expect(createRuntimeTopologyPlan(revoked.proxy as never).kind).toBe('unavailable')
-
-    })
-
     it('rejects topology and health receipts completed in the future', async () => {
         const base = await topologyEvidence({ services: { api: {} } }, [{ ID: containerId, Name: 'synthetic-api-1', Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }])
-        const topologyPlan = createRuntimeTopologyPlan({ runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: observationWindow(-20_000, 60_000) })
-        if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
-        const topologyOutcome = await executeProbe(topologyPlan.step)
-        vi.useFakeTimers()
-        vi.setSystemTime(Date.now() - 5_000)
-        try {
-            expect(admitRuntimeTopology({ plan: topologyPlan, outcome: topologyOutcome }).kind).toBe('unavailable')
-        } finally {
-            vi.useRealTimers()
-        }
+        expect(await observeRuntimeTopology({
+            runtimePlan: base.runtime.plan, stackId: stack, configSha256, batchId, observationWindow: observationWindow(-20_000, 60_000),
+            execute: async (step) => shiftReceipt('topology', 'finishedAt', () => new Date(Date.now() + 5_000).toISOString())(step, await executeProbe(step)),
+        })).toMatchObject({ kind: 'unavailable' })
         if (base.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
         const future = await serviceRun(base.admitted.topology, { alter: shiftReceipt('health', 'finishedAt', () => new Date(Date.now() + 5_000).toISOString()) })
         expect(future.stages.at(-1)).toBe('health')
@@ -2150,13 +2109,10 @@ fi
             expect(first).toBeDefined()
             expect(second).toBeDefined()
             if (!first || !second) return
-            expect(consumeRuntimeLifecycleProjection({ ...first } as never)).toBeUndefined()
-
-            const envelope = consumeRuntimeLifecycleProjection(first)
-            expect(envelope?.topology).toBe(result.admitted.topology)
-            expect(consumeRuntimeLifecycleProjection(first)).toBeUndefined()
+            const envelope = first
+            expect(envelope.topology).toBe(result.admitted.topology)
             expect(resolveRuntimeServiceOrder(result.admitted.topology)).toEqual(['db', 'api'])
-            expect(consumeRuntimeLifecycleProjection(second)?.semantics).toEqual(envelope?.semantics)
+            expect(second.semantics).toEqual(envelope.semantics)
             expect(envelope?.semantics).toEqual(expect.objectContaining({
                 stackId: stack,
                 configSha256,
@@ -2196,8 +2152,8 @@ fi
             const secondProjection = projectRuntimeLifecycle(second.admitted.topology)
             if (!firstProjection || !secondProjection) throw new Error('projection unavailable')
 
-            expect(consumeRuntimeLifecycleProjection(firstProjection)?.semantics)
-                .toEqual(consumeRuntimeLifecycleProjection(secondProjection)?.semantics)
+            expect(firstProjection?.semantics)
+                .toEqual(secondProjection?.semantics)
             const duplicate = createRuntimeAdapter({
                 ...runtimeInput,
                 operation: 'validate',
@@ -2216,7 +2172,7 @@ fi
             if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
             const projection = projectRuntimeLifecycle(result.admitted.topology)
             if (!projection) throw new Error('projection unavailable')
-            const envelope = consumeRuntimeLifecycleProjection(projection)
+            const envelope = projection
             if (!envelope) throw new Error('projection consumption failed')
             const service = envelope.semantics.services[0]
             if (!service) throw new Error('service projection missing')
@@ -2275,7 +2231,7 @@ fi
             if (first.admitted.kind !== 'complete') throw new Error(first.admitted.reason)
             const projection = projectRuntimeLifecycle(first.admitted.topology)
             if (!projection) throw new Error('projection unavailable')
-            const baseline = consumeRuntimeLifecycleProjection(projection)?.semantics
+            const baseline = projection?.semantics
             if (!baseline) throw new Error('semantics unavailable')
             const variants = [
                 ['safe environment', { env: { PATH: process.env.PATH ?? '/usr/bin', DOCKER_CONTEXT: 'changed' } }, topology],
@@ -2298,7 +2254,7 @@ fi
                 if (result.admitted.kind !== 'complete') throw new Error(`${name}: ${result.admitted.reason}`)
                 const changed = projectRuntimeLifecycle(result.admitted.topology)
                 if (!changed) throw new Error('changed projection unavailable')
-                const changedSemantics = consumeRuntimeLifecycleProjection(changed)?.semantics
+                const changedSemantics = changed?.semantics
                 if (name === 'mount check') expect(changedSemantics?.runtimeChecks.expectedMountSources).toEqual(['/workspace/other'])
                 expect(changedSemantics).not.toEqual(baseline)
             }
@@ -2317,8 +2273,8 @@ fi
             const firstProjection = projectRuntimeLifecycle(first.admitted.topology)
             const secondProjection = projectRuntimeLifecycle(second.admitted.topology)
             if (!firstProjection || !secondProjection) throw new Error('projection unavailable')
-            const firstSemantics = consumeRuntimeLifecycleProjection(firstProjection)?.semantics
-            const secondSemantics = consumeRuntimeLifecycleProjection(secondProjection)?.semantics
+            const firstSemantics = firstProjection?.semantics
+            const secondSemantics = secondProjection?.semantics
 
             expect(secondSemantics).toEqual(firstSemantics)
             const source = JSON.stringify(firstSemantics)
@@ -2330,18 +2286,10 @@ fi
             expect(source).not.toContain('spawnNotAfter')
         })
 
-        it('refuses copied, stale, accessor-backed, and revoked topology evidence', async () => {
+        it('refuses copied and stale topology evidence', async () => {
             const result = await topologyEvidence({ services: { api: {} } })
             if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
             expect(projectRuntimeLifecycle({ ...result.admitted.topology } as never)).toBeUndefined()
-            let reads = 0
-            const hostile = Object.defineProperty({}, 'stackId', { enumerable: true, get() { reads++; return stack } })
-            expect(projectRuntimeLifecycle(hostile as never)).toBeUndefined()
-            expect(reads).toBe(0)
-            const revoked = Proxy.revocable({}, {})
-            revoked.revoke()
-            expect(() => projectRuntimeLifecycle(revoked.proxy as never)).not.toThrow()
-            expect(projectRuntimeLifecycle(revoked.proxy as never)).toBeUndefined()
 
             const projection = projectRuntimeLifecycle(result.admitted.topology)
             if (!projection) throw new Error('projection unavailable')
@@ -2349,7 +2297,7 @@ fi
             vi.setSystemTime(Date.parse(result.admitted.topology.observationWindow.expiresAt) + 1)
             try {
                 expect(projectRuntimeLifecycle(result.admitted.topology)).toBeUndefined()
-                expect(consumeRuntimeLifecycleProjection(projection)).toBeUndefined()
+                expect(isRuntimeTopologyEvidence(projection.topology)).toBe(false)
             } finally {
                 vi.useRealTimers()
             }

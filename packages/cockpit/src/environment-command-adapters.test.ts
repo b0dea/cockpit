@@ -28,7 +28,7 @@ import { observeSetupCheckout, withSetupCheckoutProjection } from './environment
 import { observeConfiguration, selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage } from './environment/lifecycle-stage.js'
 import { refreshObservationPostures, resolveObservationPostures, type PreflightContext } from './environment/observations.js'
-import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan, observeRuntimeExecution, projectRuntimeExecutionEnvironment } from './environment/runtime.js'
+import { createRuntimeAdapter, observeRuntimeExecution, projectRuntimeExecutionEnvironment } from './environment/runtime.js'
 import { deriveEntrypoints, observePortFamily, projectPortLeaseResult } from './environment/ports.js'
 import { leasePortFamilyFixture } from '../test-support/port-lease-fixture.js'
 import { holderId as deriveHolderId } from './environment/identity.js'

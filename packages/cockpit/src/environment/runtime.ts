@@ -381,7 +381,6 @@ export interface MachineFloorEvidence {
 }
 
 const issuedMachineFloorEvidence = new WeakSet<object>()
-const issuedMachineFloorPlans = new WeakMap<object, { readonly stackId?: StackId; readonly floor?: MachineFloorThresholds }>()
 
 export interface MachineFloorAuthority { readonly kind: 'machine-floor-authority' }
 const issuedMachineFloorAuthorities = new WeakMap<object, Readonly<{
@@ -813,10 +812,33 @@ function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | und
     }
 }
 
-export function createMachineFloorPlan(rawInput: MachineFloorPlanInput): EnvironmentCommandOutcome<null> {
+export type MachineFloorMeasurement =
+    | { readonly kind: 'complete'; readonly evidence: MachineFloorEvidence }
+    | MachineFloorRefusal
+    | { readonly kind: 'unavailable' }
+
+type MachineFloorRefusal = Extract<EnvironmentCommandOutcome<null>, { kind: 'refusal' }>
+
+function machineFloorRefusal(code: RefusalCode, message: string, target: string): MachineFloorRefusal {
+    return refusal<null>(code, message, target) as MachineFloorRefusal
+}
+
+/** Measures the container runtime's memory and CPU and the checkout's free disk. */
+export async function measureMachineFloor(
+    rawInput: MachineFloorPlanInput,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<MachineFloorMeasurement> {
+    const planned = machineFloorPlan(rawInput)
+    if (planned.kind !== 'preview') return planned
+    const [resources, disk] = planned.plan.steps as unknown as [ExecutionStep, ExecutionStep]
+    const evidence = machineFloorEvidence(planned.contract, await execute(resources), await execute(disk))
+    return evidence ? { kind: 'complete', evidence } : { kind: 'unavailable' }
+}
+
+function machineFloorPlan(rawInput: MachineFloorPlanInput): MachineFloorRefusal | { readonly kind: 'preview'; readonly plan: ExecutionPlan; readonly contract: { readonly stackId?: StackId; readonly floor?: MachineFloorThresholds } } {
     const input = machineFloorPlanInput(rawInput)
     if (input === undefined) {
-        return refusal<null>(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors require canonical digest-bound executables and a bounded timeout', 'machine-floor')
+        return machineFloorRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors require canonical digest-bound executables and a bounded timeout', 'machine-floor')
     }
     const { runtimeExecutable, diskExecutable } = input
     const makeStep = (id: string, argv: readonly [string, ...string[]], executable: ResolvedExecutable): ExecutionStep => ({
@@ -832,27 +854,19 @@ export function createMachineFloorPlan(rawInput: MachineFloorPlanInput): Environ
         makeStep('runtime:measure:free-disk', [diskExecutable.canonicalPath, '--input-type=module', '-e', DISK_CAPACITY_COLLECTOR, input.cwd], diskExecutable),
     ]
     const plan = snapshotExecutionPlan({ steps })
-    if (plan === undefined) return refusal<null>(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors did not produce a valid execution plan', input.cwd)
-    issuedMachineFloorPlans.set(plan, Object.freeze({
+    if (plan === undefined) return machineFloorRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors did not produce a valid execution plan', input.cwd)
+    return { kind: 'preview', plan, contract: {
         ...(input.stackId ? { stackId: input.stackId } : {}),
         ...(input.floor ? { floor: input.floor } : {}),
-    }))
-    return { kind: 'preview', status: 0, diagnostics: [], result: null, plan }
+    } }
 }
 
-export function collectMachineFloorEvidence(
-    plan: ExecutionPlan,
-    outcomes: readonly [ExecuteProbeOutcome, ExecuteProbeOutcome],
+function machineFloorEvidence(
+    contract: { readonly stackId?: StackId; readonly floor?: MachineFloorThresholds },
+    resources: ExecuteProbeOutcome,
+    disk: ExecuteProbeOutcome,
 ): MachineFloorEvidence | undefined {
-    const contract = issuedMachineFloorPlans.get(plan)
-    if (!contract) return undefined
-    const ownedPlan = snapshotExecutionPlan(plan)
-    if (!ownedPlan || ownedPlan.steps.length !== 2
-        || ownedPlan.steps[0]?.id !== 'runtime:measure:resources'
-        || ownedPlan.steps[1]?.id !== 'runtime:measure:free-disk') return undefined
-    const resources = authenticatedExecutionOutcome(outcomes[0], ownedPlan.steps[0])
-    const disk = authenticatedExecutionOutcome(outcomes[1], ownedPlan.steps[1])
-    if (!resources || resources.kind !== 'complete' || !disk || disk.kind !== 'complete') return undefined
+    if (resources.kind !== 'complete' || disk.kind !== 'complete') return undefined
     let resourceText: string
     let diskText: string
     try {
@@ -1202,9 +1216,9 @@ export interface RuntimeTopologyEvidence {
     readonly services: readonly RuntimeTopologyService[]
 }
 
-export type RuntimeTopologyPlan =
-    | { readonly kind: 'planned'; readonly step: ExecutionStep }
-    | { readonly kind: 'unavailable'; readonly reason: string }
+export type RuntimeTopologyObservation =
+    | { readonly kind: 'complete'; readonly step: ExecutionStep; readonly topology: RuntimeTopologyEvidence; readonly observations: readonly EnvironmentObservation[] }
+    | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch }
 
 interface TopologyPlanContract {
     readonly runtimePlan: ExecutionPlan
@@ -1239,8 +1253,6 @@ interface RuntimeHealthServiceExpectation {
     readonly publishedPorts: readonly RuntimePublishedPort[]
 }
 
-const issuedTopologyPlans = new WeakMap<object, TopologyPlanContract>()
-const consumedTopologyPlans = new WeakSet<object>()
 const issuedTopologyEvidence = new WeakMap<object, TopologyEvidenceContract>()
 const MAX_TOPOLOGY_BYTES = 1_048_576
 const MAX_TOPOLOGY_SERVICES = 4_096
@@ -1275,7 +1287,7 @@ function unavailableReason(base: string, error?: unknown): string {
     return error === undefined ? base : `${base}: ${errorCause(error)}`
 }
 
-function unavailableTopology(reason = 'runtime topology is unavailable'): RuntimeTopologyPlan {
+function unavailableTopology(reason = 'runtime topology is unavailable'): Extract<RuntimeTopologyObservation, { kind: 'unavailable' }> {
     return { kind: 'unavailable', reason }
 }
 
@@ -1335,55 +1347,42 @@ function derivedComposeStep(base: ExecutionStep, id: string, operation: string, 
     return snapshotExecutionPlan({ steps: [step] })?.steps[0]
 }
 
-export function createRuntimeTopologyPlan(input: {
+/**
+ * Reads the stack's services through `compose config` from a validated runtime plan, and binds the
+ * topology to that plan, the observation window and the declared bind sources.
+ */
+export async function observeRuntimeTopology(input: {
     readonly runtimePlan: ExecutionPlan
     readonly stackId: StackId
     readonly configSha256: string
     readonly batchId: string
     readonly observationWindow: RuntimeObservationWindow
-}): RuntimeTopologyPlan {
-    try {
-        const captured = captureOwnValues(input, ['runtimePlan', 'stackId', 'configSha256', 'batchId', 'observationWindow'])
-        const runtimePlan = captured?.runtimePlan as ExecutionPlan | undefined
-        const stackId = captured?.stackId
-        const configSha256 = captured?.configSha256
-        const batchId = captured?.batchId
-        const runtime = runtimePlan && typeof runtimePlan === 'object' ? issuedRuntimePlans.get(runtimePlan) : undefined
-        const base = runtimePlan?.steps?.[0]
-        const window = canonicalWindow(captured?.observationWindow as RuntimeObservationWindow)
-        if (!runtime || runtime.operation !== 'validate' || !base || !window
-            || typeof stackId !== 'string' || stackId !== runtime.stackId
-            || typeof configSha256 !== 'string' || !SHA256.test(configSha256)
-            || typeof batchId !== 'string' || !SHA256.test(batchId)
-            || base.labels.stackId !== stackId || base.labels.configSha256 !== configSha256
-            || base.labels.batchId !== batchId || base.labels.composeVersion !== runtime.composeVersion
-            || base.cwd !== runtime.cwd || base.argv0 !== runtime.runtimeExecutable.invocationPath) return unavailableTopology()
-        const issuanceId = randomBytes(32).toString('hex')
-        const step = derivedComposeStep(
-            base,
-            `runtime:docker-compose:topology:${runtime.projectName}`,
-            'config',
-            ['config', '--format', 'json', '--no-env-resolution'],
-            MAX_TOPOLOGY_BYTES,
-            issuanceId,
-            MAX_OBSERVATION_WINDOW_MS,
-            undefined,
-            runtime.interpolatedNames,
-        )
-        if (!step) return unavailableTopology()
-        const plan = { kind: 'planned' as const, step }
-        issuedTopologyPlans.set(plan, Object.freeze({
-            runtimePlan,
-            runtime,
-            stackId: stackId as StackId,
-            configSha256,
-            batchId,
-            observationWindow: window,
-        }))
-        return plan
-    } catch (error) {
-        return unavailableTopology(unavailableReason('runtime topology is unavailable', error))
-    }
+    readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+}): Promise<RuntimeTopologyObservation> {
+    const { runtimePlan, stackId, configSha256, batchId } = input
+    const runtime = issuedRuntimePlans.get(runtimePlan)
+    const base = runtimePlan.steps[0]
+    const window = canonicalWindow(input.observationWindow)
+    if (!runtime || runtime.operation !== 'validate' || !base || !window
+        || stackId !== runtime.stackId || !SHA256.test(configSha256) || !SHA256.test(batchId)
+        || base.labels.stackId !== stackId || base.labels.configSha256 !== configSha256
+        || base.labels.batchId !== batchId || base.labels.composeVersion !== runtime.composeVersion
+        || base.cwd !== runtime.cwd || base.argv0 !== runtime.runtimeExecutable.invocationPath) return unavailableTopology()
+    const issuanceId = randomBytes(32).toString('hex')
+    const step = derivedComposeStep(
+        base,
+        `runtime:docker-compose:topology:${runtime.projectName}`,
+        'config',
+        ['config', '--format', 'json', '--no-env-resolution'],
+        MAX_TOPOLOGY_BYTES,
+        issuanceId,
+        MAX_OBSERVATION_WINDOW_MS,
+        undefined,
+        runtime.interpolatedNames,
+    )
+    if (!step) return unavailableTopology()
+    const contract: TopologyPlanContract = { runtimePlan, runtime, stackId, configSha256, batchId, observationWindow: window }
+    return admitRuntimeTopology(contract, step, await input.execute(step))
 }
 
 function healthcheckEnabled(value: unknown): boolean | undefined {
@@ -1632,89 +1631,73 @@ function mountSourcesMatch(binds: readonly string[], declared: readonly string[]
     return missing.length === 0 && unexpected.length === 0
 }
 
-export function admitRuntimeTopology(input: {
-    readonly plan: RuntimeTopologyPlan
-    readonly outcome: ExecuteProbeOutcome
-}): { readonly kind: 'complete'; readonly topology: RuntimeTopologyEvidence; readonly observations: readonly EnvironmentObservation[] }
-    | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch } {
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, reason: unavailableReason('runtime topology is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = captured?.plan as RuntimeTopologyPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (!plan || plan.kind !== 'planned' || consumedTopologyPlans.has(plan)) return unavailable()
-        const contract = issuedTopologyPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.step) : undefined
-        if (!contract || !outcome) return unavailable()
-        consumedTopologyPlans.add(plan)
-        if (outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0 || !outcome.receipt) return unavailable()
-        const { startedAt, finishedAt } = outcome.receipt
-        const windowStart = Date.parse(contract.observationWindow.startedAt)
-        const windowEnd = Date.parse(contract.observationWindow.expiresAt)
-        const receiptStart = Date.parse(startedAt)
-        const receiptEnd = Date.parse(finishedAt)
-        const now = Date.now()
-        if (!isCanonicalTimestamp(startedAt) || !isCanonicalTimestamp(finishedAt)
-            || windowStart > receiptStart || receiptStart > receiptEnd || receiptEnd > now || receiptEnd > windowEnd
-            || now < windowStart || now > windowEnd) return unavailable()
-        const projected = parseTopology(outcome.stdout, contract.stackId, contract.configSha256, contract.runtime.activeProfiles)
-        if (!projected) return unavailable()
-        const mounts = compareBindSources(projected.services.flatMap(({ bindMountSources }) => bindMountSources),
-            contract.runtime.expectedMountSources)
-        // The caller can name the sibling or host path behind each difference; a bare refusal here
-        // left `up` reporting only that readiness authority was unavailable.
-        if (mounts.missing.length > 0 || mounts.unexpected.length > 0) return {
-            kind: 'unavailable' as const,
-            reason: 'the bind mounts Compose resolves differ from the declared mount sources',
-            mounts,
-        }
-        const topology = {
-            stackId: contract.stackId,
-            configSha256: contract.configSha256,
-            batchId: contract.batchId,
-            runtimeVersion: contract.runtime.runtimeVersion,
-            composeVersion: contract.runtime.composeVersion,
-            executableSha256: contract.runtime.runtimeExecutable.sha256,
-            projectName: contract.runtime.projectName,
-            cwd: contract.runtime.cwd,
-            observationWindow: contract.observationWindow,
-            services: projected.services,
-        }
-        issuedTopologyEvidence.set(topology, Object.freeze({
-            ...contract,
-            step: plan.step,
-            order: projected.order,
-            services: projected.byId,
-            runtimeHealth: projected.runtimeHealth,
-        }))
-        const observations = [
-            issueObservation({
-                code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-                owner: OWNER,
-                stackId: contract.stackId,
-                source: plan.step.argv0,
-                observed: { state: 'available', value: true, observedAt: finishedAt },
-                expectation: { kind: 'equal', value: true },
-                applicability: { state: 'required', posture: 'mounted' },
-                freshness: { state: 'current' },
-                remedy: 'restore the declared runtime executable and retry the bounded probe',
-            }),
-            issueObservation({
-                code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
-                owner: OWNER,
-                stackId: contract.stackId,
-                source: plan.step.id,
-                observed: { state: 'available', value: true, observedAt: finishedAt },
-                expectation: { kind: 'equal', value: true },
-                applicability: { state: 'required', posture: 'mounted' },
-                freshness: { state: 'current' },
-                remedy: 'restore every declared bind source and refuse undeclared host binds',
-            }),
-        ]
-        return { kind: 'complete', topology, observations }
-    } catch (error) {
-        return unavailable(error)
+function admitRuntimeTopology(contract: TopologyPlanContract, step: ExecutionStep, outcome: ExecuteProbeOutcome): RuntimeTopologyObservation {
+    const unavailable = () => unavailableTopology()
+    if (outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0 || !outcome.receipt) return unavailable()
+    const { startedAt, finishedAt } = outcome.receipt
+    const windowStart = Date.parse(contract.observationWindow.startedAt)
+    const windowEnd = Date.parse(contract.observationWindow.expiresAt)
+    const receiptStart = Date.parse(startedAt)
+    const receiptEnd = Date.parse(finishedAt)
+    const now = Date.now()
+    if (!isCanonicalTimestamp(startedAt) || !isCanonicalTimestamp(finishedAt)
+        || windowStart > receiptStart || receiptStart > receiptEnd || receiptEnd > now || receiptEnd > windowEnd
+        || now < windowStart || now > windowEnd) return unavailable()
+    const projected = parseTopology(outcome.stdout, contract.stackId, contract.configSha256, contract.runtime.activeProfiles)
+    if (!projected) return unavailable()
+    const mounts = compareBindSources(projected.services.flatMap(({ bindMountSources }) => bindMountSources),
+        contract.runtime.expectedMountSources)
+    // The caller can name the sibling or host path behind each difference; a bare refusal here
+    // left `up` reporting only that readiness authority was unavailable.
+    if (mounts.missing.length > 0 || mounts.unexpected.length > 0) return {
+        kind: 'unavailable' as const,
+        reason: 'the bind mounts Compose resolves differ from the declared mount sources',
+        mounts,
     }
+    const topology = {
+        stackId: contract.stackId,
+        configSha256: contract.configSha256,
+        batchId: contract.batchId,
+        runtimeVersion: contract.runtime.runtimeVersion,
+        composeVersion: contract.runtime.composeVersion,
+        executableSha256: contract.runtime.runtimeExecutable.sha256,
+        projectName: contract.runtime.projectName,
+        cwd: contract.runtime.cwd,
+        observationWindow: contract.observationWindow,
+        services: projected.services,
+    }
+    issuedTopologyEvidence.set(topology, {
+        ...contract,
+        step,
+        order: projected.order,
+        services: projected.byId,
+        runtimeHealth: projected.runtimeHealth,
+    })
+    const observations = [
+        issueObservation({
+            code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+            owner: OWNER,
+            stackId: contract.stackId,
+            source: step.argv0,
+            observed: { state: 'available', value: true, observedAt: finishedAt },
+            expectation: { kind: 'equal', value: true },
+            applicability: { state: 'required', posture: 'mounted' },
+            freshness: { state: 'current' },
+            remedy: 'restore the declared runtime executable and retry the bounded probe',
+        }),
+        issueObservation({
+            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
+            owner: OWNER,
+            stackId: contract.stackId,
+            source: step.id,
+            observed: { state: 'available', value: true, observedAt: finishedAt },
+            expectation: { kind: 'equal', value: true },
+            applicability: { state: 'required', posture: 'mounted' },
+            freshness: { state: 'current' },
+            remedy: 'restore every declared bind source and refuse undeclared host binds',
+        }),
+    ]
+    return { kind: 'complete', step, topology, observations }
 }
 
 export function isRuntimeTopologyEvidence(value: unknown): value is RuntimeTopologyEvidence {
@@ -1790,29 +1773,10 @@ export interface RuntimeLifecycleSemantics {
     readonly services: readonly RuntimeLifecycleServiceSemantics[]
 }
 
-declare const runtimeLifecycleProjectionBrand: unique symbol
+/** The stable work a topology describes, which lifecycle planning digests; valid while its topology is. */
 export interface RuntimeLifecycleProjection {
-    readonly [runtimeLifecycleProjectionBrand]: true
-}
-
-export interface RuntimeLifecycleEnvelope {
     readonly topology: RuntimeTopologyEvidence
     readonly semantics: RuntimeLifecycleSemantics
-}
-
-interface RuntimeLifecycleProjectionContract {
-    readonly topology: RuntimeTopologyEvidence
-    readonly semantics: RuntimeLifecycleSemantics
-    readonly observationWindow: RuntimeObservationWindow
-}
-
-const issuedRuntimeLifecycleProjections = new WeakMap<object, RuntimeLifecycleProjectionContract>()
-const consumedRuntimeLifecycleProjections = new WeakSet<object>()
-
-function freezeRuntimeValue<Value>(value: Value): Value {
-    if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
-    for (const item of Object.values(value)) freezeRuntimeValue(item)
-    return value
 }
 
 function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ index: number; service: string }>): RuntimeLifecycleExecutionSemantics | undefined {
@@ -1822,7 +1786,7 @@ function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ inde
     if (argv.length === 0 || slot && (slot.index < 0 || slot.index >= argv.length)) return undefined
     const compensation = step.compensation.map((item) => projectRuntimeExecutionStep(item))
     if (compensation.some((item) => item === undefined)) return undefined
-    return freezeRuntimeValue({
+    return {
         argv: argv as [string | RuntimeContainerIdSlot, ...(string | RuntimeContainerIdSlot)[]],
         argv0: step.argv0,
         cwd: step.cwd,
@@ -1836,7 +1800,7 @@ function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ inde
         consumedFiles: step.consumedFiles.map((item) => ({ ...item, argvIndexes: [...item.argvIndexes] })),
         filesystemChecks: step.filesystemChecks.map((item) => ({ ...item })),
         compensation: compensation as RuntimeLifecycleExecutionSemantics[],
-    })
+    }
 }
 
 declare const runtimeServiceFailureEvidenceBrand: unique symbol
@@ -2124,88 +2088,61 @@ function runtimeServiceInspectStep(
 }
 
 export function projectRuntimeLifecycle(topology: RuntimeTopologyEvidence): RuntimeLifecycleProjection | undefined {
-    try {
-        if (topology === null || typeof topology !== 'object') return undefined
-        const contract = issuedTopologyEvidence.get(topology)
-        const now = Date.now()
-        if (!contract || now < Date.parse(contract.observationWindow.startedAt)
-            || now > Date.parse(contract.observationWindow.expiresAt)) return undefined
-        const services: RuntimeLifecycleServiceSemantics[] = []
-        for (const serviceId of contract.order) {
-            const service = contract.services.get(serviceId)
-            if (!service) return undefined
-            const initial = runtimeServiceInitialSteps(contract, service, randomBytes(32).toString('hex'))
-            const inspect = runtimeServiceInspectStep(
-                contract,
-                service,
-                '0'.repeat(64),
-                randomBytes(32).toString('hex'),
-                Math.min(contract.step.timeoutMs, MAX_OBSERVATION_WINDOW_MS),
-            )
-            if (!initial || !inspect) return undefined
-            const start = projectRuntimeExecutionStep(initial.start)
-            const status = projectRuntimeExecutionStep(initial.status)
-            const identity = projectRuntimeExecutionStep(initial.identity)
-            const projectedInspect = projectRuntimeExecutionStep(inspect, { index: inspect.argv.length - 1, service: service.id })
-            if (!start || !status || !identity || !projectedInspect) return undefined
-            services.push(freezeRuntimeValue({
+    const contract = issuedTopologyEvidence.get(topology)
+    const now = Date.now()
+    if (!contract || now < Date.parse(contract.observationWindow.startedAt)
+        || now > Date.parse(contract.observationWindow.expiresAt)) return undefined
+    const services: RuntimeLifecycleServiceSemantics[] = []
+    for (const serviceId of contract.order) {
+        const service = contract.services.get(serviceId)
+        if (!service) return undefined
+        const initial = runtimeServiceInitialSteps(contract, service, randomBytes(32).toString('hex'))
+        const inspect = runtimeServiceInspectStep(
+            contract,
+            service,
+            '0'.repeat(64),
+            randomBytes(32).toString('hex'),
+            Math.min(contract.step.timeoutMs, MAX_OBSERVATION_WINDOW_MS),
+        )
+        if (!initial || !inspect) return undefined
+        const start = projectRuntimeExecutionStep(initial.start)
+        const status = projectRuntimeExecutionStep(initial.status)
+        const identity = projectRuntimeExecutionStep(initial.identity)
+        const projectedInspect = projectRuntimeExecutionStep(inspect, { index: inspect.argv.length - 1, service: service.id })
+        if (!start || !status || !identity || !projectedInspect) return undefined
+        services.push({
+            id: service.id,
+            start,
+            status,
+            identity,
+            inspect: projectedInspect,
+            healthAcceptance: { state: 'running' as const, health: service.healthcheck ? 'healthy' as const : null },
+        })
+    }
+    const semantics = {
+        stackId: contract.stackId,
+        configSha256: contract.configSha256,
+        runtimeVersion: contract.runtime.runtimeVersion,
+        composeVersion: contract.runtime.composeVersion,
+        projectName: contract.runtime.projectName,
+        topology: {
+            order: [...contract.order],
+            services: topology.services.map((service) => ({
                 id: service.id,
-                start,
-                status,
-                identity,
-                inspect: projectedInspect,
-                healthAcceptance: { state: 'running' as const, health: service.healthcheck ? 'healthy' as const : null },
-            }))
-        }
-        const semantics = freezeRuntimeValue({
-            stackId: contract.stackId,
-            configSha256: contract.configSha256,
-            runtimeVersion: contract.runtime.runtimeVersion,
-            composeVersion: contract.runtime.composeVersion,
-            projectName: contract.runtime.projectName,
-            topology: {
-                order: [...contract.order],
-                services: topology.services.map((service) => ({
-                    id: service.id,
-                    dependsOn: [...service.dependsOn],
-                    bindMountSources: [...service.bindMountSources],
-                    namedVolumeMounts: service.namedVolumeMounts?.map((mount) => ({ ...mount })) ?? [],
-                    healthcheck: service.healthcheck,
-                })),
-            },
-            runtimeChecks: {
-                coldStartLimitMillis: contract.runtime.coldStartLimitMillis,
-                expectedMountSources: [...contract.runtime.expectedMountSources],
-            },
-            services,
-        }) satisfies RuntimeLifecycleSemantics
-        if (Buffer.byteLength(JSON.stringify(semantics), 'utf8') > MAX_TOPOLOGY_BYTES) return undefined
-        const projection = {} as RuntimeLifecycleProjection
-        issuedRuntimeLifecycleProjections.set(projection, Object.freeze({
-            topology,
-            semantics,
-            observationWindow: contract.observationWindow,
-        }))
-        return projection
-    } catch {
-        // A throwing accessor or proxy trap makes the projection input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-export function consumeRuntimeLifecycleProjection(projection: RuntimeLifecycleProjection): RuntimeLifecycleEnvelope | undefined {
-    try {
-        if (projection === null || typeof projection !== 'object' || consumedRuntimeLifecycleProjections.has(projection)) return undefined
-        const contract = issuedRuntimeLifecycleProjections.get(projection)
-        const now = Date.now()
-        if (!contract || now < Date.parse(contract.observationWindow.startedAt)
-            || now > Date.parse(contract.observationWindow.expiresAt)) return undefined
-        consumedRuntimeLifecycleProjections.add(projection)
-        return { topology: contract.topology, semantics: contract.semantics }
-    } catch {
-        // A throwing accessor or proxy trap makes the projection unusable, which the caller refuses.
-        return undefined
-    }
+                dependsOn: [...service.dependsOn],
+                bindMountSources: [...service.bindMountSources],
+                namedVolumeMounts: service.namedVolumeMounts?.map((mount) => ({ ...mount })) ?? [],
+                healthcheck: service.healthcheck,
+            })),
+        },
+        runtimeChecks: {
+            coldStartLimitMillis: contract.runtime.coldStartLimitMillis,
+            expectedMountSources: [...contract.runtime.expectedMountSources],
+        },
+        services,
+    } satisfies RuntimeLifecycleSemantics
+    if (Buffer.byteLength(JSON.stringify(semantics), 'utf8') > MAX_TOPOLOGY_BYTES) return undefined
+    return { topology, semantics }
 }
 
 const CONTAINER_STATES = new Set(['created', 'running', 'restarting', 'paused', 'exited', 'dead', 'removing'])

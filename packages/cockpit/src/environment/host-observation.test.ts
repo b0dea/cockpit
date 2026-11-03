@@ -10,7 +10,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type StackId } from './contract.js'
 import { resolvedExecutable, resolveGitExecutable } from './executable.js'
 import { observeHostCapacity, type HostCapacityFloor } from './host-observation.js'
-import { collectMachineFloorEvidence, createMachineFloorPlan, issueMachineFloorAuthority, type MachineFloorEvidence } from './runtime.js'
+import { issueMachineFloorAuthority, measureMachineFloor, type MachineFloorEvidence } from './runtime.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { aggregateObservations, resolveObservationPostures } from './observations.js'
@@ -80,21 +80,17 @@ async function evidence(memoryBytes: number, cpus: number, freeBlocks: number, f
         source: loaded.result.source, cockpitName: 'fixture', evaluatedAt: Date.parse(observedAt),
     }, (projection) => issueMachineFloorAuthority({ configuration: machine, checkout: projection })) : undefined
     if (!binding) throw new Error('fixture authority was refused')
-    const planned = createMachineFloorPlan({
+    const measured = await measureMachineFloor({
         runtimeExecutable: executable(dockerPath, dockerBody), diskExecutable: executable(diskPath, diskBody),
         cwd: root, env: runtimeEnv, timeoutMs: 10_000, authority: binding.authority,
-    })
-    if (planned.kind !== 'preview') throw new Error('fixture plan was refused')
-    const outcomes = await Promise.all(planned.plan.steps.map((step) => executeProbe(step)))
-    expect(collectMachineFloorEvidence({ ...planned.plan }, outcomes as [typeof outcomes[0], typeof outcomes[1]])).toBeUndefined()
-    const result = collectMachineFloorEvidence(planned.plan, outcomes as [typeof outcomes[0], typeof outcomes[1]])
-    if (!result) throw new Error(`fixture evidence was rejected: ${JSON.stringify(outcomes)}`)
-    return result
+    }, executeProbe)
+    if (measured.kind !== 'complete') throw new Error(`fixture evidence was rejected: ${measured.kind}`)
+    return measured.evidence
 }
 
 describe('host capacity evidence', () => {
     it('refuses loader injection inherited from a runtime plan', async () => {
-        await expect(evidence(1_048_576, 1, 1_024, undefined, { LD_PRELOAD: '/tmp/untrusted.so' })).rejects.toThrow('fixture plan was refused')
+        await expect(evidence(1_048_576, 1, 1_024, undefined, { LD_PRELOAD: '/tmp/untrusted.so' })).rejects.toThrow('fixture evidence was rejected: refusal')
     })
     it('rejects raw caller measurements without a digest-bound machine-floor result', () => {
         expect(() => observeHostCapacity({

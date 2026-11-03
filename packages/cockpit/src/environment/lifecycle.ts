@@ -10,9 +10,8 @@ import { consumeLifecycleStageProjection, type LifecycleStageProjection } from '
 import { consumePortLeaseProjection, type PortLeaseProjection } from './ports.js'
 import { consumeReclaimTargetProjection, type ReclaimTargetEnvelope, type ReclaimTargetProjection } from './reclaim.js'
 import {
-    consumeRuntimeLifecycleProjection,
+    isRuntimeTopologyEvidence,
     isRuntimeServiceEvidence,
-    type RuntimeLifecycleEnvelope,
     type RuntimeLifecycleExecutionSemantics,
     type RuntimeLifecycleProjection,
     type RuntimeLifecycleSemantics,
@@ -56,7 +55,7 @@ export type DestructiveLifecycleResult =
 type LifecycleRefusal = { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
 interface PlannerEvidence {
-    readonly runtime: RuntimeLifecycleEnvelope
+    readonly runtime: RuntimeLifecycleProjection
     readonly ports: PortLeaseProjection
 }
 
@@ -194,7 +193,7 @@ function workBasis(
 }
 
 function consumePlannerEvidence(runtimeProjection: RuntimeLifecycleProjection, portProjection: PortLeaseProjection): PlannerEvidence | undefined {
-    const runtime = consumeRuntimeLifecycleProjection(runtimeProjection)
+    const runtime = isRuntimeTopologyEvidence(runtimeProjection.topology) ? runtimeProjection : undefined
     const ports = consumePortLeaseProjection(portProjection)
     if (!runtime || !ports || runtime.semantics.stackId !== ports.lease.stackId
         || !Number.isSafeInteger(ports.ownership.holderCount) || ports.ownership.holderCount < 0
@@ -213,7 +212,7 @@ function validProgress(progress: LifecycleProgress | null): boolean {
 function completedPrefix(
     evidence: readonly RuntimeServiceEvidence[],
     progress: LifecycleProgress,
-    runtime: RuntimeLifecycleEnvelope,
+    runtime: RuntimeLifecycleProjection,
 ): readonly RuntimeServiceEvidence[] | undefined {
     if (evidence.length !== progress.completedServices.length) return undefined
     for (let index = 0; index < evidence.length; index += 1) {

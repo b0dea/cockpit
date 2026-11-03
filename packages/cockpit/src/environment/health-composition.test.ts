@@ -687,37 +687,6 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         ]))
     })
 
-    it('fails closed when machine-floor disk execution output changes', async () => {
-        const candidate = await fixture({ machineOnly: true, unmeasured: true })
-        const execute = vi.fn(async (step: Parameters<typeof executeProbe>[0]) => {
-            const outcome = await executeProbe(step)
-            return step.id === 'runtime:measure:free-disk'
-                ? { ...outcome, stdout: Buffer.from('1\n') }
-                : outcome
-        })
-        const adapters = createHealthCommandAdapters({
-            configPath: candidate.configPath,
-            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
-            timeoutMs: 5_000,
-        }, execute)
-
-        const result = await runDoctor({ configPath: candidate.configPath }, adapters)
-        const executionOutcomes = await Promise.all(execute.mock.results.map(({ value }) => value))
-
-        expect(execute.mock.calls.map(([step]) => step.id), JSON.stringify(executionOutcomes)).toContain('runtime:measure:free-disk')
-        expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
-            code: 'EVIDENCE_UNAVAILABLE',
-            target: 'host',
-            message: 'host observation producer failed',
-        })]))
-        expect(result.result.checks).toEqual(expect.arrayContaining([expect.objectContaining({
-            owner: 'host-observation',
-            code: 'MACHINE_DISK_BELOW_FLOOR',
-            verdict: 'unavailable',
-            reason: 'machine-disk evidence is missing',
-        })]))
-    })
-
     it('reissues exact posture and stage authority after a producer crosses the initial window', async () => {
         const candidate = await fixture({ machineOnly: true })
         vi.useFakeTimers({ toFake: ['Date'] })

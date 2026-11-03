@@ -50,9 +50,8 @@ import {
     type ReclaimTargetProjection,
 } from './reclaim.js'
 import {
-    admitRuntimeTopology,
     createRuntimeAdapter,
-    createRuntimeTopologyPlan,
+    observeRuntimeTopology,
     projectRuntimeLifecycle,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
@@ -164,7 +163,8 @@ async function issueRuntimeTopology(root: string): Promise<RuntimeTopologyEviden
         expectedMountSources: [],
     })
     if (runtime.kind !== 'preview') throw new Error(`runtime adapter unavailable: ${JSON.stringify(runtime.diagnostics)}`)
-    const plan = createRuntimeTopologyPlan({
+    const admitted = await observeRuntimeTopology({
+        execute: executeProbe,
         runtimePlan: runtime.plan,
         stackId,
         configSha256,
@@ -174,8 +174,6 @@ async function issueRuntimeTopology(root: string): Promise<RuntimeTopologyEviden
             expiresAt: new Date(Date.now() + 60_000).toISOString(),
         },
     })
-    if (plan.kind !== 'planned') throw new Error(`runtime topology plan unavailable: ${plan.reason}`)
-    const admitted = admitRuntimeTopology({ plan, outcome: await executeProbe(plan.step) })
     if (admitted.kind !== 'complete') throw new Error(`runtime topology unavailable: ${admitted.reason}`)
     return admitted.topology
 }
@@ -363,14 +361,14 @@ async function issueDrainInputs(namespace: StateNamespace, topology: RuntimeTopo
 }
 
 describe('lifecycle owner integration', () => {
-    it('accepts owner projections once and independently refuses every up projection copy and replay', async () => {
+    it('accepts stage and port projections once and independently refuses their copies and replays', async () => {
         const root = await temporaryRoot('cockpit-lifecycle-integration-up-')
         const namespace = await stateNamespace(root)
         const topology = await issueRuntimeTopology(root)
         await issuePortProjection(namespace)
         const before = await coordinationSnapshot(namespace)
 
-        for (const owner of ['lifecycleStage', 'runtime', 'ports'] as const) {
+        for (const owner of ['lifecycleStage', 'ports'] as const) {
             const consumed = await issueUpInput(namespace, topology)
             expect(planUp(consumed)).toMatchObject({ kind: 'execute', mode: 'start' })
 

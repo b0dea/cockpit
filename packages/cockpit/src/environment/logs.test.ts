@@ -10,10 +10,9 @@ import { authenticateStabilityCapture, captureRuntimeEvidence, createStabilityCa
 import { admitFailureLogs, collectLogs, failureLogExcerpt, planFailureLogs, planLogs, type FailureLogRecord, type LogRequest } from './logs.js'
 import {
     admitRuntimeServiceHealth,
-    admitRuntimeTopology,
     startRuntimeService,
     createRuntimeAdapter,
-    createRuntimeTopologyPlan,
+    observeRuntimeTopology,
     type RuntimeAdapterAuthority,
     type RuntimeObservationWindow,
     type RuntimeServiceFailureEvidence,
@@ -143,9 +142,7 @@ fi
         expectedMountSources: [],
     })
     if (runtime.kind !== 'preview') throw new Error(runtime.diagnostics[0]?.message ?? 'runtime fixture refused')
-    const topologyPlan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId: failureBatchId, observationWindow })
-    if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
-    const topologyResult = admitRuntimeTopology({ plan: topologyPlan, outcome: await executeProbe(topologyPlan.step) })
+    const topologyResult = await observeRuntimeTopology({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId: failureBatchId, observationWindow, execute: executeProbe })
     if (topologyResult.kind !== 'complete') throw new Error(topologyResult.reason)
     const observed = await startRuntimeService({ topology: topologyResult.topology, service: 'api', execute: executeProbe })
     if (observed.kind !== 'observed') throw new Error('failure log fixture service observation failed')
@@ -205,9 +202,7 @@ fi
         expectedMountSources: [],
     }, authority)
     if (runtime.kind !== 'preview') throw new Error(runtime.diagnostics[0]?.message ?? 'runtime fixture refused')
-    const topologyPlan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId: failureBatchId, observationWindow })
-    if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
-    const topologyResult = admitRuntimeTopology({ plan: topologyPlan, outcome: await executeProbe(topologyPlan.step) })
+    const topologyResult = await observeRuntimeTopology({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId: failureBatchId, observationWindow, execute: executeProbe })
     if (topologyResult.kind !== 'complete') throw new Error(topologyResult.reason)
     const failure = await startRuntimeService({ topology: topologyResult.topology, service: 'api', execute: executeProbe })
     if (failure.kind !== 'failure' || !failure.logs) throw new Error('failure log fixture start failure has no evidence')
