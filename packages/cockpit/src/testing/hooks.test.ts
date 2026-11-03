@@ -39,8 +39,10 @@ const prepareMeasurement = async (entry: NativeHookEntry) => {
     chmodSync(git, 0o755)
     const shell = await resolveExecutablePath('/bin/sh')
     if (shell.state !== 'available') throw new Error('authenticated system shell unavailable')
+    // The workload spawns the fake Git 128 times, which takes seconds on a loaded host. The bound
+    // stays below the 60 s hook timeout so an overrun is still reported as this step's timeout.
     const step: ExecutionStep = { id: 'native-hook-cost', argv: [shell.value.canonicalPath, '-c', NATIVE_HOOK_COST_SCRIPT, 'native-hook-cost', path, 'a'.repeat(40), 'b'.repeat(40)], argv0: shell.value.canonicalPath, cwd: directory,
-        env: { PATH: directory, CALL_LOG: join(directory, 'calls') }, timeoutMs: 20_000, stdoutLimitBytes: 4096, stderrLimitBytes: 1024,
+        env: { PATH: directory, CALL_LOG: join(directory, 'calls') }, timeoutMs: 50_000, stdoutLimitBytes: 4096, stderrLimitBytes: 1024,
         paths: [], ports: [], labels: {}, expected: [], filesystemChecks: [], compensation: [],
         consumedFiles: [{ path: shell.value.canonicalPath, sha256: shell.value.sha256, maxBytes: 16_777_216, argvIndexes: [0], executable: true, executionMode: shell.value.executionMode },
             { path, sha256: entry.sha256, maxBytes: Buffer.byteLength(entry.bytes), argvIndexes: [4], executable: false }] }
