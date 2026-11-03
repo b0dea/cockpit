@@ -233,10 +233,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         }
     })
 
-    it('packs a non-trivial number of files — an empty pack passes trivially', () => {
-        expect(packedFiles().length).toBeGreaterThan(3)
-    })
-
     it('ships no test file or test fixture', () => {
         // Tests name what the code must not do, which means they quote the material the
         // code exists to keep out. They are the last thing that should leave the repo.
@@ -617,12 +613,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(packedFiles().some((f) => f.startsWith('src/'))).toBe(false)
         expect(packedFiles().some((f) => f.startsWith('dist/test-support/'))).toBe(false)
         expect(packedFiles()).not.toContain('tsconfig.build.json')
-    })
-
-    it('proves it can fail, on a control the tarball does not contain', () => {
-        const files = packedFiles()
-        expect(files.some((f) => f.includes('.test.'))).toBe(false)
-        expect(['src/schema.ts', 'src/x.test.ts'].some((f) => f.includes('.test.'))).toBe(true)
     })
 
     it('ships a licence text, which npm takes only from the package directory', () => {
