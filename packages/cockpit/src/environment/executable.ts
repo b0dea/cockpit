@@ -12,11 +12,11 @@ export const GUARD_EXECUTABLE_SEARCH_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/h
 
 // Every executable runs from its own path. The executor re-checks the file's identity and digest
 // immediately before each spawn, and the process-wide digest memo makes that re-check cost a stat
-// unless the file's device, inode, size, mode or times moved. Docker used to be copied into a
-// private snapshot and re-hashed before every call; on a 74 MB client that cost one to two seconds
-// per call and made `down` take minutes. The snapshot only closed the instant between the final
-// check and spawn against a same-user writer, which the executor's cooperative-filesystem model
-// does not defend for Git or Node either.
+// unless the file's device, inode, size, mode or times moved. Copying a binary into a private
+// snapshot and re-hashing it before every call is not worth it: on a 74 MB client that costs one to
+// two seconds per call and makes `down` take minutes, and it only closes the instant between the
+// final check and spawn against a same-user writer, which the executor's cooperative-filesystem
+// model does not defend for Git or Node either.
 export interface ResolvedExecutable {
     readonly canonicalPath: string
     readonly invocationPath: string

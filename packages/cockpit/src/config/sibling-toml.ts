@@ -159,7 +159,7 @@ export function removeSiblingTable(text: string, index: number, existingRows: nu
     let after = end + 1
     while (after < lines.length && lines[after]!.trim() === '') after += 1
     const kept = [...lines.slice(0, start), ...lines.slice(after)]
-    // Removing the last table must not leave the blank line that used to separate it.
+    // Removing the last table must not leave the blank line that separated it from the table before.
     if (after >= lines.length) {
         while (kept.length > 0 && kept.at(-1)!.trim() === '') kept.pop()
         kept.push('')

@@ -675,7 +675,7 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
     // gave a word the tool could state only if it had loaded the guide; an undeclared sibling's guide
     // and a decoy file beside the guide gave words it must not state, the broken controls. Copying the
     // guide into the root AGENTS.md is the one route every tool loaded; each route that left the guide
-    // in its sibling failed in Claude Code or Codex, so sync no longer writes one.
+    // in its sibling failed in Claude Code or Codex, so sync writes none.
     Object.freeze({
         target: 'claudecode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable',
         characterizedOn: '2026-11-03', measuredVersion: '2.1.317',
