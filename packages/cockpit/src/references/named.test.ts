@@ -7,7 +7,7 @@ import { resolveNamedPath } from './named.js'
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const authority = { root: '/synthetic/cockpit', cockpitId: 'synthetic', configPath: '/synthetic/cockpit/cockpit.toml' }
 const encoded = encodeOwnershipManifest({ ...authority, generation: digest('generation'), sourceSha256: digest('source'),
-    personaSource: { path: 'personas.json', sha256: digest('personas') }, owned: [{ path: 'compose.generated.yml', sha256: digest('compose') }], surfaces: [] })
+    owned: [{ path: 'compose.generated.yml', sha256: digest('compose') }], surfaces: [] })
 const manifest = encoded.manifest
 const entry = manifest.entries[0]!
 const declarations = [{ producer: 'generated-environment' as const, applicability: 'declared-before-sync' as const, entry }]

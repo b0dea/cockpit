@@ -1730,7 +1730,6 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     const restorationEstate = prior?.format === 'cockpit-generated-ownership/v3'
         && next.format === 'cockpit-generated-ownership/v3' && prior.cockpitId === next.cockpitId
         && prior.generation === next.generation && prior.source.path === next.source.path && prior.source.sha256 === next.source.sha256
-        && prior.personaSource.path === next.personaSource.path && prior.personaSource.sha256 === next.personaSource.sha256
         && prior.producer !== null && next.producer !== null && prior.producer.package === next.producer.package
         && prior.producer.version === next.producer.version && prior.producer.sourceRevision === next.producer.sourceRevision
         && isDeepStrictEqual(prior.entries, next.entries)

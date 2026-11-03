@@ -11,7 +11,6 @@ const digest = (value: string | Uint8Array) => createHash('sha256').update(value
 
 const authority = { root: '/synthetic/cockpit', cockpitId: `cockpit:synthetic:${'a'.repeat(64)}`, configPath: '/synthetic/cockpit/cockpit.toml' }
 const manifestInput = () => ({ ...authority, generation: 'b'.repeat(64), sourceSha256: 'c'.repeat(64),
-    personaSource: { path: 'fixtures/personas.json', sha256: 'd'.repeat(64) },
     owned: [{ path: 'generated.txt', sha256: digest('generated\n') }], surfaces: [] })
 
 describe('generated ownership manifest', () => {
@@ -42,7 +41,7 @@ describe('generated ownership manifest', () => {
     it('emits integrity-bound v3 producer facts and authenticates the enclosing authority', () => {
         const input = manifestInput()
         const payload = { format: 'cockpit-generated-ownership/v3', cockpitId: input.cockpitId, generation: input.generation,
-            source: { path: 'cockpit.toml', sha256: input.sourceSha256 }, personaSource: input.personaSource,
+            source: { path: 'cockpit.toml', sha256: input.sourceSha256 },
             producer: { package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision },
             entries: [{ kind: 'file', path: 'generated.txt', ownership: 'whole-file', sha256: digest('generated\n') }] }
         const encoded = encodeOwnershipManifest(input)

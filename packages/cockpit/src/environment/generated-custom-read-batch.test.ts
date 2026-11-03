@@ -91,7 +91,6 @@ describe('custom surface output authentication batching', () => {
             initialBytes = encodeOwnershipManifest({
                 root, configPath, cockpitId: publicationCockpitId({ name: 'generated-environment' }),
                 generation: digest(`generated-environment\0${sourceSha256}`), sourceSha256,
-                personaSource: { path: 'fixtures/personas.json', sha256: digest(await readFile(join(root, 'fixtures/personas.json'), 'utf8')) },
                 owned: [], surfaces: [],
             }).bytes
             await writeFile(ledgerPath, initialBytes)

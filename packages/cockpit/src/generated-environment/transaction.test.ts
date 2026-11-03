@@ -409,7 +409,7 @@ async function publication() {
             bytes: 'owned\n', sha256: digest('owned\n') } }
     const before = 'foreign\n' + shared.region.begin + '\n' + shared.region.bytes + shared.region.end + '\nretained\n'
     const postimage = 'foreign\n\nretained\n'
-    const common = { ...authority, generation, sourceSha256, personaSource: { path: 'source.json', sha256: sourceSha256 } }
+    const common = { ...authority, generation, sourceSha256 }
     const prior = encodeOwnershipManifest({ ...common, owned: [{ path: 'a-stale.txt', sha256: digest('old') }], surfaces: [shared] })
     await mkdir(join(root, '.cockpit'))
     await writeFile(join(root, ledgerPath), prior.bytes)
@@ -465,7 +465,6 @@ async function compactPublication(options: { count?: number; segmentLength?: num
     }))
     if (options.preexisting) await Promise.all(files.map(file => mkdir(dirname(join(root, file.path)), { recursive: true })))
     const ledger = encodeOwnershipManifest({ ...authority, generation, sourceSha256,
-        personaSource: { path: 'source.json', sha256: sourceSha256 },
         owned: files.map(file => ({ path: file.path, sha256: digest(file.bytes) })), surfaces: [] })
     const status = await lstat(root)
     const node = await nodeAuthority()
@@ -998,8 +997,6 @@ describe('generated publication transaction', () => {
             owned: [{ path: 'a-stale.txt', sha256: digest('old') }], surfaces: [shared] })
         const changedEntries = encodeOwnershipManifest({ ...common,
             owned: [{ path: 'a-stale.txt', sha256: digest('different') }], surfaces: [shared] })
-        const changedSource = encodeOwnershipManifest({ ...common, personaSource: { ...common.personaSource, sha256: digest('other-source') },
-            owned: [{ path: 'a-stale.txt', sha256: digest('old') }], surfaces: [shared] })
         const changedConfig = encodeOwnershipManifest({ ...common, sourceSha256: digest('other-config'),
             owned: [{ path: 'a-stale.txt', sha256: digest('old') }], surfaces: [shared] })
         const foreign = encodeOwnershipManifest({ ...common, owned: [{ path: 'foreign.txt', sha256: digest('old') }], surfaces: [shared] })
@@ -1010,7 +1007,6 @@ describe('generated publication transaction', () => {
         for (const denied of [
             { ...current, generation: changedGeneration.manifest.generation, nextLedgerBytes: changedGeneration.bytes },
             { ...current, nextLedgerBytes: changedEntries.bytes },
-            { ...current, nextLedgerBytes: changedSource.bytes },
             { ...current, sourceSha256: changedConfig.manifest.source.sha256, nextLedgerBytes: changedConfig.bytes },
             { ...current, nextLedgerBytes: foreign.bytes },
             { ...current, nextLedgerBytes: changedProducer },
@@ -1025,7 +1021,7 @@ describe('generated publication transaction', () => {
         for (const version of [1, 2]) {
             const file = { path: 'a-stale.txt', ownership: 'whole-file', sha256: digest('old') }
             const payload = { format: `cockpit-generated-ownership/v${version}`, cockpitId: prior.manifest.cockpitId,
-                generation: prior.manifest.generation, source: prior.manifest.source, personaSource: prior.manifest.personaSource,
+                generation: prior.manifest.generation, source: prior.manifest.source,
                 ...(version === 1 ? { files: [file] } : { entries: [{ kind: 'file', ...file }] }) }
             const legacy = JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) })
             await writeFile(join(root, ledgerPath), legacy)

@@ -493,7 +493,6 @@ export interface OwnershipManifestPayload {
     readonly cockpitId: string
     readonly generation: string
     readonly source: Readonly<{ path: string; sha256: string }>
-    readonly personaSource: Readonly<{ path: string; sha256: string }>
     readonly entries: readonly OwnershipEntry[]
 }
 
@@ -512,7 +511,6 @@ export interface OwnershipAuthority {
 export interface OwnershipManifestInput extends OwnershipAuthority {
     readonly generation: string
     readonly sourceSha256: string
-    readonly personaSource: Readonly<{ path: string; sha256: string }>
     readonly owned: readonly Readonly<{ path: string; sha256: string }>[]
     readonly surfaces: readonly SurfaceDesiredEntry[]
 }
@@ -565,7 +563,6 @@ function ownershipPayload(prepared: OwnershipManifestInput): OwnershipManifestPa
         cockpitId: prepared.cockpitId,
         generation: prepared.generation,
         source: { path: basename(prepared.configPath), sha256: prepared.sourceSha256 },
-        personaSource: prepared.personaSource,
         producer: { package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision },
         entries,
     }
@@ -610,16 +607,14 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
         const record = ownRecord(JSON.parse(bytes))
         if (!uniqueJsonKeys(bytes)) return undefined
         if (!record || record.format !== 'cockpit-generated-ownership/v3'
-            || !exactKeys(record, ['format', 'producer', 'cockpitId', 'generation', 'source', 'personaSource', 'entries', 'integrity'])
+            || !exactKeys(record, ['format', 'producer', 'cockpitId', 'generation', 'source', 'entries', 'integrity'])
             || record.cockpitId !== prepared.cockpitId && !renamedPublicationId(record.cockpitId)
             || typeof record.generation !== 'string' || !SHA256.test(record.generation)
             || typeof record.integrity !== 'string' || !SHA256.test(record.integrity)
             || !Array.isArray(record.entries) || record.entries.length > MAX_OWNED_FILES) return undefined
         const source = ownRecord(record.source)
-        const personaSource = ownRecord(record.personaSource)
-        if (!source || !personaSource || !exactKeys(source, ['path', 'sha256']) || !exactKeys(personaSource, ['path', 'sha256'])
-            || source.path !== basename(prepared.configPath) || typeof source.sha256 !== 'string' || !SHA256.test(source.sha256)
-            || typeof personaSource.path !== 'string' || typeof personaSource.sha256 !== 'string' || !SHA256.test(personaSource.sha256)) return undefined
+        if (!source || !exactKeys(source, ['path', 'sha256'])
+            || source.path !== basename(prepared.configPath) || typeof source.sha256 !== 'string' || !SHA256.test(source.sha256)) return undefined
         const producer = ownRecord(record.producer)
         if (!producer || !exactKeys(producer, ['package', 'version', 'sourceRevision'])
             || [producer.package, producer.version, producer.sourceRevision].some(value => typeof value !== 'string' || value.length === 0 || value.length > 256 || /[\u0000-\u0020\u007f-\u009f]/.test(value))
@@ -662,14 +657,12 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
                 && compareCodeUnits(entries[index - 1]!.path, file.path) >= 0)) return undefined
         const rawPayload = {
             format: record.format, cockpitId: record.cockpitId as string,
-            generation: record.generation, source: source as OwnershipManifestPayload['source'],
-            personaSource: personaSource as OwnershipManifestPayload['personaSource'], producer, entries,
+            generation: record.generation, source: source as OwnershipManifestPayload['source'], producer, entries,
         }
         if (record.integrity !== sha256(JSON.stringify(rawPayload))) return undefined
         const payload: OwnershipManifestPayload = {
             format: record.format, producer: producer as unknown as GeneratedProducer, cockpitId: record.cockpitId as string,
-            generation: record.generation, source: source as OwnershipManifestPayload['source'],
-            personaSource: personaSource as OwnershipManifestPayload['personaSource'], entries,
+            generation: record.generation, source: source as OwnershipManifestPayload['source'], entries,
         }
         const manifest = snapshotGeneratedJson({
             ...payload,

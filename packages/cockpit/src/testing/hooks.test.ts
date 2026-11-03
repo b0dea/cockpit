@@ -19,7 +19,6 @@ const authority = { root: '/synthetic/cockpit', cockpitId, configPath: '/synthet
 const policyLimitMs = 3_600_000
 const policyBytes = `native-hook-ms=${policyLimitMs}\n`
 const manifest = encodeOwnershipManifest({ ...authority, generation: sha('generation'), sourceSha256: sha('source'),
-    personaSource: { path: 'personas.json', sha256: sha('personas') },
     owned: [{ path: 'hook-policy.txt', sha256: sha(policyBytes) }], surfaces: [] }).manifest
 const policy = { manifest, authority, declarations: [], path: 'hook-policy.txt', exists: true, bytes: policyBytes }
 const measurementDirectories: string[] = []
@@ -89,7 +88,6 @@ describe('native irreversible guards', () => {
         const tightPolicyBytes = 'native-hook-ms=1\n'
         const tightPolicy = { ...policy, bytes: tightPolicyBytes,
             manifest: encodeOwnershipManifest({ ...authority, generation: sha('tight-generation'), sourceSha256: sha('source'),
-                personaSource: { path: 'personas.json', sha256: sha('personas') },
                 owned: [{ path: 'hook-policy.txt', sha256: sha(tightPolicyBytes) }], surfaces: [] }).manifest }
         expect(await projectNativeHooks({ ...input(), budget: { prepareMeasurement, policy: tightPolicy } })).toMatchObject({ kind: 'ci-required' })
     }, 90000)

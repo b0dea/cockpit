@@ -141,7 +141,7 @@ function complete(value: ReturnType<typeof expandRestrictions>): RestrictionExpa
         const sourceSha256 = createHash('sha256').update(context.source).digest('hex')
         const manifest = encodeOwnershipManifest({ root: context.root, configPath: context.configPath,
             cockpitId: publicationCockpitId({ name: 'synthetic-restrictions' }),
-            generation: 'a'.repeat(64), sourceSha256, personaSource: { path: 'fixtures/synthetic.json', sha256: 'b'.repeat(64) },
+            generation: 'a'.repeat(64), sourceSha256,
             owned: files, surfaces: [] })
         writeFileSync(join(context.root, '.cockpit/generated-environment-ownership.json'), manifest.bytes)
         mkdirSync(join(context.root, '.cockpit/local'), { recursive: true })

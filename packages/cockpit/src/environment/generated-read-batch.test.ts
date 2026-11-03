@@ -46,7 +46,6 @@ native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.str
     const ownership = encodeOwnershipManifest({ root, cockpitId: currentCockpit, configPath,
         generation: createHash('sha256').update('synthetic native hook generation').digest('hex'),
         sourceSha256: createHash('sha256').update(source).digest('hex'),
-        personaSource: { path: 'fixtures/personas.json', sha256: createHash('sha256').update(personaBytes).digest('hex') },
         owned: [{ path: policyPath, sha256: policySha256 }], surfaces: [] })
     const ownershipPath = join(root, '.cockpit/generated-environment-ownership.json')
     await writeFile(ownershipPath, ownership.bytes)

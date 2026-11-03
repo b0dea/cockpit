@@ -92,7 +92,6 @@ describe('generated environment command', () => {
             cockpitId: prior.cockpitId,
             generation: prior.generation,
             source: prior.source,
-            personaSource: prior.personaSource,
             producer: prior.producer,
             entries,
         }
@@ -158,7 +157,7 @@ describe('generated environment command', () => {
             kind: 'file', path: 'Cockpit.toml', ownership: 'whole-file', sha256: digest(input),
         }].sort((left, right) => String(left.path) < String(right.path) ? -1 : String(left.path) > String(right.path) ? 1 : 0)
         const payload = { format: prior.format, cockpitId: prior.cockpitId, generation: prior.generation,
-            source: prior.source, personaSource: prior.personaSource, producer: prior.producer, entries }
+            source: prior.source, producer: prior.producer, entries }
         await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), JSON.stringify({
             ...payload, integrity: digest(JSON.stringify(payload)),
         }))
@@ -199,7 +198,7 @@ describe('generated environment command', () => {
                 kind: 'file', path: 'Cockpit.toml', ownership: 'whole-file', sha256: digest(input),
             }].sort((left, right) => String(left.path) < String(right.path) ? -1 : String(left.path) > String(right.path) ? 1 : 0)
             const payload = { format: prior.format, cockpitId: prior.cockpitId, generation: prior.generation,
-                source: prior.source, personaSource: prior.personaSource, producer: prior.producer, entries }
+                source: prior.source, producer: prior.producer, entries }
             await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), JSON.stringify({
                 ...payload, integrity: digest(JSON.stringify(payload)),
             }))
