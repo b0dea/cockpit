@@ -3808,9 +3808,11 @@ describe('product architecture contract', () => {
         )
     })
 
+    // Parses every production module with the compiler API: about 14 s on a laptop, but over 60 s on
+    // a loaded shared CI runner, where the default limit failed a correct tree.
     it('keeps the production graph acyclic and leaf-ward with one local home per mechanism', () => {
         expect(inspectArchitecture(productionSources())).toEqual([])
-    })
+    }, 180_000)
 
     it('keeps cached import parsing exact-source and returns independent results', () => {
         const first = importSpecifiers("import './first.js'")

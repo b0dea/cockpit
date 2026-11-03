@@ -756,6 +756,8 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
 }, 120_000)
 
 
+// Installs the packed tarball and runs init once per target: about 2.5 minutes on a laptop and over 4
+// on a loaded shared CI runner, where the earlier limit failed a correct run.
 it('runs installed init for each isolated target and refuses missing roots or broken adjacent assets', async () => {
     const installed = packedPackageRoot(), launcher = join(installed, 'bin/cockpit.mjs')
     const home = join(packScratch, 'init-home')
@@ -1013,7 +1015,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
         expect(JSON.parse(broken.stdout).diagnostics.length).toBeGreaterThan(0)
         expect(existsSync(join(untouched, '.agents'))).toBe(false)
     } finally { writeFileSync(asset, bytes) }
-}, 240_000)
+}, 480_000)
 
 
 it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a product using the %s cockpit root', rootChoice => {
