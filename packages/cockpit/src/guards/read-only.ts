@@ -82,6 +82,12 @@ const CAT: OptionTable = { flags: set('--number', '--number-nonblank', '--show-a
 // `tail -f` never exits, so following is absent; `head -5` is the legacy count spelling.
 const HEAD_TAIL: OptionTable = { flags: set('-q', '-v', '--quiet', '--silent', '--verbose'), values: set('-n', '-c', '--lines', '--bytes'),
     countValues: set('-n', '-c', '--lines', '--bytes'), cluster: /^-\d+$/ }
+// Only output-shaping flags: `-f`/`--from-file`, `--rawfile`, `--slurpfile` and `-L` read other files and
+// `--arg`-style options take values, so none is listed.
+const JQ: OptionTable = { flags: set('--raw-output', '--compact-output', '--sort-keys', '--slurp', '--exit-status', '--tab', '--join-output', '--ascii-output', '--monochrome-output'),
+    values: set(), cluster: /^-[rcSseCMjan]+$/ }
+// `env`, `$ENV` and `$__prog_args` expose the environment, and `import`/`include` read module files.
+const JQ_UNSAFE_FILTER = /\benv\b|\$ENV\b|\$__prog|\b(?:import|include|input_filename|getpath_file)\b/
 const WC: OptionTable = { flags: set('--bytes', '--chars', '--lines', '--words', '--max-line-length'), values: set(), cluster: /^-[clmwL]+$/ }
 const GREP: OptionTable = {
     flags: set('--recursive', '--dereference-recursive', '--ignore-case', '--invert-match', '--word-regexp', '--line-regexp', '--count',
@@ -178,6 +184,13 @@ function sed(argv: readonly string[]): Classified {
 function files(argv: readonly string[], table: OptionTable): Classified {
     const parsed = parseOptions(argv, table)
     return parsed && { reads: parsed.positionals, trees: [], listings: [] }
+}
+
+function jq(argv: readonly string[]): Classified {
+    const parsed = parseOptions(argv, JQ)
+    const [filter, ...operands] = parsed?.positionals ?? []
+    // `-n` reads no input, so a file operand with it is still just a read; the filter alone must be inert.
+    return parsed && filter !== undefined && !JQ_UNSAFE_FILTER.test(filter) ? { reads: operands, trees: [], listings: [] } : undefined
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
@@ -305,6 +318,7 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         }
         case 'cat': return shape(files(argv, CAT))
         case 'head': case 'tail': return shape(files(argv, HEAD_TAIL))
+        case 'jq': return shape(jq(argv))
         case 'wc': return shape(files(argv, WC))
         case 'grep': return shape(search(argv, GREP, false))
         // Every option ripgrep is admitted with keeps its ignore filters, which the trees are then judged by.

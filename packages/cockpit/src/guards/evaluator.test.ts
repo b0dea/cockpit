@@ -529,7 +529,7 @@ describe('built-in read-only profile', () => {
 
     it('allows exact read-only inspection commands and pipelines of them without a prompt', () => {
         for (const command of ['ls', 'ls -la src', 'pwd', 'cat README.md', 'cat -n README.md', 'head -n 20 src/a.ts', 'head -5 src/a.ts', 'tail -n5 src/a.ts',
-            'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '!*.min.js' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
+            'wc -l src/a.ts src/b.ts', 'jq . src/a.ts', 'jq -r .name src/a.ts', 'jq -rc .a.b src/a.ts | head -n 3', 'rg needle src', "rg -i -g '!*.min.js' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
             'fd name src', "find src -name '*.ts' -type f", 'git status', 'git diff --stat', 'git log --oneline -5', 'git show HEAD',
             'git branch', 'git branch --list', 'git -C ../other status', 'cockpit check', 'cockpit doctor --json', 'cockpit --help',
             'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts',
@@ -637,6 +637,11 @@ describe('built-in read-only profile', () => {
             'git commit -m done', 'printf -v HOME %s src; git status', 'git -C $? log',
         ]) {
             expect(decideInRepositories(command).decision, command).toBe('ask')
+        }
+        // jq reads files like cat, but its filter language can also read the environment, modules and other files;
+        // an unclassified shape that names a path is held back, not asked about.
+        for (const command of ["jq -n env", "jq -n '$ENV'", "jq 'include \"m\"; .' src/a.ts", 'jq -f prog.jq src/a.ts', 'jq --arg a b . src/a.ts', 'jq . src/a.ts > copy.txt', 'jq']) {
+            expect(decideInRepositories(command).decision, command).not.toBe('allow')
         }
         // Each refusal names the command and what to do instead.
         expect(decideInRepositories('git commit -m "Add the parser"').reason).toBe('`git commit -m …` requires human approval: the guard admits only the read-only commands it classifies, '
