@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,5 +30,14 @@ describe('test discovery stays inside package roots', () => {
         } finally {
             rmSync(scratch, { recursive: true, force: true })
         }
+    })
+
+    // A renamed test left the changed-test runner mapping every changeset to a file that no longer
+    // existed, so test:changed refused any branch carrying one.
+    it('names only existing test files as the changed-test runner\'s fixed owners', () => {
+        const runner = readFileSync(join(repoRoot, 'scripts/run-changed-tests.mjs'), 'utf8')
+        const named = [...runner.matchAll(/'([a-z0-9.-]+\.test\.ts)'/g)].map(match => match[1]!)
+        expect(named.length).toBeGreaterThan(0)
+        expect(named.filter(name => !existsSync(join(repoRoot, 'packages/cockpit/src', name)))).toEqual([])
     })
 })

@@ -37,9 +37,9 @@ const TEST_DIRECTORY = 'packages/cockpit/src'
 const DOCUMENTATION_TESTS = [/^docs-lint(?:\..+)?\.test\.ts$/, /^docs-ownership\.test\.ts$/, /^example-cockpit(?:\.slow)?\.test\.ts$/]
 // Release fragments cannot change linter mechanisms or runnable examples; lint:docs validates
 // their bytes while the prose owner pins their estate.
-const CHANGESET_FRAGMENT_TEST = 'docs-lint.prose.test.ts'
+const CHANGESET_FRAGMENT_TEST = 'docs-lint.test.ts'
 const MANIFEST_TESTS = ['packaging.slow.test.ts', 'supply-chain.test.ts']
-const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.contracts.test.ts', 'test-protection.test.ts']
+const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.test.ts', 'test-protection.test.ts']
 const GENERATED_FIXTURES = 'packages/cockpit/test-support/generated-fixtures.ts'
 const GENERATED_COMMAND_TEST = /^command(?:\..+)?\.test\.ts$/
 const SHARED_TEST_CONFIGURATION = new Set(['vitest.config.ts', 'packages/cockpit/src/test-support/git-isolation.ts'])

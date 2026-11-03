@@ -288,7 +288,7 @@ describe('changed adjacent-owner test runner', () => {
     })
 
     const DOCS_TESTS = [
-        'packages/cockpit/src/docs-lint.contracts.test.ts', 'packages/cockpit/src/docs-lint.prose.test.ts',
+        'packages/cockpit/src/docs-lint.test.ts',
         'packages/cockpit/src/docs-ownership.test.ts', 'packages/cockpit/src/example-cockpit.test.ts',
     ]
     const OTHER = { 'packages/cockpit/src/unrelated.test.ts': 'unrelated\n' }
@@ -335,7 +335,7 @@ describe('changed adjacent-owner test runner', () => {
         expect(result.status, result.stderr).toBe(0)
         expect(fixture.dispatched()).toEqual([
             ARCHITECTURE,
-            'packages/cockpit/src/docs-lint.prose.test.ts',
+            'packages/cockpit/src/docs-lint.test.ts',
             'packages/cockpit/src/example.test.ts',
         ])
     })
@@ -364,7 +364,7 @@ describe('changed adjacent-owner test runner', () => {
 
         expect(workflow.status, workflow.stderr).toBe(0)
         expect(fixture.dispatched()).toEqual([
-            'packages/cockpit/src/docs-lint.contracts.test.ts', 'packages/cockpit/src/jobs-reader.test.ts',
+            'packages/cockpit/src/docs-lint.test.ts', 'packages/cockpit/src/jobs-reader.test.ts',
             'packages/cockpit/src/supply-chain.test.ts', 'packages/cockpit/src/test-protection.test.ts',
         ])
         rmSync(fixture.capture)
