@@ -97,6 +97,10 @@ Mounts must match the declaration in both directions:
   `"${WORKER_DIR}/src:/app"`, through a path relative to the first Compose file's directory, as in
   `"./worker:/srv/worker"` from a `compose.yml` in the cockpit root, or set `mount = "none"` on the
   row.
+- Each `environment.generated_host_paths` entry must reach a container: bound itself, through a
+  directory inside it, or inside a bound directory such as a sibling mounted whole. Otherwise
+  `check` fails with `GENERATED_HOST_PATH_UNMOUNTED`. A generated stack is held to this too: an entry that no
+  generated service mounts and that is not a `[browser]` artifact root hands nothing to a container.
 - A container gets only what `cockpit.toml` declares. A bind outside every `mount = "always"`
   sibling and every `environment.generated_host_paths` entry, or one that leaves its sibling
   through a symbolic link, fails `check` with `COMPOSE_BIND_UNDECLARED`, and `up` refuses it.
@@ -382,8 +386,12 @@ declarations that reach its containers, not of the bytes of `cockpit.toml`. Edit
 `purpose`, the guards, MCP, surfaces, comments or formatting leaves a running stack alone, and the
 next `up` resumes it. So do the fields the host checks rather than the containers receive:
 `[environment.machine]` (including `cold_start_seconds`), `addressing`, `authentication`,
-`posture_requirements`, `resettable_volumes` and `entrypoint_derivatives`. `sleep` and `reset` keep the previous generated identity so the stack can
-resume.
+`posture_requirements`, `resettable_volumes` and `entrypoint_derivatives`. So does prose in a
+generated stack (every `reason`, `provenance`, health `property` and `measurement`, and a vendor's
+callback `alternative`), which the generated Compose file leaves out, and the order of the
+generated `services`, `volumes`, `vendors` and each service's `ports`, `mounts` and `dependencies`
+tables, which the renderer sorts. `sleep` and `reset` keep the previous generated identity so the
+stack can resume.
 
 A change to services, ports, mounts, images or anything else the containers receive gives the
 stack a new identity, and `up` refuses with `LIFECYCLE_PROGRESS_INVALID` rather than replace the

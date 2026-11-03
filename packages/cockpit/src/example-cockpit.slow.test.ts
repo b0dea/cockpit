@@ -171,6 +171,19 @@ describe('the public synthetic cockpit', () => {
             path: 'docs/cockpit/environment-decisions.md', undecided: 2, subjects: ['port:api:http', 'service:api'],
         })
         expect(check.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'GENERATED_DECISIONS_UNDECIDED' }))
+
+        // A host path no generated service mounts reaches no container, so check refuses it.
+        const configPath = join(root, 'cockpit.toml')
+        writeFileSync(configPath, readFileSync(configPath, 'utf8').replace('[environment]\n', '[environment]\ngenerated_host_paths = [".cache"]\n'))
+        expect(run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
+        const unmounted = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(unmounted.status, unmounted.stdout).toBe(2)
+        expect(unmounted.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([{
+            severity: 'error', code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
+            message: 'environment.generated_host_paths lists .cache, but no generated service bind-mounts it, a path inside it or a directory that holds it, and no [browser] writes there, so the entry hands nothing to a container',
+        }])
+        expect(unmounted.response.guidance).toContainEqual({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
+            text: expect.stringMatching(/^remove "\.cache" from environment\.generated_host_paths in cockpit\.toml, .*then run npx --no cockpit check --config /) })
     })
 
     it('validates the browser variant of the minimal example up to the port lease that up creates', () => {

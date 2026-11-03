@@ -355,6 +355,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` | depends on what failed; see the message |
 | `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_HOST_PATH_UNMOUNTED` | see the message |
 | `GENERATED_INPUT_INVALID` | depends on what failed; see the message |
 | `GENERATED_INSPECTION_INVALID` | see the message |
 | `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |

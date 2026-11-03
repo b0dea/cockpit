@@ -944,6 +944,15 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     it.each([
         ['a sibling purpose', (text: string) => text.replace('purpose = "Synthetic application"', 'purpose = "Synthetic application, described again"')],
         ['the guards', (text: string) => text.replace('[guards]\n', '[guards]\nprotected_branches = [ "main", "release" ]\n')],
+        ['a health property, reasons and provenance', (text: string) => text
+            .replace('property = "Application route returns its expected document"', 'property = "The application route answers"')
+            .replace('reason = "Pinned synthetic runtime"', 'reason = "Pinned runtime the product ships on"')
+            .replaceAll('reason = "Synthetic declaration"', 'reason = "Synthetic declaration, reworded"')],
+        ['the order of the mount tables', (text: string) => {
+            const data = '[[environment.generated.services.mounts]]\nkind = "volume"\nsource = "product-data"\ntarget = "/workspace/data"\n'
+            const source = '[[environment.generated.services.mounts]]\nkind = "bind"\nsource = "."\ntarget = "/workspace/source"\nsource_type = "directory"\n'
+            return text.replace(data, '\0').replace(source, data).replace('\0', source)
+        }],
     ])('keeps the running stack when only %s changes', async (_label, edit) => {
         const first = await runGeneratedScenario({ toolchain: 'none' })
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
@@ -1020,6 +1029,19 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             code: 'LIFECYCLE_PROGRESS_INVALID',
             message: `the recorded stack runs an earlier version of the services, ports, mounts or images: cockpit.toml changed since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
         }] })
+        // A Compose file an earlier cockpit rendered is not handed to Compose; down names the sync
+        // that brings it current and the down to run after it, and stops nothing until then.
+        const composePath = join(first.candidate.checkout, 'generated/compose.yml')
+        const rendered = await readFile(composePath, 'utf8')
+        await writeFile(composePath, `${rendered}# rendered by an earlier cockpit\n`)
+        const stale = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
+        expect(stale).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'GENERATED_ENVIRONMENT_UNAVAILABLE',
+            message: expect.stringContaining('down and reset hand Compose only a Compose file rendered from the current cockpit.toml, so nothing was stopped or removed'),
+            fix: `run ${cockpitCommand('sync', { config: path })}, then ${cockpitCommand('down', { config: path })} (or the reset you ran)`,
+        }] })
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        expect(await readFile(composePath, 'utf8')).toBe(rendered)
         // Follow the recovery exactly as printed: it must remove the old stack and start the new one.
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })

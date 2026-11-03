@@ -2332,6 +2332,11 @@ fi
         ] } } }, [], { expectedMountSources: ['/workspace/应用', '/workspace/应用/worker'] })
         expect(nested.admitted).toEqual({ kind: 'unavailable', reason: 'the bind mounts Compose resolves differ from the declared mount sources',
             mounts: { missing: ['/workspace/应用'], unexpected: [] } })
+        // A declared host path inside a checkout bound whole reaches the container through that bind.
+        const held = await topologyEvidence({ services: { api: { volumes: [
+            { type: 'bind', source: '/workspace/应用', target: '/app' },
+        ] } } }, [], { expectedMountSources: ['/workspace/应用', '/workspace/应用/.cache'] })
+        expect(held.admitted.kind).toBe('complete')
     })
 
     it('rejects service evidence after the clock moves before its observation window', async () => {

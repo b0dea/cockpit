@@ -1455,10 +1455,37 @@ const ENVIRONMENT_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set([
     'machine', 'addressing', 'authentication', 'posture_requirements', 'resettable_volumes', 'entrypoint_derivatives',
 ])
 
+// What a declaration says to its reader: why it is so, where it came from, what a probe proves, how
+// long a start once took. Rendering keeps all of it out of the Compose file and the work a running
+// stack is bound to, so rewording a health property or a provenance note left a healthy stack
+// behind a demand to run `down`.
+const DESCRIPTIVE_FIELDS: ReadonlySet<string> = new Set(['provenance', 'reason', 'property', 'measurement', 'alternative'])
+
 function canonicalJson(value: unknown): string {
     return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
-        ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+        ? Object.fromEntries(Object.entries(item).filter(([key]) => !DESCRIPTIVE_FIELDS.has(key))
+            .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
         : item)
+}
+
+function sortedBy<T>(rows: readonly T[], key: (row: T) => string): T[] {
+    return [...rows].sort((left, right) => key(left) < key(right) ? -1 : key(left) > key(right) ? 1 : 0)
+}
+
+// Decision records describe the stack, and the renderer sorts these tables by identity, so neither
+// the records nor the order of the tables in cockpit.toml reaches a container.
+function generatedRuntime({ decisions: _decisions, ...generated }: GeneratedEnvironment) {
+    return {
+        ...generated,
+        services: sortedBy(generated.services, ({ id }) => id).map((service) => ({
+            ...service,
+            ports: sortedBy(service.ports, ({ name }) => name),
+            mounts: sortedBy(service.mounts, ({ kind, source, target }) => `${kind}:${source}:${target}`),
+            dependencies: sortedBy(service.dependencies, ({ service: dependency }) => dependency),
+        })),
+        volumes: sortedBy(generated.volumes, ({ id }) => id),
+        vendors: sortedBy(generated.vendors, ({ id }) => id),
+    }
 }
 
 /**
@@ -1469,8 +1496,9 @@ function canonicalJson(value: unknown): string {
  *
  * It covers everything except what is known not to reach a container: comments and formatting,
  * guards, MCP, work orders, surfaces, testing, the guide settings, generated decision records, the
- * descriptive sibling fields, the host-only environment fields, and siblings with mount "none" that
- * no generated service names. A new field is therefore counted
+ * descriptive sibling fields, the host-only environment fields, siblings with mount "none" that no
+ * generated service names, descriptive prose and provenance anywhere, and the order of the generated
+ * tables the renderer sorts. A new field is therefore counted
  * as runtime until someone decides otherwise: the failure is a needless down, never a stack running
  * an older declaration than the one on disk. The contents of `environment.compose_files` are
  * outside it: only their paths are declared here, and `up` hands the files to Compose as they are.
@@ -1484,12 +1512,11 @@ export function runtimeDeclarationSha256(cfg: CockpitConfig): string {
         .sort((left, right) => String(left.slug) < String(right.slug) ? -1 : 1)
     const { generated: _generated, ...declared } = cfg.environment
     const environment = Object.fromEntries(Object.entries(declared).filter(([field]) => !ENVIRONMENT_NON_RUNTIME_FIELDS.has(field)))
-    const { decisions: _decisions, ...declaration } = generated ?? {}
     return createHash('sha256').update(canonicalJson({
         cockpit: { name: cfg.cockpit.name, siblings_root: cfg.cockpit.siblings_root },
         sibling,
         ports: cfg.ports,
         browser: cfg.browser ?? null,
-        environment: { ...environment, generated: generated ? declaration : null },
+        environment: { ...environment, generated: generated ? generatedRuntime(generated) : null },
     })).digest('hex')
 }

@@ -213,6 +213,30 @@ cold_start_seconds = 300
             validConfig.replace('dir = "api-service"', 'dir = "api"'),
             validConfig.replace('[ports]', `${unused.replace('mount = "none"', 'mount = "always"')}\n[ports]`),
         ]) expect((await identity(runtime)).runtime, runtime).not.toBe(base.runtime)
+
+        // A generated stack: prose, provenance and the order of the tables the renderer sorts reach
+        // no container; a port, image or mount does.
+        const stack = readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
+        const generated = await identity(stack)
+        const swapped = (text: string, first: string, second: string) => text.replace(first, '\0').replace(second, first).replace('\0', second)
+        const dataMount = '[[environment.generated.services.mounts]]\nkind = "volume"\nsource = "product-data"\ntarget = "/workspace/data"\n'
+        const sourceMount = '[[environment.generated.services.mounts]]\nkind = "bind"\nsource = "."\ntarget = "/workspace/source"\nsource_type = "directory"\n'
+        for (const cosmetic of [
+            stack.replace('property = "Application route returns its expected document"', 'property = "The application route answers"'),
+            stack.replaceAll('reason = "Synthetic declaration"', 'reason = "Synthetic declaration, reworded"'),
+            stack.replace('reason = "Pinned synthetic runtime"', 'reason = "Pinned runtime the product ships on"'),
+            stack.replace('duration_seconds = 15', 'duration_seconds = 18'),
+            swapped(stack, dataMount, sourceMount),
+        ]) {
+            const edited = await identity(cosmetic)
+            expect(edited.file).not.toBe(generated.file)
+            expect(edited.runtime, cosmetic).toBe(generated.runtime)
+        }
+        for (const runtime of [
+            stack.replace('internal = 3000', 'internal = 3001'),
+            stack.replace('node@sha256:83f487e0', 'node@sha256:93f487e0'),
+            stack.replace('target = "/workspace/source"', 'target = "/workspace/app"').replace('app:bind:.:/workspace/source', 'app:bind:.:/workspace/app'),
+        ]) expect((await identity(runtime)).runtime, runtime).not.toBe(generated.runtime)
     })
 
     it('reports provenance from the native canonical config path', async () => {

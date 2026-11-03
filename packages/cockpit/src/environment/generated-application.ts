@@ -87,7 +87,7 @@ import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
-import { assessComposeTopology, composeProjectDirectory, observeComposeTopology } from './compose-topology.js'
+import { assessComposeTopology, compareBindSources, composeProjectDirectory, observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime } from './declaration.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
@@ -3733,6 +3733,7 @@ export interface GeneratedEnvironmentCurrentness {
     readonly repairAuthority?: GeneratedEnvironmentRepairAuthority
     readonly repairRefusal?: RefusalOutcome
     readonly decisions?: GeneratedDecisionReport
+    readonly unmountedHostPaths?: readonly string[]
 }
 
 interface RepairRecord {
@@ -3746,6 +3747,16 @@ function issueRepairAuthority(record: RepairRecord): GeneratedEnvironmentRepairA
     const authority: GeneratedEnvironmentRepairAuthority = Object.freeze({ kind: 'generated-environment-repair' })
     issuedRepairs.set(authority, record)
     return authority
+}
+
+// A generated host path that no generated service binds hands nothing to a container, while reset
+// still deletes it. A declared [browser] owns exactly these paths as the artifact roots its commands
+// write on the host, so they are in use whether or not a runner mounts them.
+function unmountedGeneratedHostPaths(prepared: PreparedEnvironment): readonly string[] {
+    if (prepared.workEnvironment.browser) return Object.freeze([])
+    const binds = prepared.hostInputs.filter(({ mount }) => mount).map(({ root, source }) => resolve(root.path, source))
+    const declared = new Map(prepared.workEnvironment.generatedHostPaths.map((path) => [resolve(prepared.root, path), path]))
+    return Object.freeze(compareBindSources(binds, [...declared.keys()]).missing.map((path) => declared.get(path)!))
 }
 
 export async function prepareGeneratedEnvironmentCurrentness(
@@ -3762,6 +3773,7 @@ export async function prepareGeneratedEnvironmentCurrentness(
     const authority = prepared && 'plan' in publication
         ? issueRepairAuthority({ prepared, plan: publication.plan, adapters }) : undefined
     const decisions = prepared?.rendered && undecidedGeneratedDecisions(prepared.rendered)
+    const unmountedHostPaths = prepared?.rendered && unmountedGeneratedHostPaths(prepared)
     return Object.freeze({
         outcome,
         changes: 'plan' in publication ? publication.plan.changes : Object.freeze([]),
@@ -3772,6 +3784,7 @@ export async function prepareGeneratedEnvironmentCurrentness(
             generatedTargets: Object.freeze(prepared ? [...prepared.owned, ...prepared.surfaces].map(row => row.path) : []) }),
         ...(authority ? { repairAuthority: authority } : {}),
         ...(decisions ? { decisions } : {}),
+        ...(unmountedHostPaths ? { unmountedHostPaths } : {}),
         ...('status' in publication ? { repairRefusal: publication }
             : 'refusal' in publication ? { repairRefusal: publication.refusal } : {}),
     })
@@ -4022,7 +4035,7 @@ async function composeTopologyDiagnostics(
         portVariables: Object.keys(config.ports.bases),
         siblings: config.sibling.map(sibling => Object.freeze({
             slug: sibling.slug, var: sibling.var, mount: sibling.mount, path: resolve(siblingsRoot, sibling.dir) })),
-        hostPaths: config.environment.generated_host_paths.map(path => resolve(root, path)),
+        hostPaths: config.environment.generated_host_paths.map(declared => Object.freeze({ declared, path: resolve(root, declared) })),
     })
 }
 
@@ -4034,15 +4047,22 @@ export async function checkGeneratedEnvironment(
     const adapters = mergedAdapters(adapterOverrides)
     const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters, portLease)
     const undecided = currentness.decisions
-    const topology = currentness.outcome.kind === 'complete'
-        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters) : []
+    const findings = currentness.outcome.kind === 'complete' ? [
+        ...await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters),
+        ...(currentness.unmountedHostPaths ?? []).map((path) => ({
+            severity: 'error' as const, code: 'GENERATED_HOST_PATH_UNMOUNTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_PATH_UNMOUNTED,
+            target: `environment.generated_host_paths:${path}`,
+            message: `environment.generated_host_paths lists ${path}, but no generated service bind-mounts it, a path inside it or a directory that holds it, and no [browser] writes there, so the entry hands nothing to a container`,
+            fix: `remove "${path}" from environment.generated_host_paths in cockpit.toml, or bind-mount it from a generated service whose sibling directory contains it; then run npx --no cockpit check --config <your cockpit.toml>`,
+        })),
+    ] : []
     const diagnostics = currentness.outcome.kind === 'complete' && undecided && undecided.undecided > 0
         ? Object.freeze([...currentness.outcome.diagnostics, {
             severity: 'info' as const, code: 'GENERATED_DECISIONS_UNDECIDED', target: undecided.path,
             message: `${undecided.undecided} structural subject${undecided.undecided === 1 ? ' has' : 's have'} no decision entry and ${undecided.undecided === 1 ? 'is' : 'are'} listed as undecided: ${undecided.subjects.join(', ')}; record each under environment.generated.decisions.entries when it is decided`,
-        }])
-        : Object.freeze([...currentness.outcome.diagnostics, ...topology])
-    const outcome = topology.some(row => row.severity === 'error')
+        }, ...findings])
+        : Object.freeze([...currentness.outcome.diagnostics, ...findings])
+    const outcome = findings.some(row => row.severity === 'error')
         ? Object.freeze({ kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics })
         : Object.freeze({ ...currentness.outcome, diagnostics })
     return Object.freeze({ ...outcome, fixContext: currentness.fixContext, report: Object.freeze({

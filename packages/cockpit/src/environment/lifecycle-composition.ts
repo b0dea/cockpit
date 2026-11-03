@@ -949,14 +949,25 @@ export function createLifecycleCommandAdapters(
             ? binding.generatedApplication ?? await projectGeneratedApplication(context, 'check', ports, diagnostics => { checkRefusal = diagnostics[0] })
             : undefined
         // Name why the generated files do not match cockpit.toml (an edit not yet synced, a hand
-        // edit) instead of letting health report only that its evidence went missing.
+        // edit, files an earlier cockpit rendered) instead of letting health report only that its
+        // evidence went missing.
         if (generated && !generatedApplication) return checkRefusal ? refuse?.(Object.freeze([Object.freeze({
             ...environmentCode(checkRefusal.code)
-                ? { code: checkRefusal.code, message: checkRefusal.message }
-                : { code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                    message: `the generated files do not match cockpit.toml, so the running stack cannot be checked: ${checkRefusal.code}: ${checkRefusal.message}` },
+                ? { code: checkRefusal.code, message: checkRefusal.message, ...(checkRefusal.fix ? { fix: checkRefusal.fix } : {}) }
+                // Teardown hands Compose the generated file, and cockpit hands Compose only bytes it
+                // rendered from the current cockpit.toml: a stale file could name containers, volumes
+                // or networks the declaration cannot account for. The plain sync fix left the person
+                // to guess that down still had to be run afterwards.
+                : purpose === 'teardown' ? {
+                    code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+                    message: `the generated files do not match cockpit.toml (${checkRefusal.code}: ${checkRefusal.message}), and down and reset hand Compose only a Compose file rendered from the current cockpit.toml, so nothing was stopped or removed`,
+                    fix: `run ${cockpitCommand('sync', { config: context.source.path })}, then ${cockpitCommand('down', { config: context.source.path })} (or the reset you ran)`,
+                } : {
+                    code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+                    message: `the generated files do not match cockpit.toml, so the running stack cannot be checked: ${checkRefusal.code}: ${checkRefusal.message}`,
+                    ...(checkRefusal.fix ? { fix: checkRefusal.fix } : {}),
+                },
             severity: 'error' as const, target: checkRefusal.target ?? input.configPath,
-            ...(checkRefusal.fix ? { fix: checkRefusal.fix } : {}),
         })])) : undefined
         if (generated && !ports) return undefined
         if (generated && generatedApplication) {
