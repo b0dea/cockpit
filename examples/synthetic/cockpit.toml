@@ -22,8 +22,9 @@ instance = ".env"
 slug = "web"
 dir = "web"
 mount = "none"
-acquire = "auto"
-remote = "synthetic-web.git"
+# A local repository has no hosted remote whose identity preflight could compare, so it is
+# declared as an existing checkout rather than with a local-path remote.
+acquire = "none"
 var = "WEB_DIR"
 purpose = "Synthetic web repository"
 

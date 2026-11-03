@@ -19,7 +19,6 @@ function copyExample(name: string) {
     cpSync(join(repositoryRoot, 'examples/synthetic'), root, { recursive: true })
     mkdirSync(join(root, 'repositories/app'), { recursive: true })
     mkdirSync(join(root, 'repositories/web'), { recursive: true })
-    execFileSync('git', ['init', '--quiet', '--bare', join(root, 'repositories/synthetic-web.git')])
     mkdirSync(join(root, 'fixtures'), { recursive: true })
     writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
     writeFileSync(join(root, 'repositories/app/.gitignore'), '.env\n')
@@ -29,7 +28,6 @@ function copyExample(name: string) {
     for (const directory of [root, join(root, 'repositories/app'), join(root, 'repositories/web')]) {
         execFileSync('git', ['init', '--quiet', directory])
     }
-    execFileSync('git', ['-C', join(root, 'repositories/web'), 'remote', 'add', 'origin', 'synthetic-web.git'])
     execFileSync('git', ['-C', join(root, 'repositories/app'), 'add', '.gitignore', 'package.json', 'package-lock.json', 'probe.mjs'])
     execFileSync('git', ['-C', join(root, 'repositories/app'), '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'synthetic fixture'])
     return root
@@ -90,8 +88,7 @@ describe('the public synthetic cockpit', () => {
             ['mkdir', '-p'], ['printf', '\'[{"id":"synthetic"}]\\n\''],
             ['printf', '\'.env\\n\''],
             ['printf', '\'%s\\n\''], ['printf', '\'%s\\n\''], ['printf', '\'process.exitCode'],
-            ['git', 'init'], ['git', 'init'], ['git', 'init'], ['git', 'init'],
-            ['git', '-C'],
+            ['git', 'init'], ['git', 'init'], ['git', 'init'],
             ['git', '-C'], ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
         ])
@@ -101,9 +98,6 @@ describe('the public synthetic cockpit', () => {
                 execFileSync('git', ['-C', app, 'add', '.env.example'])
                 execFileSync('git', ['-C', app, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
                     'commit', '--quiet', '-m', 'generated synthetic template'])
-                // sync needs the web checkout to exist, but a fresh machine has none: setup must clone it
-                // from the relative remote and accept the absolute origin Git records for it.
-                rmSync(join(root, 'repositories/web'), { recursive: true })
             }
             const result = run(root, argv)
             expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
@@ -127,13 +121,13 @@ describe('the public synthetic cockpit', () => {
         execFileSync('git', ['-C', join(missing, 'repositories/app'), '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
             'commit', '--quiet', '-m', 'generated synthetic template'])
         rmSync(join(missing, 'repositories/web'), { recursive: true })
-        rmSync(join(missing, 'repositories/synthetic-web.git'), { recursive: true })
-        const missingResult = run(missing, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
+        // web is an existing checkout (acquire "none"): setup reports it absent and leaves it alone,
+        // and check refuses the cockpit until it is back.
+        const absent = run(missing, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
+        expect(absent.response.diagnostics).toContainEqual(expect.objectContaining({ code: 'SETUP_NONE_ABSENT', target: join(realpathSync(missing), 'repositories/web') }))
+        const missingResult = run(missing, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
         expect(missingResult.status).toBe(2)
-        const missingCodes = missingResult.response.diagnostics.map((row: { code: string }) => row.code)
-        expect(missingCodes, JSON.stringify(missingCodes)).toContain('SETUP_CLONE_FAILED')
-        const cloneFailure = missingResult.response.diagnostics.find((row: { code: string }) => row.code === 'SETUP_CLONE_FAILED')
-        expect(cloneFailure.message).toContain('synthetic-web.git')
+        expect(missingResult.response.diagnostics).toEqual([expect.objectContaining({ code: 'SIBLING_MISSING', target: 'sibling:web' })])
 
         const stale = copyExample('stale')
         expect(run(stale, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
