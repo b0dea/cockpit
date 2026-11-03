@@ -183,6 +183,7 @@ describe('the supply-chain readiness detector', () => {
             ['a publish job without provenance', '.github/workflows/release.yml', (text: string) => text.replace("NPM_CONFIG_PROVENANCE: 'true'", "NPM_CONFIG_PROVENANCE: 'false'"), 'RELEASE_PROVENANCE_MISSING'],
             ['a publish job without the OIDC token scope', '.github/workflows/release.yml', (text: string) => text.replace(/ +id-token: write[^\n]*\n/, ''), 'RELEASE_PROVENANCE_MISSING'],
             ['a release workflow with no publish job', '.github/workflows/release.yml', (text: string) => text.replace('  publish:\n', '  other:\n'), 'RELEASE_JOB_MISSING'],
+            ['a version job that opens a pull request for a private package', '.github/workflows/release.yml', (text: string) => text.replace(" && needs.select-mode.outputs.private == 'false'", ''), 'RELEASE_VERSION_UNGATED'],
             ['a publish script under an input the publish action ignores', '.github/workflows/release.yml',
                 (text: string) => text.replace('script: bash .github/scripts/release-publish.sh', 'publish-script: bash .github/scripts/release-publish.sh'), 'RELEASE_STAMP_MISSING'],
             ['a publish job outside the npm deployment environment', '.github/workflows/release.yml',

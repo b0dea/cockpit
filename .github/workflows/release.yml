@@ -34,7 +34,8 @@ concurrency:
 jobs:
   # `version` while changesets are pending, `publish` once the Version Packages pull request has
   # merged and its version is not on npm yet, `none` otherwise. A private package is never in the
-  # publish plan, so it reads `none`.
+  # publish plan, so it reads `none`; changesets still reads `version` for it but versions nothing,
+  # which opened an empty Version Packages pull request on every push. `private` gates that job.
   select-mode:
     name: select release mode
     if: github.repository == 'b0dea/cockpit'
@@ -44,6 +45,7 @@ jobs:
       contents: read
     outputs:
       mode: ${{ steps.mode.outputs.mode }}
+      private: ${{ steps.package.outputs.private }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,17 +56,17 @@ jobs:
       - run: npm ci --ignore-scripts
       - id: mode
         uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
-      - name: say why a private package publishes nothing
-        if: steps.mode.outputs.mode == 'none'
+      - id: package
+        run: echo "private=$(node -p "require('./packages/cockpit/package.json').private === true")" >> "$GITHUB_OUTPUT"
+      - name: say why a private package is neither versioned nor published
+        if: steps.package.outputs.private == 'true'
         run: |
-          if [[ "$(node -p "require('./packages/cockpit/package.json').private === true")" == true ]]; then
-            echo "::notice::packages/cockpit/package.json is private: true, so nothing was published. Set private to false and follow 'First publication' in docs/contributing/releasing.md to enable publishing."
-          fi
+          echo "::notice::packages/cockpit/package.json is private: true, so nothing was versioned or published. Set private to false and follow 'First publication' in docs/contributing/releasing.md to enable releases."
 
   version:
     name: version pull request
     needs: select-mode
-    if: needs.select-mode.outputs.mode == 'version'
+    if: needs.select-mode.outputs.mode == 'version' && needs.select-mode.outputs.private == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

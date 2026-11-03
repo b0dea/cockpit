@@ -433,6 +433,12 @@ function releaseDiagnostics(root) {
         }
     }
     const workflow = readYaml('.github/workflows/release.yml')
+    const versionJob = record(workflow?.jobs) ? workflow.jobs.version : undefined
+    // Changesets versions nothing for a private package yet still opens a Version Packages pull
+    // request, so an ungated version job opens an empty one on every push.
+    if (record(versionJob) && !String(versionJob.if ?? '').includes("needs.select-mode.outputs.private == 'false'")) {
+        diagnostics.push(diagnostic('RELEASE_VERSION_UNGATED', '.github/workflows/release.yml', "the version job must also require needs.select-mode.outputs.private == 'false', or a private package opens an empty Version Packages pull request"))
+    }
     const job = record(workflow?.jobs) ? workflow.jobs.publish : undefined
     if (workflow !== undefined && !record(job)) {
         diagnostics.push(diagnostic('RELEASE_JOB_MISSING', '.github/workflows/release.yml', 'the release workflow must define a job named publish'))
