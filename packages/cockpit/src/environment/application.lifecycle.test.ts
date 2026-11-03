@@ -9,7 +9,7 @@ import { resolveExecutable } from './executable.js'
 import type { StackId } from './contract.js'
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp'>>,
-    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder' | 'revalidateRuntimeService' | 'startRuntimeService'>>,
+    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder' | 'startRuntimeService'>>,
     ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
@@ -26,7 +26,6 @@ vi.mock('./runtime.js', async (importOriginal) => {
     return {
         ...actual,
         admitRuntimeServiceHealth: (...args: Parameters<typeof actual.admitRuntimeServiceHealth>) => applicationOwners.runtime.admitRuntimeServiceHealth?.(...args) ?? actual.admitRuntimeServiceHealth(...args),
-        revalidateRuntimeService: (...args: Parameters<typeof actual.revalidateRuntimeService>) => applicationOwners.runtime.revalidateRuntimeService?.(...args) ?? actual.revalidateRuntimeService(...args),
         startRuntimeService: (...args: Parameters<typeof actual.startRuntimeService>) => applicationOwners.runtime.startRuntimeService?.(...args) ?? actual.startRuntimeService(...args),
         observeRuntimeServiceColdStart: (...args: Parameters<typeof actual.observeRuntimeServiceColdStart>) => applicationOwners.runtime.observeRuntimeServiceColdStart?.(...args) ?? actual.observeRuntimeServiceColdStart(...args),
         resolveRuntimeServiceOrder: (...args: Parameters<typeof actual.resolveRuntimeServiceOrder>) => applicationOwners.runtime.resolveRuntimeServiceOrder?.(...args) ?? actual.resolveRuntimeServiceOrder(...args),

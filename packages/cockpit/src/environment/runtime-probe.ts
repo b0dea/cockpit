@@ -4,7 +4,7 @@ import { arch, platform } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
-import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, errorCause, isMissing, RefusalError, type ExecutionStep, type StackId } from './contract.js'
 import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { runDown, runLogs, runReset, runSleep, runUp } from './application.js'
@@ -246,7 +246,7 @@ function runner(input: RuntimeProbeRequest, batchId: string, deadline: number): 
                 filesystemChecks: [], compensation: [],
             }
             const outcome = await executeProbe(step)
-            if (!executionOutcomeMatches(outcome, step)) throw new RefusalError('runtime probe execution outcome is unauthenticated')
+            if (!authenticatedExecutionOutcome(outcome, step)) throw new RefusalError('runtime probe execution outcome is unauthenticated')
             if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) sawTimeout = true
             return outcome
         },

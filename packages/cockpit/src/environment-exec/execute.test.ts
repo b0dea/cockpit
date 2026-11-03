@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, snapshotJson, type ExecutionPlan, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
-import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, repairFencedExecution } from './execute.js'
+import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, authenticatedExecutionOutcome, repairFencedExecution } from './execute.js'
 
 // A spawned step reaches its first line in milliseconds when idle and in seconds under load;
 // expect.poll's 1 s default failed these waits whenever a full suite shared the machine. The wait
@@ -155,7 +155,7 @@ describe('mechanical environment executor', () => {
             expect(existsSync(effect)).toBe(false)
             expect(outcome).toMatchObject({ kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED', execution: { started: false } })
             expect(outcome.receipt).toBeUndefined()
-            expect(executionOutcomeMatches(outcome, step)).toBe(true)
+            expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
             expect(existsSync(clockHit)).toBe(true)
             const marker = JSON.parse(readFileSync(fence.markerPath, 'utf8')) as { status: string; supervisorPid: number }
             expect(marker.status).toBe('terminated')
@@ -507,7 +507,7 @@ describe('mechanical environment executor', () => {
             kind: 'refusal', code: 'EXECUTION_SPAWN_FAILED',
             execution: expect.objectContaining({ exitCode: 1, started: false }),
         }))
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
     })
 
     it('returns bounded probe output on refusal so callers can classify the failed control', async () => {
@@ -542,8 +542,8 @@ describe('mechanical environment executor', () => {
         }))
         expect(probe.receipt.receiptMatches(step)).toBe(true)
         expect(probe.receipt.receiptMatches({ ...step, labels: { ...step.labels, batchId: 'caller-relabelled' } })).toBe(false)
-        expect(executionOutcomeMatches(probe, step)).toBe(true)
-        expect(executionOutcomeMatches({ ...probe, receipt: { ...probe.receipt } }, step)).toBe(false)
+        expect(authenticatedExecutionOutcome(probe, step)).toBeDefined()
+        expect(authenticatedExecutionOutcome({ ...probe, receipt: { ...probe.receipt } }, step)).toBeUndefined()
     })
 
     it('binds every enumerable record key without prototype interpretation', async () => {
@@ -650,11 +650,11 @@ describe('mechanical environment executor', () => {
         const step = nodeStep('outcome-control', "process.stdout.write('safe')")
         const outcome = await executeProbe(step)
 
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
-        expect(executionOutcomeMatches({ ...outcome, stdout: Buffer.from('altered') }, step)).toBe(false)
-        expect(executionOutcomeMatches({ ...outcome, execution: { ...outcome.execution, exitCode: 7 } }, step)).toBe(false)
-        expect(executionOutcomeMatches(outcome, { ...step, cwd: '/altered' })).toBe(false)
-        expect(executionOutcomeMatches(outcome, { ...step, argv0: '/altered/invocation' })).toBe(false)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
+        expect(authenticatedExecutionOutcome({ ...outcome, stdout: Buffer.from('altered') }, step)).toBeUndefined()
+        expect(authenticatedExecutionOutcome({ ...outcome, execution: { ...outcome.execution, exitCode: 7 } }, step)).toBeUndefined()
+        expect(authenticatedExecutionOutcome(outcome, { ...step, cwd: '/altered' })).toBeUndefined()
+        expect(authenticatedExecutionOutcome(outcome, { ...step, argv0: '/altered/invocation' })).toBeUndefined()
     })
 
     it('authenticates an issued receiptless refusal against the resolved input', async () => {
@@ -676,9 +676,9 @@ describe('mechanical environment executor', () => {
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED' }))
         expect(outcome).not.toHaveProperty('receipt')
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
-        expect(executionOutcomeMatches({ ...outcome }, step)).toBe(false)
-        expect(executionOutcomeMatches(outcome, { ...step, cwd: '/altered' })).toBe(false)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
+        expect(authenticatedExecutionOutcome({ ...outcome }, step)).toBeUndefined()
+        expect(authenticatedExecutionOutcome(outcome, { ...step, cwd: '/altered' })).toBeUndefined()
     })
 
     it('passes a data input to the process as its private content-addressed snapshot', async () => {
@@ -704,7 +704,7 @@ describe('mechanical environment executor', () => {
         expect(dirname(dirname(snapshot!))).toBe(tmpdir())
         expect(basename(dirname(snapshot!))).toMatch(/^cockpit-execution-/)
         expect(content).toBe('verified')
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
     })
 
     it('runs a verified executable from its own path and binds its digest into the receipt', async () => {
@@ -727,7 +727,7 @@ describe('mechanical environment executor', () => {
         if (outcome.kind !== 'complete') return
         const rebound = { ...step, consumedFiles: [{ ...step.consumedFiles[0]!, sha256: sha256('other') }] }
         expect(outcome.receipt.receiptMatches(rebound as ExecutionStep)).toBe(false)
-        expect(executionOutcomeMatches(outcome, rebound as ExecutionStep)).toBe(false)
+        expect(authenticatedExecutionOutcome(outcome, rebound as ExecutionStep)).toBeUndefined()
     })
 
     it('re-hashes a verified executable whose bytes changed under a restored size and modification time', async () => {
@@ -773,7 +773,7 @@ describe('mechanical environment executor', () => {
 
         expect(outcome.kind).toBe('complete')
         expect(outcome.stdout.toString('utf8')).toBe('/usr/local/bin/synthetic-runtime')
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
     })
 
     it('preserves project-relative resolution while staging a compose command', async () => {
@@ -833,7 +833,7 @@ done
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_STAGING_CLEANUP_FAILED' }))
         expect(outcome.execution.exitCode).toBe(1)
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
         expect(readFileSync(unrelated, 'utf8')).toBe('safe')
         const staging = outcome.stdout.toString()
         chmodSync(staging, 0o700)
@@ -1111,7 +1111,7 @@ done
             [`${stream}RetainedBytes`]: 4,
         }))
         expect(outcome[stream].toString()).toBe('1234')
-        expect(executionOutcomeMatches(outcome, nodeStep(`limit-${stream}`, script, limits))).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, nodeStep(`limit-${stream}`, script, limits))).toBeDefined()
     })
 
     it('keeps the newest bytes of a tail-retaining step from the first whole character', async () => {
@@ -1122,7 +1122,7 @@ done
         expect(outcome).toEqual(expect.objectContaining({ kind: 'complete' }))
         expect(outcome.execution).toEqual(expect.objectContaining({ stdoutObservedBytes: 7, stdoutRetainedBytes: 3 }))
         expect(new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout)).toBe('xyz')
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
     })
 
     it('never classifies a signal-terminated child as successful', async () => {
@@ -1131,7 +1131,7 @@ done
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED' }))
         expect(outcome.execution).toEqual(expect.objectContaining({ exitCode: 1, signal: 'SIGKILL' }))
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
     })
 
     it('keeps a controller refusal nonzero when the child handles termination by exiting zero', async () => {
@@ -1145,7 +1145,7 @@ done
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_TIMEOUT' }))
         expect(outcome.execution).toEqual(expect.objectContaining({ exitCode: 1, signal: null }))
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
     })
 
     it('stops at first failure and runs only declared compensation in supplied order', async () => {
@@ -1362,7 +1362,7 @@ while :; do sleep 1; done
                 kind: 'refusal', code: 'EXECUTION_TERMINATION_UNCONFIRMED',
             }))
             expect(outcome).not.toHaveProperty('receipt')
-            expect(executionOutcomeMatches(outcome, step)).toBe(true)
+            expect(authenticatedExecutionOutcome(outcome, step)).toBeDefined()
             expect(basename(staging)).toMatch(/^cockpit-execution-/)
             expect(existsSync(staging)).toBe(true)
         } finally {

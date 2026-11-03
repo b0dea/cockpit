@@ -306,14 +306,8 @@ export type ExecutePlanOutcome =
 
 const TERMINATION_GRACE_MS = 100
 const TERMINATION_KILL_MS = TERMINATION_GRACE_MS / 2
-interface ReceiptBinding {
-    readonly stepFingerprint: string
-    readonly consumedFingerprint: string
-    outcomeFingerprint?: string
-}
-
-const issuedReceipts = new WeakMap<object, ReceiptBinding>()
-const issuedOutcomes = new WeakMap<object, Readonly<{ stepFingerprint: string; outcomeFingerprint: string }>>()
+// The step each outcome came from, so a caller can prove its result came from this executor for that step.
+const issuedOutcomes = new WeakMap<object, string>()
 
 function failedStep(step: ExecutionStep, failure: ExecutionFailureCode): StepExecution & { failure: ExecutionFailureCode } {
     return { id: step.id, exitCode: 1, signal: null, stdoutBytes: 0, stderrBytes: 0, failure }
@@ -331,8 +325,8 @@ function stepFingerprint(step: ExecutionStep): string {
     return createHash('sha256').update(JSON.stringify(step)).digest('hex')
 }
 
-function executionReceipt(stepId: string, fingerprint: string, consumedFingerprint: string, startedAt: string, finishedAt: string): ExecutionReceipt {
-    const receipt = {
+function executionReceipt(stepId: string, fingerprint: string, startedAt: string, finishedAt: string): ExecutionReceipt {
+    return {
         stepId,
         startedAt,
         finishedAt,
@@ -341,8 +335,6 @@ function executionReceipt(stepId: string, fingerprint: string, consumedFingerpri
             return owned !== undefined && stepFingerprint(owned) === fingerprint
         },
     }
-    issuedReceipts.set(receipt, { stepFingerprint: fingerprint, consumedFingerprint })
-    return receipt
 }
 
 async function checkFilesystem(check: FilesystemCheck): Promise<boolean> {
@@ -406,7 +398,6 @@ function filesystemIdentitiesPass(checks: readonly FilesystemCheck[]): boolean {
 interface PreparedStep {
     readonly logical: ExecutionStep
     readonly argv: readonly [string, ...string[]]
-    readonly consumedFingerprint: string
     readonly verifiedPathExecutables: readonly ConsumedFile[]
 }
 
@@ -522,12 +513,10 @@ async function prepareExecutionPlan(plan: ExecutionPlan): Promise<PreparationRes
     const prepare = async (step: ExecutionStep): Promise<boolean> => {
         if (prepared.has(step)) return true
         const argv = [...step.argv]
-        const consumed: ConsumedFile[] = []
         const verifiedPathExecutables: ConsumedFile[] = []
         for (const file of step.consumedFiles) {
             if (file.executable) {
                 verifiedPathExecutables.push(file)
-                consumed.push(file)
                 continue
             }
             if (directory === undefined) {
@@ -539,12 +528,10 @@ async function prepareExecutionPlan(plan: ExecutionPlan): Promise<PreparationRes
             const digest = await stageVerifiedFile(file, snapshot)
             if (digest === undefined) return false
             for (const index of file.argvIndexes) argv[index] = snapshot
-            consumed.push({ ...file, sha256: digest })
         }
         prepared.set(step, {
             logical: step,
             argv: argv as [string, ...string[]],
-            consumedFingerprint: createHash('sha256').update(JSON.stringify(consumed)).digest('hex'),
             verifiedPathExecutables,
         })
         for (const compensation of step.compensation) if (!await prepare(compensation)) return false
@@ -647,7 +634,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 stdout: retainedStdout,
                 stderr: retainedStderr,
                 receipt: started && terminationConfirmed
-                    ? executionReceipt(stepId, fingerprint, prepared.consumedFingerprint, startedAt, new Date().toISOString())
+                    ? executionReceipt(stepId, fingerprint, startedAt, new Date().toISOString())
                     : undefined,
                 resolvedStep: step,
             }
@@ -822,21 +809,6 @@ function immutablePlanOutcome(outcome: ExecutePlanOutcome): ExecutePlanOutcome {
     }
 }
 
-function probeOutcomeFingerprint(outcome: ExecuteProbeOutcome, consumedFingerprint: string): string {
-    const receipt = outcome.receipt
-    return createHash('sha256').update(JSON.stringify({
-        kind: outcome.kind,
-        code: outcome.kind === 'refusal' ? outcome.code : null,
-        execution: outcome.execution,
-        receipt: receipt === undefined ? null : {
-            stepId: receipt.stepId, startedAt: receipt.startedAt, finishedAt: receipt.finishedAt,
-        },
-        stdoutSha256: createHash('sha256').update(outcome.stdout).digest('hex'),
-        stderrSha256: createHash('sha256').update(outcome.stderr).digest('hex'),
-        consumedFingerprint,
-    })).digest('hex')
-}
-
 function immutableProbeOutput<Value extends object>(value: Value, stdout: Buffer, stderr: Buffer): Value & { stdout: Buffer; stderr: Buffer } {
     return Object.defineProperties(value, {
         stdout: { enumerable: true, get: () => Buffer.from(stdout) },
@@ -844,100 +816,16 @@ function immutableProbeOutput<Value extends object>(value: Value, stdout: Buffer
     }) as Value & { stdout: Buffer; stderr: Buffer }
 }
 
-interface CapturedProbeOutcome { readonly outcome: ExecuteProbeOutcome; readonly sourceReceipt?: ExecutionReceipt }
-
-function captureProbeOutcome(value: unknown): CapturedProbeOutcome | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const candidate = value as Partial<ExecuteProbeOutcome>
-        const receiptPresent = Object.prototype.hasOwnProperty.call(value, 'receipt')
-        const kind = candidate.kind
-        const expectedKeys = kind === 'complete' || receiptPresent
-            ? ['kind', 'execution', 'receipt', 'stdout', 'stderr']
-            : ['kind', 'code', 'execution', 'stdout', 'stderr']
-        if (kind === 'refusal' && receiptPresent) expectedKeys.splice(1, 0, 'code')
-        const actualKeys = Object.keys(value).sort()
-        expectedKeys.sort()
-        if (actualKeys.length !== expectedKeys.length || !actualKeys.every((key, index) => key === expectedKeys[index])) return undefined
-        const code = kind === 'refusal' ? candidate.code : undefined
-        const execution = snapshotJson(candidate.execution)
-        const receipt = candidate.receipt
-        const stdout = candidate.stdout
-        const stderr = candidate.stderr
-        if ((kind !== 'complete' && kind !== 'refusal') || (kind === 'refusal' && !EXECUTION_FAILURE_CODES.includes(code as ExecutionFailureCode))
-            || execution === undefined || execution === null || typeof execution !== 'object' || Array.isArray(execution)
-            || !Buffer.isBuffer(stdout) || !Buffer.isBuffer(stderr) || stdout.byteLength > 16_777_216 || stderr.byteLength > 16_777_216) return undefined
-        const executionKeys = Object.keys(execution).sort()
-        const expectedExecutionKeys = ['id', 'exitCode', 'signal', 'stdoutBytes', 'stderrBytes', 'started', 'stdoutObservedBytes', 'stderrObservedBytes', 'stdoutRetainedBytes', 'stderrRetainedBytes'].sort()
-        if (executionKeys.length !== expectedExecutionKeys.length || !executionKeys.every((key, index) => key === expectedExecutionKeys[index])) return undefined
-        const observed = execution as unknown as ProbeStepExecution
-        if (typeof observed.id !== 'string' || observed.id.length === 0 || observed.id.includes('\0')
-            || !Number.isSafeInteger(observed.exitCode) || observed.exitCode < 0
-            || (kind === 'complete' ? observed.exitCode !== 0 : observed.exitCode === 0)
-            || (observed.signal !== null && (typeof observed.signal !== 'string' || !/^SIG[A-Z0-9]+$/.test(observed.signal)))
-            || typeof observed.started !== 'boolean'
-            || [observed.stdoutBytes, observed.stderrBytes, observed.stdoutObservedBytes, observed.stderrObservedBytes,
-                observed.stdoutRetainedBytes, observed.stderrRetainedBytes].some((count) => !Number.isSafeInteger(count) || count < 0)
-            || observed.stdoutRetainedBytes !== stdout.byteLength || observed.stderrRetainedBytes !== stderr.byteLength
-            || observed.stdoutBytes > observed.stdoutObservedBytes || observed.stderrBytes > observed.stderrObservedBytes) return undefined
-        let ownedReceipt: ExecutionReceipt | undefined
-        if (receipt !== undefined) {
-            if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)) return undefined
-            const receiptKeys = Object.keys(receipt).sort()
-            const expectedReceiptKeys = ['stepId', 'startedAt', 'finishedAt', 'receiptMatches'].sort()
-            const stepId = receipt.stepId
-            const startedAt = receipt.startedAt
-            const finishedAt = receipt.finishedAt
-            const receiptMatches = receipt.receiptMatches
-            if (receiptKeys.length !== expectedReceiptKeys.length || !receiptKeys.every((key, index) => key === expectedReceiptKeys[index])
-                || typeof stepId !== 'string' || typeof startedAt !== 'string'
-                || typeof finishedAt !== 'string' || typeof receiptMatches !== 'function') return undefined
-            ownedReceipt = { stepId, startedAt, finishedAt, receiptMatches }
-        } else if (kind === 'complete') return undefined
-        const ownedExecution = {
-            id: observed.id, exitCode: observed.exitCode, signal: observed.signal,
-            stdoutBytes: observed.stdoutBytes, stderrBytes: observed.stderrBytes, started: observed.started,
-            stdoutObservedBytes: observed.stdoutObservedBytes, stderrObservedBytes: observed.stderrObservedBytes,
-            stdoutRetainedBytes: observed.stdoutRetainedBytes, stderrRetainedBytes: observed.stderrRetainedBytes,
-        }
-        const owned = kind === 'complete'
-            ? { kind, execution: ownedExecution, receipt: ownedReceipt as ExecutionReceipt, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
-            : ownedReceipt === undefined
-                ? { kind, code: code as ExecutionFailureCode, execution: ownedExecution, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
-                : { kind, code: code as ExecutionFailureCode, execution: ownedExecution, receipt: ownedReceipt, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
-        return { outcome: owned, sourceReceipt: receipt }
-    } catch {
-        // A throwing accessor or proxy trap means the outcome is not authentic; the caller refuses it.
-        return undefined
-    }
-}
-
-function issueProbeOutcome(outcome: ExecuteProbeOutcome, resolvedStep?: ExecutionStep): ExecuteProbeOutcome {
-    const captured = captureProbeOutcome(outcome)
-    if (captured === undefined || resolvedStep === undefined) return outcome
-    const fingerprint = stepFingerprint(resolvedStep)
-    const receiptBinding = captured.sourceReceipt === undefined ? undefined : issuedReceipts.get(captured.sourceReceipt)
-    const consumedFingerprint = receiptBinding?.consumedFingerprint ?? fingerprint
-    const outcomeFingerprint = probeOutcomeFingerprint(captured.outcome, consumedFingerprint)
-    if (receiptBinding !== undefined) receiptBinding.outcomeFingerprint = outcomeFingerprint
-    issuedOutcomes.set(outcome, Object.freeze({ stepFingerprint: fingerprint, outcomeFingerprint }))
+function issueProbeOutcome(outcome: ExecuteProbeOutcome, resolvedStep: ExecutionStep | undefined): ExecuteProbeOutcome {
+    if (resolvedStep !== undefined) issuedOutcomes.set(outcome, stepFingerprint(resolvedStep))
     return outcome
 }
 
+/** The outcome when this executor produced it for exactly `step`; undefined for any other value. */
 export function authenticatedExecutionOutcome(outcome: unknown, step: ExecutionStep): ExecuteProbeOutcome | undefined {
     if (outcome === null || typeof outcome !== 'object') return undefined
-    const issued = issuedOutcomes.get(outcome)
-    const captured = captureProbeOutcome(outcome)
     const resolved = snapshotExecutionStep(step)
-    if (issued === undefined || captured === undefined || resolved === undefined || issued.stepFingerprint !== stepFingerprint(resolved)) return undefined
-    const receiptBinding = captured.sourceReceipt === undefined ? undefined : issuedReceipts.get(captured.sourceReceipt)
-    if (captured.sourceReceipt !== undefined && (receiptBinding === undefined || receiptBinding.stepFingerprint !== issued.stepFingerprint)) return undefined
-    const consumedFingerprint = receiptBinding?.consumedFingerprint ?? issued.stepFingerprint
-    return issued.outcomeFingerprint === probeOutcomeFingerprint(captured.outcome, consumedFingerprint) ? captured.outcome : undefined
-}
-
-export function executionOutcomeMatches(outcome: ExecuteProbeOutcome, step: ExecutionStep): boolean {
-    return authenticatedExecutionOutcome(outcome, step) !== undefined
+    return resolved !== undefined && issuedOutcomes.get(outcome) === stepFingerprint(resolved) ? outcome as ExecuteProbeOutcome : undefined
 }
 
 function captureForegroundInput(input: ForegroundProcessInput): ForegroundProcessInput | undefined {
