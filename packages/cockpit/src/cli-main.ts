@@ -6,7 +6,7 @@ import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold,
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { parse as parseToml, TomlError } from 'smol-toml'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { parseArgs, types as utilTypes } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
@@ -956,8 +956,12 @@ async function decodeRequest(
             request = { operation: handler, workOrderId: workOrderId!, close: values.partial === true ? 'partial' : values.abandon === true ? 'abandoned' : 'done', ...(note ? { note } : {}) }
         } else if (handler === 'grade-criteria') {
             const criteriaFile = text('criteria')
-            if (!criteriaFile) return usageOutcome('CLI_USAGE_INVALID', 'provide --criteria <relative-file>', '--criteria')
-            request = { operation: handler, criteriaFile }
+            if (!criteriaFile) return usageOutcome('CLI_USAGE_INVALID', 'provide --criteria <file inside the repository>', '--criteria')
+            // A path is read from the cockpit root; an absolute path inside it is the same file spelled differently.
+            const inside = relative(dirname(resolve(values.config)), resolve(dirname(resolve(values.config)), criteriaFile))
+            if (inside === '' || inside === '..' || inside.startsWith('../') || isAbsolute(inside)) return usageOutcome('CLI_USAGE_INVALID',
+                `--criteria ${JSON.stringify(criteriaFile)} must be a file inside the repository; pass a path under ${dirname(resolve(values.config))}`, '--criteria')
+            request = { operation: handler, criteriaFile: inside }
         } else if (handler === 'test-run') {
             const gate = text('gate'), mode = values.mode
             if (!gate || mode !== 'canonical' && mode !== 'full' && mode !== 'staged') return usageOutcome('CLI_USAGE_INVALID', 'provide --gate and --mode canonical|full|staged')

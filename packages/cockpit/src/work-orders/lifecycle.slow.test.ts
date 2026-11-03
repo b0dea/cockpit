@@ -71,6 +71,11 @@ describe('work-order lifecycle', () => {
         const graded = await work(root, ['grade', '--criteria', 'criteria.md'], env)
         expect(graded).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }],
             result: { outOfScope: [], checks: [{ criterion: 'AC1', passed: true }], criteria: [{ id: 'AC1', verdict: 'unclear' }], evaluator: { tool: 'claudecode' } } })
+        // An absolute path inside the repository is the same file; one outside it is refused by name.
+        expect(await work(root, ['grade', '--criteria', join(root, 'criteria.md')], env)).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }], result: { checks: [{ passed: true }] } })
+        for (const outside of ['../criteria.md', join(root, '..', 'criteria.md')]) {
+            expect(await work(root, ['grade', '--criteria', outside], env)).toMatchObject({ status: 2, diagnostics: [{ code: 'CLI_USAGE_INVALID', message: expect.stringContaining('--criteria') }] })
+        }
         // The fix names the command that was run, not an order this grade does not have.
         expect(graded.guidance?.[0]?.text).toContain(`npx --no cockpit grade --config ${join(root, 'cockpit.toml')} --criteria <file>`)
         // A person who names the grader gets that tool or a refusal, never another listed tool that is available.
