@@ -838,21 +838,18 @@ describe('lifecycle application contracts', () => {
             topology: {}, firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
             drainRequest: request, reclaim: null,
         } as never)
-        const reservationAuthority = Object.freeze({ reservation: true })
-        const attemptAuthority = Object.freeze({ attempt: true })
-        const outcomeAuthority = Object.freeze({ outcome: true })
         applicationOwners.claims.reserveDrain = async () => {
             events.push('reserve')
-            return { kind: 'complete', authority: reservationAuthority } as never
+            return { kind: 'complete', reservation: {} } as never
         }
         applicationOwners.claims.reserveDrainAttempt = async () => {
             events.push('attempt')
-            return { kind: 'complete', authority: attemptAuthority } as never
+            return { kind: 'complete', reservation: {}, attempt: {}, fence: {} } as never
         }
         applicationOwners.runtime.stopRuntime = async ({ execute }) => {
             await execute({ id: 'stop' } as never)
             await execute({ id: 'postcheck' } as never)
-            return { kind: 'stopped', authority: outcomeAuthority, fence: executionFence('sleep-stop') } as never
+            return { kind: 'stopped', outcome: {}, fence: executionFence('sleep-stop') } as never
         }
         applicationOwners.claims.commitDrainOutcome = async () => {
             expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
@@ -903,12 +900,12 @@ describe('lifecycle application contracts', () => {
             topology: {}, firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
             drainRequest: request, reclaim: null,
         } as never)
-        applicationOwners.claims.reserveDrain = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
+        applicationOwners.claims.reserveDrain = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
+        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
         applicationOwners.runtime.stopRuntime = async ({ execute }) => {
             await execute({ id: 'stop' } as never)
             await execute({ id: 'postcheck' } as never)
-            return { kind: 'stopped', authority: ({}), fence: executionFence('sleep-indeterminate') } as never
+            return { kind: 'stopped', outcome: {}, fence: executionFence('sleep-indeterminate') } as never
         }
         applicationOwners.claims.commitDrainOutcome = async () => ({
             kind: 'indeterminate', code: 'STATE_DURABILITY_INDETERMINATE',
@@ -954,7 +951,7 @@ describe('lifecycle application contracts', () => {
         })
         applicationOwners.claims.inspectSleepDrainRecovery = async () => ({
             kind: 'recoverable', generation: request.generation,
-            runtimeStopValidForMs: request.actions[0].validForMs, authority: {},
+            runtimeStopValidForMs: request.actions[0].validForMs, record: {},
         }) as never
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         applicationOwners.ports.observeRetainedPortFamily = async () => ({ kind: 'complete', holderId: context.holderId, recordRevision: 7, lease }) as never
@@ -971,14 +968,14 @@ describe('lifecycle application contracts', () => {
         } as never)
         applicationOwners.claims.recoverSleepDrainReservation = async ({ request: recovered }) => {
             events.push(`recover:${recovered.expectedCoordinationRevision}`)
-            return { kind: 'complete', authority: {} } as never
+            return { kind: 'complete', reservation: {} } as never
         }
         applicationOwners.claims.reserveDrain = async () => { events.push('reserve'); return {} as never }
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
+        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
         applicationOwners.runtime.stopRuntime = async ({ execute }) => {
             await execute({ id: 'stop' } as never)
             await execute({ id: 'postcheck' } as never)
-            return { kind: 'stopped', authority: ({}), fence: executionFence('sleep-recovery') } as never
+            return { kind: 'stopped', outcome: {}, fence: executionFence('sleep-recovery') } as never
         }
         applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
 

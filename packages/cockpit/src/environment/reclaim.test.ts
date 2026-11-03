@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
-import { coordinationStateRecord, decodeCoordinationRecord, inspectDrainAttemptAuthority, openRuntimeDrainExecution, commitDrainOutcome, recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt, settleRuntimeDrainSuccess } from './claims.js'
+import { coordinationStateRecord, decodeCoordinationRecord, commitDrainOutcome, recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt } from './claims.js'
 import {
     classifyReclaim,
     discoverReclaim,
@@ -930,13 +930,9 @@ describe('reset planning', () => {
                 }
                 const reserved = await reserveDrain({ namespace: selected.value, request })
                 if (reserved.kind !== 'complete') throw new Error('drain reservation unavailable')
-                const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: reserved.authority })
+                const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: reserved.reservation })
                 if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
-                const candidate = inspectDrainAttemptAuthority(runtimeAttempt.authority)
-                const runtimeExecution = candidate && openRuntimeDrainExecution({
-                    authority: runtimeAttempt.authority, candidate,
-                })
-                const runtimeSuccess = runtimeExecution && settleRuntimeDrainSuccess({ authority: runtimeExecution, fact: {
+                const runtimeSuccess = { kind: 'success' as const, reservation: runtimeAttempt.reservation, fact: {
                     purpose: request.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
                     operationBasis: runtimeAttempt.reservation.operationBasis,
                     coordinationRevision: runtimeAttempt.reservation.coordinationRevision,
@@ -946,26 +942,25 @@ describe('reset planning', () => {
                     validThrough: runtimeAttempt.attempt.validThrough, actionIndex: runtimeAttempt.attempt.actionIndex,
                     currentTarget: runtimeAttempt.attempt.currentTarget, currentStage: runtimeAttempt.attempt.currentStage,
                     observedAt: runtimeAttempt.attempt.committedAt,
-                } })
-                if (!runtimeSuccess) throw new Error('runtime completion unavailable')
+                } }
                 const active = await readState(selected.value.paths.coordination(stackId))
                 if (active.kind !== 'complete') throw new Error('active drain unavailable')
-                const progressed = reduceDrainOutcome({ record: active.value, authority: runtimeSuccess })
+                const progressed = reduceDrainOutcome({ record: active.value, outcome: runtimeSuccess })
                 if (!progressed) throw new Error('runtime progress unavailable')
                 const progressCommit = await commitDrainOutcome({
-                    authority: runtimeSuccess, namespace: selected.value, stackId,
+                    outcome: runtimeSuccess, namespace: selected.value, stackId,
                 })
                 if (progressCommit.kind !== 'complete') throw new Error('runtime progress commit unavailable')
                 const recovered = await recoverDrainReservation({ namespace: selected.value, request })
                 if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-                const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: recovered.authority })
+                const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: recovered.reservation })
                 if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
                 if (mode === 'cache-ancestor-replaced-before-redemption') {
                     await rename(cacheRoot, join(root, 'held-dependency-caches'))
                     await mkdir(completedCachePath!, { recursive: true })
                     await writeFile(join(completedCachePath!, 'replacement'), 'preserved')
                     const execute = vi.fn(executeProbe)
-                    expect(await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt.authority, execute })).toEqual({ kind: 'unavailable' })
+                    expect(await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute })).toEqual({ kind: 'unavailable' })
                     expect(execute).not.toHaveBeenCalled()
                     expect(await readFile(join(completedCachePath!, 'replacement'), 'utf8')).toBe('preserved')
                     return
@@ -974,7 +969,7 @@ describe('reset planning', () => {
                 const coldFirst = mode === 'cold-prestart-retry' || mode === 'cold-changed-timeout' || mode === 'cold-added-target' || coldAbsent
                 let outcome: Awaited<ReturnType<typeof executeProbe>> | undefined
                 // A changed executable is refused before spawn, so the removal provably never started.
-                const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt.authority, execute: async (step) => {
+                const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute: async (step) => {
                     const executableBytes = coldFirst ? await readFile(step.argv[0]) : undefined
                     if (coldFirst) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
                     if (mode === 'redeemed-cache-target-replaced') {
@@ -1003,13 +998,13 @@ describe('reset planning', () => {
                 }
                 if (coldFirst) {
                     if (ran.kind !== 'not-started') throw new Error('teardown failure unavailable')
-                    const failureAuthority = ran.authority
+                    const failure = ran.outcome
                     const active = await readState(selected.value.paths.coordination(stackId))
                     if (active.kind !== 'complete') throw new Error('active teardown attempt unavailable')
-                    const failedValue = reduceDrainOutcome({ record: active.value, authority: failureAuthority })
+                    const failedValue = reduceDrainOutcome({ record: active.value, outcome: failure })
                     if (!failedValue) throw new Error('teardown failure transition unavailable')
                     const failedCommit = await commitDrainOutcome({
-                        authority: failureAuthority, namespace: selected.value, stackId,
+                        outcome: failure, namespace: selected.value, stackId,
                     })
                     if (failedCommit.kind !== 'complete') throw new Error('teardown failure commit unavailable')
                     vi.resetModules()
@@ -1017,14 +1012,9 @@ describe('reset planning', () => {
                     const freshClaims = await import('./claims.js')
                     const coldReservation = await freshClaims.recoverDrainReservation({ namespace: selected.value, request })
                     if (coldReservation.kind !== 'complete') throw new Error('cold teardown recovery unavailable')
-                    expect(freshClaims.inspectFailedReclaimRecovery({
-                        authority: { ...coldReservation.authority } as never, record: failedCommit.value,
-                    })).toBeUndefined()
-                    const coldRecoveryAuthority = freshClaims.inspectFailedReclaimRecovery({
-                        authority: coldReservation.authority, record: failedCommit.value,
+                    const coldProjection = freshClaims.inspectFailedReclaimRecovery({
+                        reservation: coldReservation.reservation, record: failedCommit.value,
                     })
-                    if (!coldRecoveryAuthority) throw new Error('cold teardown projection unavailable')
-                    const coldProjection = freshClaims.consumeFailedReclaimRecovery(coldRecoveryAuthority)
                     expect(coldProjection).toMatchObject({
                         purpose: 'down', planDigest: preview.discoveryDigest, completed: [],
                         current: { targetId: reclaimTargets![0] }, pending: [{ targetId: reclaimTargets![1] }],
@@ -1037,7 +1027,7 @@ describe('reset planning', () => {
                     const coldPlan = await freshReclaim.planTeardown({
                         ...common, coordinationRecord: failedCommit.value, discovery: coldDiscovery,
                         executable: runtimeByDiscovery.get(coldDiscovery)!,
-                        expectedDiscoveryDigest: preview.discoveryDigest, recoveryAuthority: coldReservation.authority,
+                        expectedDiscoveryDigest: preview.discoveryDigest, recoveredReservation: coldReservation.reservation,
                         ...(mode === 'cold-changed-timeout' ? { timeoutMs: 29_000 } : {}),
                         coordinationAddress: selected.value.paths.coordination(stackId),
                     })
@@ -1047,12 +1037,12 @@ describe('reset planning', () => {
                     }
                     if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error(`cold teardown action unavailable: ${JSON.stringify(coldPlan)}`)
                     const beforeRetry = coldAbsent ? await authenticatedDiscovery(root, [remaining]) : undefined
-                    const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, authority: coldReservation.authority })
+                    const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
                     if (coldAttempt.kind !== 'complete') throw new Error('cold teardown retry attempt unavailable')
                     if (coldAbsent) {
                         // The target is already gone, so recording its removal runs nothing.
                         const execute = vi.fn(executeProbe)
-                        const absence = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt.authority, execute })
+                        const absence = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute })
                         if (absence.kind !== 'executed') throw new Error('absent teardown reconciliation unavailable')
                         expect(execute).not.toHaveBeenCalled()
                         const post = mode === 'cold-absent-stale' ? beforeRetry! : await authenticatedDiscovery(root,
@@ -1066,10 +1056,10 @@ describe('reset planning', () => {
                                 value: { value: { holders: [{ holderId }], drain: { attempt: { status: 'active' } } } } })
                             return
                         }
-                        expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything(), authority: expect.anything() })
+                        expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything(), outcome: expect.anything() })
                         if (reconciled.kind !== 'complete' || !reconciled.continuation) throw new Error('absent teardown continuation unavailable')
-                        const success = reconciled.authority
-                        const published = await freshClaims.commitDrainOutcome({ authority: success, namespace: selected.value, stackId })
+                        const success = reconciled.outcome
+                        const published = await freshClaims.commitDrainOutcome({ outcome: success, namespace: selected.value, stackId })
                         if (published.kind !== 'complete') throw new Error(JSON.stringify(published))
                         const continued = await freshReclaim.planTeardown({ ...common, coordinationRecord: published.value,
                             discovery: post, executable: runtimeByDiscovery.get(post)!,
@@ -1078,7 +1068,7 @@ describe('reset planning', () => {
                         expect(continued, JSON.stringify(continued)).toMatchObject({ kind: 'complete', action: expect.anything(), noop: false })
                         return
                     }
-                    const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt.authority, execute: executeProbe })
+                    const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
                     if (coldExecution.kind !== 'executed') throw new Error('cold teardown execution unavailable')
                     const coldPost = await authenticatedDiscovery(root, [remaining])
                     expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
@@ -1110,13 +1100,13 @@ describe('reset planning', () => {
                     || mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
                     || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target')
                     && reconciled.kind === 'complete') {
-                    const success = reconciled.authority
+                    const success = reconciled.outcome
                     const current = await readState(selected.value.paths.coordination(stackId))
                     if (current.kind !== 'complete') throw new Error('teardown progress record unavailable')
-                    const nextProgress = reduceDrainOutcome({ record: current.value, authority: success })
+                    const nextProgress = reduceDrainOutcome({ record: current.value, outcome: success })
                     if (!nextProgress) throw new Error('teardown progress unavailable')
                     const committed = await commitDrainOutcome({
-                        authority: success, namespace: selected.value, stackId,
+                        outcome: success, namespace: selected.value, stackId,
                     })
                     if (committed.kind !== 'complete') throw new Error('teardown progress commit unavailable')
                     // The discovery that reconciled the first removal plans the second, as `down` does;
@@ -1131,11 +1121,11 @@ describe('reset planning', () => {
                     if (nextPlan.kind !== 'complete' || !nextPlan.action) throw new Error(`second teardown action unavailable: ${JSON.stringify(nextPlan)}`)
                     const nextReservation = await recoverDrainReservation({ namespace: selected.value, request })
                     if (nextReservation.kind !== 'complete') throw new Error('second teardown recovery unavailable')
-                    const nextAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: nextReservation.authority })
+                    const nextAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: nextReservation.reservation })
                     if (nextAttempt.kind !== 'complete') throw new Error('second teardown attempt unavailable')
                     const coldSecond = mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
                         || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target'
-                    const nextRan = await executeReclaimAction({ action: nextPlan.action, attempt: nextAttempt.authority, execute: async (step) => {
+                    const nextRan = await executeReclaimAction({ action: nextPlan.action, attempt: nextAttempt, execute: async (step) => {
                         const secondExecutableBytes = coldSecond ? await readFile(step.argv[0]) : undefined
                         if (coldSecond) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
                         const nextOutcome = await executeProbe(step)
@@ -1144,13 +1134,13 @@ describe('reset planning', () => {
                     } })
                     if (coldSecond) {
                         if (nextRan.kind !== 'not-started') throw new Error('second teardown failure unavailable')
-                        const failureAuthority = nextRan.authority
+                        const failure = nextRan.outcome
                         const secondActive = await readState(selected.value.paths.coordination(stackId))
                         if (secondActive.kind !== 'complete') throw new Error('second active teardown attempt unavailable')
-                        const failedValue = reduceDrainOutcome({ record: secondActive.value, authority: failureAuthority })
+                        const failedValue = reduceDrainOutcome({ record: secondActive.value, outcome: failure })
                         if (!failedValue) throw new Error('second teardown failure transition unavailable')
                         const failedCommit = await commitDrainOutcome({
-                            authority: failureAuthority, namespace: selected.value, stackId,
+                            outcome: failure, namespace: selected.value, stackId,
                         })
                         if (failedCommit.kind !== 'complete') throw new Error('second teardown failure commit unavailable')
                         vi.resetModules()
@@ -1169,7 +1159,7 @@ describe('reset planning', () => {
                         const coldPlan = await freshReclaim.planTeardown({
                             ...common, coordinationRecord: failedCommit.value, discovery: coldDiscovery,
                             executable: runtimeByDiscovery.get(coldDiscovery)!,
-                            expectedDiscoveryDigest: preview.discoveryDigest, recoveryAuthority: coldReservation.authority,
+                            expectedDiscoveryDigest: preview.discoveryDigest, recoveredReservation: coldReservation.reservation,
                             coordinationAddress: selected.value.paths.coordination(stackId),
                         })
                         if (mode !== 'cold-second-action-retry') {
@@ -1177,9 +1167,9 @@ describe('reset planning', () => {
                             return
                         }
                         if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error('second cold teardown action unavailable')
-                        const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, authority: coldReservation.authority })
+                        const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
                         if (coldAttempt.kind !== 'complete') throw new Error('second cold teardown retry attempt unavailable')
-                        const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt.authority, execute: executeProbe })
+                        const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
                         if (coldExecution.kind !== 'executed') throw new Error('second cold teardown execution unavailable')
                         const coldPost = await authenticatedDiscovery(root, [])
                         expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
@@ -1291,14 +1281,10 @@ describe('reset planning', () => {
                 }
                 const reserved = await reserveDrain({ namespace: selected.value, request })
                 if (reserved.kind !== 'complete') throw new Error(`nested reset drain unavailable: ${JSON.stringify(reserved)}`)
-                const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: reserved.authority })
+                const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: reserved.reservation })
                 if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
-                const runtimeCandidate = inspectDrainAttemptAuthority(runtimeAttempt.authority)
-                const runtimeExecution = runtimeCandidate && openRuntimeDrainExecution({
-                    authority: runtimeAttempt.authority, candidate: runtimeCandidate,
-                })
-                const runtimeSuccess = runtimeExecution && settleRuntimeDrainSuccess({
-                    authority: runtimeExecution,
+                const runtimeSuccess = {
+                    kind: 'success' as const, reservation: runtimeAttempt.reservation,
                     fact: {
                         purpose: request.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
                         operationBasis: runtimeAttempt.reservation.operationBasis,
@@ -1310,19 +1296,18 @@ describe('reset planning', () => {
                         currentTarget: runtimeAttempt.attempt.currentTarget, currentStage: runtimeAttempt.attempt.currentStage,
                         observedAt: runtimeAttempt.attempt.committedAt,
                     },
-                })
-                if (!runtimeSuccess) throw new Error('runtime success unavailable')
+                }
                 const active = await readState(selected.value.paths.coordination(stackId))
                 if (active.kind !== 'complete') throw new Error('active drain unavailable')
-                const progressed = reduceDrainOutcome({ record: active.value, authority: runtimeSuccess })
+                const progressed = reduceDrainOutcome({ record: active.value, outcome: runtimeSuccess })
                 if (!progressed) throw new Error('runtime progress unavailable')
                 const publication = await commitDrainOutcome({
-                    authority: runtimeSuccess, namespace: selected.value, stackId,
+                    outcome: runtimeSuccess, namespace: selected.value, stackId,
                 })
                 if (publication.kind !== 'complete') throw new Error('runtime progress commit unavailable')
                 const recovered = await recoverDrainReservation({ namespace: selected.value, request })
                 if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-                const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: recovered.authority })
+                const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: recovered.reservation })
                 if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
                 const replace = async (scope: 'target' | 'ancestor') => {
                     // Staged beside the original rather than recreated in its place: ext4
@@ -1339,13 +1324,13 @@ describe('reset planning', () => {
                 if (mode === 'target-before-redemption' || mode === 'ancestor-before-redemption') {
                     await replace(mode.startsWith('target') ? 'target' : 'ancestor')
                     const execute = vi.fn(executeProbe)
-                    expect(await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt.authority, execute })).toEqual({ kind: 'unavailable' })
+                    expect(await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute })).toEqual({ kind: 'unavailable' })
                     expect(execute).not.toHaveBeenCalled()
                     expect(await readFile(join(target, 'replacement'), 'utf8')).toBe('preserved')
                     return
                 }
                 let outcome: Awaited<ReturnType<typeof executeProbe>> | undefined
-                const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt.authority, execute: async (step) => {
+                const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute: async (step) => {
                     // Replaced after the identity was bound to the step, before the removal spawns.
                     if (mode === 'target-after-redemption' || mode === 'ancestor-after-redemption') await replace(mode.startsWith('target') ? 'target' : 'ancestor')
                     outcome = await executeProbe(step)
@@ -1542,11 +1527,11 @@ describe('reset planning', () => {
             }
             const reserved = await reserveDrain({ namespace: selected.value, request: drainRequest })
             if (reserved.kind !== 'complete') throw new Error('drain reservation unavailable')
-            const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: reserved.authority })
+            const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: reserved.reservation })
             if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
             // The runtime-stop attempt does not admit a reclaim action.
             const early = vi.fn(executeProbe)
-            expect(await executeReclaimAction({ action: planned.action, attempt: runtimeAttempt.authority, execute: early })).toEqual({ kind: 'unavailable' })
+            expect(await executeReclaimAction({ action: planned.action, attempt: runtimeAttempt, execute: early })).toEqual({ kind: 'unavailable' })
             expect(early).not.toHaveBeenCalled()
             const runtimeFact = {
                 purpose: drainRequest.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
@@ -1560,29 +1545,22 @@ describe('reset planning', () => {
             }
             const activeRecord = await readState(selected.value.paths.coordination(stackId))
             if (activeRecord.kind !== 'complete') throw new Error('active drain unavailable')
-            const runtimeCandidate = inspectDrainAttemptAuthority(runtimeAttempt.authority)
-            const runtimeExecution = runtimeCandidate && openRuntimeDrainExecution({
-                authority: runtimeAttempt.authority, candidate: runtimeCandidate,
-            })
-            const runtimeSuccess = runtimeExecution && settleRuntimeDrainSuccess({
-                authority: runtimeExecution, fact: runtimeFact,
-            })
-            if (!runtimeSuccess) throw new Error('runtime success authority unavailable')
-            const progressed = reduceDrainOutcome({ record: activeRecord.value, authority: runtimeSuccess })
+            const runtimeSuccess = { kind: 'success' as const, reservation: runtimeAttempt.reservation, fact: runtimeFact }
+            const progressed = reduceDrainOutcome({ record: activeRecord.value, outcome: runtimeSuccess })
             if (!progressed) throw new Error('runtime progress unavailable')
             const progressCommit = await commitDrainOutcome({
-                authority: runtimeSuccess, namespace: selected.value, stackId,
+                outcome: runtimeSuccess, namespace: selected.value, stackId,
             })
             if (progressCommit.kind !== 'complete') throw new Error('runtime progress commit unavailable')
             const recovered = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
             if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-            const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: recovered.authority })
+            const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: recovered.reservation })
             if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
             expect(reclaimAttempt.attempt).toMatchObject({ currentStage: 'reclaim', currentTarget: 'volume:session-data', actionIndex: 1 })
             const recoveredAgain = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
             expect(recoveredAgain).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
             let outcome: Awaited<ReturnType<typeof executeProbe>> | undefined
-            const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt.authority, execute: async (step) => {
+            const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute: async (step) => {
                 if (mode === 'prestart-failure' || retryMode) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
                 if (mode === 'started-failure') await rm(join(root, 'docker.volume'))
                 if (mode === 'expired-before-spawn') {
@@ -1604,21 +1582,21 @@ describe('reset planning', () => {
                     expect(ran).toEqual({ kind: 'unavailable' })
                     return
                 }
-                expect(ran).toMatchObject({ kind: 'not-started', authority: expect.anything() })
+                expect(ran).toMatchObject({ kind: 'not-started', outcome: expect.anything() })
                 if (ran.kind !== 'not-started') return
                 const preCommitDiscovery = retryMode
                     ? await authenticatedDiscovery(root, resetVolumes) : undefined
-                const failureAuthority = ran.authority
-                if (retryMode && failureAuthority) {
+                const failure = ran.outcome
+                if (retryMode && failure) {
                     const active = await readState(selected.value.paths.coordination(stackId))
                     if (active.kind !== 'complete') throw new Error('failed attempt record unavailable')
-                    const failedValue = reduceDrainOutcome({ record: active.value, authority: failureAuthority })
+                    const failedValue = reduceDrainOutcome({ record: active.value, outcome: failure })
                     if (!failedValue) throw new Error('failed attempt transition unavailable')
                     const failedCommit = await commitDrainOutcome({
-                        authority: failureAuthority, namespace: selected.value, stackId,
+                        outcome: failure, namespace: selected.value, stackId,
                     })
                     if (failedCommit.kind !== 'complete') throw new Error('failed attempt commit unavailable')
-                    expect(reduceDrainOutcome({ record: failedCommit.value, authority: failureAuthority })).toBeUndefined()
+                    expect(reduceDrainOutcome({ record: failedCommit.value, outcome: failure })).toBeUndefined()
                     if (coldRetryMode) {
                         vi.resetModules()
                         const freshReclaim = await import('./reclaim.js')
@@ -1640,11 +1618,9 @@ describe('reset planning', () => {
                         } })).toMatchObject({ kind: 'refusal' })
                         const coldReservation = await freshClaims.recoverDrainReservation({ namespace: selected.value, request: drainRequest })
                         if (coldReservation.kind !== 'complete') throw new Error('cold retry drain recovery unavailable')
-                        const coldRecordAuthority = freshClaims.inspectFailedReclaimRecovery({
-                            authority: coldReservation.authority, record: failedCommit.value,
-                        })
-                        expect(coldRecordAuthority).toBeDefined()
-                        expect(freshClaims.consumeFailedReclaimRecovery(coldRecordAuthority!)).toMatchObject({
+                        expect(freshClaims.inspectFailedReclaimRecovery({
+                            reservation: coldReservation.reservation, record: failedCommit.value,
+                        })).toMatchObject({
                             purpose: 'reset', current: { targetCommitment: expect.any(Object) },
                         })
                         const coldResources = mode === 'cold-target-set-change' || mode === 'cold-absent-current' ? []
@@ -1660,7 +1636,7 @@ describe('reset planning', () => {
                             expectedCoordinationRevision: failedCommit.value.revision,
                             discovery: coldDiscovery, runtimeExecutable: runtimeByDiscovery.get(coldDiscovery)!,
                             confirmationDigest: preview.digest,
-                            recoveryAuthority: coldReservation.authority,
+                            recoveredReservation: coldReservation.reservation,
                             ...(mode === 'cold-changed-config' ? { configSha256: sha('changed cold config') } : {}),
                             ...(mode === 'cold-changed-runtime' ? { cwd: join(root, 'changed-runtime') } : {}),
                             ...(mode === 'cold-changed-timeout' ? { timeoutMs: 29_000 } : {}),
@@ -1676,11 +1652,6 @@ describe('reset planning', () => {
                             ...(mode === 'cold-target-set-change' ? { resettableVolumes: [] } : {}),
                         })
                         if (operatorApproval.kind !== 'preview') throw new Error(JSON.stringify(operatorApproval))
-                        if (mode === 'cold-prestart-retry') {
-                            expect(await freshReclaim.planReset({ ...coldInput, operatorApproval,
-                                recoveryAuthority: { ...coldReservation.authority } as never,
-                            })).toMatchObject({ kind: 'refusal' })
-                        }
                         if (mode === 'cold-absent-current') {
                             expect(operatorApproval).toMatchObject({ noop: true, targets: [] })
                             expect(await freshReclaim.planReset(coldInput)).toMatchObject({ kind: 'refusal',
@@ -1695,20 +1666,20 @@ describe('reset planning', () => {
                             return
                         }
                         if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error(`cold retry reset action unavailable: ${JSON.stringify(coldPlan)}`)
-                        const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, authority: coldReservation.authority })
+                        const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
                         if (coldAttempt.kind !== 'complete') throw new Error('cold retry drain attempt unavailable')
                         if (mode === 'cold-absent-current') {
                             expect(coldPlan.envelope).toMatchObject({ purpose: 'reset', planDigest: preview.digest, commitments: reclaimCommitments })
                             const execute = vi.fn(executeProbe)
-                            const absent = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt.authority, execute })
+                            const absent = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute })
                             if (absent.kind !== 'executed') throw new Error('absent reset reconciliation unavailable')
                             expect(execute).not.toHaveBeenCalled()
                             const post = await authenticatedDiscovery(root, [])
                             const completed = await freshReclaim.reconcileReclaimAction({ executed: absent.executed, discovery: post })
-                            expect(completed).toMatchObject({ kind: 'complete', continuation: null, authority: expect.anything() })
+                            expect(completed).toMatchObject({ kind: 'complete', continuation: null, outcome: expect.anything() })
                             if (completed.kind !== 'complete') throw new Error('absent reset completion unavailable')
-                            const success = completed.authority
-                            const publication = await freshClaims.commitDrainOutcome({ authority: success, namespace: selected.value, stackId })
+                            const success = completed.outcome
+                            const publication = await freshClaims.commitDrainOutcome({ outcome: success, namespace: selected.value, stackId })
                             if (publication.kind !== 'complete') throw new Error(JSON.stringify(publication))
                             expect(publication.value.value).toMatchObject({ holders: [], lease: { released: true }, drain: null })
                             expect(await readState(selected.value.paths.lifecycle(stackId))).toMatchObject({ kind: 'missing' })
@@ -1716,13 +1687,13 @@ describe('reset planning', () => {
                         }
                         // The action planned before the failure was published cannot run under the retry attempt.
                         const replayed = vi.fn(executeProbe)
-                        expect(await freshReclaim.executeReclaimAction({ action: planned.action, attempt: coldAttempt.authority, execute: replayed }))
+                        expect(await freshReclaim.executeReclaimAction({ action: planned.action, attempt: coldAttempt, execute: replayed }))
                             .toEqual({ kind: 'unavailable' })
                         expect(replayed).not.toHaveBeenCalled()
                         expect(freshClaims.reduceDrainOutcome({
-                            record: failedCommit.value, authority: failureAuthority,
+                            record: failedCommit.value, outcome: failure,
                         })).toBeUndefined()
-                        const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt.authority, execute: executeProbe })
+                        const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
                         if (coldExecution.kind !== 'executed') throw new Error('cold retry reclaim execution unavailable')
                         const coldPost = await authenticatedDiscovery(root, [])
                         expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
@@ -1747,12 +1718,12 @@ describe('reset planning', () => {
                     if (retryPlan.kind !== 'complete' || !retryPlan.action) throw new Error(`retry reset action unavailable: ${JSON.stringify(retryPlan)}`)
                     const retryReservation = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
                     if (retryReservation.kind !== 'complete') throw new Error('retry drain recovery unavailable')
-                    const retryAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: retryReservation.authority })
+                    const retryAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: retryReservation.reservation })
                     if (retryAttempt.kind !== 'complete') throw new Error('retry drain attempt unavailable')
                     const replayed = vi.fn(executeProbe)
-                    expect(await executeReclaimAction({ action: planned.action, attempt: retryAttempt.authority, execute: replayed })).toEqual({ kind: 'unavailable' })
+                    expect(await executeReclaimAction({ action: planned.action, attempt: retryAttempt, execute: replayed })).toEqual({ kind: 'unavailable' })
                     expect(replayed).not.toHaveBeenCalled()
-                    const retryExecution = await executeReclaimAction({ action: retryPlan.action, attempt: retryAttempt.authority, execute: executeProbe })
+                    const retryExecution = await executeReclaimAction({ action: retryPlan.action, attempt: retryAttempt, execute: executeProbe })
                     if (retryExecution.kind !== 'executed') throw new Error('retry reclaim execution unavailable')
                     const retryPost = await authenticatedDiscovery(root, [])
                     expect(await reconcileReclaimAction({ executed: retryExecution.executed, discovery: retryPost }))
@@ -1785,19 +1756,19 @@ describe('reset planning', () => {
                 expect(reconciled).toMatchObject({ kind: 'refusal' })
                 return
             }
-            expect(reconciled).toMatchObject({ kind: 'complete', authority: expect.anything() })
+            expect(reconciled).toMatchObject({ kind: 'complete', outcome: expect.anything() })
             if (mode === 'two-action-success') expect(reconciled).toMatchObject({ continuation: expect.anything() })
             if (reconciled.kind !== 'complete') return
-            const reclaimSuccess = reconciled.authority
+            const reclaimSuccess = reconciled.outcome
             if ((mode === 'two-action-success' || mode === 'completed-target-reappears' || mode === 'completed-target-is-replaced'
                 || mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
                 || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target') && reclaimSuccess) {
                 const current = await readState(selected.value.paths.coordination(stackId))
                 if (current.kind !== 'complete') throw new Error('reclaim progress record unavailable')
-                const nextProgress = reduceDrainOutcome({ record: current.value, authority: reclaimSuccess })
+                const nextProgress = reduceDrainOutcome({ record: current.value, outcome: reclaimSuccess })
                 if (!nextProgress) throw new Error('reclaim progress unavailable')
                 const committed = await commitDrainOutcome({
-                    authority: reclaimSuccess, namespace: selected.value, stackId,
+                    outcome: reclaimSuccess, namespace: selected.value, stackId,
                 })
                 if (committed.kind !== 'complete') throw new Error('reclaim progress commit unavailable')
                 const nextDiscovery = await authenticatedDiscovery(root, [remainingVolume])
@@ -1810,11 +1781,11 @@ describe('reset planning', () => {
                 if (nextPlan.kind !== 'complete' || !nextPlan.action) throw new Error(`second reset action unavailable: ${JSON.stringify(nextPlan)}`)
                 const nextReservation = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
                 if (nextReservation.kind !== 'complete') throw new Error('second drain recovery unavailable')
-                const nextAttempt = await reserveDrainAttempt({ namespace: selected.value, authority: nextReservation.authority })
+                const nextAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: nextReservation.reservation })
                 if (nextAttempt.kind !== 'complete') throw new Error('second reclaim attempt unavailable')
                 const coldSecond = mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
                     || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target'
-                const nextRan = await executeReclaimAction({ action: nextPlan.action, attempt: nextAttempt.authority, execute: async (step) => {
+                const nextRan = await executeReclaimAction({ action: nextPlan.action, attempt: nextAttempt, execute: async (step) => {
                     const secondExecutableBytes = coldSecond ? await readFile(step.argv[0]) : undefined
                     if (coldSecond) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
                     const nextOutcome = await executeProbe(step)
@@ -1823,13 +1794,13 @@ describe('reset planning', () => {
                 } })
                 if (coldSecond) {
                     if (nextRan.kind !== 'not-started') throw new Error('second reset failure unavailable')
-                    const failureAuthority = nextRan.authority
+                    const failure = nextRan.outcome
                     const secondActive = await readState(selected.value.paths.coordination(stackId))
                     if (secondActive.kind !== 'complete') throw new Error('second active reset attempt unavailable')
-                    const failedValue = reduceDrainOutcome({ record: secondActive.value, authority: failureAuthority })
+                    const failedValue = reduceDrainOutcome({ record: secondActive.value, outcome: failure })
                     if (!failedValue) throw new Error('second reset failure transition unavailable')
                     const failedCommit = await commitDrainOutcome({
-                        authority: failureAuthority, namespace: selected.value, stackId,
+                        outcome: failure, namespace: selected.value, stackId,
                     })
                     if (failedCommit.kind !== 'complete') throw new Error('second reset failure commit unavailable')
                     vi.resetModules()
@@ -1858,7 +1829,7 @@ describe('reset planning', () => {
                         expectedCoordinationRevision: failedCommit.value.revision,
                         discovery: coldDiscovery, runtimeExecutable: runtimeByDiscovery.get(coldDiscovery)!,
                         confirmationDigest: preview.digest,
-                        recoveryAuthority: coldReservation.authority, operatorApproval,
+                        recoveredReservation: coldReservation.reservation, operatorApproval,
                         ...(mode === 'cold-second-added-target' ? { resettableVolumes: ['a-data', 'session-data', 'session-logs'] } : {}),
                         coordinationAddress: selected.value.paths.coordination(stackId),
                     })
@@ -1867,9 +1838,9 @@ describe('reset planning', () => {
                         return
                     }
                     if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error('second cold reset action unavailable')
-                    const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, authority: coldReservation.authority })
+                    const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
                     if (coldAttempt.kind !== 'complete') throw new Error('second cold reset retry attempt unavailable')
-                    const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt.authority, execute: executeProbe })
+                    const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
                     if (coldExecution.kind !== 'executed') throw new Error('second cold reset execution unavailable')
                     const coldPost = await authenticatedDiscovery(root, [])
                     expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))

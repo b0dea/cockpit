@@ -165,7 +165,6 @@ import {
 } from './runtime.js'
 import { admitFailureLogs, failureLogExcerpt, planFailureLogs } from './logs.js'
 import {
-    discardDrainReservationAuthority,
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
     settleInterruptedDrainRepair,
@@ -178,7 +177,7 @@ import {
     observeProcessStart,
     processHost,
     releaseDeadSessionHolders,
-    type DrainOutcomeAuthority,
+    type DrainOutcome,
     type DrainReservationRequest,
 } from './claims.js'
 import {
@@ -891,8 +890,8 @@ export interface DestructiveObservation {
     readonly instance: SelectDestructiveInstanceInput
     readonly runtime: RuntimeLifecycleProjection
     readonly ports: PortLeaseProjection
-    readonly down: Omit<PlanTeardownInput, 'expectedDiscoveryDigest' | 'consent' | 'continuation' | 'recoveryAuthority'>
-    readonly reset: Omit<PlanResetInput, 'confirmationDigest' | 'consent' | 'continuation' | 'recoveryAuthority'>
+    readonly down: Omit<PlanTeardownInput, 'expectedDiscoveryDigest' | 'consent' | 'continuation' | 'recoveredReservation'>
+    readonly reset: Omit<PlanResetInput, 'confirmationDigest' | 'consent' | 'continuation' | 'recoveredReservation'>
 }
 
 /** The evidence a step of an already-reserved drain re-reads: no runtime readiness, no ports. */
@@ -3174,7 +3173,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
     if (recovery.kind === 'repairable') {
         const terminated = await repairFencedExecution(recovery.fence)
         if (terminated.kind !== 'complete') return repairRequired(context)
-        const repaired = await settleInterruptedDrainRepair({ authority: recovery.authority, evidence: terminated.evidence })
+        const repaired = await settleInterruptedDrainRepair({ namespace: context.namespace, record: recovery.record, evidence: terminated.evidence })
         if (repaired.kind !== 'complete') return repairRequired(context)
         if (!await cleanupFencedExecution(recovery.fence)) return lifecycleRefusal(
             ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
@@ -3283,7 +3282,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
         if (recovery.kind === 'recoverable') {
             reserved = await recoverSleepDrainReservation({
                 namespace: context.namespace,
-                authority: recovery.authority,
+                record: recovery.record,
                 request: planned.request,
             })
         } else {
@@ -3294,17 +3293,17 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             reserved.diagnostics[0]?.message ?? 'sleep drain could not be reserved',
             reserved.diagnostics[0]?.target ?? context.stackId,
         )
-        const attempted = await reserveDrainAttempt({ namespace: context.namespace, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: context.namespace, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') return lifecycleRefusal(
             attempted.diagnostics[0]?.code ?? ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
             attempted.diagnostics[0]?.message ?? 'sleep attempt could not be reserved',
             attempted.diagnostics[0]?.target ?? context.stackId,
         )
-        const stopped = await stopRuntime({ topology: issuance.topology, attempt: attempted.authority, execute: (step) => adapters.execute(step) })
+        const stopped = await stopRuntime({ topology: issuance.topology, attempt: attempted, execute: (step) => adapters.execute(step) })
         if (stopped.kind === 'unavailable') return repairRequired(context)
-        const { authority, fence } = stopped
+        const { outcome, fence } = stopped
         if (stopped.kind === 'not-started') {
-            const finalized = await publishDrainOutcome(context, authority, fence)
+            const finalized = await publishDrainOutcome(context, outcome, fence)
             return finalized ?? lifecycleRefusal(stopped.code, 'runtime stop did not start', context.stackId)
         }
         const invalidated = await invalidateCompletedLifecycle(
@@ -3314,7 +3313,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             'sleep',
         )
         if (invalidated) return invalidated
-        const finalized = await publishDrainOutcome(context, authority, fence)
+        const finalized = await publishDrainOutcome(context, outcome, fence)
         if (finalized) return finalized
         return {
             kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
@@ -3403,10 +3402,10 @@ async function invalidateCompletedLifecycle(
 
 async function publishDrainOutcomeRecord(
     context: LifecycleRunContext,
-    authority: DrainOutcomeAuthority,
+    outcome: DrainOutcome,
 ): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
     const publication = await commitDrainOutcome({
-        authority,
+        outcome,
         namespace: context.namespace,
         stackId: context.stackId,
     })
@@ -3428,10 +3427,10 @@ async function publishDrainOutcomeRecord(
 
 async function publishDrainOutcome(
     context: LifecycleRunContext,
-    authority: DrainOutcomeAuthority,
+    outcome: DrainOutcome,
     fence: ExecutionFence,
 ): Promise<SleepCommandResult | undefined> {
-    const published = await publishDrainOutcomeRecord(context, authority)
+    const published = await publishDrainOutcomeRecord(context, outcome)
     if (published) return published
     return await cleanupFencedExecution(fence) ? undefined : lifecycleRefusal(
         ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
@@ -3558,10 +3557,10 @@ function destructiveRepairAfterObservation(
 
 async function publishDestructiveOutcome(
     context: DestructiveRunContext,
-    authority: DrainOutcomeAuthority,
+    outcome: DrainOutcome,
     fence: ExecutionFence,
 ): Promise<Extract<DownCommandResult, { kind: 'refusal' }> | undefined> {
-    const result = await publishDrainOutcome(context, authority, fence)
+    const result = await publishDrainOutcome(context, outcome, fence)
     return result?.kind === 'refusal' ? result : undefined
 }
 
@@ -3570,18 +3569,18 @@ async function executeRuntimeDrain(
     adapters: DestructiveCommandAdapters,
     topology: RuntimeTopologyEvidence,
     attempt: Awaited<ReturnType<typeof reserveDrainAttempt>>,
-): Promise<{ readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence } | Extract<DownCommandResult, { kind: 'refusal' }>> {
+): Promise<{ readonly outcome: DrainOutcome; readonly fence: ExecutionFence } | Extract<DownCommandResult, { kind: 'refusal' }>> {
     if (attempt.kind !== 'complete') return forwardedRefusal(attempt.diagnostics)
-    const stopped = await stopRuntime({ topology, attempt: attempt.authority, execute: (step) => adapters.execute(step) })
+    const stopped = await stopRuntime({ topology, attempt, execute: (step) => adapters.execute(step) })
     if (stopped.kind === 'unavailable') return destructiveRepairRequired(context)
-    const { authority, fence } = stopped
-    if (stopped.kind === 'not-started') return { authority, fence }
-    const reservation = attempt.authority.reservation
+    const { outcome, fence } = stopped
+    if (stopped.kind === 'not-started') return { outcome, fence }
+    const reservation = attempt.reservation
     if (reservation.purpose === 'down' && reservation.actions.length === 1) {
         const invalidated = await invalidateCompletedLifecycle(context, reservation.operationBasis, reservation.generation, 'down')
         if (invalidated) return invalidated
     }
-    return { authority, fence }
+    return { outcome, fence }
 }
 
 // Teardown removes only what it can prove is this stack's and unused, so a finished drain can
@@ -3626,10 +3625,10 @@ async function executeDestructivePlan(
     if (reserved.kind !== 'complete') return forwardedRefusal(reserved.diagnostics)
     let availableReservation = reserved.reservation.completedActionCount === 0 ? undefined : reserved
     if (reserved.reservation.completedActionCount === 0) {
-        const runtimeAttempt = await reserveDrainAttempt({ namespace: context.namespace, authority: reserved.authority })
+        const runtimeAttempt = await reserveDrainAttempt({ namespace: context.namespace, reservation: reserved.reservation })
         const runtimeOutcome = await executeRuntimeDrain(context, adapters, issuance.topology, runtimeAttempt)
         if ('kind' in runtimeOutcome) return runtimeOutcome
-        const runtimePublished = await publishDestructiveOutcome(context, runtimeOutcome.authority, runtimeOutcome.fence)
+        const runtimePublished = await publishDestructiveOutcome(context, runtimeOutcome.outcome, runtimeOutcome.fence)
         if (runtimePublished) return runtimePublished
     }
 
@@ -3640,12 +3639,12 @@ async function executeDestructivePlan(
         const recovered = availableReservation ?? await recoverDrainReservation({ namespace: context.namespace, request })
         availableReservation = undefined
         if (recovered.kind !== 'complete') return forwardedRefusal(recovered.diagnostics)
-        const attempt = await reserveDrainAttempt({ namespace: context.namespace, authority: recovered.authority })
+        const attempt = await reserveDrainAttempt({ namespace: context.namespace, reservation: recovered.reservation })
         if (attempt.kind !== 'complete') return forwardedRefusal(attempt.diagnostics)
-        const ran = await executeReclaimAction({ action: plan.action, attempt: attempt.authority, execute: (step) => adapters.execute(step) })
+        const ran = await executeReclaimAction({ action: plan.action, attempt, execute: (step) => adapters.execute(step) })
         if (ran.kind === 'unavailable') return destructiveRepairRequired(context)
         if (ran.kind === 'not-started') {
-            const published = await publishDestructiveOutcome(context, ran.authority, ran.fence)
+            const published = await publishDestructiveOutcome(context, ran.outcome, ran.fence)
             return published ?? forwardedRefusal([{
                 severity: 'error', code: ran.code,
                 message: 'destructive action did not start', target: context.stackId,
@@ -3668,8 +3667,8 @@ async function executeDestructivePlan(
         }
         const fence = ran.executed.fence
         const published = fence === null
-            ? await publishDrainOutcomeRecord(context, reconciled.authority)
-            : await publishDestructiveOutcome(context, reconciled.authority, fence)
+            ? await publishDrainOutcomeRecord(context, reconciled.outcome)
+            : await publishDestructiveOutcome(context, reconciled.outcome, fence)
         if (published) return published
         if (reconciled.continuation === null) break
         // The discovery that reconciled this removal plans the next; only the coordination record
@@ -3734,7 +3733,7 @@ async function prepareDown(
     const previewObservation = await observeDestructive(context, adapters)
     if (!previewObservation || 'diagnostics' in previewObservation) return destructivePreconditionRefusal(context, previewObservation)
     const preview = await planTeardown({ ...previewObservation.down,
-        ...(recovered ? { recoveryAuthority: recovered.authority } : {}) })
+        ...(recovered ? { recoveredReservation: recovered.reservation } : {}) })
     if (preview.kind !== 'complete') return forwardedRefusal(preview.diagnostics)
     // The plan needs a discovery after the preview's consent; the runtime the preview measured
     // seconds ago still stands for planning the drain.
@@ -3750,7 +3749,7 @@ async function inspectDestructiveRecoveryWithRepair(context: DestructiveRunConte
     if (inspection.kind !== 'repairable') return inspection
     const terminated = await repairFencedExecution(inspection.fence)
     if (terminated.kind !== 'complete') return inspection
-    const repaired = await settleInterruptedDrainRepair({ authority: inspection.authority, evidence: terminated.evidence })
+    const repaired = await settleInterruptedDrainRepair({ namespace: context.namespace, record: inspection.record, evidence: terminated.evidence })
     if (repaired.kind !== 'complete') return inspection
     if (!await cleanupFencedExecution(inspection.fence)) return inspection
     inspection = await inspectDestructiveDrainRecovery({
@@ -3776,36 +3775,32 @@ async function downWithContext(context: DestructiveRunContext, adapters: DownCom
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: context.namespace, request: persistedRequest })
     if (recovered?.kind === 'refusal') return forwardedRefusal(recovered.diagnostics)
-    try {
-        const prepared = await prepareDown(context, adapters, recovered)
-        if ('diagnostics' in prepared) return prepared
-        const basis = destructivePlanningBasis(persistedRequest)
-        const lifecycle = planDown({
-            runtime: prepared.runtime,
-            ports: prepared.ports,
-            reclaim: prepared.preview.envelope,
-            operationGeneration: basis.generation,
-            runtimeStopValidForMs: basis.runtimeStopValidForMs,
-            reclaimValidForMs: basis.reclaimValidForMs,
-        })
-        if (lifecycle.kind !== 'drain') return forwardedRefusal(lifecycle.diagnostics)
-        if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(context)
-        const plan = await planTeardown({
-            ...prepared.observation.down,
-            expectedDiscoveryDigest: prepared.preview.discoveryDigest,
-            ...(recovered?.kind === 'complete'
-                ? { recoveryAuthority: recovered.authority }
-                : prepared.preview.consent === null ? {} : { consent: prepared.preview.consent }),
-        })
-        if (plan.kind !== 'complete') return forwardedRefusal(plan.diagnostics)
-        return await executeDestructivePlan(
-            context, adapters, 'down', lifecycle, plan, prepared.observation,
-            recovered?.kind === 'complete' ? recovered : undefined,
-            persistedRequest,
-        ) as DownCommandResult
-    } finally {
-        if (recovered?.kind === 'complete') discardDrainReservationAuthority(recovered.authority)
-    }
+    const prepared = await prepareDown(context, adapters, recovered)
+    if ('diagnostics' in prepared) return prepared
+    const basis = destructivePlanningBasis(persistedRequest)
+    const lifecycle = planDown({
+        runtime: prepared.runtime,
+        ports: prepared.ports,
+        reclaim: prepared.preview.envelope,
+        operationGeneration: basis.generation,
+        runtimeStopValidForMs: basis.runtimeStopValidForMs,
+        reclaimValidForMs: basis.reclaimValidForMs,
+    })
+    if (lifecycle.kind !== 'drain') return forwardedRefusal(lifecycle.diagnostics)
+    if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(context)
+    const plan = await planTeardown({
+        ...prepared.observation.down,
+        expectedDiscoveryDigest: prepared.preview.discoveryDigest,
+        ...(recovered?.kind === 'complete'
+            ? { recoveredReservation: recovered.reservation }
+            : prepared.preview.consent === null ? {} : { consent: prepared.preview.consent }),
+    })
+    if (plan.kind !== 'complete') return forwardedRefusal(plan.diagnostics)
+    return await executeDestructivePlan(
+        context, adapters, 'down', lifecycle, plan, prepared.observation,
+        recovered?.kind === 'complete' ? recovered : undefined,
+        persistedRequest,
+    ) as DownCommandResult
 }
 
 interface PrivateResetSession {
@@ -3886,62 +3881,58 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: session.context.namespace, request: persistedRequest })
     if (recovered?.kind === 'refusal') return forwardedRefusal(recovered.diagnostics)
-    try {
-        const observation = await observeDestructive(session.context, session.adapters)
-        if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(session.context, observation)
-        if (session.preview.noop && !persistedRequest) {
-            const noop = await planReset({
-                ...observation.reset,
-                confirmationDigest: session.preview.digest,
-                consent: session.preview.consent,
-            })
-            if (noop.kind !== 'complete' || !noop.noop || noop.action !== null) {
-                return noop.kind === 'refusal' ? forwardedRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
-            }
-            const finalInspection = await inspectDestructiveDrainRecovery({ namespace: session.context.namespace,
-                stackId: session.context.stackId, holderId: session.context.holderId, purpose: 'reset' })
-            if (finalInspection.kind !== 'none') return finalInspection.kind === 'refusal'
-                ? forwardedRefusal(finalInspection.diagnostics) : destructiveRepairRequired(session.context)
-            return {
-                kind: 'complete', status: 0, diagnostics: [],
-                result: { stackId: session.context.stackId, change: 'unchanged' },
-            }
-        }
-        const recoveryPlan = recovered ? await planReset({ ...observation.reset,
-            confirmationDigest: persistedRequest!.planDigest,
-            recoveryAuthority: recovered.authority, operatorApproval: session.preview }) : undefined
-        if (recoveryPlan && recoveryPlan.kind !== 'complete') return recoveryPlan.kind === 'refusal'
-            ? forwardedRefusal(recoveryPlan.diagnostics) : destructiveRepairRequired(session.context)
-        const basis = destructivePlanningBasis(persistedRequest)
-        const lifecycle = planResetLifecycle({
-            runtime: observation.runtime,
-            ports: observation.ports,
-            reclaim: recoveryPlan ? recoveryPlan.envelope : session.preview.envelope,
-            operationGeneration: basis.generation,
-            runtimeStopValidForMs: basis.runtimeStopValidForMs,
-            reclaimValidForMs: basis.reclaimValidForMs,
-        })
-        if (lifecycle.kind !== 'drain') return forwardedRefusal(lifecycle.diagnostics)
-        if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(session.context)
-        const actionablePlan = recoveryPlan ?? await planReset({
+    const observation = await observeDestructive(session.context, session.adapters)
+    if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(session.context, observation)
+    if (session.preview.noop && !persistedRequest) {
+        const noop = await planReset({
             ...observation.reset,
             confirmationDigest: session.preview.digest,
-            ...(recovered?.kind === 'complete'
-                ? { recoveryAuthority: recovered.authority }
-                : { consent: session.preview.consent }),
+            consent: session.preview.consent,
         })
-        if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
-            ? forwardedRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
-        const applied = await executeDestructivePlan(
-            session.context, session.adapters, 'reset', lifecycle, actionablePlan, observation,
-            recovered?.kind === 'complete' ? recovered : undefined,
-            persistedRequest,
-        ) as OperatorResetResult
-        return applied.kind === 'complete' ? { ...applied, result: { ...applied.result,
-            targets: publicResetPreview(session.context, session.preview).result.targets } } : applied
-    } finally {
-        if (recovered?.kind === 'complete') discardDrainReservationAuthority(recovered.authority)
+        if (noop.kind !== 'complete' || !noop.noop || noop.action !== null) {
+            return noop.kind === 'refusal' ? forwardedRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
+        }
+        const finalInspection = await inspectDestructiveDrainRecovery({ namespace: session.context.namespace,
+            stackId: session.context.stackId, holderId: session.context.holderId, purpose: 'reset' })
+        if (finalInspection.kind !== 'none') return finalInspection.kind === 'refusal'
+            ? forwardedRefusal(finalInspection.diagnostics) : destructiveRepairRequired(session.context)
+        return {
+            kind: 'complete', status: 0, diagnostics: [],
+            result: { stackId: session.context.stackId, change: 'unchanged' },
+        }
     }
+    const recoveryPlan = recovered ? await planReset({ ...observation.reset,
+        confirmationDigest: persistedRequest!.planDigest,
+        recoveredReservation: recovered.reservation, operatorApproval: session.preview }) : undefined
+    if (recoveryPlan && recoveryPlan.kind !== 'complete') return recoveryPlan.kind === 'refusal'
+        ? forwardedRefusal(recoveryPlan.diagnostics) : destructiveRepairRequired(session.context)
+    const basis = destructivePlanningBasis(persistedRequest)
+    const lifecycle = planResetLifecycle({
+        runtime: observation.runtime,
+        ports: observation.ports,
+        reclaim: recoveryPlan ? recoveryPlan.envelope : session.preview.envelope,
+        operationGeneration: basis.generation,
+        runtimeStopValidForMs: basis.runtimeStopValidForMs,
+        reclaimValidForMs: basis.reclaimValidForMs,
+    })
+    if (lifecycle.kind !== 'drain') return forwardedRefusal(lifecycle.diagnostics)
+    if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(session.context)
+    const actionablePlan = recoveryPlan ?? await planReset({
+        ...observation.reset,
+        confirmationDigest: session.preview.digest,
+        ...(recovered?.kind === 'complete'
+            ? { recoveredReservation: recovered.reservation }
+            : { consent: session.preview.consent }),
+    })
+    if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
+        ? forwardedRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
+    const applied = await executeDestructivePlan(
+        session.context, session.adapters, 'reset', lifecycle, actionablePlan, observation,
+        recovered?.kind === 'complete' ? recovered : undefined,
+        persistedRequest,
+    ) as OperatorResetResult
+    return applied.kind === 'complete' ? { ...applied, result: { ...applied.result,
+        targets: publicResetPreview(session.context, session.preview).result.targets } } : applied
 }
 
 export interface ComparisonRemoteInput {

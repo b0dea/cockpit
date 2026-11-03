@@ -32,16 +32,9 @@ import {
 import { compareBindSources, composeProjectDirectory } from './compose-topology.js'
 import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
-    inspectDrainAttemptAuthority,
-    inspectDrainExecutionFence,
-    openRuntimeDrainExecution,
-    settleRuntimeDrainFailure,
-    settleRuntimeDrainSuccess,
-    type DrainAttemptFailure,
-    type DrainAttemptAuthority,
-    type RuntimeDrainExecutionAuthority,
-    type DrainOutcomeAuthority,
+    type DrainOutcome,
     type DrainReservation,
+    type ReservedDrainAttempt,
     type RuntimeStopped,
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
@@ -2787,9 +2780,9 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
 
 export type RuntimeStopOutcome =
     /** Compose stopped the stack and a fresh `ps` found nothing running. */
-    | { readonly kind: 'stopped'; readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence }
+    | { readonly kind: 'stopped'; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
     /** The stop never started, so the drain attempt is settled as failed and nothing changed. */
-    | { readonly kind: 'not-started'; readonly code: ExecutionFailureCode; readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence }
+    | { readonly kind: 'not-started'; readonly code: ExecutionFailureCode; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
     /** No proof either way; the drain attempt stays open and its fence stays for repair. */
     | { readonly kind: 'unavailable'; readonly reason: string }
 
@@ -2808,19 +2801,17 @@ function receiptWithin(outcome: ExecuteProbeOutcome, notBefore: string, notAfter
 
 /**
  * Runs the drain's runtime-stop action: `compose stop` under the attempt's execution fence, then a
- * fresh `ps` that must find nothing running, and settles the attempt with the claims broker.
+ * fresh `ps` that must find nothing running, and settles the attempt as the outcome to publish.
  */
 export async function stopRuntime(input: {
     readonly topology: RuntimeTopologyEvidence
-    readonly attempt: DrainAttemptAuthority
+    readonly attempt: ReservedDrainAttempt
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }): Promise<RuntimeStopOutcome> {
     const topology = issuedTopologyEvidence.get(input.topology)
-    const candidate = inspectDrainAttemptAuthority(input.attempt)
-    const reservation = candidate?.reservation
-    const attempt = candidate?.attempt
+    const { reservation, attempt, fence } = input.attempt
     const now = Date.now()
-    if (!topology || !reservation || !attempt || attempt.status !== 'active'
+    if (!topology || attempt.status !== 'active' || reservation.attempt?.attemptId !== attempt.attemptId
         || reservation.stackId !== topology.stackId
         || reservation.configSha256 !== topology.configSha256
         || attempt.currentStage !== 'runtime-stop' || attempt.currentTarget !== reservation.stackId
@@ -2839,16 +2830,12 @@ export async function stopRuntime(input: {
         topology.runtime.interpolatedNames,
     )
     if (!step) return unavailableRuntimeStop()
-    const execution = openRuntimeDrainExecution({ authority: input.attempt, candidate: candidate! })
-    const fence = execution && inspectDrainExecutionFence(execution)
-    if (!execution || !fence) return unavailableRuntimeStop()
     const stopped = await input.execute({ ...step, executionFence: fence })
     if (stopped.kind === 'refusal') {
         // Only a stop that provably never started leaves the stack as it was.
         if (stopped.receipt !== undefined || stopped.execution.started || stopped.execution.signal !== null
             || stopped.execution.exitCode === 0) return unavailableRuntimeStop()
-        const settled = settleRuntimeDrainFailure({ authority: execution, fact: { ...attempt, failedAt: new Date().toISOString() } satisfies DrainAttemptFailure })
-        return settled ? { kind: 'not-started', code: stopped.code, authority: settled, fence } : unavailableRuntimeStop()
+        return { kind: 'not-started', code: stopped.code, outcome: { kind: 'failure', reservation, failedAt: new Date().toISOString() }, fence }
     }
     if (stopped.stderr.byteLength !== 0 || !receiptWithin(stopped, attempt.committedAt, attempt.validThrough)) return unavailableRuntimeStop()
     const observationStep = derivedComposeStep(
@@ -2885,6 +2872,5 @@ export async function stopRuntime(input: {
         currentStage: attempt.currentStage,
         observedAt: observed.receipt.finishedAt,
     } satisfies RuntimeStopped
-    const settled = settleRuntimeDrainSuccess({ authority: execution, fact })
-    return settled ? { kind: 'stopped', authority: settled, fence } : unavailableRuntimeStop()
+    return { kind: 'stopped', outcome: { kind: 'success', reservation, fact }, fence }
 }

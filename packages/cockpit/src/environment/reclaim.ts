@@ -6,20 +6,13 @@ import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     decodeCoordinationRecord,
-    consumeFailedReclaimRecovery,
-    inspectDrainAttemptAuthority,
-    inspectDrainExecutionFence,
     inspectFailedReclaimRecovery,
     matchReclaimDrainContinuation,
-    openReclaimDrainExecution,
-    settleReclaimDrainFailure,
-    settleReclaimDrainSuccess,
-    type DrainAttemptAuthority,
-    type DrainAttemptFailure,
-    type DrainReservationAuthority,
-    type ReclaimDrainExecutionAuthority,
-    type DrainOutcomeAuthority,
+    reclaimDrainStep,
+    type DrainOutcome,
     type DrainReservation,
+    type ReclaimDrainStep,
+    type ReservedDrainAttempt,
     type FailedReclaimRecovery,
     type DrainTargetCommitment,
     type ReclaimCompleted,
@@ -108,7 +101,8 @@ export interface ReclaimConsent {
 
 /**
  * The remaining committed target set of a drain after one action, carried from that action's plan
- * to the next. `drain` is the key the claims owner binds the action's execution to.
+ * to the next. `drain` is the attempt the action ran under, which the next plan matches against
+ * the record its outcome published; null until the action runs.
  */
 export interface ReclaimContinuation {
     readonly purpose: 'down' | 'reset'
@@ -120,7 +114,7 @@ export interface ReclaimContinuation {
     readonly targetIdentities: readonly ReclaimTargetIdentity[]
     /** A discovery that plans the next action must start no earlier than this. */
     readonly freshAfter: string
-    readonly drain: object
+    readonly drain: ReclaimDrainStep | null
 }
 
 /** The one removal a plan permits, executed only by `executeReclaimAction` under a reserved attempt. */
@@ -1035,7 +1029,8 @@ export interface PlanResetInput extends ClassifyReclaimInput {
     readonly consent?: ReclaimConsent
     readonly coordinationAddress?: StateAddress
     readonly continuation?: ReclaimContinuation
-    readonly recoveryAuthority?: DrainReservationAuthority
+    /** A recovered reservation whose reclaim try failed, which plans its remaining committed targets. */
+    readonly recoveredReservation?: DrainReservation
     readonly operatorApproval?: ResetPreview
 }
 
@@ -1073,7 +1068,8 @@ export interface PlanTeardownInput extends ClassifyReclaimInput {
     readonly consent?: ReclaimConsent
     readonly continuation?: ReclaimContinuation
     readonly coordinationAddress?: StateAddress
-    readonly recoveryAuthority?: DrainReservationAuthority
+    /** A recovered reservation whose reclaim try failed, which plans its remaining committed targets. */
+    readonly recoveredReservation?: DrainReservation
 }
 
 export type TeardownPlanResult =
@@ -1375,7 +1371,7 @@ async function rereadCoordination(
 
 export async function planReset(input: PlanResetInput): Promise<ResetPreview | ResetPlanResult> {
     try {
-        const { discovery, consent, continuation, recoveryAuthority, operatorApproval } = input
+        const { discovery, consent, continuation, recoveredReservation, operatorApproval } = input
         const runtimeExecutable = resolvedDockerExecutable(input.runtimeExecutable)
         const pathExecutable = await removalExecutable(input.pathExecutable)
         const env = safeEnvironment(input.env)
@@ -1390,11 +1386,9 @@ export async function planReset(input: PlanResetInput): Promise<ResetPreview | R
         const selection = discovery.selection
         const coordination = coordinationForDestruction(input)
         if ('refusal' in coordination) return coordination.refusal
-        const coldPlanningAuthority = continuation === undefined && consent === undefined && recoveryAuthority !== undefined
-            ? inspectFailedReclaimRecovery({ authority: recoveryAuthority, record: input.coordinationRecord! }) : undefined
-        const coldPlanningRecovery = coldPlanningAuthority === undefined
-            ? undefined : consumeFailedReclaimRecovery(coldPlanningAuthority)
-        if ((recoveryAuthority !== undefined) !== (operatorApproval !== undefined)
+        const coldPlanningRecovery = continuation === undefined && consent === undefined && recoveredReservation !== undefined
+            ? inspectFailedReclaimRecovery({ reservation: recoveredReservation, record: input.coordinationRecord! }) : undefined
+        if ((recoveredReservation !== undefined) !== (operatorApproval !== undefined)
             || operatorApproval !== undefined && coldPlanningRecovery === undefined) {
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
                 'cold reset recovery requires an authenticated approval of the remaining targets', 'reset-confirmation')
@@ -1527,7 +1521,7 @@ export async function planReset(input: PlanResetInput): Promise<ResetPreview | R
             targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities))
         const continuationFor = (completedTargetId: string): ReclaimContinuation => ({
             purpose: 'reset', digest, completedTargetId, runtimeDigest, targetIds, removedTargetIds, targetIdentities,
-            freshAfter: new Date().toISOString(), drain: {},
+            freshAfter: new Date().toISOString(), drain: null,
         })
         if (coldTargetsMatch && coldCurrentAbsent) {
             const action: PlannedReclaimAction = {
@@ -1634,7 +1628,7 @@ function actionableReclaimResources(resources: readonly ClassifiedReclaimResourc
 
 export async function planTeardown(input: PlanTeardownInput): Promise<TeardownPlanResult> {
     try {
-        const { discovery, consent, continuation: continued, recoveryAuthority } = input
+        const { discovery, consent, continuation: continued, recoveredReservation } = input
         const executable = resolvedDockerExecutable(input.executable)
         const env = safeEnvironment(input.env)
         const caches = await dependencyCacheAuthorities(input.dependencyCaches)
@@ -1667,9 +1661,8 @@ export async function planTeardown(input: PlanTeardownInput): Promise<TeardownPl
         }
         const classified = classifyReclaim({ ...reclaimInput(input), discovery: observedDiscovery })
         if (classified.kind !== 'complete') return classified
-        const coldAuthority = continued === undefined && consent === undefined && recoveryAuthority !== undefined
-            ? inspectFailedReclaimRecovery({ authority: recoveryAuthority, record: input.coordinationRecord }) : undefined
-        const coldRecovery = coldAuthority === undefined ? undefined : consumeFailedReclaimRecovery(coldAuthority)
+        const coldRecovery = continued === undefined && consent === undefined && recoveredReservation !== undefined
+            ? inspectFailedReclaimRecovery({ reservation: recoveredReservation, record: input.coordinationRecord }) : undefined
         const coldIdentities = coldRecovery === undefined ? undefined : committedTargetIdentities(coldRecovery)
         if (continued !== undefined && continued.purpose !== 'down') {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation receipt is invalid', 'teardown-continuation')
@@ -1788,7 +1781,7 @@ export async function planTeardown(input: PlanTeardownInput): Promise<TeardownPl
         }
         const continuationFor = (completedTargetId: string): ReclaimContinuation => ({
             purpose: 'down', digest: discoveryDigest, completedTargetId, runtimeDigest, targetIds, removedTargetIds, targetIdentities,
-            freshAfter: new Date().toISOString(), drain: {},
+            freshAfter: new Date().toISOString(), drain: null,
         })
         const action: PlannedReclaimAction | null = absent ? {
             stackId: input.stackId, configSha256: input.configSha256, step: null,
@@ -2159,12 +2152,12 @@ function reclaimCompletionFact(
     } satisfies ReclaimCompleted
 }
 
-/** A removal the attempt admitted, with the drain execution it opened and what it observed. */
+/** A removal the attempt admitted, with the attempt it ran under and what it observed. */
 export interface ExecutedReclaimAction {
     readonly action: PlannedReclaimAction
     readonly reservation: DrainReservation
     readonly attempt: NonNullable<DrainReservation['attempt']>
-    readonly execution: ReclaimDrainExecutionAuthority
+    readonly drain: ReclaimDrainStep
     /** Null for an already-absent target, which runs nothing. */
     readonly receipt: ExecutionReceipt | null
     readonly fence: ExecutionFence | null
@@ -2176,7 +2169,7 @@ export type ReclaimActionExecution =
     | {
           readonly kind: 'not-started'
           readonly code: Extract<ExecuteProbeOutcome, { kind: 'refusal' }>['code']
-          readonly authority: DrainOutcomeAuthority
+          readonly outcome: DrainOutcome
           readonly fence: ExecutionFence
           readonly continuation: ReclaimContinuation
       }
@@ -2188,13 +2181,13 @@ export type ReclaimActionExecution =
  */
 export async function executeReclaimAction(input: {
     readonly action: PlannedReclaimAction
-    readonly attempt: DrainAttemptAuthority
+    readonly attempt: ReservedDrainAttempt
     readonly execute: Executor
 }): Promise<ReclaimActionExecution> {
     const { action } = input
     const { continuation } = action
-    const candidate = inspectDrainAttemptAuthority(input.attempt)
-    if (!candidate || candidate.attempt.status !== 'active' || candidate.attempt.currentStage !== 'reclaim') return { kind: 'unavailable' }
+    const candidate = input.attempt
+    if (candidate.reservation.attempt?.attemptId !== candidate.attempt.attemptId || candidate.attempt.status !== 'active' || candidate.attempt.currentStage !== 'reclaim') return { kind: 'unavailable' }
     const targetId = continuation.completedTargetId
     const reclaimTargets = candidate.reservation.actions.filter(({ stage }) => stage === 'reclaim').map(({ targetId: id }) => id)
     const reserved = candidate.reservation.actions[candidate.attempt.actionIndex]
@@ -2209,17 +2202,13 @@ export async function executeReclaimAction(input: {
         || reserved?.stage !== 'reclaim' || reserved.targetId !== targetId
         || candidate.attempt.currentTarget !== targetId
         || !sameStrings(reclaimTargets, continuation.targetIds)) return { kind: 'unavailable' }
-    const open = () => openReclaimDrainExecution({
-        authority: input.attempt, candidate, planningRecord: action.coordinationRecord, continuation: continuation.drain,
-    })
-    const executedWith = (execution: ReclaimDrainExecutionAuthority, receipt: ExecutionReceipt | null, fence: ExecutionFence | null): ReclaimActionExecution => ({
+    const drain = reclaimDrainStep({ planningRecord: action.coordinationRecord, reservation: candidate.reservation })
+    if (!drain) return { kind: 'unavailable' }
+    const executedWith = (receipt: ExecutionReceipt | null, fence: ExecutionFence | null): ReclaimActionExecution => ({
         kind: 'executed',
-        executed: { action, reservation: candidate.reservation, attempt: candidate.attempt, execution, receipt, fence },
+        executed: { action, reservation: candidate.reservation, attempt: candidate.attempt, drain, receipt, fence },
     })
-    if (action.step === null) {
-        const execution = open()
-        return execution ? executedWith(execution, null, null) : { kind: 'unavailable' }
-    }
+    if (action.step === null) return executedWith(null, null)
     const pathIdentity = continuation.targetIdentities.find((identity): identity is PathTargetIdentity =>
         identity.targetId === targetId && identity.medium === 'path')
     const identityCheck = pathIdentity === undefined ? undefined : await identityBoundFilesystemCheck(pathIdentity)
@@ -2227,9 +2216,7 @@ export async function executeReclaimAction(input: {
     const validThroughMs = Date.parse(candidate.attempt.validThrough)
     const remainingMs = validThroughMs - Date.now()
     if (!Number.isSafeInteger(validThroughMs) || remainingMs < 1) return { kind: 'unavailable' }
-    const execution = open()
-    const fence = execution && inspectDrainExecutionFence(execution)
-    if (!execution || !fence) return { kind: 'unavailable' }
+    const { fence } = candidate
     const step = snapshotExecutionStep({
         ...action.step,
         timeoutMs: Math.min(action.step.timeoutMs, remainingMs),
@@ -2243,15 +2230,19 @@ export async function executeReclaimAction(input: {
         // Only a removal that provably never started leaves the target as it was.
         if (outcome.receipt !== undefined || outcome.execution.started || outcome.execution.signal !== null
             || outcome.execution.exitCode === 0) return { kind: 'unavailable' }
-        const settled = settleReclaimDrainFailure({ authority: execution, fact: { ...candidate.attempt, failedAt: new Date().toISOString() } satisfies DrainAttemptFailure })
-        return settled ? { kind: 'not-started', code: outcome.code, authority: settled, fence, continuation } : { kind: 'unavailable' }
+        const failedAt = new Date().toISOString()
+        return {
+            kind: 'not-started', code: outcome.code, fence,
+            outcome: { kind: 'failure', reservation: candidate.reservation, failedAt },
+            continuation: { ...continuation, drain: { ...drain, failedAt } },
+        }
     }
     if (outcome.stderr.byteLength !== 0) return { kind: 'unavailable' }
-    return executedWith(execution, outcome.receipt, fence)
+    return executedWith(outcome.receipt, fence)
 }
 
 export type ReconcileReclaimActionResult =
-    | { readonly kind: 'complete'; readonly authority: DrainOutcomeAuthority; readonly continuation: ReclaimContinuation | null }
+    | { readonly kind: 'complete'; readonly outcome: DrainOutcome; readonly continuation: ReclaimContinuation | null }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
 /**
@@ -2262,7 +2253,7 @@ export async function reconcileReclaimAction(input: {
     readonly executed: ExecutedReclaimAction
     readonly discovery: ReclaimDiscovery
 }): Promise<ReconcileReclaimActionResult> {
-    const { action, reservation, attempt, execution, receipt } = input.executed
+    const { action, reservation, attempt, drain, receipt } = input.executed
     const { discovery } = input
     const { continuation } = action
     const remainder = reservation.actions.slice(attempt.actionIndex + 1)
@@ -2289,11 +2280,9 @@ export async function reconcileReclaimAction(input: {
             : remainder.includes(identity.targetId) && sameTargetIdentity(identity, discovery.resources))) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'fresh discovery did not prove the exact reserved removal set', 'reclaim-reconciliation')
     }
-    const settled = settleReclaimDrainSuccess({ authority: execution,
-        fact: reclaimCompletionFact(reservation, attempt, discovery.observedAt, remainder) })
-    if (!settled) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim completion authority is unavailable', 'reclaim-reconciliation')
     return {
-        kind: 'complete', authority: settled,
-        continuation: remainder.length === 0 ? null : { ...continuation, freshAfter },
+        kind: 'complete',
+        outcome: { kind: 'success', reservation, fact: reclaimCompletionFact(reservation, attempt, discovery.observedAt, remainder) },
+        continuation: remainder.length === 0 ? null : { ...continuation, freshAfter, drain },
     }
 }

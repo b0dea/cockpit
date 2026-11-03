@@ -1485,7 +1485,7 @@ describe('retained port-family projection', () => {
             expectedCoordinationRevision: lease.recordRevision,
         } })
         if (reserved.kind !== 'complete') throw new Error('drain fixture unavailable')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('drain attempt fixture unavailable')
         const before = await readFile(state.paths.coordination(stackA).path)
         const retained = await observeRetainedPortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config })

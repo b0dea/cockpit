@@ -13,13 +13,11 @@ import {
 } from './contract.js'
 import {
     matchReclaimDrainContinuation,
+    reclaimDrainStep,
     reduceDrainOutcome,
-    inspectDrainAttemptAuthority,
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
     inspectFailedReclaimRecovery,
-    consumeFailedReclaimRecovery,
-    consumeDrainReservationAuthority,
     coordinationStateRecord,
     decodeCoordinationRecord,
     observeProcessStart,
@@ -27,17 +25,11 @@ import {
     commitDrainOutcome,
     releaseDeadSessionHolders,
     removeExactCoordinationHolder,
-    openReclaimDrainExecution,
-    openRuntimeDrainExecution,
     recoverDrainReservation,
     recoverSleepDrainReservation,
     releaseClaim,
     reserveDrainAttempt,
     reserveDrain,
-    settleReclaimDrainFailure,
-    settleReclaimDrainSuccess,
-    settleRuntimeDrainFailure,
-    settleRuntimeDrainSuccess,
     settleInterruptedDrainRepair,
     readActiveStackInventory,
     readRootPortInventory,
@@ -45,9 +37,7 @@ import {
     type DrainReservationRequest,
     type DrainReservation,
     type DrainAttemptResult,
-    type ReclaimDrainExecutionAuthority,
-    type RuntimeDrainExecutionAuthority,
-    type SleepDrainRecoveryAuthority,
+    type DrainOutcome,
 } from './claims.js'
 import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
 import { leasePortFamily } from './ports.js'
@@ -388,23 +378,18 @@ describe('sleep drain recovery ownership', () => {
             kind: 'recoverable',
             generation: persisted.generation,
             runtimeStopValidForMs: 30_000,
-            authority: expect.any(Object),
+            record: expect.objectContaining({ revision: 1 }),
         })
-        expect(Object.keys(inspected.authority)).toEqual([])
         expect('reservation' in inspected).toBe(false)
 
         const freshRequest = sleepDrainRequest(persisted)
-        expect(await recoverSleepDrainReservation({
-            namespace: state,
-            authority: { ...inspected.authority } as SleepDrainRecoveryAuthority,
-            request: freshRequest,
-        })).toMatchObject({ kind: 'refusal' })
-        const recovered = await recoverSleepDrainReservation({ namespace: state, authority: inspected.authority, request: freshRequest })
+        const recovered = await recoverSleepDrainReservation({ namespace: state, record: inspected.record, request: freshRequest })
         if (recovered.kind !== 'complete') throw new Error('expected recovered sleep drain')
         expect(recovered.reservation.expectedCoordinationRevision).toBe(0)
-        expect(await reserveDrainAttempt({ namespace: state, authority: recovered.authority })).toMatchObject({ kind: 'complete' })
-        expect(await recoverSleepDrainReservation({ namespace: state, authority: inspected.authority, request: freshRequest }))
-            .toMatchObject({ kind: 'refusal' })
+        expect(await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })).toMatchObject({ kind: 'complete' })
+        // The attempt moved the record past the one inspected, so the inspection cannot recover it again.
+        expect(await recoverSleepDrainReservation({ namespace: state, record: inspected.record, request: freshRequest }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
     })
 
     it('recovers an unstarted sleep reservation after attempt lock contention', async () => {
@@ -435,7 +420,7 @@ describe('sleep drain recovery ownership', () => {
         }))
         try {
             await locked
-            await expect(reserveDrainAttempt({ namespace: state, authority: reserved.authority }))
+            await expect(reserveDrainAttempt({ namespace: state, reservation: reserved.reservation }))
                 .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_LOCKED }] })
         } finally {
             releaseLock()
@@ -447,11 +432,11 @@ describe('sleep drain recovery ownership', () => {
         if (inspected.kind !== 'recoverable') throw new Error('expected recoverable sleep reservation')
         const recovered = await recoverSleepDrainReservation({
             namespace: state,
-            authority: inspected.authority,
+            record: inspected.record,
             request: { ...request, expectedCoordinationRevision: 1 },
         })
         if (recovered.kind !== 'complete') throw new Error('expected recovered sleep reservation')
-        await expect(reserveDrainAttempt({ namespace: state, authority: recovered.authority }))
+        await expect(reserveDrainAttempt({ namespace: state, reservation: recovered.reservation }))
             .resolves.toMatchObject({ kind: 'complete' })
     })
 
@@ -462,131 +447,46 @@ describe('sleep drain recovery ownership', () => {
         if (inspected.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
         const staleRequest = sleepDrainRequest(persisted, { expectedCoordinationRevision: 0 })
 
-        expect(await recoverSleepDrainReservation({ namespace: state, authority: inspected.authority, request: staleRequest }))
+        expect(await recoverSleepDrainReservation({ namespace: state, record: inspected.record, request: staleRequest }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
-        expect(await recoverSleepDrainReservation({
-            namespace: state,
-            authority: inspected.authority,
-            request: { ...staleRequest, expectedCoordinationRevision: 1 },
-        })).toMatchObject({ kind: 'refusal' })
     })
 
-    it('burns genuine recovery authority on malformed sibling inputs without letting a copy burn it', async () => {
+    it('refuses a malformed namespace or request as malformed input', async () => {
         const state = await namespace()
         const persisted = await seedPersistedSleepDrain(state)
         const request = sleepDrainRequest(persisted)
-        const copiedAuthorityInspection = await inspectSleepDrainRecovery({ namespace: state, stackId, holderId: holderA })
-        if (copiedAuthorityInspection.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
-        expect(await recoverSleepDrainReservation({
-            namespace: state,
-            authority: { ...copiedAuthorityInspection.authority } as SleepDrainRecoveryAuthority,
-            request,
-        })).toMatchObject({ kind: 'refusal' })
-        expect(await recoverSleepDrainReservation({
-            namespace: state,
-            authority: copiedAuthorityInspection.authority,
-            request,
-        })).toMatchObject({ kind: 'complete' })
+        const inspected = await inspectSleepDrainRecovery({ namespace: state, stackId, holderId: holderA })
+        if (inspected.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
 
-        const malformedNamespaceState = await namespace()
-        const malformedNamespacePersisted = await seedPersistedSleepDrain(malformedNamespaceState)
-        const malformedNamespaceInspection = await inspectSleepDrainRecovery({
-            namespace: malformedNamespaceState, stackId, holderId: holderA,
-        })
-        if (malformedNamespaceInspection.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
-        const malformedNamespaceRequest = sleepDrainRequest(malformedNamespacePersisted)
         expect(await recoverSleepDrainReservation({
-            namespace: { ...malformedNamespaceState } as StateNamespace,
-            authority: malformedNamespaceInspection.authority,
-            request: malformedNamespaceRequest,
+            namespace: { ...state } as StateNamespace, record: inspected.record, request,
         })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
         expect(await recoverSleepDrainReservation({
-            namespace: malformedNamespaceState,
-            authority: malformedNamespaceInspection.authority,
-            request: malformedNamespaceRequest,
-        })).toMatchObject({ kind: 'refusal' })
-
-        const malformedRequestState = await namespace()
-        const malformedRequestPersisted = await seedPersistedSleepDrain(malformedRequestState)
-        const malformedRequest = sleepDrainRequest(malformedRequestPersisted)
-        const malformedRequestInspection = await inspectSleepDrainRecovery({
-            namespace: malformedRequestState, stackId, holderId: holderA,
-        })
-        if (malformedRequestInspection.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
-        expect(await recoverSleepDrainReservation({
-            namespace: malformedRequestState,
-            authority: malformedRequestInspection.authority,
-            request: { ...malformedRequest, actions: 'malformed' } as never,
+            namespace: state, record: inspected.record, request: { ...request, actions: 'malformed' } as never,
         })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
-        expect(await recoverSleepDrainReservation({
-            namespace: malformedRequestState,
-            authority: malformedRequestInspection.authority,
-            request: malformedRequest,
-        })).toMatchObject({ kind: 'refusal' })
+        expect(await recoverSleepDrainReservation({ namespace: state, record: inspected.record, request }))
+            .toMatchObject({ kind: 'complete' })
     })
 
-    it('refuses an independently authenticated namespace object for the same state root', async () => {
+    it('refuses fresh planning evidence whose work differs from the persisted sleep drain', async () => {
         const state = await namespace()
         const persisted = await seedPersistedSleepDrain(state)
         const inspected = await inspectSleepDrainRecovery({ namespace: state, stackId, holderId: holderA })
         if (inspected.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
-        const sameRoot = await reissueNamespace(state)
-        const request = sleepDrainRequest(persisted)
-
-        expect(await recoverSleepDrainReservation({ namespace: sameRoot, authority: inspected.authority, request }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
-    })
-
-    it('burns recovery authority when state or fresh semantic intent does not match', async () => {
-        const state = await namespace()
-        const persisted = await seedPersistedSleepDrain(state)
-        const inspected = await inspectSleepDrainRecovery({ namespace: state, stackId, holderId: holderA })
-        if (inspected.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
-        const request = {
-            purpose: 'sleep' as const,
-            stackId,
-            holderId: holderA,
-            requesterId: holderA,
-            configSha256: persisted.configSha256,
-            planDigest: '7'.repeat(64),
-            operationBasis: persisted.operationBasis,
-            generation: persisted.generation,
-            targetIds: [stackId],
-            actions: drainActions(stackId),
-            expectedCoordinationRevision: 1,
-        }
-        expect(await recoverSleepDrainReservation({ namespace: state, authority: inspected.authority, request }))
+        const request = sleepDrainRequest(persisted, { planDigest: '7'.repeat(64) })
+        expect(await recoverSleepDrainReservation({ namespace: state, record: inspected.record, request }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        expect(await recoverSleepDrainReservation({
-            namespace: state,
-            authority: inspected.authority,
-            request: { ...request, planDigest: persisted.planDigest },
-        })).toMatchObject({ kind: 'refusal' })
     })
 
-    it('binds recovery authority to its exact namespace and coordination bytes', async () => {
+    it('recovers only from the inspected coordination record in its own state root', async () => {
         const state = await namespace()
         const persisted = await seedPersistedSleepDrain(state)
-        const request = {
-            purpose: 'sleep' as const,
-            stackId,
-            holderId: holderA,
-            requesterId: holderA,
-            configSha256: persisted.configSha256,
-            planDigest: persisted.planDigest,
-            operationBasis: persisted.operationBasis,
-            generation: persisted.generation,
-            targetIds: [stackId],
-            actions: drainActions(stackId),
-            expectedCoordinationRevision: 1,
-        }
+        const request = sleepDrainRequest(persisted)
         const foreign = await namespace()
-        const foreignInspection = await inspectSleepDrainRecovery({ namespace: state, stackId, holderId: holderA })
-        if (foreignInspection.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
-        expect(await recoverSleepDrainReservation({ namespace: foreign, authority: foreignInspection.authority, request }))
+        const inspected = await inspectSleepDrainRecovery({ namespace: state, stackId, holderId: holderA })
+        if (inspected.kind !== 'recoverable') throw new Error('expected recoverable sleep drain')
+        expect(await recoverSleepDrainReservation({ namespace: foreign, record: inspected.record, request }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
-        expect(await recoverSleepDrainReservation({ namespace: state, authority: foreignInspection.authority, request }))
-            .toMatchObject({ kind: 'refusal' })
 
         const changed = await namespace()
         await seedPersistedSleepDrain(changed)
@@ -596,7 +496,7 @@ describe('sleep drain recovery ownership', () => {
         const before = await readState(address)
         if (before.kind !== 'complete') throw new Error('expected persisted sleep drain')
         await writeFile(address.path, `${JSON.stringify({ ...before.value, updatedAt: '2026-09-07T12:00:02.000Z' })}\n`)
-        expect(await recoverSleepDrainReservation({ namespace: changed, authority: changedInspection.authority, request }))
+        expect(await recoverSleepDrainReservation({ namespace: changed, record: changedInspection.record, request }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
     })
 
@@ -619,7 +519,7 @@ describe('sleep drain recovery ownership', () => {
             actions: drainActions(field === 'stack' ? otherStack : stackId),
             expectedCoordinationRevision: 1,
         }
-        expect(await recoverSleepDrainReservation({ namespace: state, authority: inspected.authority, request }))
+        expect(await recoverSleepDrainReservation({ namespace: state, record: inspected.record, request }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
     })
 
@@ -642,7 +542,7 @@ describe('sleep drain recovery ownership', () => {
             generation: '5'.repeat(64), targetIds: [stackId], actions: drainActions(stackId), expectedCoordinationRevision: 0,
         } })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: active, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: active, reservation: reserved.reservation })
         expect(attempted).toMatchObject({ kind: 'complete' })
         if (attempted.kind !== 'complete') throw new Error('expected active sleep attempt')
         expect(await inspectSleepDrainRecovery({ namespace: active, stackId, holderId: holderA }))
@@ -669,7 +569,7 @@ describe('destructive drain recovery inspection', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected destructive reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected destructive attempt')
         const repairable = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
         if (repairable.kind !== 'repairable') throw new Error('expected repairable execution fence')
@@ -684,7 +584,7 @@ describe('destructive drain recovery inspection', () => {
         expect(await readRootPortInventory(state)).toMatchObject({ kind: 'complete', value: [{ cockpitId, stackId }] })
         const termination = await repairFencedExecution(repairable.fence)
         if (termination.kind !== 'complete') throw new Error('expected authenticated termination')
-        const settled = await settleInterruptedDrainRepair({ authority: repairable.authority, evidence: termination.evidence })
+        const settled = await settleInterruptedDrainRepair({ namespace: state, record: repairable.record, evidence: termination.evidence })
         expect(settled).toMatchObject({ kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } } })
         expect(await readActiveStackInventory(state)).toMatchObject({ kind: 'complete', value: [{ stackId }] })
         expect(await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
@@ -701,7 +601,7 @@ describe('destructive drain recovery inspection', () => {
             actions: [{ stage: 'runtime-stop', targetId: stackId, validForMs: 50 }], expectedCoordinationRevision: 0,
         } })
         if (reserved.kind !== 'complete') throw new Error('expected destructive reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected destructive attempt')
 
         const marker = join(state.cockpitRoot, 'orphan-pid')
@@ -780,19 +680,16 @@ describe('destructive drain recovery inspection', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected destructive reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected destructive attempt')
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active destructive record')
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         const failedAt = new Date().toISOString()
-        const failure = settleRuntimeDrainFailure({
-            authority: drainExecution(attempted), fact: { ...attempted.attempt, failedAt },
-        })
-        if (!failure) throw new Error('expected failed destructive outcome')
-        const reduced = reduceDrainOutcome({ authority: failure, record: active.value })
+        const failure = failedOutcome(attempted, failedAt)
+        const reduced = reduceDrainOutcome({ outcome: failure, record: active.value })
         if (!reduced) throw new Error('expected failed destructive reduction')
-        const publication = await commitDrainOutcome({ authority: failure, namespace: state, stackId })
+        const publication = await commitDrainOutcome({ outcome: failure, namespace: state, stackId })
         if ('diagnostics' in publication) throw new Error('expected failed destructive publication')
 
         const inspected = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
@@ -823,7 +720,7 @@ describe('destructive drain recovery inspection', () => {
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'reset' }))
             .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
 
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         expect(attempted).toMatchObject({ kind: 'complete' })
         if (attempted.kind !== 'complete') throw new Error('expected active destructive attempt')
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
@@ -847,27 +744,14 @@ describe('destructive drain recovery inspection', () => {
     })
 })
 
-function drainExecution(
-    attempted: Extract<DrainAttemptResult, { kind: 'complete' }>,
-): RuntimeDrainExecutionAuthority
-function drainExecution(
-    attempted: Extract<DrainAttemptResult, { kind: 'complete' }>,
-    planningRecord: StateRecord,
-): ReclaimDrainExecutionAuthority
-function drainExecution(
-    attempted: Extract<DrainAttemptResult, { kind: 'complete' }>,
-    planningRecord?: StateRecord,
-): RuntimeDrainExecutionAuthority | ReclaimDrainExecutionAuthority {
-    const candidate = inspectDrainAttemptAuthority(attempted.authority)
-    if (!candidate) throw new Error('expected drain attempt candidate')
-    const execution = attempted.attempt.currentStage === 'runtime-stop'
-        ? openRuntimeDrainExecution({ authority: attempted.authority, candidate })
-        : planningRecord && openReclaimDrainExecution({
-            authority: attempted.authority, candidate,
-            planningRecord, continuation: Object.freeze({}),
-        })
-    if (!execution) throw new Error('expected drain execution authority')
-    return execution
+type Attempted = Extract<DrainAttemptResult, { kind: 'complete' }>
+
+function stoppedOutcome(attempted: Attempted, fact: Record<string, unknown> = stoppedFact(attempted.reservation)): DrainOutcome {
+    return { kind: 'success', reservation: attempted.reservation, fact: fact as never }
+}
+
+function failedOutcome(attempted: Attempted, failedAt: string): DrainOutcome {
+    return { kind: 'failure', reservation: attempted.reservation, failedAt }
 }
 
 async function mutateInventoryAfterIdentity(
@@ -909,7 +793,7 @@ describe('active stack inventory', () => {
                 actions: [{ stage: 'runtime-stop', targetId: stackId, validForMs: 30_000 }], expectedCoordinationRevision: 0,
             } })
             if (reserved.kind !== 'complete') throw new Error(JSON.stringify(reserved))
-            const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+            const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
             if (attempted.kind !== 'complete') throw new Error(JSON.stringify(attempted))
             const inspected = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
             if (inspected.kind !== 'repairable') throw new Error(JSON.stringify(inspected))
@@ -1422,7 +1306,7 @@ describe('dead session holders', () => {
 })
 
 describe('session-aware claims', () => {
-    it('keeps a settled runtime outcome reusable through reduction until it is committed', async () => {
+    it('reduces an exact settled outcome against its attempt and publishes it only into its own coordination record', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const request = {
@@ -1433,32 +1317,17 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected runtime attempt')
-        const candidate = inspectDrainAttemptAuthority(attempted.authority)
-        if (!candidate) throw new Error('expected drain attempt candidate')
-        expect(openRuntimeDrainExecution({ authority: attempted.authority, candidate, extra: true,
-        } as never)).toBeUndefined()
-        expect(openRuntimeDrainExecution({ authority: attempted.authority, candidate,
-            planningRecord: {} as never, continuation: Object.freeze({}),
-        } as never)).toBeUndefined()
-        const execution = openRuntimeDrainExecution({ authority: attempted.authority, candidate })
-        if (!execution) throw new Error('expected drain execution authority')
-        expect(settleRuntimeDrainSuccess({ authority: { ...execution } as never, fact: stoppedFact(attempted.reservation),
-        })).toBeUndefined()
-        expect(settleRuntimeDrainSuccess({ authority: execution, fact: { ...stoppedFact(attempted.reservation), extra: true } as never,
-        })).toBeUndefined()
-        const outcome = settleRuntimeDrainSuccess({ authority: execution, fact: stoppedFact(attempted.reservation) })
-        if (!outcome) throw new Error('expected drain outcome authority')
-        expect(outcome).not.toBe(execution)
-        expect(settleRuntimeDrainSuccess({ authority: execution, fact: stoppedFact(attempted.reservation) })).toBeUndefined()
         const record = await readState(state.paths.coordination(stackId))
         if (record.kind !== 'complete') throw new Error('expected active attempt record')
-        expect(reduceDrainOutcome({ authority: { ...outcome } as never, record: record.value })).toBeUndefined()
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value, extra: true } as never)).toBeUndefined()
-        const reduced = reduceDrainOutcome({ authority: outcome, record: record.value })
+        expect(reduceDrainOutcome({
+            outcome: stoppedOutcome(attempted, { ...stoppedFact(attempted.reservation), extra: true }), record: record.value,
+        })).toBeUndefined()
+        const outcome = stoppedOutcome(attempted)
+        const reduced = reduceDrainOutcome({ outcome, record: record.value })
         expect(reduced).toMatchObject({ drain: { completedActionCount: 1, attempt: null } })
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
+        expect(reduceDrainOutcome({ outcome, record: record.value })).toEqual(reduced)
         if (!reduced) throw new Error('expected reduced drain outcome')
         const otherCockpitId = `cockpit:coordination-a1:${'9'.repeat(64)}` as CockpitId
         const otherHome = await mkdtemp(join(tmpdir(), 'cockpit-claims-other-'))
@@ -1466,32 +1335,32 @@ describe('session-aware claims', () => {
         const otherNamespace = await selectStateRoot({ platform: 'linux', home: otherHome, cockpitId: otherCockpitId })
         if (otherNamespace.kind !== 'complete') throw new Error('expected other namespace')
         const copiedToOtherCockpit = { ...record.value, cockpitId: otherCockpitId }
-        expect(reduceDrainOutcome({ authority: outcome, record: copiedToOtherCockpit })).toEqual(reduced)
+        expect(reduceDrainOutcome({ outcome, record: copiedToOtherCockpit })).toEqual(reduced)
         expect(await commitDrainOutcome({
-            authority: outcome, namespace: otherNamespace.value, stackId,
+            outcome, namespace: otherNamespace.value, stackId,
         })).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
         const otherRoot = await namespace()
         expect(await commitDrainOutcome({
-            authority: outcome, namespace: otherRoot, stackId,
+            outcome, namespace: otherRoot, stackId,
         })).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
+        expect(reduceDrainOutcome({ outcome, record: record.value })).toEqual(reduced)
         const address = state.paths.coordination(stackId)
         const sync = await interceptDirectorySync(dirname(address.path), () => {
             throw new Error('injected directory sync failure')
         })
         let committed
         try {
-            committed = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
+            committed = await commitDrainOutcome({ outcome, namespace: state, stackId })
         } finally {
             sync.restore()
         }
         if ('diagnostics' in committed || committed.kind !== 'indeterminate') throw new Error('expected indeterminate publication')
         expect(committed).toMatchObject({ kind: 'indeterminate' })
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value })).toEqual(reduced)
+        expect(reduceDrainOutcome({ outcome, record: record.value })).toEqual(reduced)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: record.value.revision + 1 } })
         expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({ kind: 'complete' })
     })
@@ -1506,22 +1375,19 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected runtime attempt')
-        const outcome = settleRuntimeDrainSuccess({
-            authority: drainExecution(attempted), fact: stoppedFact(attempted.reservation),
-        })
-        if (!outcome) throw new Error('expected runtime outcome')
+        const outcome = stoppedOutcome(attempted)
         const address = state.paths.coordination(stackId)
         const active = await readState(address)
         if (active.kind !== 'complete') throw new Error('expected active drain')
-        const reduced = reduceDrainOutcome({ authority: outcome, record: active.value })
+        const reduced = reduceDrainOutcome({ outcome, record: active.value })
         if (!reduced) throw new Error('expected reduced outcome')
         const beforeDirectorySync = vi.fn(async () => undefined)
         let suppliedClockReads = 0
         const startedAt = Date.now()
         const publication = await commitDrainOutcome({
-            authority: outcome, namespace: state, stackId, beforeDirectorySync,
+            outcome, namespace: state, stackId, beforeDirectorySync,
             get updatedAt() { suppliedClockReads += 1; return '2000-01-01T00:00:00.000Z' },
         } as never)
         expect(publication).toMatchObject({ kind: 'complete', value: { value: reduced } })
@@ -1531,7 +1397,7 @@ describe('session-aware claims', () => {
     })
 
     it.each(['complete', 'indeterminate'] as const)(
-        'retains outcome authority after a %s publication predating its evidence', async (kind) => {
+        'refuses a publication predating its evidence and later publishes it as %s', async (kind) => {
         vi.useFakeTimers()
         vi.setSystemTime('2026-09-07T12:00:00.000Z')
         const state = await namespace()
@@ -1544,15 +1410,12 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected runtime attempt')
-        const outcome = settleRuntimeDrainSuccess({
-            authority: drainExecution(attempted), fact: stoppedFact(attempted.reservation),
-        })
-        if (!outcome) throw new Error('expected runtime outcome')
+        const outcome = stoppedOutcome(attempted)
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active drain')
-        const reduced = reduceDrainOutcome({ authority: outcome, record: active.value })
+        const reduced = reduceDrainOutcome({ outcome, record: active.value })
         if (!reduced) throw new Error('expected reduced outcome')
         const address = state.paths.coordination(stackId)
         vi.setSystemTime(Date.parse(attempted.attempt.committedAt) - 1)
@@ -1562,16 +1425,16 @@ describe('session-aware claims', () => {
             })
             : undefined
         const before = await readFile(address.path)
-        const refused = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
+        const refused = await commitDrainOutcome({ outcome, namespace: state, stackId })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
         expect(await readFile(address.path)).toEqual(before)
         vi.setSystemTime(attempted.attempt.committedAt)
-        expect(reduceDrainOutcome({ authority: outcome, record: active.value })).toEqual(reduced)
+        expect(reduceDrainOutcome({ outcome, record: active.value })).toEqual(reduced)
         let retry
         try {
-            retry = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
+            retry = await commitDrainOutcome({ outcome, namespace: state, stackId })
         } finally {
             sync?.restore()
         }
@@ -1581,7 +1444,7 @@ describe('session-aware claims', () => {
         },
     )
 
-    it('vetoes a clock rollback at the publication boundary without consuming outcome authority', async () => {
+    it('vetoes a clock rollback at the publication boundary and publishes once the clock recovers', async () => {
         vi.useFakeTimers()
         vi.setSystemTime('2026-09-07T12:00:00.000Z')
         const state = await namespace()
@@ -1593,20 +1456,17 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected runtime attempt')
-        const outcome = settleRuntimeDrainSuccess({
-            authority: drainExecution(attempted), fact: stoppedFact(attempted.reservation),
-        })
-        if (!outcome) throw new Error('expected runtime outcome')
+        const outcome = stoppedOutcome(attempted)
         const address = state.paths.coordination(stackId)
         const active = await readState(address)
         if (active.kind !== 'complete') throw new Error('expected active drain')
-        const reduced = reduceDrainOutcome({ authority: outcome, record: active.value })
+        const reduced = reduceDrainOutcome({ outcome, record: active.value })
         if (!reduced) throw new Error('expected drain outcome reduction')
         const before = await readFile(address.path)
         const refused = await commitDrainOutcome({
-            authority: outcome, namespace: state, stackId,
+            outcome, namespace: state, stackId,
             beforePublish: async () => { vi.setSystemTime(Date.parse(attempted.attempt.committedAt) - 1) },
         })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [
@@ -1614,9 +1474,9 @@ describe('session-aware claims', () => {
         ] })
         expect(await readFile(address.path)).toEqual(before)
         vi.setSystemTime(attempted.attempt.committedAt)
-        expect(reduceDrainOutcome({ authority: outcome, record: active.value })).toEqual(reduced)
+        expect(reduceDrainOutcome({ outcome, record: active.value })).toEqual(reduced)
         const committed = await commitDrainOutcome({
-            authority: outcome, namespace: state, stackId,
+            outcome, namespace: state, stackId,
         })
         if ('diagnostics' in committed || committed.kind !== 'complete') throw new Error('expected drain outcome commit')
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { value: { drain: null } } })
@@ -1635,22 +1495,19 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected runtime attempt')
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active drain')
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         const failedAt = new Date().toISOString()
-        const outcome = settleRuntimeDrainFailure({
-            authority: drainExecution(attempted), fact: { ...attempted.attempt, failedAt },
-        })
-        if (!outcome) throw new Error('expected failed runtime outcome')
-        const reduced = reduceDrainOutcome({ authority: outcome, record: active.value })
+        const outcome = failedOutcome(attempted, failedAt)
+        const reduced = reduceDrainOutcome({ outcome, record: active.value })
         if (!reduced) throw new Error('expected failed outcome reduction')
         const address = state.paths.coordination(stackId)
         const before = await readFile(address.path)
         vi.setSystemTime(Date.parse(attempted.attempt.committedAt) - 1)
-        const refused = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
+        const refused = await commitDrainOutcome({ outcome, namespace: state, stackId })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED },
         ] })
@@ -1663,7 +1520,7 @@ describe('session-aware claims', () => {
             : undefined
         let publication
         try {
-            publication = await commitDrainOutcome({ authority: outcome, namespace: state, stackId })
+            publication = await commitDrainOutcome({ outcome, namespace: state, stackId })
         } finally {
             sync?.restore()
         }
@@ -1680,7 +1537,7 @@ describe('session-aware claims', () => {
         },
     )
 
-    it('retains failure matching until an exact reclaim retry replaces it with progress', async () => {
+    it('matches each reclaim try to the failure or progress its own outcome published', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const request = {
@@ -1691,14 +1548,11 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const runtimeAttempt = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const runtimeAttempt = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (runtimeAttempt.kind !== 'complete') throw new Error('expected runtime attempt')
         const runtimeRecord = await readState(state.paths.coordination(stackId))
         if (runtimeRecord.kind !== 'complete') throw new Error('expected runtime record')
-        const runtimeSuccess = settleRuntimeDrainSuccess({ authority: drainExecution(runtimeAttempt), fact: stoppedFact(runtimeAttempt.reservation),
-        })
-        if (!runtimeSuccess) throw new Error('expected runtime success')
-        const runtimeProgress = reduceDrainOutcome({ record: runtimeRecord.value, authority: runtimeSuccess })
+        const runtimeProgress = reduceDrainOutcome({ record: runtimeRecord.value, outcome: stoppedOutcome(runtimeAttempt) })
         if (!runtimeProgress) throw new Error('expected runtime progress')
         const planningCommit = await transactState(
             state, state.paths.coordination(stackId), { ownerId: holderA },
@@ -1707,60 +1561,45 @@ describe('session-aware claims', () => {
         if (planningCommit.kind !== 'complete') throw new Error('expected reclaim planning record')
         const recovered = await recoverDrainReservation({ namespace: state, request })
         if (recovered.kind !== 'complete') throw new Error('expected drain recovery')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: recovered.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected reclaim attempt')
-        const candidate = inspectDrainAttemptAuthority(attempted.authority)
-        if (!candidate) throw new Error('expected reclaim candidate')
-        const continuation = Object.freeze({})
-        const execution = openReclaimDrainExecution({ authority: attempted.authority, candidate,
-            planningRecord: planningCommit.value, continuation,
-        })
-        if (!execution) throw new Error('expected reclaim execution authority')
+        expect(reclaimDrainStep({ planningRecord: planningCommit.value, reservation: runtimeAttempt.reservation })).toBeUndefined()
+        const step = reclaimDrainStep({ planningRecord: planningCommit.value, reservation: attempted.reservation })
+        if (!step) throw new Error('expected reclaim step')
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active reclaim record')
-        expect(matchReclaimDrainContinuation({ continuation, record: active.value,
-        })).toBe('unmatched')
-        expect(matchReclaimDrainContinuation({ continuation, record: active.value, extra: true,
-        } as never)).toBe('unmatched')
+        expect(matchReclaimDrainContinuation({ continuation: step, record: active.value })).toBe('unmatched')
         const failedAt = new Date().toISOString()
-        const outcome = settleReclaimDrainFailure({ authority: execution, fact: { ...attempted.attempt, failedAt },
-        })
-        if (!outcome) throw new Error('expected reclaim failure outcome')
-        const failed = reduceDrainOutcome({ authority: outcome, record: active.value })
-        if (!failed || typeof failed === 'boolean' || typeof failed === 'string') throw new Error('expected failed drain state')
+        const failed = reduceDrainOutcome({ outcome: failedOutcome(attempted, failedAt), record: active.value })
+        if (!failed) throw new Error('expected failed drain state')
         const failedRecord = coordinationStateRecord(state, stackId, active.value, failedAt, failed)
-        expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('failed')
-        expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('failed')
+        const failedStep = { ...step, failedAt }
+        expect(matchReclaimDrainContinuation({ continuation: failedStep, record: failedRecord })).toBe('failed')
+        expect(matchReclaimDrainContinuation({ continuation: step, record: failedRecord })).toBe('unmatched')
         const failedCommit = await commitDrainOutcome({
-            authority: outcome, namespace: state, stackId,
+            outcome: failedOutcome(attempted, failedAt), namespace: state, stackId,
         })
         if (failedCommit.kind !== 'complete') throw new Error('expected failed reclaim commit')
         const retryReservation = await recoverDrainReservation({ namespace: state, request })
         if (retryReservation.kind !== 'complete') throw new Error('expected retry reservation')
-        const retry = await reserveDrainAttempt({ namespace: state, authority: retryReservation.authority })
+        const retry = await reserveDrainAttempt({ namespace: state, reservation: retryReservation.reservation })
         if (retry.kind !== 'complete') throw new Error('expected reclaim retry')
-        const retryCandidate = inspectDrainAttemptAuthority(retry.authority)
-        if (!retryCandidate) throw new Error('expected retry candidate')
-        expect(openRuntimeDrainExecution({ authority: retry.authority, candidate: retryCandidate,
-        })).toBeUndefined()
-        expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('failed')
-        const retryExecution = openReclaimDrainExecution({ authority: retry.authority, candidate: retryCandidate,
-            planningRecord: failedCommit.value, continuation,
-        })
-        if (!retryExecution) throw new Error('expected retry execution authority')
-        expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('unmatched')
+        // A retry is planned from the published failure, never from the record that planned the first try.
+        expect(reclaimDrainStep({ planningRecord: planningCommit.value, reservation: retry.reservation })).toBeUndefined()
+        const retryStep = reclaimDrainStep({ planningRecord: failedCommit.value, reservation: retry.reservation })
+        if (!retryStep) throw new Error('expected retry step')
+        expect(matchReclaimDrainContinuation({ continuation: retryStep, record: failedRecord })).toBe('unmatched')
         const retryActive = await readState(state.paths.coordination(stackId))
         if (retryActive.kind !== 'complete') throw new Error('expected retry record')
-        expect(settleReclaimDrainSuccess({ authority: retryExecution, fact: stoppedFact(retry.reservation) as never,
-        })).toBeUndefined()
-        const retryOutcome = settleReclaimDrainSuccess({ authority: retryExecution,
-            fact: { ...stoppedFact(retry.reservation), remainingTargetIds: ['volume:second'] },
+        expect(reduceDrainOutcome({ outcome: stoppedOutcome(retry), record: retryActive.value })).toBeUndefined()
+        const progressed = reduceDrainOutcome({
+            outcome: stoppedOutcome(retry, { ...stoppedFact(retry.reservation), remainingTargetIds: ['volume:second'] }),
+            record: retryActive.value,
         })
-        if (!retryOutcome) throw new Error('expected retry success outcome')
-        const progressed = reduceDrainOutcome({ authority: retryOutcome, record: retryActive.value })
-        if (!progressed || typeof progressed === 'boolean' || typeof progressed === 'string') throw new Error('expected progressed drain state')
+        if (!progressed) throw new Error('expected progressed drain state')
         const progressedRecord = coordinationStateRecord(state, stackId, retryActive.value, new Date().toISOString(), progressed)
-        expect(matchReclaimDrainContinuation({ continuation, record: progressedRecord })).toBe('progressed')
+        expect(matchReclaimDrainContinuation({ continuation: retryStep, record: progressedRecord })).toBe('progressed')
+        expect(matchReclaimDrainContinuation({ continuation: null, record: progressedRecord })).toBe('unmatched')
     })
 
     it('routes a final settled success through complete drain reduction', async () => {
@@ -1773,17 +1612,12 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected runtime attempt')
-        const candidate = inspectDrainAttemptAuthority(attempted.authority)
-        if (!candidate) throw new Error('expected drain attempt candidate')
-        const execution = openRuntimeDrainExecution({ authority: attempted.authority, candidate })
-        if (!execution) throw new Error('expected drain execution authority')
-        const outcome = settleRuntimeDrainSuccess({ authority: execution, fact: stoppedFact(attempted.reservation) })
-        if (!outcome) throw new Error('expected drain outcome authority')
+        const outcome = stoppedOutcome(attempted)
         const record = await readState(state.paths.coordination(stackId))
         if (record.kind !== 'complete') throw new Error('expected active attempt record')
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value }))
+        expect(reduceDrainOutcome({ outcome, record: record.value }))
             .toMatchObject({ holders: [], lease: { released: true }, drain: null })
     })
     it('parses persisted reclaim commitments back to the issued drain actions', async () => {
@@ -1804,10 +1638,10 @@ describe('session-aware claims', () => {
         const decoded = decodeCoordinationRecord(stored.value, stackId)
         if (!decoded?.drain) throw new Error('expected parsed drain')
         expect(decoded.drain.actions[1]?.stage).toBe('reclaim')
-        expect(reserved.authority.reservation.actions).toEqual(decoded.drain?.actions)
+        expect(reserved.reservation.actions).toEqual(decoded.drain?.actions)
     })
 
-    it('persists an exact drain and never remints while its consumed execution path remains live', async () => {
+    it('persists an exact drain and lets only one holder of it start an attempt', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const request = {
@@ -1825,12 +1659,14 @@ describe('session-aware claims', () => {
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
         expect(await releaseClaim({ namespace: state, stackId, requesterId: holderA, holderId: holderA, now: '2026-09-07T12:00:01.000Z' }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({ kind: 'refusal' })
-        expect(consumeDrainReservationAuthority({ ...reserved.authority } as never)).toBeUndefined()
-        expect(consumeDrainReservationAuthority(reserved.authority)).toEqual(reserved.reservation)
-        expect(consumeDrainReservationAuthority(reserved.authority)).toBeUndefined()
-        expect(await recoverDrainReservation({ namespace: state, request }))
-            .toMatchObject({ kind: 'refusal' })
+        const recovered = await recoverDrainReservation({ namespace: state, request })
+        if (recovered.kind !== 'complete') throw new Error('expected recovered reservation')
+        expect(recovered.reservation).toEqual(reserved.reservation)
+        expect(await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })).toMatchObject({ kind: 'complete' })
+        const before = await readFile(state.paths.coordination(stackId).path)
+        expect(await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
+        expect(await readFile(state.paths.coordination(stackId).path)).toEqual(before)
         expect(await recoverDrainReservation({ namespace: state, request: { ...request, planDigest: '5'.repeat(64) } }))
             .toMatchObject({ kind: 'refusal' })
         expect(await recoverDrainReservation({ namespace: state, request: { ...request, generation: '6'.repeat(64) } }))
@@ -1852,7 +1688,7 @@ describe('session-aware claims', () => {
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
         const reservedRecord = await readState(state.paths.coordination(stackId))
         if (reservedRecord.kind !== 'complete') throw new Error('expected reserved record')
-        const first = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const first = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         expect(first).toMatchObject({ kind: 'complete', attempt: {
             purpose: 'reset', targetIds: request.targetIds, generation: request.generation,
             actionIndex: 0, currentTarget: stackId, currentStage: 'runtime-stop', status: 'active', committedRevision: 2,
@@ -1862,33 +1698,25 @@ describe('session-aware claims', () => {
         expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }],
         })
-        expect(await reserveDrainAttempt({ namespace: state, authority: reserved.authority })).toMatchObject({ kind: 'refusal' })
+        expect(await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })).toMatchObject({ kind: 'refusal' })
 
-        expect(inspectDrainAttemptAuthority({ ...first.authority } as never)).toBeUndefined()
-        const execution = drainExecution(first)
-        expect(inspectDrainAttemptAuthority(first.authority)).toBeUndefined()
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active attempt')
         vi.useFakeTimers()
         vi.setSystemTime(Date.parse(first.attempt.validThrough) + 1)
         const failedAt = new Date().toISOString()
-        expect(settleReclaimDrainFailure({
-            authority: execution as never, fact: { ...first.attempt, failedAt },
-        })).toBeUndefined()
-        const failureAuthority = settleRuntimeDrainFailure({ authority: execution, fact: { ...first.attempt, failedAt },
-        })
-        if (!failureAuthority) throw new Error('expected failed outcome authority')
-        const failedValue = reduceDrainOutcome({ record: active.value, authority: failureAuthority })
-        expect(reduceDrainOutcome({ record: active.value, authority: failureAuthority })).toEqual(failedValue)
+        const failure = failedOutcome(first, failedAt)
+        const failedValue = reduceDrainOutcome({ record: active.value, outcome: failure })
+        expect(reduceDrainOutcome({ record: active.value, outcome: failure })).toEqual(failedValue)
         expect(failedValue).toMatchObject({ drain: { attempt: { status: 'failed', failedRevision: 3, failedAt } } })
         if (!failedValue) return
         const committed = await commitDrainOutcome({
-            authority: failureAuthority, namespace: state, stackId,
+            outcome: failure, namespace: state, stackId,
         })
         expect(committed).toMatchObject({ kind: 'complete', value: { revision: 3 } })
         if ('diagnostics' in committed) throw new Error('expected failed outcome publication')
         // The outcome reduces only against the record it settled from, so it cannot be published twice.
-        expect(await commitDrainOutcome({ authority: failureAuthority, namespace: state, stackId }))
+        expect(await commitDrainOutcome({ outcome: failure, namespace: state, stackId }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }] })
         const recovered = await recoverDrainReservation({ namespace: state, request })
         expect(recovered).toMatchObject({ kind: 'complete', reservation: {
@@ -1896,8 +1724,7 @@ describe('session-aware claims', () => {
             targetIds: request.targetIds, attempt: { status: 'failed', currentTarget: stackId },
         } })
         if (recovered.kind !== 'complete') return
-        expect(await reserveDrainAttempt({ namespace: state, authority: { ...recovered.authority } as never })).toMatchObject({ kind: 'refusal' })
-        const retry = await reserveDrainAttempt({ namespace: state, authority: recovered.authority })
+        const retry = await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })
         expect(retry).toMatchObject({ kind: 'complete', reservation: {
             reservationId: first.reservation.reservationId, generation: request.generation,
             targetIds: request.targetIds,
@@ -1929,7 +1756,7 @@ describe('session-aware claims', () => {
         const before = await readFile(address.path)
 
         vi.setSystemTime('2026-09-07T11:59:59.999Z')
-        expect(await reserveDrainAttempt({ namespace: state, authority: reserved.authority })).toMatchObject({ kind: 'refusal' })
+        expect(await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })).toMatchObject({ kind: 'refusal' })
         expect(await readFile(address.path)).toEqual(before)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: 1 } })
     })
@@ -1946,20 +1773,17 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected drain attempt')
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active attempt')
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         const failedAt = new Date().toISOString()
-        const failure = settleRuntimeDrainFailure({
-            authority: drainExecution(attempted), fact: { ...attempted.attempt, failedAt },
-        })
-        if (!failure) throw new Error('expected failed outcome authority')
-        const failed = reduceDrainOutcome({ record: active.value, authority: failure })
+        const failure = failedOutcome(attempted, failedAt)
+        const failed = reduceDrainOutcome({ record: active.value, outcome: failure })
         if (!failed) throw new Error('expected failed drain state')
         const committed = await commitDrainOutcome({
-            authority: failure, namespace: state, stackId,
+            outcome: failure, namespace: state, stackId,
         })
         if (committed.kind !== 'complete') throw new Error('expected failed attempt commit')
         const recovered = await recoverDrainReservation({ namespace: state, request })
@@ -1968,7 +1792,7 @@ describe('session-aware claims', () => {
         const before = await readFile(address.path)
 
         vi.setSystemTime(Date.parse(failedAt) - 1)
-        expect(await reserveDrainAttempt({ namespace: state, authority: recovered.authority })).toMatchObject({ kind: 'refusal' })
+        expect(await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })).toMatchObject({ kind: 'refusal' })
         expect(await readFile(address.path)).toEqual(before)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: committed.value.revision } })
     })
@@ -1995,56 +1819,20 @@ describe('session-aware claims', () => {
         await seedCoordination(isolated, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const reserved = await reserveDrain({ namespace: isolated, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: isolated, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: isolated, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected drain attempt')
         const stored = await readState(isolated.paths.coordination(stackId))
         if (stored.kind !== 'complete') throw new Error('expected coordination record')
         const fact = stoppedFact(attempted.reservation)
-        const execution = drainExecution(attempted)
-        expect(settleRuntimeDrainSuccess({ authority: execution, fact: { ...fact, extra: true } as never })).toBeUndefined()
-        expect(settleRuntimeDrainSuccess({ authority: execution,
-            fact: { ...fact, validThrough: new Date(Date.now() - 1).toISOString() },
+        expect(reduceDrainOutcome({ record: stored.value, outcome: stoppedOutcome(attempted, { ...fact, extra: true }) })).toBeUndefined()
+        expect(reduceDrainOutcome({ record: stored.value,
+            outcome: stoppedOutcome(attempted, { ...fact, validThrough: new Date(Date.now() - 1).toISOString() }),
         })).toBeUndefined()
-        const success = settleRuntimeDrainSuccess({ authority: execution, fact })
-        if (!success) throw new Error('expected success authority')
-        expect(reduceDrainOutcome({ record: stored.value, authority: { ...success } as never })).toBeUndefined()
-        expect(reduceDrainOutcome({ record: stored.value, authority: success }))
+        expect(reduceDrainOutcome({ record: stored.value, outcome: stoppedOutcome(attempted, fact) }))
             .toMatchObject({ drain: { completedActionCount: 1, progressRevision: 3, attempt: null } })
         expect(await reserveDrain({ namespace: isolated, request: {
             ...request, targetIds: [stackId, 'é'.repeat(257)].sort(), actions: drainActions(stackId, ['é'.repeat(257)]),
         } })).toMatchObject({ kind: 'refusal' })
-    })
-
-    it('keeps a reservation authority bound to its issuing state root', async () => {
-        const state = await namespace()
-        const otherRoot = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        await seedCoordination(otherRoot, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const request = {
-            purpose: 'down' as const, stackId, holderId: holderA, requesterId: holderA,
-            configSha256: '2'.repeat(64), planDigest: '3'.repeat(64), operationBasis: '4'.repeat(64),
-            generation: '5'.repeat(64), targetIds: [stackId], actions: drainActions(stackId), expectedCoordinationRevision: 0,
-        }
-        const reserved = await reserveDrain({ namespace: state, request })
-        if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const issued = await readState(state.paths.coordination(stackId))
-        if (issued.kind !== 'complete') throw new Error('expected issued reservation record')
-        const issuedValue = decodeCoordinationRecord(issued.value, stackId)
-        if (!issuedValue) throw new Error('expected issued reservation value')
-        const copied = await transactState(
-            otherRoot, otherRoot.paths.coordination(stackId), { ownerId: holderA },
-            (current) => coordinationStateRecord(
-                otherRoot, stackId, current, issued.value.updatedAt,
-                issuedValue,
-            ),
-        )
-        if (copied.kind !== 'complete') throw new Error('expected copied reservation record')
-        const before = await readFile(otherRoot.paths.coordination(stackId).path)
-        expect(await reserveDrainAttempt({ namespace: otherRoot, authority: reserved.authority })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
-        })
-        expect(await readFile(otherRoot.paths.coordination(stackId).path)).toEqual(before)
-        expect(await reserveDrainAttempt({ namespace: state, authority: reserved.authority })).toMatchObject({ kind: 'complete' })
     })
 
     it('refuses co-tenant, mismatched-owner, stale-revision, and repeated drain reservations without changing bytes', async () => {
@@ -2120,39 +1908,36 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (attempted.kind !== 'complete') throw new Error('expected drain attempt')
         const stored = await readState(state.paths.coordination(stackId))
         if (stored.kind !== 'complete') throw new Error('expected coordination record')
         const fact = stoppedFact(attempted.reservation)
-        const success = settleRuntimeDrainSuccess({ authority: drainExecution(attempted), fact })
-        if (!success) throw new Error('expected runtime success authority')
-        const progressed = reduceDrainOutcome({ record: stored.value, authority: success })
+        const success = stoppedOutcome(attempted, fact)
+        const progressed = reduceDrainOutcome({ record: stored.value, outcome: success })
         expect(progressed).toMatchObject({ drain: { completedActionCount: 1, progressRevision: 3, attempt: null } })
         if (!progressed) return
         expect(await recoverDrainReservation({ namespace: state, request })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }],
         })
         const progressCommit = await commitDrainOutcome({
-            authority: success, namespace: state, stackId,
+            outcome: success, namespace: state, stackId,
         })
         expect(progressCommit).toMatchObject({ kind: 'complete', value: { revision: 3 } })
         if (progressCommit.kind !== 'complete') throw new Error('expected progress commit')
-        expect(await reserveDrainAttempt({ namespace: state, authority: reserved.authority })).toMatchObject({ kind: 'refusal' })
+        expect(await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })).toMatchObject({ kind: 'refusal' })
         const recovered = await recoverDrainReservation({ namespace: state, request })
         if (recovered.kind !== 'complete') throw new Error('expected progressed drain recovery')
-        const reclaimAttempt = await reserveDrainAttempt({ namespace: state, authority: recovered.authority })
+        const reclaimAttempt = await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })
         if (reclaimAttempt.kind !== 'complete') throw new Error('expected reclaim attempt')
         expect(reclaimAttempt.attempt).toMatchObject({ actionIndex: 1, currentStage: 'reclaim', currentTarget: 'volume:synthetic' })
         const current = await readState(state.paths.coordination(stackId))
         if (current.kind !== 'complete') throw new Error('expected reclaim coordination record')
         const reclaimFact = { ...stoppedFact(reclaimAttempt.reservation), remainingTargetIds: [] }
-        const reclaimExecution = drainExecution(reclaimAttempt, progressCommit.value)
-        expect(settleReclaimDrainSuccess({ authority: reclaimExecution, fact: { ...reclaimFact, purpose: 'down' } as never,
-        })).toBeUndefined()
-        const reclaimSuccess = settleReclaimDrainSuccess({ authority: reclaimExecution, fact: reclaimFact })
-        if (!reclaimSuccess) throw new Error('expected reclaim success authority')
-        expect(reduceDrainOutcome({ record: current.value, authority: reclaimSuccess }))
+        expect(reduceDrainOutcome({ record: current.value, outcome: stoppedOutcome(reclaimAttempt, { ...reclaimFact, purpose: 'down' }) }))
+            .toBeUndefined()
+        const reclaimSuccess = stoppedOutcome(reclaimAttempt, reclaimFact)
+        expect(reduceDrainOutcome({ record: current.value, outcome: reclaimSuccess }))
             .toMatchObject({ holders: [], lease: { released: true }, drain: null })
     })
 
@@ -2168,14 +1953,12 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const runtimeAttempt = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const runtimeAttempt = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (runtimeAttempt.kind !== 'complete') throw new Error('expected runtime attempt')
         const runtimeRecord = await readState(state.paths.coordination(stackId))
         if (runtimeRecord.kind !== 'complete') throw new Error('expected runtime record')
-        const runtimeSuccess = settleRuntimeDrainSuccess({ authority: drainExecution(runtimeAttempt), fact: stoppedFact(runtimeAttempt.reservation),
-        })
-        if (!runtimeSuccess) throw new Error('expected runtime success')
-        const runtimeProgress = reduceDrainOutcome({ record: runtimeRecord.value, authority: runtimeSuccess })
+        const runtimeSuccess = stoppedOutcome(runtimeAttempt)
+        const runtimeProgress = reduceDrainOutcome({ record: runtimeRecord.value, outcome: runtimeSuccess })
         if (!runtimeProgress) throw new Error('expected runtime progress')
         const planningCommit = await transactState(
             state, state.paths.coordination(stackId), { ownerId: holderA },
@@ -2184,28 +1967,22 @@ describe('session-aware claims', () => {
         if (planningCommit.kind !== 'complete') throw new Error('expected planning predecessor')
         const recovered = await recoverDrainReservation({ namespace: state, request })
         if (recovered.kind !== 'complete') throw new Error('expected drain recovery')
-        const reclaimAttempt = await reserveDrainAttempt({ namespace: state, authority: recovered.authority })
+        const reclaimAttempt = await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })
         if (reclaimAttempt.kind !== 'complete') throw new Error('expected reclaim attempt')
-        const candidate = inspectDrainAttemptAuthority(reclaimAttempt.authority)
-        const continuation = Object.freeze({})
-        const execution = candidate && openReclaimDrainExecution({ authority: reclaimAttempt.authority, candidate,
-            planningRecord: planningCommit.value, continuation,
-        })
-        if (!execution) throw new Error('expected reclaim execution authority')
+        const continuation = reclaimDrainStep({ planningRecord: planningCommit.value, reservation: reclaimAttempt.reservation })
+        if (!continuation) throw new Error('expected reclaim step')
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active reclaim record')
-        const success = settleReclaimDrainSuccess({ authority: execution, fact: {
+        const success = stoppedOutcome(reclaimAttempt, {
             ...stoppedFact(reclaimAttempt.reservation), remainingTargetIds: ['volume:second'],
-        } })
-        if (!success) throw new Error('expected reclaim success')
-        const progressed = reduceDrainOutcome({ record: active.value, authority: success })
+        })
+        const progressed = reduceDrainOutcome({ record: active.value, outcome: success })
         if (!progressed) throw new Error('expected reclaim progress')
         const expected = coordinationStateRecord(state, stackId, active.value, new Date().toISOString(), progressed)
         const expectedValue = decodeCoordinationRecord(expected, stackId)
         if (!expectedValue?.lease) throw new Error('expected coordinated lease')
         expect(matchReclaimDrainContinuation({ continuation, record: expected })).toBe('progressed')
-        expect(matchReclaimDrainContinuation({ continuation: { ...continuation }, record: expected })).toBe('unmatched')
-        expect(matchReclaimDrainContinuation({ continuation: {}, record: expected })).toBe('unmatched')
+        expect(matchReclaimDrainContinuation({ continuation: null, record: expected })).toBe('unmatched')
         const changedLease = coordinationStateRecord(state, stackId, active.value, expected.updatedAt, {
             ...expectedValue,
             lease: { ...expectedValue.lease, offset: 1, ports: { WEB: 3100 } },
@@ -2213,7 +1990,7 @@ describe('session-aware claims', () => {
         expect(matchReclaimDrainContinuation({ continuation, record: changedLease })).toBe('unmatched')
     })
 
-    it('authenticates persisted reclaim failure before reminting the same action', async () => {
+    it('recovers a failed reclaim action only from the exact record that published its failure', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const request = {
@@ -2225,14 +2002,12 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const runtimeAttempt = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        const runtimeAttempt = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
         if (runtimeAttempt.kind !== 'complete') throw new Error('expected runtime attempt')
         const runtimeRecord = await readState(state.paths.coordination(stackId))
         if (runtimeRecord.kind !== 'complete') throw new Error('expected runtime record')
-        const runtimeSuccess = settleRuntimeDrainSuccess({ authority: drainExecution(runtimeAttempt), fact: stoppedFact(runtimeAttempt.reservation),
-        })
-        if (!runtimeSuccess) throw new Error('expected runtime success')
-        const runtimeProgress = reduceDrainOutcome({ record: runtimeRecord.value, authority: runtimeSuccess })
+        const runtimeSuccess = stoppedOutcome(runtimeAttempt)
+        const runtimeProgress = reduceDrainOutcome({ record: runtimeRecord.value, outcome: runtimeSuccess })
         if (!runtimeProgress) throw new Error('expected runtime progress')
         const planningCommit = await transactState(
             state, state.paths.coordination(stackId), { ownerId: holderA },
@@ -2241,27 +2016,20 @@ describe('session-aware claims', () => {
         if (planningCommit.kind !== 'complete') throw new Error('expected planning predecessor')
         const recovered = await recoverDrainReservation({ namespace: state, request })
         if (recovered.kind !== 'complete') throw new Error('expected drain recovery')
-        const reclaimAttempt = await reserveDrainAttempt({ namespace: state, authority: recovered.authority })
+        const reclaimAttempt = await reserveDrainAttempt({ namespace: state, reservation: recovered.reservation })
         if (reclaimAttempt.kind !== 'complete') throw new Error('expected reclaim attempt')
-        const candidate = inspectDrainAttemptAuthority(reclaimAttempt.authority)
-        const continuation = Object.freeze({})
-        const execution = candidate && openReclaimDrainExecution({ authority: reclaimAttempt.authority, candidate,
-            planningRecord: planningCommit.value, continuation,
-        })
-        if (!execution) throw new Error('expected reclaim execution authority')
+        const step = reclaimDrainStep({ planningRecord: planningCommit.value, reservation: reclaimAttempt.reservation })
+        if (!step) throw new Error('expected reclaim step')
         const active = await readState(state.paths.coordination(stackId))
         if (active.kind !== 'complete') throw new Error('expected active reclaim record')
         const failedAt = new Date().toISOString()
-        const failure = settleReclaimDrainFailure({ authority: execution, fact: { ...reclaimAttempt.attempt, failedAt },
-        })
-        if (!failure) throw new Error('expected reclaim failure authority')
-        const failedValue = reduceDrainOutcome({ record: active.value, authority: failure })
+        const continuation = { ...step, failedAt }
+        const failure = failedOutcome(reclaimAttempt, failedAt)
+        const failedValue = reduceDrainOutcome({ record: active.value, outcome: failure })
         if (!failedValue) throw new Error('expected reclaim failure transition')
         const failedRecord = coordinationStateRecord(state, stackId, active.value, failedAt, failedValue)
         expect(matchReclaimDrainContinuation({ continuation, record: failedRecord })).toBe('failed')
-        expect(matchReclaimDrainContinuation({ continuation: { ...continuation }, record: failedRecord,
-        })).toBe('unmatched')
-        expect(matchReclaimDrainContinuation({ continuation: {}, record: failedRecord })).toBe('unmatched')
+        expect(matchReclaimDrainContinuation({ continuation: step, record: failedRecord })).toBe('unmatched')
         const decoded = decodeCoordinationRecord(failedRecord, stackId)
         if (!decoded?.lease) throw new Error('expected coordinated lease')
         const changedLease = coordinationStateRecord(state, stackId, active.value, failedAt, {
@@ -2269,19 +2037,16 @@ describe('session-aware claims', () => {
         })
         expect(matchReclaimDrainContinuation({ continuation, record: changedLease })).toBe('unmatched')
         const committed = await commitDrainOutcome({
-            authority: failure, namespace: state, stackId,
+            outcome: failure, namespace: state, stackId,
         })
         if (committed.kind !== 'complete') throw new Error('expected failed reclaim commit')
         expect(matchReclaimDrainContinuation({ continuation, record: committed.value })).toBe('failed')
         const retryReservation = await recoverDrainReservation({ namespace: state, request })
         if (retryReservation.kind !== 'complete') throw new Error('expected failed reclaim recovery')
-        const recoveredAction = retryReservation.authority.reservation.actions[1]
+        const recoveredAction = retryReservation.reservation.actions[1]
         if (recoveredAction?.stage !== 'reclaim') throw new Error('expected recovered reclaim action')
-        expect(inspectFailedReclaimRecovery({ authority: committed.value as never, record: committed.value })).toBeUndefined()
-        expect(inspectFailedReclaimRecovery({ authority: { ...retryReservation.authority } as never, record: committed.value })).toBeUndefined()
         const changedRecords = [
             { ...committed.value, revision: committed.value.revision + 1 },
-            { ...committed.value, updatedAt: after(committed.value.updatedAt, 1) },
             { ...committed.value, extra: undefined },
             { ...committed.value, extra: 'unexpected' },
             { ...committed.value, value: { ...(committed.value.value as object), drain: null } },
@@ -2311,26 +2076,17 @@ describe('session-aware claims', () => {
             } } },
         ] as unknown as StateRecord[]
         for (const record of changedRecords) {
-            expect(inspectFailedReclaimRecovery({ authority: retryReservation.authority, record })).toBeUndefined()
+            expect(inspectFailedReclaimRecovery({ reservation: retryReservation.reservation, record })).toBeUndefined()
         }
-        const accessorInput = { authority: retryReservation.authority }
-        Object.defineProperty(accessorInput, 'record', { enumerable: true, get: () => committed.value })
-        expect(inspectFailedReclaimRecovery(accessorInput as never)).toBeUndefined()
         const accessorRecord = { ...committed.value }
         Object.defineProperty(accessorRecord, 'value', { enumerable: true, get: () => committed.value.value })
-        expect(inspectFailedReclaimRecovery({ authority: retryReservation.authority, record: accessorRecord })).toBeUndefined()
+        expect(inspectFailedReclaimRecovery({ reservation: retryReservation.reservation, record: accessorRecord })).toBeUndefined()
         const nonEnumerableRecord = { ...committed.value }
         Object.defineProperty(nonEnumerableRecord, 'extra', { value: undefined })
-        expect(inspectFailedReclaimRecovery({ authority: retryReservation.authority, record: nonEnumerableRecord })).toBeUndefined()
+        expect(inspectFailedReclaimRecovery({ reservation: retryReservation.reservation, record: nonEnumerableRecord })).toBeUndefined()
         const symbolRecord = Object.assign({ ...committed.value }, { [Symbol('extra')]: undefined })
-        expect(inspectFailedReclaimRecovery({ authority: retryReservation.authority, record: symbolRecord })).toBeUndefined()
-        expect(inspectFailedReclaimRecovery(Object.assign(
-            { authority: retryReservation.authority, record: committed.value }, { [Symbol('extra')]: true },
-        ) as never)).toBeUndefined()
-        const recovery = inspectFailedReclaimRecovery({ authority: retryReservation.authority, record: committed.value })
-        if (!recovery) throw new Error('expected authenticated failed reclaim recovery')
-        expect(consumeFailedReclaimRecovery({ ...recovery } as never)).toBeUndefined()
-        const projection = consumeFailedReclaimRecovery(recovery)
+        expect(inspectFailedReclaimRecovery({ reservation: retryReservation.reservation, record: symbolRecord })).toBeUndefined()
+        const projection = inspectFailedReclaimRecovery({ reservation: retryReservation.reservation, record: committed.value })
         const recoveryPurpose: 'down' | 'reset' | undefined = projection?.purpose
         expect(recoveryPurpose).toBe('reset')
         expect(projection).toMatchObject({
@@ -2338,54 +2094,38 @@ describe('session-aware claims', () => {
             freshAfter: committed.value.updatedAt,
             completed: [], current: { targetId: 'volume:first' }, pending: [{ targetId: 'volume:second' }],
         })
-        expect(consumeFailedReclaimRecovery(recovery)).toBeUndefined()
-        const retry = await reserveDrainAttempt({ namespace: state, authority: retryReservation.authority })
+        const retry = await reserveDrainAttempt({ namespace: state, reservation: retryReservation.reservation })
         if (retry.kind !== 'complete') throw new Error('expected reclaim retry')
-        const retryCandidate = inspectDrainAttemptAuthority(retry.authority)
-        const retryExecution = retryCandidate && openReclaimDrainExecution({ authority: retry.authority, candidate: retryCandidate,
-            planningRecord: committed.value, continuation: Object.freeze({}),
-        })
-        if (!retryExecution) throw new Error('expected retry execution authority')
+        expect(reclaimDrainStep({ planningRecord: committed.value, reservation: retry.reservation })).toBeDefined()
         const retryRecord = await readState(state.paths.coordination(stackId))
         if (retryRecord.kind !== 'complete') throw new Error('expected retry record')
-        const firstSuccess = settleReclaimDrainSuccess({ authority: retryExecution, fact: {
-            ...stoppedFact(retry.reservation), remainingTargetIds: ['volume:second'],
-        } })
-        if (!firstSuccess) throw new Error('expected first reclaim success')
-        const firstProgress = reduceDrainOutcome({ record: retryRecord.value, authority: firstSuccess })
+        const firstSuccess = stoppedOutcome(retry, { ...stoppedFact(retry.reservation), remainingTargetIds: ['volume:second'] })
+        const firstProgress = reduceDrainOutcome({ record: retryRecord.value, outcome: firstSuccess })
         if (!firstProgress) throw new Error('expected first reclaim progress')
         const firstProgressCommit = await commitDrainOutcome({
-            authority: firstSuccess, namespace: state, stackId,
+            outcome: firstSuccess, namespace: state, stackId,
         })
         if (firstProgressCommit.kind !== 'complete') throw new Error('expected first reclaim progress commit')
         const secondReservation = await recoverDrainReservation({ namespace: state, request })
         if (secondReservation.kind !== 'complete') throw new Error('expected second reclaim recovery')
-        const secondAttempt = await reserveDrainAttempt({ namespace: state, authority: secondReservation.authority })
+        const secondAttempt = await reserveDrainAttempt({ namespace: state, reservation: secondReservation.reservation })
         if (secondAttempt.kind !== 'complete') throw new Error('expected second reclaim attempt')
-        const secondCandidate = inspectDrainAttemptAuthority(secondAttempt.authority)
-        const secondExecution = secondCandidate && openReclaimDrainExecution({ authority: secondAttempt.authority, candidate: secondCandidate,
-            planningRecord: firstProgressCommit.value, continuation: Object.freeze({}),
-        })
-        if (!secondExecution) throw new Error('expected second reclaim execution authority')
+        expect(reclaimDrainStep({ planningRecord: firstProgressCommit.value, reservation: secondAttempt.reservation })).toBeDefined()
         const secondActive = await readState(state.paths.coordination(stackId))
         if (secondActive.kind !== 'complete') throw new Error('expected second active record')
         const secondFailedAt = new Date().toISOString()
-        const secondFailure = settleReclaimDrainFailure({ authority: secondExecution, fact: { ...secondAttempt.attempt, failedAt: secondFailedAt },
-        })
-        if (!secondFailure) throw new Error('expected second reclaim failure')
-        const secondFailedValue = reduceDrainOutcome({ record: secondActive.value, authority: secondFailure })
+        const secondFailure = failedOutcome(secondAttempt, secondFailedAt)
+        const secondFailedValue = reduceDrainOutcome({ record: secondActive.value, outcome: secondFailure })
         if (!secondFailedValue) throw new Error('expected second reclaim failure transition')
         const secondFailedCommit = await commitDrainOutcome({
-            authority: secondFailure, namespace: state, stackId,
+            outcome: secondFailure, namespace: state, stackId,
         })
         if (secondFailedCommit.kind !== 'complete') throw new Error('expected second reclaim failure commit')
         const secondRecovery = await recoverDrainReservation({ namespace: state, request })
         if (secondRecovery.kind !== 'complete') throw new Error('expected persisted second reclaim recovery')
-        const secondRecoveryAuthority = inspectFailedReclaimRecovery({
-            authority: secondRecovery.authority, record: secondFailedCommit.value,
-        })
-        if (!secondRecoveryAuthority) throw new Error('expected second recovery projection')
-        expect(consumeFailedReclaimRecovery(secondRecoveryAuthority)).toMatchObject({
+        expect(inspectFailedReclaimRecovery({
+            reservation: secondRecovery.reservation, record: secondFailedCommit.value,
+        })).toMatchObject({
             completed: [{ targetId: 'volume:first' }],
             current: { targetId: 'volume:second' },
             pending: [],

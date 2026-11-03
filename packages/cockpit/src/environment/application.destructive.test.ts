@@ -13,7 +13,7 @@ const executionFence = (id: string) => {
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'consumeLifecycleIssuance' | 'planDown' | 'planResetLifecycle'>>,
     runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'stopRuntime'>>,
-    claims: {} as Partial<Pick<typeof import('./claims.js'), 'discardDrainReservationAuthority' | 'commitDrainOutcome' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
+    claims: {} as Partial<Pick<typeof import('./claims.js'), 'commitDrainOutcome' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'executeReclaimAction' | 'keptTeardownResources' | 'planReset' | 'planTeardown' | 'reconcileReclaimAction'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
@@ -36,7 +36,6 @@ vi.mock('./claims.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./claims.js')>()
     return {
         ...actual,
-        discardDrainReservationAuthority: (...args: Parameters<typeof actual.discardDrainReservationAuthority>) => applicationOwners.claims.discardDrainReservationAuthority?.(...args) ?? actual.discardDrainReservationAuthority(...args),
         commitDrainOutcome: (...args: Parameters<typeof actual.commitDrainOutcome>) => applicationOwners.claims.commitDrainOutcome?.(...args) ?? actual.commitDrainOutcome(...args),
         recoverDrainReservation: (...args: Parameters<typeof actual.recoverDrainReservation>) => applicationOwners.claims.recoverDrainReservation?.(...args) ?? actual.recoverDrainReservation(...args),
         reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
@@ -434,24 +433,20 @@ describe('destructive application contracts', () => {
         })
         applicationOwners.claims.reserveDrain = async () => {
             events.push('reservation')
-            return {
-                kind: 'complete', authority: Object.freeze({}),
-                reservation,
-            } as never
+            return { kind: 'complete', reservation } as never
         }
         applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'refusal', diagnostics: [] }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => {
             events.push('attempt')
             return {
-                kind: 'complete', authority: Object.freeze({
-                    reservation: Object.freeze({ ...reservation, attempt }), attempt,
-                }),
+                kind: 'complete', reservation: Object.freeze({ ...reservation, attempt }), attempt,
+                fence: executionFence('reset-stop'),
             } as never
         }
         applicationOwners.runtime.stopRuntime = async ({ execute }) => {
             await execute({ id: 'runtime-stop' } as never)
             await execute({ id: 'runtime-observe' } as never)
-            return { kind: 'stopped', authority: Object.freeze({}), fence: executionFence('reset-stop') } as never
+            return { kind: 'stopped', outcome: Object.freeze({}), fence: executionFence('reset-stop') } as never
         }
         applicationOwners.claims.commitDrainOutcome = async () => {
             events.push('publication')
@@ -527,7 +522,7 @@ describe('destructive application contracts', () => {
         }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => {
             events.push('attempt')
-            return { kind: 'complete', authority: {} } as never
+            return { kind: 'complete', reservation: {}, attempt: {}, fence: {} } as never
         }
         applicationOwners.reclaim.executeReclaimAction = async ({ execute }) => {
             events.push('reclaim-action')
@@ -535,7 +530,7 @@ describe('destructive application contracts', () => {
             return { kind: 'executed', executed: { receipt: {}, fence: executionFence('recovered-down') } } as never
         }
         applicationOwners.reclaim.reconcileReclaimAction = () => ({
-            kind: 'complete', continuation: null, authority: {},
+            kind: 'complete', continuation: null, outcome: {},
         }) as never
         applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
         const result = await runDown({ configPath }, {
@@ -568,15 +563,9 @@ describe('destructive application contracts', () => {
         applicationOwners.lifecycle.planDown = () => ({
             kind: 'drain', plan: { diagnostics: [] }, request: { ...request, operationBasis: '8'.repeat(64) },
         }) as never
-        const recoveredAuthority = Object.freeze({})
-        const recover = vi.fn(async () => ({
-            kind: 'complete', authority: recoveredAuthority,
-            reservation: recoveredReservation,
-        }) as never)
-        const discard = vi.fn(() => true)
+        const recover = vi.fn(async () => ({ kind: 'complete', reservation: recoveredReservation }) as never)
         const reserveAttempt = vi.fn()
         applicationOwners.claims.recoverDrainReservation = recover
-        applicationOwners.claims.discardDrainReservationAuthority = discard
         applicationOwners.claims.reserveDrainAttempt = reserveAttempt
         const execute = vi.fn()
 
@@ -589,8 +578,6 @@ describe('destructive application contracts', () => {
         }] })
         expect(recover).toHaveBeenCalledOnce()
         expect(recover).toHaveBeenCalledWith({ namespace: context.namespace, request: recoveredRequest })
-        expect(discard).toHaveBeenCalledOnce()
-        expect(discard).toHaveBeenCalledWith(recoveredAuthority)
         expect(reserveAttempt).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
     })
@@ -626,15 +613,15 @@ describe('destructive application contracts', () => {
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
         }) as never
-        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
+        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', reservation: { completedActionCount: 1 } }) as never
+        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
         applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('reclaim-loop') } }) as never
         const continuation = Object.freeze({})
         let reconciliations = 0
         applicationOwners.reclaim.reconcileReclaimAction = ({ discovery }) => {
             discoveries.push(discovery)
             reconciliations += 1
-            return { kind: 'complete', continuation: reconciliations === 1 ? continuation : null, authority: {} } as never
+            return { kind: 'complete', continuation: reconciliations === 1 ? continuation : null, outcome: {} } as never
         }
         applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
 
@@ -674,10 +661,10 @@ describe('destructive application contracts', () => {
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
         }) as never
-        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
+        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', reservation: { completedActionCount: 1 } }) as never
+        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
         applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('never-started') } }) as never
-        applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, authority: {} }) as never
+        applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, outcome: {} }) as never
         applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
         const discovery = Object.freeze({ down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord: null }) })
 
@@ -708,7 +695,7 @@ describe('destructive application contracts', () => {
             applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
                 topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
             }) as never
-            applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
+            applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', reservation: { completedActionCount: 1 } }) as never
             const observed = Object.freeze({
                 stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
                 coordinationRecord: failedRecord, declaredCacheIds: [],
@@ -740,7 +727,7 @@ describe('destructive application contracts', () => {
         expect(kept.diagnostics[0]!.message).not.toContain('synthetic_data')
     })
 
-    it('uses recovered failed-action authority without trying to recover the same epoch twice', async () => {
+    it('plans a recovered failed action from its reservation without recovering it twice', async () => {
         const { configPath, context, instance } = await destructiveFixture()
         const failedRecord = persistFailedDestructiveRecord(context, 'reset')
         const recoveredReservation = decodeCoordinationRecord(failedRecord as never, context.stackId)?.drain
@@ -768,17 +755,11 @@ describe('destructive application contracts', () => {
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: {}, drainRequest: request, reclaim: { purpose: 'reset' },
         }) as never
-        const recoveredAuthority = Object.freeze({})
-        const recover = vi.fn(async () => ({
-            kind: 'complete', authority: recoveredAuthority,
-            reservation: recoveredReservation,
-        }) as never)
-        const discard = vi.fn(() => true)
+        const recover = vi.fn(async () => ({ kind: 'complete', reservation: recoveredReservation }) as never)
         applicationOwners.claims.recoverDrainReservation = recover
-        applicationOwners.claims.discardDrainReservationAuthority = discard
         applicationOwners.claims.reserveDrainAttempt = async () => {
             events.push('attempt')
-            return { kind: 'complete', authority: {} } as never
+            return { kind: 'complete', reservation: {}, attempt: {}, fence: {} } as never
         }
         applicationOwners.reclaim.executeReclaimAction = async ({ execute }) => {
             events.push('reclaim-action')
@@ -787,7 +768,7 @@ describe('destructive application contracts', () => {
         }
         applicationOwners.reclaim.reconcileReclaimAction = () => {
             events.push('reconcile')
-            return { kind: 'complete', continuation: null, authority: {} } as never
+            return { kind: 'complete', continuation: null, outcome: {} } as never
         }
         applicationOwners.claims.commitDrainOutcome = async () => {
             events.push('publish')
@@ -812,7 +793,7 @@ describe('destructive application contracts', () => {
         }))
         expect(planReset).toHaveBeenNthCalledWith(2, expect.objectContaining({
             confirmationDigest: recoveredRequest.planDigest,
-            recoveryAuthority: recoveredAuthority,
+            recoveredReservation,
             operatorApproval: operatorPreview,
         }))
         expect(planReset.mock.calls[1]?.[0].operatorApproval).toBe(operatorPreview)
@@ -820,8 +801,6 @@ describe('destructive application contracts', () => {
         expect(planResetLifecycle).toHaveBeenCalledWith(expect.objectContaining({ reclaim: recoveredPlan.envelope }))
         expect(recover).toHaveBeenCalledOnce()
         expect(recover).toHaveBeenCalledWith({ namespace: context.namespace, request: recoveredRequest })
-        expect(discard).toHaveBeenCalledOnce()
-        expect(discard).toHaveBeenCalledWith(recoveredAuthority)
         expect(events).toEqual(['attempt', 'reclaim-action', 'execute', 'reconcile', 'publish'])
     })
 })

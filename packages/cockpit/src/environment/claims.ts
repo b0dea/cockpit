@@ -21,7 +21,6 @@ import {
     type HolderId,
     type ExecutionStep,
     type ExecutionFence,
-    type JsonSnapshot,
     type StackId,
 } from './contract.js'
 import { authenticatedExecutionOutcome, consumeFencedExecutionTermination, type ExecuteProbeOutcome, type FencedExecutionTermination } from '../environment-exec/execute.js'
@@ -353,29 +352,6 @@ export interface DrainAttempt {
     readonly failedAt: string | null
 }
 
-declare const drainReservationAuthorityBrand: unique symbol
-export interface DrainReservationAuthority {
-    readonly [drainReservationAuthorityBrand]: true
-    readonly reservation: DrainReservation
-}
-
-declare const sleepDrainRecoveryAuthorityBrand: unique symbol
-export interface SleepDrainRecoveryAuthority {
-    readonly [sleepDrainRecoveryAuthorityBrand]: true
-}
-
-declare const drainAttemptAuthorityBrand: unique symbol
-export interface DrainAttemptAuthority {
-    readonly [drainAttemptAuthorityBrand]: true
-    readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-}
-
-declare const failedReclaimRecoveryBrand: unique symbol
-export interface FailedReclaimRecoveryAuthority {
-    readonly [failedReclaimRecoveryBrand]: true
-}
-
 export interface FailedReclaimRecoveryTarget {
     readonly targetId: string
     readonly targetCommitment: DrainTargetCommitment
@@ -392,48 +368,29 @@ export interface FailedReclaimRecovery {
     readonly pending: readonly FailedReclaimRecoveryTarget[]
 }
 
-declare const drainAttemptCandidateBrand: unique symbol
-export interface DrainAttemptCandidate {
-    readonly [drainAttemptCandidateBrand]: true
+/** An attempt the claims owner committed, and the execution fence its one step runs under. */
+export interface ReservedDrainAttempt {
     readonly reservation: DrainReservation
     readonly attempt: DrainAttempt
+    readonly fence: ExecutionFence
 }
 
-declare const drainAttemptSuccessAuthorityBrand: unique symbol
-interface DrainAttemptSuccessAuthority {
-    readonly [drainAttemptSuccessAuthorityBrand]: true
-}
+/**
+ * What a drain step settled to, for `commitDrainOutcome` to publish. The publication admits it only
+ * while the coordination record still holds its exact active attempt, so it publishes at most once.
+ */
+export type DrainOutcome =
+    | { readonly kind: 'success'; readonly reservation: DrainReservation; readonly fact: RuntimeStopped | ReclaimCompleted }
+    | { readonly kind: 'failure'; readonly reservation: DrainReservation; readonly failedAt: string }
 
-declare const drainAttemptFailureAuthorityBrand: unique symbol
-interface DrainAttemptFailureAuthority {
-    readonly [drainAttemptFailureAuthorityBrand]: true
-}
-
-interface DrainAttemptPermit<Success extends RuntimeStopped | ReclaimCompleted> {
+/**
+ * The reclaim attempt a removal ran under and the record it was planned from. The next plan matches
+ * it against the record the removal's outcome published; `failedAt` is set when the removal never started.
+ */
+export interface ReclaimDrainStep {
+    readonly planningRecord: StateRecord
     readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-    readonly provenance: DrainAttemptProvenance
-    readonly sealSuccess: (success: Success) => DrainAttemptSuccessAuthority | undefined
-    readonly sealFailure: (failure: DrainAttemptFailure) => DrainAttemptFailureAuthority | undefined
-}
-
-declare const drainProgressAuthorityBrand: unique symbol
-interface DrainProgressAuthority {
-    readonly [drainProgressAuthorityBrand]: true
-}
-
-declare const runtimeDrainExecutionAuthorityBrand: unique symbol
-export interface RuntimeDrainExecutionAuthority { readonly [runtimeDrainExecutionAuthorityBrand]: true }
-declare const reclaimDrainExecutionAuthorityBrand: unique symbol
-export interface ReclaimDrainExecutionAuthority { readonly [reclaimDrainExecutionAuthorityBrand]: true }
-
-declare const drainOutcomeAuthorityBrand: unique symbol
-export interface DrainOutcomeAuthority {
-    readonly [drainOutcomeAuthorityBrand]: true
-}
-
-interface ReclaimAttemptPermit extends DrainAttemptPermit<ReclaimCompleted> {
-    readonly progressAuthority: DrainProgressAuthority
+    readonly failedAt: string | null
 }
 
 export interface RuntimeStopped {
@@ -459,63 +416,6 @@ export interface RuntimeStopped {
 export interface ReclaimCompleted extends RuntimeStopped {
     readonly remainingTargetIds: readonly string[]
 }
-
-const drainAuthorities = new WeakSet<object>()
-const drainAuthorityRecords = new WeakMap<object, string>()
-const drainAuthorityAddresses = new WeakMap<object, StateAddress>()
-const drainAuthorityEpochs = new Map<string, string>()
-interface SleepDrainRecoveryRecord {
-    readonly namespace: StateNamespace
-    readonly address: StateAddress
-    readonly recordFingerprint: string
-    readonly reservation: DrainReservation
-}
-const sleepDrainRecoveries = new WeakMap<object, SleepDrainRecoveryRecord>()
-interface DrainAttemptProvenance {
-    readonly kind: 'coordination'
-    readonly cockpitId: CockpitId
-    readonly subjectId: string
-    readonly address: StateAddress
-}
-
-const drainAttemptAuthorities = new WeakMap<object, {
-    readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-    readonly provenance: DrainAttemptProvenance
-}>()
-const failedReclaimRecoveries = new WeakMap<object, FailedReclaimRecovery>()
-const drainAttemptCandidates = new WeakMap<object, { readonly authority: object; readonly reservation: DrainReservation; readonly attempt: DrainAttempt }>()
-const drainAttemptSuccessAuthorities = new WeakMap<object, {
-    readonly reservation: DrainReservation
-    readonly fact: RuntimeStopped | ReclaimCompleted
-    readonly provenance: DrainAttemptProvenance
-}>()
-const drainAttemptFailureAuthorities = new WeakMap<object, {
-    readonly reservation: DrainReservation
-    readonly fact: DrainAttemptFailure
-    readonly provenance: DrainAttemptProvenance
-}>()
-const drainProgressAuthorities = new WeakMap<object, {
-    readonly planningRecord: StateRecord
-    readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-}>()
-const drainFailureProgressAuthorities = new WeakMap<object, {
-    readonly planningRecord: StateRecord
-    readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-    readonly failure: DrainAttemptFailure
-}>()
-const drainExecutions = new WeakMap<object,
-    | { readonly kind: 'runtime-stop'; readonly permit: DrainAttemptPermit<RuntimeStopped>; readonly fence: ExecutionFence }
-    | { readonly kind: 'reclaim'; readonly permit: ReclaimAttemptPermit; readonly continuation: object; readonly fence: ExecutionFence }>()
-const drainOutcomes = new WeakMap<object,
-    | { readonly kind: 'success'; readonly authority: DrainAttemptSuccessAuthority; readonly provenance: DrainAttemptProvenance }
-    | { readonly kind: 'failure'; readonly authority: DrainAttemptFailureAuthority; readonly provenance: DrainAttemptProvenance }>()
-
-const drainContinuationEvidence = new WeakMap<object,
-    | { readonly kind: 'progress'; readonly authority: DrainProgressAuthority }
-    | { readonly kind: 'failure'; readonly authority: DrainAttemptFailureAuthority }>()
 
 type ClaimMutationRefusal = {
     readonly kind: 'refusal'
@@ -1276,28 +1176,6 @@ function sameTargets(left: readonly string[], right: readonly string[]): boolean
     return left.length === right.length && left.every((target, index) => target === right[index])
 }
 
-function issueDrainAuthority(reservation: DrainReservation, record: StateRecord, address: StateAddress): DrainReservationAuthority {
-    const authority = { reservation: snapshotDrainReservation(reservation) } as DrainReservationAuthority
-    const recordFingerprint = exactRecordFingerprint(record)
-    const ownedAddress = snapshotCoordinationAddress(address)
-    if (recordFingerprint === undefined || ownedAddress === undefined) throw new RefusalError('drain authority provenance is malformed')
-    drainAuthorities.add(authority)
-    drainAuthorityRecords.set(authority, recordFingerprint)
-    drainAuthorityAddresses.set(authority, ownedAddress)
-    drainAuthorityEpochs.set(reservation.reservationId, drainAuthorityEpoch(reservation))
-    return authority
-}
-
-function retireDrainAuthority(authority: DrainReservationAuthority, recoverable: boolean): void {
-    const reservation = authority.reservation
-    drainAuthorities.delete(authority)
-    drainAuthorityRecords.delete(authority)
-    drainAuthorityAddresses.delete(authority)
-    if (recoverable && drainAuthorityEpochs.get(reservation.reservationId) === drainAuthorityEpoch(reservation)) {
-        drainAuthorityEpochs.delete(reservation.reservationId)
-    }
-}
-
 function exactRecordFingerprint(record: unknown): string | undefined {
     const snapshot = snapshotDataOnly(record)
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
@@ -1312,32 +1190,12 @@ function exactRecordFingerprint(record: unknown): string | undefined {
     return JSON.stringify(canonicalJsonValue(snapshot))
 }
 
-function drainAuthorityEpoch(reservation: DrainReservation): string {
-    return reservation.attempt?.status === 'failed'
-        ? `failed:${reservation.attempt.attemptId}:${reservation.attempt.failedRevision}`
-        : `progress:${reservation.completedActionCount}:${reservation.progressRevision}`
-}
-
-export function consumeDrainReservationAuthority(authority: DrainReservationAuthority): DrainReservation | undefined {
-    if (!authority || typeof authority !== 'object' || !drainAuthorities.has(authority)) return undefined
-    const reservation = authority.reservation
-    drainAuthorities.delete(authority)
-    drainAuthorityAddresses.delete(authority)
-    return reservation
-}
-
-export function discardDrainReservationAuthority(authority: DrainReservationAuthority): boolean {
-    if (!authority || typeof authority !== 'object' || !drainAuthorities.has(authority)) return false
-    retireDrainAuthority(authority, true)
-    return true
-}
-
 export function isDrainActive(value: CoordinationRecord): boolean {
     return value.drain != null
 }
 
 export type DrainReservationResult =
-    | { readonly kind: 'complete'; readonly reservation: DrainReservation; readonly authority: DrainReservationAuthority }
+    | { readonly kind: 'complete'; readonly reservation: DrainReservation }
     | ClaimMutationRefusal
 
 export async function reserveDrain(input: {
@@ -1393,57 +1251,14 @@ export async function reserveDrain(input: {
     if (!value?.drain || !sameDrainRequest(value.drain, request) || value.drain.reservationId !== reservationId) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published drain reservation is malformed', request.stackId)
     }
-    return {
-        kind: 'complete', reservation: value.drain,
-        authority: issueDrainAuthority(value.drain, result.value, namespace.paths.coordination(request.stackId)),
-    }
+    return { kind: 'complete', reservation: value.drain }
 }
 
 export type DrainAttemptResult =
-    | { readonly kind: 'complete'; readonly reservation: DrainReservation; readonly attempt: DrainAttempt; readonly authority: DrainAttemptAuthority }
+    | ({ readonly kind: 'complete' } & ReservedDrainAttempt)
     | ClaimMutationRefusal
 
-function snapshotCoordinationAddress(address: StateAddress): StateAddress | undefined {
-    const owned = exactDataProperties(address, ['path', 'stateRoot', 'cockpitRoot', 'kind', 'cockpitId', 'subjectId'])
-    return owned && owned.kind === 'coordination' && typeof owned.path === 'string'
-        && typeof owned.stateRoot === 'string' && typeof owned.cockpitRoot === 'string'
-        && typeof owned.cockpitId === 'string' && typeof owned.subjectId === 'string'
-        ? owned as unknown as StateAddress
-        : undefined
-}
-
-function sameCoordinationAddress(left: StateAddress, right: StateAddress): boolean {
-    return left.path === right.path && left.stateRoot === right.stateRoot && left.cockpitRoot === right.cockpitRoot
-        && left.kind === right.kind && left.cockpitId === right.cockpitId && left.subjectId === right.subjectId
-        && left.qualifier === undefined && right.qualifier === undefined
-}
-
-function issueDrainAttemptAuthority(reservation: DrainReservation, record: StateRecord, address: StateAddress): DrainAttemptAuthority {
-    if (!reservation.attempt) throw new RefusalError('drain attempt is absent')
-    const ownedAddress = snapshotCoordinationAddress(address)
-    if (!ownedAddress) throw new RefusalError('drain attempt address is malformed')
-    const owned = snapshotDrainReservation(reservation)
-    const authority = { reservation: owned, attempt: owned.attempt! } as DrainAttemptAuthority
-    drainAttemptAuthorities.set(authority, {
-        reservation: owned,
-        attempt: owned.attempt!,
-        provenance: Object.freeze({
-            kind: 'coordination', cockpitId: record.cockpitId as CockpitId, subjectId: record.subjectId,
-            address: ownedAddress,
-        }),
-    })
-    return authority
-}
-
-function reduceDrainAttemptState(input: unknown, retry: boolean): CoordinationRecord | undefined {
-    const owned = snapshotExactReducerInput(input, ['record', 'reservation', 'attempt'])
-    if (!owned) return undefined
-    const reservationResult = DrainReservationSchema.safeParse(owned.reservation)
-    const attemptResult = DrainAttemptSchema.safeParse(owned.attempt)
-    const record = owned.record as StateRecord
-    if (!reservationResult.success || !attemptResult.success || !record || typeof record !== 'object') return undefined
-    const reservation = reservationResult.data as unknown as DrainReservation
-    const attempt = attemptResult.data as DrainAttempt
+function reduceDrainAttemptState(record: StateRecord, reservation: DrainReservation, attempt: DrainAttempt, retry: boolean): CoordinationRecord | undefined {
     const value = decodeCoordinationRecord(record, reservation.stackId)
     const currentAction = reservation.actions[reservation.completedActionCount]
     const prior = reservation.attempt
@@ -1466,49 +1281,19 @@ function reduceDrainAttemptState(input: unknown, retry: boolean): CoordinationRe
     return CoordinationValueSchema.safeParse(proposed).success ? proposed : undefined
 }
 
-function reduceDrainAttemptStart(input: {
-    readonly record: StateRecord
-    readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-}): CoordinationRecord | undefined {
-    return reduceDrainAttemptState(input, false)
-}
-
-function reduceDrainAttemptRetry(input: {
-    readonly record: StateRecord
-    readonly reservation: DrainReservation
-    readonly attempt: DrainAttempt
-}): CoordinationRecord | undefined {
-    return reduceDrainAttemptState(input, true)
-}
-
+/**
+ * Commits the next attempt of a reservation: its first try, or a retry of the action whose try was
+ * published as failed. The commit admits only the exact persisted reservation at the revision it
+ * names, so two holders of one reservation cannot both start an attempt.
+ */
 export async function reserveDrainAttempt(input: {
     readonly namespace: StateNamespace
-    readonly authority: DrainReservationAuthority
+    readonly reservation: DrainReservation
 }): Promise<DrainAttemptResult> {
-    let namespace: StateNamespace | undefined
-    let reservation: DrainReservation | undefined
-    let reservationAuthority: DrainReservationAuthority | undefined
-    try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)
-            || !hasExactKeys(input, ['namespace', 'authority'])) throw new RefusalError('invalid')
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Object.values(descriptors).some((descriptor) => !('value' in descriptor))) throw new RefusalError('invalid')
-        reservationAuthority = descriptors.authority!.value as DrainReservationAuthority
-        if (!reservationAuthority || typeof reservationAuthority !== 'object' || !drainAuthorities.has(reservationAuthority)) throw new RefusalError('invalid')
-        reservation = reservationAuthority.reservation
-        namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        namespace = undefined
-        reservation = undefined
-        reservationAuthority = undefined
-    }
-    const currentAction = reservation?.actions[reservation.completedActionCount]
-    const issuedAddress = reservationAuthority && drainAuthorityAddresses.get(reservationAuthority)
-    const requestedAddress = namespace && reservation ? namespace.paths.coordination(reservation.stackId) : undefined
-    if (!namespace || !reservation || !currentAction || reservation.attempt?.status === 'active'
-        || !issuedAddress || !requestedAddress || !sameCoordinationAddress(issuedAddress, requestedAddress)
+    const namespace = snapshotStateNamespace(input.namespace)
+    const { reservation } = input
+    const currentAction = reservation.actions[reservation.completedActionCount]
+    if (!namespace || !currentAction || reservation.attempt?.status === 'active'
         || reservation.attempt?.status === 'failed' && (
             currentAction.targetId !== reservation.attempt.currentTarget
             || currentAction.stage !== reservation.attempt.currentStage
@@ -1528,107 +1313,27 @@ export async function reserveDrainAttempt(input: {
         committedRevision: priorRevision + 1, committedAt, validThrough,
         status: 'active' as const, failedRevision: null, failedAt: null,
     } satisfies DrainAttempt
+    const fence = drainExecutionFence(attempt, namespace.paths.coordination(reservation.stackId))
+    if (!fence) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'drain attempt execution fence is malformed', 'drain attempt')
     const transaction = await transactClaim<DrainAttemptResult>(namespace, reservation.stackId, reservation.requesterId, (current) => {
-        const reduced = current === null ? undefined : reservation!.attempt === null
-            ? reduceDrainAttemptStart({ record: current, reservation: reservation!, attempt })
-            : reduceDrainAttemptRetry({ record: current, reservation: reservation!, attempt })
+        const reduced = current === null ? undefined : reduceDrainAttemptState(current, reservation, attempt, reservation.attempt !== null)
         if (!reduced) {
-            return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'drain attempt requires an exact unstarted or failed reservation', reservation!.stackId))
+            return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'drain attempt requires an exact unstarted or failed reservation', reservation.stackId))
         }
-        return coordinationStateRecord(namespace!, reservation!.stackId, current, committedAt, reduced)
+        return coordinationStateRecord(namespace, reservation.stackId, current, committedAt, reduced)
     })
-    if ('diagnostics' in transaction) {
-        retireDrainAuthority(reservationAuthority!, true)
-        return transaction
-    }
-    if ('attempt' in transaction) return transaction
+    if ('diagnostics' in transaction || 'attempt' in transaction) return transaction
     if (transaction.kind !== 'complete') {
-        if (transaction.kind === 'indeterminate') {
-            retireDrainAuthority(reservationAuthority!, false)
-        } else {
-            retireDrainAuthority(reservationAuthority!, true)
-        }
         return transaction.kind === 'missing'
             ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'drain attempt returned no record', transaction.path)
             : stateRefusal(transaction)
     }
-    retireDrainAuthority(reservationAuthority!, false)
     const value = decodeCoordinationRecord(transaction.value, reservation.stackId)
     if (!value?.drain?.attempt || value.drain.attempt.attemptId !== attempt.attemptId
         || transaction.value.revision !== attempt.committedRevision) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published drain attempt is malformed', reservation.stackId)
     }
-    const owned = snapshotDrainReservation(value.drain)
-    return {
-        kind: 'complete', reservation: owned, attempt: owned.attempt!,
-        authority: issueDrainAttemptAuthority(owned, transaction.value, namespace.paths.coordination(reservation.stackId)),
-    }
-}
-
-export function inspectDrainAttemptAuthority(authority: DrainAttemptAuthority): DrainAttemptCandidate | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const issued = drainAttemptAuthorities.get(authority)
-    if (!issued) return undefined
-    const candidate = { reservation: issued.reservation, attempt: issued.attempt } as DrainAttemptCandidate
-    drainAttemptCandidates.set(candidate, { authority, ...issued })
-    return candidate
-}
-
-function redeemDrainAttempt<Success extends RuntimeStopped | ReclaimCompleted>(
-    authority: DrainAttemptAuthority,
-    candidate: DrainAttemptCandidate,
-    stage: DrainAction['stage'],
-    planningRecord?: StateRecord,
-): DrainAttemptPermit<Success> | undefined {
-    if (!authority || typeof authority !== 'object' || !candidate || typeof candidate !== 'object') return undefined
-    const issued = drainAttemptAuthorities.get(authority)
-    const inspected = drainAttemptCandidates.get(candidate)
-    if (!issued || !inspected || inspected.authority !== authority || inspected.reservation !== issued.reservation
-        || inspected.attempt !== issued.attempt || issued.attempt.status !== 'active' || issued.attempt.currentStage !== stage
-        || issued.reservation.attempt !== issued.attempt
-        || issued.reservation.actions[issued.attempt.actionIndex]?.stage !== stage
-        || issued.reservation.actions[issued.attempt.actionIndex]?.targetId !== issued.attempt.currentTarget) return undefined
-    drainAttemptAuthorities.delete(authority)
-    drainAttemptCandidates.delete(candidate)
-    let available = true
-    const sealSuccess = (success: Success): DrainAttemptSuccessAuthority | undefined => {
-        const snapshot = snapshotDataOnly(success) as Success | undefined
-        if (!available || !snapshot || !isExactDrainSuccess(issued.reservation, snapshot)) return undefined
-        available = false
-        const result = {} as DrainAttemptSuccessAuthority
-        drainAttemptSuccessAuthorities.set(result, Object.freeze({
-            reservation: issued.reservation, fact: Object.freeze(snapshot), provenance: issued.provenance,
-        }))
-        return result
-    }
-    const sealFailure = (failure: DrainAttemptFailure): DrainAttemptFailureAuthority | undefined => {
-        const snapshot = snapshotDataOnly(failure) as DrainAttemptFailure | undefined
-        if (!available || !snapshot || !hasExactKeys(snapshot, [
-            'attemptId', 'reservationId', 'purpose', 'targetIds', 'generation', 'actionIndex', 'currentTarget', 'currentStage',
-            'committedRevision', 'committedAt', 'validThrough', 'status', 'failedRevision', 'failedAt',
-        ]) || snapshot.status !== 'active' || snapshot.failedRevision !== null || !sameDrainAttemptBinding(snapshot, issued.attempt)
-            || !isCanonicalTimestamp(snapshot.failedAt) || Date.parse(snapshot.failedAt) < Date.parse(issued.attempt.committedAt)
-            || Date.parse(snapshot.failedAt) > Date.now()) return undefined
-        available = false
-        const result = {} as DrainAttemptFailureAuthority
-        drainAttemptFailureAuthorities.set(result, Object.freeze({
-            reservation: issued.reservation, fact: Object.freeze(snapshot), provenance: issued.provenance,
-        }))
-        if (planningRecord !== undefined) {
-            drainFailureProgressAuthorities.set(result, Object.freeze({
-                planningRecord,
-                reservation: issued.reservation,
-                attempt: issued.attempt,
-                failure: Object.freeze(snapshot),
-            }))
-        }
-        return result
-    }
-    return { ...issued, sealSuccess, sealFailure }
-}
-
-function redeemRuntimeStopAttempt(authority: DrainAttemptAuthority, candidate: DrainAttemptCandidate): DrainAttemptPermit<RuntimeStopped> | undefined {
-    return redeemDrainAttempt<RuntimeStopped>(authority, candidate, 'runtime-stop')
+    return { kind: 'complete', reservation: value.drain, attempt: value.drain.attempt, fence }
 }
 
 function sameSnapshot(left: unknown, right: unknown): boolean {
@@ -1669,56 +1374,26 @@ function planningRecordPrecedesAttempt(record: StateRecord, reservation: DrainRe
     return snapshot
 }
 
-function redeemReclaimAttempt(
-    authority: DrainAttemptAuthority,
-    candidate: DrainAttemptCandidate,
-    planningRecord: StateRecord,
-): ReclaimAttemptPermit | undefined {
-    const issued = drainAttemptAuthorities.get(authority)
-    const predecessor = issued ? planningRecordPrecedesAttempt(planningRecord, issued.reservation) : undefined
-    if (!issued || predecessor === undefined) return undefined
-    const permit = redeemDrainAttempt<ReclaimCompleted>(authority, candidate, 'reclaim', predecessor)
-    if (!permit) return undefined
-    const progressAuthority = {} as DrainProgressAuthority
-    drainProgressAuthorities.set(progressAuthority, Object.freeze({
-        planningRecord: predecessor,
-        reservation: permit.reservation,
-        attempt: permit.attempt,
-    }))
-    return { ...permit, progressAuthority }
+/**
+ * Binds an active reclaim attempt to the coordination record its removal was planned from. Undefined
+ * when that record does not directly precede the attempt, so a plan never runs under another try.
+ */
+export function reclaimDrainStep(input: {
+    readonly planningRecord: StateRecord
+    readonly reservation: DrainReservation
+}): ReclaimDrainStep | undefined {
+    const { reservation } = input
+    const attempt = reservation.attempt
+    const action = attempt === null ? undefined : reservation.actions[attempt.actionIndex]
+    if (!attempt || attempt.status !== 'active' || attempt.currentStage !== 'reclaim'
+        || action?.stage !== 'reclaim' || action.targetId !== attempt.currentTarget) return undefined
+    const planningRecord = planningRecordPrecedesAttempt(input.planningRecord, reservation)
+    return planningRecord === undefined ? undefined : { planningRecord, reservation, failedAt: null }
 }
 
-function exactDataProperties(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
-    try {
-        if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, keys)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (keys.some((key) => !('value' in descriptors[key]!))) return undefined
-        return Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value]))
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-export function openRuntimeDrainExecution(input: {
-    readonly authority: DrainAttemptAuthority; readonly candidate: DrainAttemptCandidate
-}): RuntimeDrainExecutionAuthority | undefined {
-    const owned = exactDataProperties(input, ['authority', 'candidate'])
-    if (!owned) return undefined
-    const permit = redeemRuntimeStopAttempt(
-        owned.authority as DrainAttemptAuthority, owned.candidate as DrainAttemptCandidate,
-    )
-    if (!permit) return undefined
-    const fence = drainExecutionFence({ attempt: permit.attempt, address: permit.provenance.address })
-    if (!fence) return undefined
-    const execution = {} as RuntimeDrainExecutionAuthority
-    drainExecutions.set(execution, Object.freeze({ kind: 'runtime-stop', permit, fence }))
-    return execution
-}
-
-function drainExecutionFence(input: { readonly attempt: DrainAttempt; readonly address: StateAddress }): ExecutionFence | undefined {
-    const attemptId = input.attempt.attemptId
-    const markerPath = `${input.address.path}.${attemptId}.executor.json`
+function drainExecutionFence(attempt: DrainAttempt, address: StateAddress): ExecutionFence | undefined {
+    const attemptId = attempt.attemptId
+    const markerPath = `${address.path}.${attemptId}.executor.json`
     const socketRoot = join(platform() === 'darwin' ? '/private/tmp' : '/tmp', `cockpit-exec-${process.getuid?.() ?? 0}`)
     const socketPath = join(socketRoot, `${attemptId.slice(0, 24)}.sock`)
     return /^[a-f0-9]{64}$/.test(attemptId) && isAbsolute(markerPath) && normalize(markerPath) === markerPath
@@ -1726,399 +1401,212 @@ function drainExecutionFence(input: { readonly attempt: DrainAttempt; readonly a
         ? { attemptId, markerPath, socketPath } : undefined
 }
 
-export function inspectDrainExecutionFence(
-    authority: RuntimeDrainExecutionAuthority | ReclaimDrainExecutionAuthority,
-): ExecutionFence | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const execution = drainExecutions.get(authority)
-    return execution ? { ...execution.fence } : undefined
+/** The coordination value the outcome publishes over `record`, or undefined when it no longer applies. */
+export function reduceDrainOutcome(input: { readonly outcome: DrainOutcome; readonly record: StateRecord }): CoordinationRecord | undefined {
+    const { outcome, record } = input
+    if (outcome.kind === 'failure') return reduceDrainAttemptFailure(record, outcome.reservation, outcome.failedAt)
+    const attempt = outcome.reservation.attempt
+    return attempt !== null && attempt.actionIndex === outcome.reservation.actions.length - 1
+        ? reduceDrain(record, outcome.reservation, outcome.fact)
+        : reduceDrainAttemptSuccess(record, outcome.reservation, outcome.fact)
 }
 
-export function openReclaimDrainExecution(input: {
-    readonly authority: DrainAttemptAuthority; readonly candidate: DrainAttemptCandidate
-    readonly planningRecord: StateRecord; readonly continuation: object
-}): ReclaimDrainExecutionAuthority | undefined {
-    const owned = exactDataProperties(input, ['authority', 'candidate', 'planningRecord', 'continuation'])
-    if (!owned) return undefined
-    const continuation = owned.continuation
-    if (!continuation || typeof continuation !== 'object') return undefined
-    const permit = redeemReclaimAttempt(
-        owned.authority as DrainAttemptAuthority, owned.candidate as DrainAttemptCandidate,
-        owned.planningRecord as StateRecord,
-    )
-    if (!permit) return undefined
-    const fence = drainExecutionFence({ attempt: permit.attempt, address: permit.provenance.address })
-    if (!fence) return undefined
-    const execution = {} as ReclaimDrainExecutionAuthority
-    drainExecutions.set(execution, Object.freeze({ kind: 'reclaim', permit, continuation, fence }))
-    drainContinuationEvidence.set(continuation, Object.freeze({
-        kind: 'progress', authority: permit.progressAuthority,
-    }))
-    return execution
-}
-
-function settleOwnedDrainExecution(input: unknown, executionKind: 'runtime-stop' | 'reclaim', outcomeKind: 'success' | 'failure'): DrainOutcomeAuthority | undefined {
-    const owned = exactDataProperties(input, ['authority', 'fact'])
-    if (!owned) return undefined
-    const executionAuthority = owned.authority
-    if (!executionAuthority || typeof executionAuthority !== 'object') return undefined
-    const execution = drainExecutions.get(executionAuthority)
-    if (!execution || execution.kind !== executionKind) return undefined
-    const sealed = outcomeKind === 'success'
-        ? execution.permit.sealSuccess(owned.fact as never)
-        : execution.permit.sealFailure(owned.fact as DrainAttemptFailure)
-    if (!sealed) return undefined
-    drainExecutions.delete(executionAuthority)
-    const outcome = {} as DrainOutcomeAuthority
-    if (outcomeKind === 'success') {
-        drainOutcomes.set(outcome, Object.freeze({
-            kind: 'success', authority: sealed as DrainAttemptSuccessAuthority, provenance: execution.permit.provenance,
-        }))
-    } else {
-        const failure = sealed as DrainAttemptFailureAuthority
-        drainOutcomes.set(outcome, Object.freeze({ kind: 'failure', authority: failure, provenance: execution.permit.provenance }))
-        if (execution.kind === 'reclaim') {
-            drainContinuationEvidence.set(execution.continuation, Object.freeze({ kind: 'failure', authority: failure }))
-        }
-    }
-    return outcome
-}
-
-export const settleRuntimeDrainSuccess = (input: { readonly authority: RuntimeDrainExecutionAuthority; readonly fact: RuntimeStopped }) => settleOwnedDrainExecution(input, 'runtime-stop', 'success')
-export const settleRuntimeDrainFailure = (input: { readonly authority: RuntimeDrainExecutionAuthority; readonly fact: DrainAttemptFailure }) => settleOwnedDrainExecution(input, 'runtime-stop', 'failure')
-export const settleReclaimDrainSuccess = (input: { readonly authority: ReclaimDrainExecutionAuthority; readonly fact: ReclaimCompleted }) => settleOwnedDrainExecution(input, 'reclaim', 'success')
-export const settleReclaimDrainFailure = (input: { readonly authority: ReclaimDrainExecutionAuthority; readonly fact: DrainAttemptFailure }) => settleOwnedDrainExecution(input, 'reclaim', 'failure')
-
-function reduceOwnedDrainOutcome(authority: DrainOutcomeAuthority, record: StateRecord): CoordinationRecord | undefined {
-    const outcome = drainOutcomes.get(authority)
-    if (!outcome) return undefined
-    const reduced = outcome.kind === 'failure'
-        ? reduceDrainAttemptFailure({ record, authority: outcome.authority })
-        : (() => {
-            const issued = drainAttemptSuccessAuthorities.get(outcome.authority)
-            const final = issued !== undefined && issued.reservation.attempt !== null
-                && issued.reservation.attempt.actionIndex === issued.reservation.actions.length - 1
-            return final
-                ? reduceDrain({ record, authority: outcome.authority })
-                : reduceDrainAttemptSuccess({ record, authority: outcome.authority })
-        })()
-    const value = reduced === undefined ? undefined : snapshotJson(reduced)
-    if (reduced === undefined || value === undefined) return undefined
-    return reduced
-}
-
-export function reduceDrainOutcome(input: { readonly authority: DrainOutcomeAuthority; readonly record: StateRecord }): CoordinationRecord | undefined {
-    const reduction = exactDataProperties(input, ['authority', 'record'])
-    const authority = reduction?.authority
-    return authority && typeof authority === 'object'
-        ? reduceOwnedDrainOutcome(authority as DrainOutcomeAuthority, reduction.record as StateRecord)
-        : undefined
-}
-
-function prepareDrainOutcomeRecord(input: {
-    readonly authority: DrainOutcomeAuthority
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly current: StateRecord | null
-}): StateRecord | StateTransactionAbort<ClaimMutationRefusal> {
-    const preparation = exactDataProperties(input, ['authority', 'namespace', 'stackId', 'current'])
-    const authority = preparation?.authority
-    const outcome = authority && typeof authority === 'object' ? drainOutcomes.get(authority) : undefined
-    const namespace = preparation ? snapshotStateNamespace(preparation.namespace as StateNamespace) : undefined
-    const stackId = preparation?.stackId
-    const current = preparation?.current === null
-        ? null
-        : snapshotDataOnly(preparation?.current) as StateRecord | undefined
-    const observedTime = Date.now()
-    let updatedAt: string | undefined
-    try {
-        const candidate = Number.isFinite(observedTime) ? new Date(observedTime).toISOString() : undefined
-        updatedAt = candidate && isCanonicalTimestamp(candidate) ? candidate : undefined
-    } catch {
-        // A clock that cannot yield a canonical timestamp leaves updatedAt undefined, which the caller refuses.
-        updatedAt = undefined
-    }
-    const notBefore = outcome?.kind === 'failure'
-        ? drainAttemptFailureAuthorities.get(outcome.authority)?.fact.failedAt
-        : outcome?.kind === 'success'
-            ? drainAttemptSuccessAuthorities.get(outcome.authority)?.fact.observedAt
-            : undefined
-    if (!outcome || !namespace || typeof stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(stackId)
-        || !current || typeof current !== 'object' || !updatedAt || !notBefore
-        || Date.parse(updatedAt) < Date.parse(notBefore)
-        || namespace.paths.coordination(stackId as StackId).cockpitId !== outcome.provenance.cockpitId
-        || stackId !== outcome.provenance.subjectId
-        || !sameCoordinationAddress(namespace.paths.coordination(stackId as StackId), outcome.provenance.address)
-        || current.kind !== outcome.provenance.kind
-        || current.cockpitId !== outcome.provenance.cockpitId
-        || current.subjectId !== outcome.provenance.subjectId) {
-        return abortStateTransaction(refuse(
-            ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            'drain outcome publication requires an exact current record and a non-regressive observation time',
-            typeof stackId === 'string' ? stackId : 'drain outcome publication',
-        ))
-    }
-    const value = reduceOwnedDrainOutcome(authority as DrainOutcomeAuthority, current)
-    if (!value) {
-        return abortStateTransaction(refuse(
-            ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            'drain outcome publication no longer matches the current coordination record',
-            stackId,
-        ))
-    }
-    const snapshot = snapshotJson(value)
-    if (snapshot === undefined) {
-        return abortStateTransaction(refuse(
-            ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            'drain outcome publication no longer matches the current coordination record',
-            stackId,
-        ))
-    }
-    return coordinationStateRecord(namespace, stackId as StackId, current, updatedAt, value)
+function outcomeObservedAt(outcome: DrainOutcome): string {
+    return outcome.kind === 'failure' ? outcome.failedAt : outcome.fact.observedAt
 }
 
 /**
- * Publishes a settled drain outcome to the coordination record and, once it is durable, retires the
- * outcome so it cannot be published again. An indeterminate publication keeps the outcome for repair.
+ * Publishes a settled drain outcome to the coordination record. The publication admits it only while
+ * the record holds the outcome's exact active attempt, so an outcome publishes at most once.
  */
 export async function commitDrainOutcome(input: {
-    readonly authority: DrainOutcomeAuthority
+    readonly outcome: DrainOutcome
     readonly namespace: StateNamespace
     readonly stackId: StackId
     readonly beforePublish?: StateTransactionOptions['beforePublish']
 }): Promise<StateResult<StateRecord> | ClaimMutationRefusal> {
-    const { authority, stackId, beforePublish } = input
-    const outcome = drainOutcomes.get(authority)
+    const { outcome, stackId, beforePublish } = input
     const namespace = snapshotStateNamespace(input.namespace)
-    const sealed = outcome?.kind === 'failure'
-        ? drainAttemptFailureAuthorities.get(outcome.authority)
-        : outcome?.kind === 'success'
-            ? drainAttemptSuccessAuthorities.get(outcome.authority)
-            : undefined
-    const sealedReservation = sealed?.reservation
-    const ownerId = sealedReservation?.requesterId === sealedReservation?.holderId
-        ? sealedReservation?.requesterId
-        : undefined
-    const address = namespace && typeof stackId === 'string' && /^stack:[a-f0-9]{64}$/.test(stackId)
-        ? namespace.paths.coordination(stackId as StackId)
-        : undefined
-    const notBefore = outcome?.kind === 'failure'
-        ? drainAttemptFailureAuthorities.get(outcome.authority)?.fact.failedAt
-        : outcome?.kind === 'success'
-            ? drainAttemptSuccessAuthorities.get(outcome.authority)?.fact.observedAt
-            : undefined
-    if (!outcome || !namespace || !address || !notBefore || !isCanonicalTimestamp(notBefore)
-        || typeof ownerId !== 'string' || !holderIdentity.test(ownerId)
-        || beforePublish !== undefined && typeof beforePublish !== 'function'
-        || !sameCoordinationAddress(address, outcome.provenance.address)) {
+    const reservation = outcome.reservation
+    const notBefore = outcomeObservedAt(outcome)
+    // Ownership and the observation time come from the reservation and this clock, never the caller.
+    if (!namespace || stackId !== reservation.stackId || reservation.requesterId !== reservation.holderId
+        || !holderIdentity.test(reservation.requesterId) || !isCanonicalTimestamp(notBefore)) {
         return refuse(
             ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
             'drain outcome publication requires exact coordination authority and ownership',
-            typeof stackId === 'string' ? stackId : 'drain outcome publication',
+            stackId,
         )
     }
+    const address = namespace.paths.coordination(stackId)
     let preparedAt: string | undefined
     const publication = await transactState(
         namespace,
         address,
         {
-            ownerId: ownerId as HolderId,
+            ownerId: reservation.requesterId,
             contentionTimeoutMs: 2_000,
-            ...(beforePublish ? { beforePublish: beforePublish as StateTransactionOptions['beforePublish'] } : {}),
+            ...(beforePublish ? { beforePublish } : {}),
             beforeCommit: () => {
                 const now = Date.now()
-                return !Number.isFinite(now) || !preparedAt || now < Date.parse(notBefore) || now < Date.parse(preparedAt)
+                return !preparedAt || now < Date.parse(notBefore) || now < Date.parse(preparedAt)
                     ? abortStateTransaction(refuse(
                         ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
                         'drain outcome publication clock changed before commit',
-                        stackId as StackId,
+                        stackId,
                     ))
                     : undefined
             },
         },
         (current) => {
-            const proposal = prepareDrainOutcomeRecord({
-                authority: authority as DrainOutcomeAuthority, namespace, stackId: stackId as StackId, current,
-            })
-            if (!('aborted' in proposal)) preparedAt = proposal.updatedAt
-            return proposal
+            const updatedAt = new Date().toISOString()
+            if (!current || Date.parse(updatedAt) < Date.parse(notBefore)
+                || current.kind !== 'coordination' || current.cockpitId !== address.cockpitId || current.subjectId !== stackId) {
+                return abortStateTransaction(refuse(
+                    ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+                    'drain outcome publication requires an exact current record and a non-regressive observation time',
+                    stackId,
+                ))
+            }
+            const value = reduceDrainOutcome({ outcome, record: current })
+            if (!value) {
+                return abortStateTransaction(refuse(
+                    ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+                    'drain outcome publication no longer matches the current coordination record',
+                    stackId,
+                ))
+            }
+            preparedAt = updatedAt
+            return coordinationStateRecord(namespace, stackId, current, updatedAt, value)
         },
     )
-    if ('aborted' in publication) return publication.value as ClaimMutationRefusal
-    if (publication.kind === 'complete') {
-        drainOutcomes.delete(authority as DrainOutcomeAuthority)
-        finalizeDrainAttemptOutcome(outcome.authority)
-    }
-    return publication
+    return 'aborted' in publication ? publication.value as ClaimMutationRefusal : publication
 }
 
-export function matchReclaimDrainContinuation(input: { readonly continuation: object; readonly record: StateRecord }): 'progressed' | 'failed' | 'unmatched' {
-    const matching = exactDataProperties(input, ['continuation', 'record'])
-    if (!matching) return 'unmatched'
-    const continuation = matching.continuation
-    if (!continuation || typeof continuation !== 'object') return 'unmatched'
-    const evidence = drainContinuationEvidence.get(continuation)
-    if (!evidence) return 'unmatched'
-    const record = matching.record as StateRecord
-    if (evidence.kind === 'progress') {
-        return matchesDrainProgress(evidence.authority, record) ? 'progressed' : 'unmatched'
-    }
-    return matchesDrainFailure(evidence.authority, record) ? 'failed' : 'unmatched'
+/**
+ * Whether `record` is the one the step's outcome published: its removal progressed, or (for a step
+ * that never started) its failure was recorded. Anything else is unmatched.
+ */
+export function matchReclaimDrainContinuation(input: { readonly continuation: ReclaimDrainStep | null; readonly record: StateRecord }): 'progressed' | 'failed' | 'unmatched' {
+    const step = input.continuation
+    if (step === null) return 'unmatched'
+    if (step.failedAt === null) return matchesDrainProgress(step, input.record) ? 'progressed' : 'unmatched'
+    return matchesDrainFailure(step, step.failedAt, input.record) ? 'failed' : 'unmatched'
 }
 
-function matchesDrainProgress(authority: DrainProgressAuthority, record: StateRecord): boolean {
-    if (!authority || typeof authority !== 'object') return false
-    const issued = drainProgressAuthorities.get(authority)
+function followsPlanningRecord(step: ReclaimDrainStep, record: StateRecord, notBefore: string): CoordinationRecord | undefined {
+    const attempt = step.reservation.attempt
     const snapshot = snapshotDataOnly(record) as StateRecord | undefined
-    if (!issued || !snapshot || snapshot.format !== issued.planningRecord.format
-        || snapshot.kind !== issued.planningRecord.kind || snapshot.cockpitId !== issued.planningRecord.cockpitId
-        || snapshot.subjectId !== issued.planningRecord.subjectId
-        || snapshot.revision !== issued.attempt.committedRevision + 1
+    if (!attempt || !snapshot || snapshot.format !== step.planningRecord.format
+        || snapshot.kind !== step.planningRecord.kind || snapshot.cockpitId !== step.planningRecord.cockpitId
+        || snapshot.subjectId !== step.planningRecord.subjectId
+        || snapshot.revision !== attempt.committedRevision + 1
         || !isCanonicalTimestamp(snapshot.updatedAt)
-        || Date.parse(snapshot.updatedAt) < Date.parse(issued.attempt.committedAt)
-        || Date.parse(snapshot.updatedAt) > Date.now()) return false
-    const predecessor = decodeCoordinationRecord(issued.planningRecord, issued.reservation.stackId)
-    const value = decodeCoordinationRecord(snapshot, issued.reservation.stackId)
+        || Date.parse(snapshot.updatedAt) < Date.parse(notBefore)
+        || Date.parse(snapshot.updatedAt) > Date.now()) return undefined
+    const predecessor = decodeCoordinationRecord(step.planningRecord, step.reservation.stackId)
+    const value = decodeCoordinationRecord(snapshot, step.reservation.stackId)
     if (!predecessor || !value?.drain
         || !sameSnapshot(value.holders, predecessor.holders)
         || !sameSnapshot(value.lease, predecessor.lease)
-        || value.lastReleasedHolder !== predecessor.lastReleasedHolder) return false
-    const expectedDrain = {
-        ...issued.reservation,
-        completedActionCount: issued.attempt.actionIndex + 1,
-        progressRevision: issued.attempt.committedRevision + 1,
+        || value.lastReleasedHolder !== predecessor.lastReleasedHolder) return undefined
+    return value
+}
+
+function matchesDrainProgress(step: ReclaimDrainStep, record: StateRecord): boolean {
+    const attempt = step.reservation.attempt!
+    const value = followsPlanningRecord(step, record, attempt.committedAt)
+    return value !== undefined && sameSnapshot(value.drain, {
+        ...step.reservation,
+        completedActionCount: attempt.actionIndex + 1,
+        progressRevision: attempt.committedRevision + 1,
         attempt: null,
-    }
-    return sameSnapshot(value.drain, expectedDrain)
+    })
 }
 
-function matchesDrainFailure(authority: DrainAttemptFailureAuthority, record: StateRecord): boolean {
-    if (!authority || typeof authority !== 'object') return false
-    const issued = drainFailureProgressAuthorities.get(authority)
-    const snapshot = snapshotDataOnly(record) as StateRecord | undefined
-    if (!issued || !snapshot || snapshot.format !== issued.planningRecord.format
-        || snapshot.kind !== issued.planningRecord.kind || snapshot.cockpitId !== issued.planningRecord.cockpitId
-        || snapshot.subjectId !== issued.planningRecord.subjectId
-        || snapshot.revision !== issued.attempt.committedRevision + 1
-        || !isCanonicalTimestamp(snapshot.updatedAt)
-        || Date.parse(snapshot.updatedAt) < Date.parse(issued.failure.failedAt)
-        || Date.parse(snapshot.updatedAt) > Date.now()) return false
-    const predecessor = decodeCoordinationRecord(issued.planningRecord, issued.reservation.stackId)
-    const value = decodeCoordinationRecord(snapshot, issued.reservation.stackId)
-    if (!predecessor || !value?.drain
-        || !sameSnapshot(value.holders, predecessor.holders)
-        || !sameSnapshot(value.lease, predecessor.lease)
-        || value.lastReleasedHolder !== predecessor.lastReleasedHolder) return false
-    const expectedDrain = {
-        ...issued.reservation,
-        attempt: {
-            ...issued.attempt,
-            status: 'failed' as const,
-            failedRevision: issued.attempt.committedRevision + 1,
-            failedAt: issued.failure.failedAt,
-        },
-    }
-    return sameSnapshot(value.drain, expectedDrain)
+function matchesDrainFailure(step: ReclaimDrainStep, failedAt: string, record: StateRecord): boolean {
+    const attempt = step.reservation.attempt!
+    const value = followsPlanningRecord(step, record, failedAt)
+    return value !== undefined && sameSnapshot(value.drain, {
+        ...step.reservation,
+        attempt: { ...attempt, status: 'failed' as const, failedRevision: attempt.committedRevision + 1, failedAt },
+    })
 }
 
-export interface DrainAttemptFailure extends DrainAttempt {
-    readonly failedAt: string
-}
-
-function reduceDrainAttemptFailure(input: {
-    readonly record: StateRecord
-    readonly authority: DrainAttemptFailureAuthority
-}): CoordinationRecord | undefined {
-    const owned = snapshotExactReducerInput(input, ['record', 'authority'])
-    if (!owned) return undefined
-    const record = owned.record as StateRecord
-    const authority = Object.getOwnPropertyDescriptor(input, 'authority')?.value as object
-    const issued = authority && typeof authority === 'object' ? drainAttemptFailureAuthorities.get(authority) : undefined
-    const reservation = issued?.reservation
-    const failure = issued?.fact
-    if (!reservation?.attempt || reservation.attempt.status !== 'active'
-        || !record || typeof record !== 'object' || record.revision !== reservation.attempt.committedRevision
-        || !failure
-        || !hasExactKeys(failure, ['attemptId', 'reservationId', 'purpose', 'targetIds', 'generation', 'actionIndex', 'currentTarget', 'currentStage', 'committedRevision', 'committedAt', 'validThrough', 'status', 'failedRevision', 'failedAt'])
-        || failure.status !== 'active' || failure.failedRevision !== null || !isCanonicalTimestamp(failure.failedAt)
-        || Date.parse(failure.failedAt) < Date.parse(reservation.attempt.committedAt)
-        || Date.parse(failure.failedAt) > Date.now()) return undefined
+function reduceDrainAttemptFailure(record: StateRecord, reservation: DrainReservation, failedAt: string): CoordinationRecord | undefined {
+    if (!reservation.attempt || reservation.attempt.status !== 'active'
+        || record.revision !== reservation.attempt.committedRevision
+        || !isCanonicalTimestamp(failedAt)
+        || Date.parse(failedAt) < Date.parse(reservation.attempt.committedAt)
+        || Date.parse(failedAt) > Date.now()) return undefined
     const value = decodeCoordinationRecord(record, reservation.stackId)
     const attempt = value?.drain?.attempt
     if (!value?.drain || !attempt || attempt.status !== 'active'
         || value.drain.reservationId !== reservation.reservationId
-        || !sameDrainAttempt(attempt, reservation.attempt)
-        || !sameDrainAttemptBinding(failure, attempt)) return undefined
+        || !sameDrainAttempt(attempt, reservation.attempt)) return undefined
     return {
         ...value,
         drain: {
             ...value.drain,
             attempt: { ...attempt, status: 'failed' as const,
-                failedRevision: attempt.committedRevision + 1, failedAt: failure.failedAt },
+                failedRevision: attempt.committedRevision + 1, failedAt },
         },
     }
 }
 
 export type SleepDrainRecoveryInspection =
     | { readonly kind: 'none' }
-    | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly authority: DrainRepairAuthority }
+    | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly record: StateRecord }
     | {
           readonly kind: 'recoverable'
           readonly generation: string
           readonly runtimeStopValidForMs: number
-          readonly authority: SleepDrainRecoveryAuthority
+          /** The record inspected; recovery acts only while the stored record is still exactly this one. */
+          readonly record: StateRecord
       }
     | ClaimMutationRefusal
 
 export type DestructiveDrainRecoveryInspection =
     | { readonly kind: 'none' }
-    | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly authority: DrainRepairAuthority }
+    | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly record: StateRecord }
     | { readonly kind: 'recoverable'; readonly request: DrainReservationRequest }
     | ClaimMutationRefusal
 
-declare const drainRepairAuthorityBrand: unique symbol
-export interface DrainRepairAuthority { readonly [drainRepairAuthorityBrand]: true }
-const drainRepairs = new WeakMap<object, {
-    readonly namespace: StateNamespace
-    readonly address: StateAddress
-    readonly recordFingerprint: string
-    readonly reservation: DrainReservation
-    readonly fence: ExecutionFence
-}>()
-
-function issueDrainRepair(namespace: StateNamespace, address: StateAddress, record: StateRecord, reservation: DrainReservation):
+function drainRepair(address: StateAddress, record: StateRecord, reservation: DrainReservation):
     Extract<SleepDrainRecoveryInspection, { kind: 'repairable' }> | undefined {
     if (!reservation.attempt || reservation.attempt.status !== 'active') return undefined
-    const fence = drainExecutionFence({ attempt: reservation.attempt, address })
-    const recordFingerprint = exactRecordFingerprint(record)
-    if (!fence || !recordFingerprint) return undefined
-    const authority = {} as DrainRepairAuthority
-    drainRepairs.set(authority, { namespace, address: Object.freeze({ ...address }), recordFingerprint,
-        reservation: snapshotDrainReservation(reservation), fence })
-    return { kind: 'repairable', fence, authority }
+    const fence = drainExecutionFence(reservation.attempt, address)
+    return fence && exactRecordFingerprint(record) ? { kind: 'repairable', fence, record } : undefined
 }
 
+/**
+ * Records an interrupted attempt as failed once the executor's termination is proven for its fence.
+ * The record must still be exactly the one inspected, so a concurrent change is never overwritten.
+ */
 export async function settleInterruptedDrainRepair(input: {
-    readonly authority: DrainRepairAuthority
+    readonly namespace: StateNamespace
+    readonly record: StateRecord
     readonly evidence: FencedExecutionTermination
 }): Promise<StateResult<StateRecord> | ClaimMutationRefusal> {
-    const owned = exactDataProperties(input, ['authority', 'evidence'])
-    const authority = owned?.authority as DrainRepairAuthority | undefined
-    const repair = authority && typeof authority === 'object' ? drainRepairs.get(authority) : undefined
-    if (!repair || !consumeFencedExecutionTermination(owned!.evidence as FencedExecutionTermination, repair.fence)) {
+    const namespace = snapshotStateNamespace(input.namespace)
+    const stackId = input.record.subjectId as StackId
+    const fingerprint = exactRecordFingerprint(input.record)
+    const reservation = validIdentity(stackId, stackIdentity) ? decodeCoordinationRecord(input.record, stackId)?.drain : undefined
+    const fence = namespace && reservation?.attempt?.status === 'active'
+        ? drainExecutionFence(reservation.attempt, namespace.paths.coordination(stackId)) : undefined
+    if (!namespace || !fingerprint || !reservation?.attempt || !fence || !consumeFencedExecutionTermination(input.evidence, fence)) {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'interrupted drain termination evidence is unavailable', 'drain repair')
     }
-    drainRepairs.delete(authority!)
     const failedAt = new Date().toISOString()
-    return transactClaim(repair.namespace, repair.reservation.stackId, repair.reservation.holderId, current => {
-        const value = decodeCoordinationRecord(current, repair.reservation.stackId)
+    return transactClaim(namespace, stackId, reservation.holderId, current => {
+        const value = decodeCoordinationRecord(current, stackId)
         const attempt = value?.drain?.attempt
-        if (!current || exactRecordFingerprint(current) !== repair.recordFingerprint || !value?.drain || !attempt
-            || attempt.status !== 'active' || !sameDrainAttempt(attempt, repair.reservation.attempt!)) {
+        if (!current || exactRecordFingerprint(current) !== fingerprint || !value?.drain || !attempt
+            || attempt.status !== 'active' || !sameDrainAttempt(attempt, reservation.attempt!)) {
             return abortStateTransaction(refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-                'interrupted drain changed before executor termination could be recorded', repair.reservation.stackId))
+                'interrupted drain changed before executor termination could be recorded', stackId))
         }
-        return coordinationStateRecord(repair.namespace, repair.reservation.stackId, current, failedAt, {
+        return coordinationStateRecord(namespace, stackId, current, failedAt, {
             ...value,
             drain: { ...value.drain, attempt: { ...attempt, status: 'failed' as const,
                 failedRevision: current.revision + 1, failedAt } },
@@ -2187,7 +1675,7 @@ export async function inspectDestructiveDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'persisted drain requires explicit repair', stackId)
     }
     if (reservation.attempt?.status === 'active') {
-        return issueDrainRepair(namespace, address, record, reservation)
+        return drainRepair(address, record, reservation)
             ?? refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
                 'the interrupted destructive executor has no repairable execution fence', stackId)
     }
@@ -2207,6 +1695,7 @@ export async function inspectDestructiveDrainRecovery(input: {
     return request ? { kind: 'recoverable', request }
         : refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'persisted destructive drain is malformed', address.path)
 }
+
 
 export async function inspectSleepDrainRecovery(input: {
     readonly namespace: StateNamespace
@@ -2252,101 +1741,71 @@ export async function inspectSleepDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'persisted drain requires explicit repair', stackId)
     }
     if (reservation.attempt?.status === 'active') {
-        return issueDrainRepair(namespace, address, record, reservation)
+        return drainRepair(address, record, reservation)
             ?? refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
                 'the interrupted sleep executor has no repairable execution fence', stackId)
     }
     const runtimeStop = reservation.actions[0]
-    const fingerprint = exactRecordFingerprint(record)
-    if (!runtimeStop || runtimeStop.stage !== 'runtime-stop' || runtimeStop.targetId !== stackId || fingerprint === undefined) {
+    if (!runtimeStop || runtimeStop.stage !== 'runtime-stop' || runtimeStop.targetId !== stackId || exactRecordFingerprint(record) === undefined) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'persisted sleep drain is malformed', address.path)
     }
-    if (drainAuthorityEpochs.get(reservation.reservationId) === drainAuthorityEpoch(reservation)) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain already has authority for its current state', stackId)
-    }
-    const authority = {} as SleepDrainRecoveryAuthority
-    sleepDrainRecoveries.set(authority, {
-        namespace,
-        address: Object.freeze({ ...address }),
-        recordFingerprint: fingerprint,
-        reservation: snapshotDrainReservation(reservation),
-    })
     return {
         kind: 'recoverable',
         generation: reservation.generation,
         runtimeStopValidForMs: runtimeStop.validForMs,
-        authority,
+        record,
     }
 }
 
+/**
+ * Resumes a persisted sleep drain from fresh planning evidence. The stored record must still be the
+ * one inspected and the fresh request must name its revision and the same work.
+ */
 export async function recoverSleepDrainReservation(input: {
     readonly namespace: StateNamespace
-    readonly authority: SleepDrainRecoveryAuthority
+    readonly record: StateRecord
     readonly request: DrainReservationRequest
 }): Promise<DrainReservationResult> {
     let namespace: StateNamespace | undefined
-    let authority: SleepDrainRecoveryAuthority | undefined
     let request: DrainReservationRequest | undefined
-    let issued: SleepDrainRecoveryRecord | undefined
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid')
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if ('value' in descriptors.authority!) {
-            authority = descriptors.authority!.value as SleepDrainRecoveryAuthority
-            issued = authority && typeof authority === 'object' ? sleepDrainRecoveries.get(authority) : undefined
-            if (issued) sleepDrainRecoveries.delete(authority)
-        }
-        if (!hasExactKeys(input, ['namespace', 'authority', 'request'])
-            || !('value' in descriptors.namespace!) || !('value' in descriptors.authority!)
-            || !('value' in descriptors.request!)) throw new RefusalError('invalid')
-        namespace = authenticateStateNamespace(descriptors.namespace!.value)
-        request = snapshotDrainRequest(descriptors.request!.value)
+        namespace = authenticateStateNamespace(input.namespace)
+        request = snapshotDrainRequest(input.request)
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
     }
-    if (!namespace || !authority || !request || !issued) {
+    const fingerprint = exactRecordFingerprint(input.record)
+    const inspected = fingerprint === undefined ? undefined : decodeCoordinationRecord(input.record, input.record.subjectId as StackId)?.drain
+    if (!namespace || !request || !inspected) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'sleep drain recovery input is malformed', 'sleep drain recovery')
     }
-    if (namespace !== issued.namespace) {
-        return refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, 'sleep drain recovery namespace changed', issued.address.path)
-    }
-    const stored = await readState(issued.address)
+    const address = namespace.paths.coordination(inspected.stackId)
+    const stored = await readState(address)
     if (stored.kind !== 'complete') {
         return stored.kind === 'missing'
             ? refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, 'persisted sleep drain disappeared', stored.path)
             : stateRefusal(stored)
     }
-    if (exactRecordFingerprint(stored.value) !== issued.recordFingerprint) {
-        return refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, 'persisted sleep drain changed before recovery', issued.address.path)
-    }
-    const value = decodeCoordinationRecord(stored.value, issued.reservation.stackId)
-    if (!value?.drain || !sameSnapshot(value.drain, issued.reservation)) {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'persisted sleep drain is malformed', issued.address.path)
+    if (exactRecordFingerprint(stored.value) !== fingerprint) {
+        return refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, 'persisted sleep drain changed before recovery', address.path)
     }
     if (request.expectedCoordinationRevision !== stored.value.revision) {
         return refuse(
             ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
             'fresh sleep drain planning evidence does not name the current coordination revision',
-            issued.address.path,
+            address.path,
         )
     }
     const persistedRequest = {
         ...request,
-        expectedCoordinationRevision: issued.reservation.expectedCoordinationRevision,
+        expectedCoordinationRevision: inspected.expectedCoordinationRevision,
     }
-    if (request.purpose !== 'sleep' || !sameDrainRequest(issued.reservation, persistedRequest)) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted sleep drain does not match fresh planning evidence', issued.reservation.stackId)
+    if (request.purpose !== 'sleep' || inspected.purpose !== 'sleep' || inspected.attempt?.status === 'active'
+        || !sameDrainRequest(inspected, persistedRequest)) {
+        return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted sleep drain does not match fresh planning evidence', inspected.stackId)
     }
-    const epoch = drainAuthorityEpoch(issued.reservation)
-    if (drainAuthorityEpochs.get(issued.reservation.reservationId) === epoch) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain already has authority for its current state', issued.reservation.stackId)
-    }
-    return {
-        kind: 'complete',
-        reservation: issued.reservation,
-        authority: issueDrainAuthority(issued.reservation, stored.value, issued.address),
-    }
+    return { kind: 'complete', reservation: inspected }
 }
 
 export async function recoverDrainReservation(input: {
@@ -2380,15 +1839,10 @@ export async function recoverDrainReservation(input: {
     if (value.drain.attempt?.status === 'active') {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'the active destructive attempt requires explicit repair', request.stackId)
     }
-    const expectedRevision = value.drain.attempt?.failedRevision ?? value.drain.progressRevision
-    const epoch = drainAuthorityEpoch(value.drain)
-    if (stored.value.revision !== expectedRevision || drainAuthorityEpochs.get(value.drain.reservationId) === epoch) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain already has authority for its current state', request.stackId)
+    if (stored.value.revision !== (value.drain.attempt?.failedRevision ?? value.drain.progressRevision)) {
+        return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain does not match its coordination revision', request.stackId)
     }
-    return {
-        kind: 'complete', reservation: value.drain,
-        authority: issueDrainAuthority(value.drain, stored.value, namespace.paths.coordination(request.stackId)),
-    }
+    return { kind: 'complete', reservation: value.drain }
 }
 
 function failedReclaimRecoveryTarget(action: Extract<DrainAction, { readonly stage: 'reclaim' }>): FailedReclaimRecoveryTarget {
@@ -2398,66 +1852,43 @@ function failedReclaimRecoveryTarget(action: Extract<DrainAction, { readonly sta
     }
 }
 
+/**
+ * The committed targets of a recovered reservation whose reclaim try failed, read from the record
+ * that published that failure. Undefined for any other reservation or record.
+ */
 export function inspectFailedReclaimRecovery(input: {
-    readonly authority: DrainReservationAuthority
+    readonly reservation: DrainReservation
     readonly record: StateRecord
-}): FailedReclaimRecoveryAuthority | undefined {
-    try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = Reflect.ownKeys(descriptors)
-        if (keys.length !== 2 || keys.some((key) => typeof key !== 'string')
-            || !keys.includes('authority') || !keys.includes('record')) return undefined
-        if (!('value' in descriptors.authority!) || !('value' in descriptors.record!)) return undefined
-        const authority = descriptors.authority!.value as DrainReservationAuthority
-        const record = snapshotDataOnly(descriptors.record!.value) as StateRecord | undefined
-        if (!authority || typeof authority !== 'object' || !drainAuthorities.has(authority) || !record) return undefined
-        const boundRecord = drainAuthorityRecords.get(authority)
-        if (boundRecord === undefined || exactRecordFingerprint(record) !== boundRecord) return undefined
-        const reservation = authority.reservation
-        const value = decodeCoordinationRecord(record, reservation.stackId)
-        if (!value?.drain || !sameSnapshot(value.drain, reservation)) return undefined
-        const attempt = reservation.attempt
-        const action = attempt && reservation.actions[attempt.actionIndex]
-        if (!attempt || attempt.status !== 'failed' || attempt.currentStage !== 'reclaim'
-            || reservation.purpose !== 'down' && reservation.purpose !== 'reset'
-            || record.revision !== attempt.failedRevision || !isCanonicalTimestamp(record.updatedAt)
-            || Date.parse(record.updatedAt) < Date.parse(attempt.failedAt!) || Date.parse(record.updatedAt) > Date.now()
-            || Date.parse(reservation.reservedAt) > Date.parse(attempt.committedAt)
-            || reservation.progressRevision !== attempt.committedRevision - 1
-            || attempt.failedRevision !== attempt.committedRevision + 1
-            || reservation.completedActionCount !== attempt.actionIndex
-            || !action || action.stage !== 'reclaim' || action.targetId !== attempt.currentTarget
-            || !action.targetCommitment
-            || !validDrainActions(reservation.purpose, reservation.stackId, reservation.targetIds, reservation.actions)) return undefined
-        const reclaimActions = reservation.actions.filter((candidate): candidate is Extract<DrainAction, { readonly stage: 'reclaim' }> => candidate.stage === 'reclaim')
-        const currentIndex = attempt.actionIndex - 1
-        if (currentIndex < 0 || reclaimActions[currentIndex] !== action) return undefined
-        const recovery = {
-            purpose: reservation.purpose,
-            stackId: reservation.stackId,
-            configSha256: reservation.configSha256,
-            planDigest: reservation.planDigest,
-            freshAfter: record.updatedAt,
-            completed: reclaimActions.slice(0, currentIndex).map(failedReclaimRecoveryTarget),
-            current: failedReclaimRecoveryTarget(action),
-            pending: reclaimActions.slice(currentIndex + 1).map(failedReclaimRecoveryTarget),
-        } satisfies FailedReclaimRecovery
-        const candidateAuthority = {} as FailedReclaimRecoveryAuthority
-        failedReclaimRecoveries.set(candidateAuthority, recovery)
-        return candidateAuthority
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
+}): FailedReclaimRecovery | undefined {
+    const { reservation, record } = input
+    const value = exactRecordFingerprint(record) === undefined ? undefined : decodeCoordinationRecord(record, reservation.stackId)
+    if (!value?.drain || !sameSnapshot(value.drain, reservation)) return undefined
+    const attempt = reservation.attempt
+    const action = attempt && reservation.actions[attempt.actionIndex]
+    if (!attempt || attempt.status !== 'failed' || attempt.currentStage !== 'reclaim'
+        || reservation.purpose !== 'down' && reservation.purpose !== 'reset'
+        || record.revision !== attempt.failedRevision || !isCanonicalTimestamp(record.updatedAt)
+        || Date.parse(record.updatedAt) < Date.parse(attempt.failedAt!) || Date.parse(record.updatedAt) > Date.now()
+        || Date.parse(reservation.reservedAt) > Date.parse(attempt.committedAt)
+        || reservation.progressRevision !== attempt.committedRevision - 1
+        || attempt.failedRevision !== attempt.committedRevision + 1
+        || reservation.completedActionCount !== attempt.actionIndex
+        || !action || action.stage !== 'reclaim' || action.targetId !== attempt.currentTarget
+        || !action.targetCommitment
+        || !validDrainActions(reservation.purpose, reservation.stackId, reservation.targetIds, reservation.actions)) return undefined
+    const reclaimActions = reservation.actions.filter((candidate): candidate is Extract<DrainAction, { readonly stage: 'reclaim' }> => candidate.stage === 'reclaim')
+    const currentIndex = attempt.actionIndex - 1
+    if (currentIndex < 0 || reclaimActions[currentIndex] !== action) return undefined
+    return {
+        purpose: reservation.purpose,
+        stackId: reservation.stackId,
+        configSha256: reservation.configSha256,
+        planDigest: reservation.planDigest,
+        freshAfter: record.updatedAt,
+        completed: reclaimActions.slice(0, currentIndex).map(failedReclaimRecoveryTarget),
+        current: failedReclaimRecoveryTarget(action),
+        pending: reclaimActions.slice(currentIndex + 1).map(failedReclaimRecoveryTarget),
     }
-}
-
-export function consumeFailedReclaimRecovery(authority: FailedReclaimRecoveryAuthority): FailedReclaimRecovery | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const recovery = failedReclaimRecoveries.get(authority)
-    if (!recovery) return undefined
-    failedReclaimRecoveries.delete(authority)
-    return recovery
 }
 
 function sameDrainFact(reservation: DrainReservation, fact: RuntimeStopped): boolean {
@@ -2485,10 +1916,10 @@ const runtimeStoppedKeys = [
     'validThrough', 'actionIndex', 'currentTarget', 'currentStage', 'observedAt',
 ] as const
 
-function isExactDrainSuccess(reservation: DrainReservation, fact: unknown): fact is RuntimeStopped | ReclaimCompleted {
-    if (!fact || typeof fact !== 'object' || !reservation.attempt) return false
+function isExactDrainSuccess(reservation: DrainReservation, fact: RuntimeStopped | ReclaimCompleted): boolean {
+    if (!reservation.attempt) return false
     if (reservation.attempt.currentStage === 'runtime-stop') {
-        return hasExactKeys(fact, runtimeStoppedKeys) && sameDrainFact(reservation, fact as RuntimeStopped)
+        return hasExactKeys(fact, runtimeStoppedKeys) && sameDrainFact(reservation, fact)
     }
     if (!hasExactKeys(fact, [...runtimeStoppedKeys, 'remainingTargetIds'])) return false
     const reclaim = fact as ReclaimCompleted
@@ -2502,21 +1933,11 @@ function snapshotDrainTargetsAllowEmpty(value: unknown): readonly string[] | und
     return snapshotDrainTargets(value)
 }
 
-function reduceDrainAttemptSuccess(input: {
-    readonly record: StateRecord
-    readonly authority: DrainAttemptSuccessAuthority
-}): CoordinationRecord | undefined {
-    const owned = snapshotExactReducerInput(input, ['record', 'authority'])
-    if (!owned) return undefined
-    const record = owned.record as StateRecord
-    const authority = Object.getOwnPropertyDescriptor(input, 'authority')?.value as object
-    const issued = authority && typeof authority === 'object' ? drainAttemptSuccessAuthorities.get(authority) : undefined
-    const reservation = issued?.reservation
-    const success = issued?.fact
-    if (!reservation?.attempt || reservation.attempt.status !== 'active'
+function reduceDrainAttemptSuccess(record: StateRecord, reservation: DrainReservation, success: RuntimeStopped | ReclaimCompleted): CoordinationRecord | undefined {
+    if (!reservation.attempt || reservation.attempt.status !== 'active'
         || reservation.attempt.actionIndex >= reservation.actions.length - 1
-        || !record || record.revision !== reservation.attempt.committedRevision
-        || !success || !isExactDrainSuccess(reservation, success)) return undefined
+        || record.revision !== reservation.attempt.committedRevision
+        || !isExactDrainSuccess(reservation, success)) return undefined
     const value = decodeCoordinationRecord(record, reservation.stackId)
     if (!value?.drain?.attempt || !sameDrainRequest(value.drain, reservation)
         || value.drain.reservationId !== reservation.reservationId
@@ -2532,47 +1953,12 @@ function reduceDrainAttemptSuccess(input: {
     }
 }
 
-function snapshotExactReducerInput(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
-    try {
-        if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, keys)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (keys.some((key) => !('value' in descriptors[key]!))) return undefined
-        const result: Record<string, unknown> = {}
-        for (const key of keys) {
-            const snapshot = snapshotDataOnly(descriptors[key]!.value)
-            if (snapshot === undefined) return undefined
-            result[key] = snapshot
-        }
-        return result
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-// CAS callbacks may retry; burn outcome authority only after publication is definite.
-function finalizeDrainAttemptOutcome(authority: DrainAttemptSuccessAuthority | DrainAttemptFailureAuthority): boolean {
-    if (!authority || typeof authority !== 'object') return false
-    if (drainAttemptSuccessAuthorities.delete(authority)) return true
-    return drainAttemptFailureAuthorities.delete(authority)
-}
-
-function reduceDrain(input: {
-    readonly record: StateRecord
-    readonly authority: DrainAttemptSuccessAuthority
-}): CoordinationRecord | undefined {
-    const owned = snapshotExactReducerInput(input, ['record', 'authority'])
-    if (!owned) return undefined
-    const record = owned.record as unknown as StateRecord
-    const authority = Object.getOwnPropertyDescriptor(input, 'authority')?.value as object
-    const issued = authority && typeof authority === 'object' ? drainAttemptSuccessAuthorities.get(authority) : undefined
-    const reservation = issued?.reservation
-    const success = issued?.fact
-    if (!reservation?.attempt || !record || typeof record !== 'object'
+function reduceDrain(record: StateRecord, reservation: DrainReservation, success: RuntimeStopped | ReclaimCompleted): CoordinationRecord | undefined {
+    if (!reservation.attempt
         || reservation.attempt.actionIndex !== reservation.actions.length - 1
         || reservation.completedActionCount !== reservation.actions.length - 1
         || !Number.isSafeInteger(record.revision) || record.revision !== reservation.attempt.committedRevision
-        || !success || !isExactDrainSuccess(reservation, success)) return undefined
+        || !isExactDrainSuccess(reservation, success)) return undefined
     const value = decodeCoordinationRecord(record, reservation.stackId)
     if (!value?.drain || !sameDrainRequest(value.drain, reservation)
         || value.drain.coordinationRevision !== reservation.coordinationRevision

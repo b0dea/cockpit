@@ -6,9 +6,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
 import {
-    coordinationStateRecord, inspectDrainAttemptAuthority, openRuntimeDrainExecution,
+    coordinationStateRecord,
     commitDrainOutcome,
-    recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt, settleRuntimeDrainSuccess,
+    recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt,
 } from './claims.js'
 import {
     discoverReclaim,
@@ -378,13 +378,9 @@ describe('teardown replay', () => {
             }
             const reserved = await reserveDrain({ namespace: namespace.value, request: drainRequest })
             if (reserved.kind !== 'complete') throw new Error('drain reservation unavailable')
-            const runtimeAttempt = await reserveDrainAttempt({ namespace: namespace.value, authority: reserved.authority })
+            const runtimeAttempt = await reserveDrainAttempt({ namespace: namespace.value, reservation: reserved.reservation })
             if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
-            const candidate = inspectDrainAttemptAuthority(runtimeAttempt.authority)
-            const execution = candidate && openRuntimeDrainExecution({
-                authority: runtimeAttempt.authority, candidate,
-            })
-            const success = execution && settleRuntimeDrainSuccess({ authority: execution, fact: {
+            const success = { kind: 'success' as const, reservation: runtimeAttempt.reservation, fact: {
                 purpose: drainRequest.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
                 operationBasis: runtimeAttempt.reservation.operationBasis,
                 coordinationRevision: runtimeAttempt.reservation.coordinationRevision,
@@ -394,21 +390,20 @@ describe('teardown replay', () => {
                 validThrough: runtimeAttempt.attempt.validThrough, actionIndex: runtimeAttempt.attempt.actionIndex,
                 currentTarget: runtimeAttempt.attempt.currentTarget, currentStage: runtimeAttempt.attempt.currentStage,
                 observedAt: runtimeAttempt.attempt.committedAt,
-            } })
-            if (!success) throw new Error('runtime completion unavailable')
+            } }
             const active = await readState(namespace.value.paths.coordination(stackId))
             if (active.kind !== 'complete') throw new Error('active drain unavailable')
-            const progress = reduceDrainOutcome({ record: active.value, authority: success })
+            const progress = reduceDrainOutcome({ record: active.value, outcome: success })
             if (!progress) throw new Error('runtime progress unavailable')
             const committed = await commitDrainOutcome({
-                authority: success, namespace: namespace.value, stackId,
+                outcome: success, namespace: namespace.value, stackId,
             })
             if (committed.kind !== 'complete') throw new Error('runtime progress commit unavailable')
             const recovered = await recoverDrainReservation({ namespace: namespace.value, request: drainRequest })
             if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-            const reclaimAttempt = await reserveDrainAttempt({ namespace: namespace.value, authority: recovered.authority })
+            const reclaimAttempt = await reserveDrainAttempt({ namespace: namespace.value, reservation: recovered.reservation })
             if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
-            return { action: action.action, attempt: reclaimAttempt.authority, cachePath, root: authenticated.root }
+            return { action: action.action, attempt: reclaimAttempt, cachePath, root: authenticated.root }
         }
 
         const valid = await setup()
@@ -416,7 +411,7 @@ describe('teardown replay', () => {
         try {
             expect(await executeReclaimAction({ action: valid.action, attempt: valid.attempt, execute: executeProbe })).toMatchObject({ kind: 'executed' })
             await expect(lstat(valid.cachePath)).rejects.toMatchObject({ code: 'ENOENT' })
-            // One attempt admits one removal.
+            // A second removal under the same attempt no longer finds the original inode and runs nothing.
             expect(await executeReclaimAction({ action: valid.action, attempt: valid.attempt, execute: executeProbe })).toEqual({ kind: 'unavailable' })
 
             const original = await lstat(replaced.cachePath)
