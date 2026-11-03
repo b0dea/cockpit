@@ -256,23 +256,6 @@ describe('install policy resolution', () => {
             })))).toMatchObject({ kind: 'unavailable' })
     })
 
-    it('fails closed on hostile top-level and sibling accessors', () => {
-        let reads = 0
-        const hostile = Object.defineProperty(input([], { ...baseSibling, toolchain: 'none' }), 'policies', {
-            enumerable: true,
-            get: () => { reads += 1; return [] },
-        })
-        expect(resolveInstallPolicies(hostile as never)).toMatchObject({ kind: 'unavailable' })
-        expect(reads).toBe(0)
-
-        const hostileSibling = Object.defineProperty({ ...baseSibling, toolchain: 'none' }, 'slug', {
-            enumerable: true,
-            get: () => { reads += 1; return 'service' },
-        })
-        expect(resolveInstallPolicies(input([], hostileSibling as never))).toMatchObject({ kind: 'unavailable' })
-        expect(reads).toBe(0)
-    })
-
     it('rejects duplicate runtime catalog selectors independently of schema loading', () => {
         const duplicateSelector = [policy(), policy({ build: ['npm', 'run', 'build'] })]
         expect(resolveInstallPolicies(input(duplicateSelector, { ...baseSibling, toolchain: 'none' })))

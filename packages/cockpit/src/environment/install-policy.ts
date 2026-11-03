@@ -1,5 +1,4 @@
 import { isAbsolute, normalize } from 'node:path'
-import { isProxy } from 'node:util/types'
 
 import { GuardCommandArgv, InstallPolicy, Sibling, type InstallPolicy as InstallPolicyValue, type Sibling as SiblingValue } from '../schema.js'
 import { ENVIRONMENT_CODES, snapshotJson, type CheckoutId, type SourceProvenance } from './contract.js'
@@ -69,90 +68,47 @@ function unavailable(siblingIndex: number, siblingSlug: string, reason: string):
     }
 }
 
-function ownRecord(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> | undefined {
-    if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)) return undefined
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const allowed = new Set([...required, ...optional])
-        const keys = Reflect.ownKeys(value)
-        if (keys.some((key) => typeof key !== 'string' || !allowed.has(key))
-            || required.some((key) => !(key in descriptors))
-            || Object.values(descriptors).some((descriptor) => !descriptor.enumerable || !('value' in descriptor))) return undefined
-        return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
-        return undefined
-    }
-}
-
-function ownArray(value: unknown): readonly unknown[] | undefined {
-    if (!Array.isArray(value) || isProxy(value)) return undefined
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>
-        const length = descriptors.length?.value
-        if (!Number.isSafeInteger(length) || length < 0 || length > 4_096
-            || Reflect.ownKeys(value).length !== length + 1) return undefined
-        const result: unknown[] = []
-        for (let index = 0; index < length; index += 1) {
-            const descriptor = descriptors[String(index)]
-            if (!descriptor?.enumerable || !('value' in descriptor)) return undefined
-            result.push(descriptor.value)
-        }
-        return result
-    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
-        return undefined
-    }
-}
-
-function sourceProvenance(value: unknown): SourceProvenance | undefined {
-    const snapshot = snapshotJson(value)
-    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
-    const source = snapshot as Record<string, unknown>
+function sourceProvenance(source: SourceProvenance): SourceProvenance | undefined {
     return typeof source.path === 'string' && !source.path.includes('\0')
         && isAbsolute(source.path) && normalize(source.path) === source.path
-        && Number.isSafeInteger(source.byteLength) && (source.byteLength as number) >= 0
+        && Number.isSafeInteger(source.byteLength) && source.byteLength >= 0
         && typeof source.sha256 === 'string' && /^[a-f0-9]{64}$/.test(source.sha256)
         ? { path: source.path, byteLength: source.byteLength as number, sha256: source.sha256 }
         : undefined
 }
 
-export function resolveInstallPolicies(input: InstallPolicyResolutionInput): InstallPolicyResolution {
-    const root = ownRecord(
-        input,
-        ['source', 'policies', 'siblingIndex', 'sibling'],
-        ['checkoutRoot', 'checkoutId', 'projection'],
-    )
-    const source = sourceProvenance(root?.source)
-    const policyInputs = ownArray(root?.policies)
-    const siblingIndex = root?.siblingIndex
-    const sibling = Sibling.safeParse(snapshotJson(root?.sibling))
-    if (!source || !policyInputs || !Number.isSafeInteger(siblingIndex) || (siblingIndex as number) < 0 || !sibling.success) {
+export function resolveInstallPolicies(root: InstallPolicyResolutionInput): InstallPolicyResolution {
+    const source = sourceProvenance(root.source)
+    const siblingIndex = root.siblingIndex
+    const sibling = Sibling.safeParse(root.sibling)
+    if (!source || !Array.isArray(root.policies) || !Number.isSafeInteger(siblingIndex) || siblingIndex < 0 || !sibling.success) {
         return unavailable(
-            Number.isSafeInteger(siblingIndex) ? siblingIndex as number : 0,
+            Number.isSafeInteger(siblingIndex) ? siblingIndex : 0,
             sibling.success ? sibling.data.slug : 'configuration',
             'install policy resolution input is invalid',
         )
     }
-    const policies = policyInputs.map((policy) => InstallPolicy.safeParse(snapshotJson(policy)))
+    const policies = root.policies.map((policy) => InstallPolicy.safeParse(policy))
     if (policies.some((policy) => !policy.success)) {
-        return unavailable(siblingIndex as number, sibling.data.slug, 'install policy catalog is invalid')
+        return unavailable(siblingIndex, sibling.data.slug, 'install policy catalog is invalid')
     }
     const catalog = policies.map((policy) => (policy as Extract<typeof policy, { success: true }>).data)
     const selectors = catalog.map(({ toolchain, lockfile }) => `${toolchain}\0${lockfile}`)
     if (new Set(selectors).size !== selectors.length) {
-        return unavailable(siblingIndex as number, sibling.data.slug, 'install policy catalog is invalid')
+        return unavailable(siblingIndex, sibling.data.slug, 'install policy catalog is invalid')
     }
     if (sibling.data.toolchain === 'none') return { kind: 'complete', bindings: [] }
-    if (typeof root?.checkoutRoot !== 'string' || typeof root.checkoutId !== 'string') {
-        return unavailable(siblingIndex as number, sibling.data.slug, 'authenticated lockfile evidence is unavailable')
+    if (typeof root.checkoutRoot !== 'string' || typeof root.checkoutId !== 'string') {
+        return unavailable(siblingIndex, sibling.data.slug, 'authenticated lockfile evidence is unavailable')
     }
     const observation = consumeInstallPolicyProjection(root.projection as InstallPolicyProjection)
-    if (!observation) return unavailable(siblingIndex as number, sibling.data.slug, 'authenticated lockfile evidence is unavailable')
+    if (!observation) return unavailable(siblingIndex, sibling.data.slug, 'authenticated lockfile evidence is unavailable')
     if (!matchesInstallPolicyCatalog(observation, catalog)
         || observation.siblingIndex !== siblingIndex || observation.siblingSlug !== sibling.data.slug
         || observation.checkoutRoot !== root.checkoutRoot || observation.checkoutId !== root.checkoutId
         || observation.source.path !== source.path || observation.source.byteLength !== source.byteLength
         || observation.source.sha256 !== source.sha256) {
-        return unavailable(siblingIndex as number, sibling.data.slug, 'authenticated lockfile evidence does not match the sibling')
+        return unavailable(siblingIndex, sibling.data.slug, 'authenticated lockfile evidence does not match the sibling')
     }
     const present = new Set(observation.lockfiles
         .filter((lockfile) => lockfile.state === 'available')
@@ -166,7 +122,7 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
         return {
             kind: 'refusal',
             code: matches.length === 0 ? ENVIRONMENT_CODES.INSTALL_POLICY_MISSING : ENVIRONMENT_CODES.INSTALL_POLICY_AMBIGUOUS,
-            siblingIndex: siblingIndex as number,
+            siblingIndex,
             siblingSlug: sibling.data.slug,
             candidates,
         }
@@ -175,12 +131,12 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
     for (const kind of ['build', 'test'] as const) {
         const argv = selected.policy[kind]
         if (argv && renderGuardProjectCommand(argv).kind !== 'complete') {
-            return unavailable(siblingIndex as number, sibling.data.slug, `${kind} project command rendering exceeds the byte bound`)
+            return unavailable(siblingIndex, sibling.data.slug, `${kind} project command rendering exceeds the byte bound`)
         }
     }
     const binding = {
         source,
-        siblingIndex: siblingIndex as number,
+        siblingIndex,
         diagnostics: { catalogIndex: selected.catalogIndex },
         siblingSlug: sibling.data.slug,
         checkoutRoot: observation.checkoutRoot,

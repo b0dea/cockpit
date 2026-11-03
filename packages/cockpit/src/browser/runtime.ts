@@ -1,7 +1,6 @@
 import { lstatSync, realpathSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { dirname, resolve } from 'node:path'
-import { isProxy } from 'node:util/types'
 import { BROWSER_DRIVER_VERSION, browserDriversCompatible, GeneratedHostPath, parseBrowserNetworkExposure } from '../schema.js'
 import { authenticateObservationPostureContext, type PreflightContext } from '../environment/posture-observation.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from '../environment/ports.js'
@@ -47,21 +46,6 @@ interface BrowserRuntimeBinding {
 
 const issuedRuntimes = new WeakMap<object, BrowserRuntimeBinding>()
 
-function assertPlainData(value: unknown, depth = 0, budget = { entries: 0 }): void {
-    if (depth > 8 || ++budget.entries > 2048) throw new RefusalError('browser input data exceeds its bounds')
-    if (value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value)) return
-    if (typeof value !== 'object' || isProxy(value)
-        || ![Object.prototype, Array.prototype, null].includes(Object.getPrototypeOf(value))) throw new RefusalError('browser input must contain plain data')
-    const keys = Reflect.ownKeys(value)
-    if (keys.length > 2048 || keys.some((key) => typeof key !== 'string')) throw new RefusalError('browser input data exceeds its bounds')
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    if (Array.isArray(value) && keys.length !== value.length + 1) throw new RefusalError('browser input data needs dense arrays')
-    for (const descriptor of Object.values(descriptors)) {
-        if (!('value' in descriptor)) throw new RefusalError('browser input must contain plain data without accessors')
-        assertPlainData(descriptor.value, depth + 1, budget)
-    }
-}
-
 function storageIdentity(path: string): string {
     let metadata
     try {
@@ -81,7 +65,6 @@ function browserClientLimit(maxClients: number, policy: BrowserRuntimeInput['aut
 }
 
 export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNamespace?: StateNamespace) {
-    assertPlainData(input)
     // The existing owner authenticates source, freshness and both directions of the catalog.
     const checked = authenticateObservationPostureContext(input.postures)
     const checks = checked.checks

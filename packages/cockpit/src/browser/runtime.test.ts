@@ -238,14 +238,6 @@ describe('shared browser runtime', () => {
         }
     })
 
-    it('refuses accessor-backed inputs before executing the accessor', async () => {
-        const { input } = await fixture()
-        let calls = 0
-        const images = { get mcp() { calls += 1; return input.images.mcp } }
-        await expect(attempt({ ...input, images })).rejects.toThrow('data')
-        expect(calls).toBe(0)
-    })
-
     it('revalidates auth file identity before use without reading its contents', async () => {
         const { input, root } = await fixture()
         const runtime = await attempt(input)

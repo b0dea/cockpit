@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { isProxy } from 'node:util/types'
 import { z } from 'zod'
 import { errorCause, filesystemObjectIdentity, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId, RefusalError } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -383,41 +382,14 @@ function currentCoordination(record: StateRecord | null, stackId: StackId, owner
 export async function withBrowserProjectOperationAdmission<T>(client: BrowserProjectClient, runtime: BrowserRuntimeProjection,
     input: BrowserProjectOperationAdmissionInput,
     operation: (authorization: BrowserProjectOperationAuthorization) => Promise<T>): Promise<BrowserProjectOperationAdmissionResult<T>> {
-    if (issuedClients.get(client) !== runtime || typeof operation !== 'function' || !input || typeof input !== 'object' || isProxy(input)) {
+    if (issuedClients.get(client) !== runtime || typeof operation !== 'function') {
         return { kind: 'refusal', reason: 'Browser operation admission requires an issued project client and closed authority' }
     }
-    const descriptors = Object.getOwnPropertyDescriptors(input)
-    const allowed = new Set(['origin', 'role', 'state'])
-    if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !allowed.has(key))
-        || !descriptors.origin || !('value' in descriptors.origin)
-        || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) {
-        return { kind: 'refusal', reason: 'Browser operation admission requires an issued project client and closed authority' }
-    }
-    const captured = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value])) as {
-        origin: unknown
-        role?: unknown
-        state?: unknown
-    }
-    let state: BrowserProjectOperationAdmissionInput['state']
-    if (captured.state !== undefined) {
-        if (!captured.state || typeof captured.state !== 'object' || isProxy(captured.state)) {
-            return { kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' }
-        }
-        const stateDescriptors = Object.getOwnPropertyDescriptors(captured.state)
-        if (Object.keys(stateDescriptors).sort().join(',') !== 'namespace,ownerId,stackId'
-            || Object.values(stateDescriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) {
-            return { kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' }
-        }
-        const values = Object.fromEntries(Object.entries(stateDescriptors).map(([key, descriptor]) => [key, descriptor.value]))
-        if (!values.namespace || typeof values.namespace !== 'object' || isProxy(values.namespace)
-            || typeof values.stackId !== 'string' || typeof values.ownerId !== 'string') {
-            return { kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' }
-        }
-        state = { namespace: values.namespace as StateNamespace, stackId: values.stackId as StackId, ownerId: values.ownerId as HolderId }
-    }
+    const captured = input
+    const state = input.state
     let origin: URL
     // The URL error quotes the caller's origin; the refusal below names the expected shape instead.
-    try { origin = new URL(captured.origin as string) } catch {
+    try { origin = new URL(captured.origin) } catch {
         return { kind: 'refusal', reason: 'Browser operation admission requires an issued HTTP application origin' }
     }
     if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/'

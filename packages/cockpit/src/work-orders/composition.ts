@@ -4,6 +4,7 @@ import {
 } from 'node:fs'
 import { basename, delimiter, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
+import { readBoundedFile } from '../bounded-read.js'
 import { tmpdir } from 'node:os'
 import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
 import { readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
@@ -244,64 +245,30 @@ function closeReadAnchors(anchors: readonly ReadDirectoryAnchor[]): void {
     if (failure !== undefined) throw failure
 }
 
-function readObservedDescriptor(descriptor: number, expectedSize: number, maximum: number, changedMessage: string): Buffer {
-    if (expectedSize > maximum) throw new RefusalError(changedMessage)
-    const bytes = Buffer.alloc(expectedSize + 1)
-    let total = 0
-    while (total < bytes.byteLength) {
-        const count = readSync(descriptor, bytes, total, bytes.byteLength - total, null)
-        if (count === 0) break
-        total += count
-    }
-    if (total !== expectedSize) throw new RefusalError(changedMessage)
-    return bytes.subarray(0, total)
+// The leaf is read by the shared no-follow helper; a second link would let an agent-writable name
+// alias a file outside the admitted root, so only a single-link file is accepted.
+function readAnchoredLeaf(anchored: Readonly<{ target: string; anchors: readonly ReadDirectoryAnchor[] }>, maximum: number, what: string): Buffer {
+    try {
+        const read = readBoundedFile(anchored.target, maximum)
+        if (read.kind !== 'complete') throw new RefusalError(`${what} exceeds its ${maximum}-byte read bound`)
+        if (lstatSync(anchored.target).nlink !== 1) throw new RefusalError(`${what} has more than one link`)
+        if (!readAnchorsCurrent(anchored.anchors)) throw new RefusalError(`${what} ancestor changed during read`)
+        return read.bytes
+    } finally { closeReadAnchors(anchored.anchors) }
 }
 
 function readBounded(root: string, relativePath: string, maximum = MAX_DOCUMENT_BYTES): Buffer {
     const anchored = anchoredReadPath(root, relativePath)
     if (!anchored) throw new RefusalError('contained file is missing')
-    try {
-        const stat = lstatSync(anchored.target)
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maximum) throw new RefusalError('contained file is not a bounded single-link regular file')
-        const descriptor = openSync(anchored.target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-        try {
-            const opened = fstatSync(descriptor)
-            if (opened.dev !== stat.dev || opened.ino !== stat.ino || opened.nlink !== 1 || opened.size !== stat.size
-                || opened.mtimeMs !== stat.mtimeMs || opened.ctimeMs !== stat.ctimeMs) throw new RefusalError('contained file changed before read')
-            const bytes = readObservedDescriptor(descriptor, opened.size, maximum, 'contained file changed during read')
-            const after = fstatSync(descriptor); const linked = lstatSync(anchored.target)
-            if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1 || after.size !== opened.size
-                || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs
-                || linked.dev !== opened.dev || linked.ino !== opened.ino || linked.nlink !== 1 || linked.size !== opened.size
-                || linked.mtimeMs !== opened.mtimeMs || linked.ctimeMs !== opened.ctimeMs
-                || !readAnchorsCurrent(anchored.anchors)) throw new RefusalError('contained file or ancestor changed during read')
-            return bytes
-        } finally { closeSync(descriptor) }
-    } finally { closeReadAnchors(anchored.anchors) }
+    return readAnchoredLeaf(anchored, maximum, 'contained file')
 }
 
 function readExactFile(path: string, maximum: number): Buffer {
     const anchored = anchoredAbsoluteReadPath(path)
     try {
-        const stat = lstatSync(path)
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maximum || realpathSync(path) !== path) {
-            throw new RefusalError('file is not a bounded canonical single-link regular file')
-        }
-        const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-        try {
-            const opened = fstatSync(descriptor)
-            if (opened.dev !== stat.dev || opened.ino !== stat.ino || opened.nlink !== 1 || opened.size !== stat.size
-                || opened.mtimeMs !== stat.mtimeMs || opened.ctimeMs !== stat.ctimeMs) throw new RefusalError('file changed before read')
-            const bytes = readObservedDescriptor(descriptor, opened.size, maximum, 'file changed during read')
-            const after = fstatSync(descriptor); const linked = lstatSync(path)
-            if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1 || after.size !== opened.size
-                || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs
-                || linked.dev !== opened.dev || linked.ino !== opened.ino || linked.nlink !== 1 || linked.size !== opened.size
-                || linked.mtimeMs !== opened.mtimeMs || linked.ctimeMs !== opened.ctimeMs
-                || !readAnchorsCurrent(anchored.anchors)) throw new RefusalError('file or ancestor changed during read')
-            return bytes
-        } finally { closeSync(descriptor) }
-    } finally { closeReadAnchors(anchored.anchors) }
+        if (realpathSync(path) !== path) throw new RefusalError('file path is not canonical')
+    } catch (error) { closeReadAnchors(anchored.anchors); throw error }
+    return readAnchoredLeaf(anchored, maximum, 'file')
 }
 
 

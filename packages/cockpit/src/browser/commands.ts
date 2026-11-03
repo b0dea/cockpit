@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync } from 'node:fs'
+import { lstatSync, mkdirSync, realpathSync } from 'node:fs'
+import { readBoundedFile } from '../bounded-read.js'
 import { isIP } from 'node:net'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
-import { isProxy } from 'node:util/types'
 import { errorCause, snapshotJson, type HolderId, type StackId, RefusalError, hasErrorCode } from '../environment/contract.js'
 import { type StateNamespace } from '../environment/state.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -119,44 +119,6 @@ function networkExposureCovers(exposure: string, origin: URL): boolean {
     })
 }
 
-/** Copies a plain object's own enumerable data properties, refusing proxies, accessors and keys outside the named set, without running caller code. */
-function ownDataRecord(value: unknown, required: readonly string[], optional: readonly string[]): Record<string, unknown> | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)
-            || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const keys = Reflect.ownKeys(descriptors)
-        const allowed = new Set([...required, ...optional])
-        if (keys.some(key => typeof key !== 'string' || !allowed.has(key))
-            || required.some(key => !(key in descriptors))
-            || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) return undefined
-        return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    } catch {
-        // A hostile value can throw from any inspection above; the caller refuses with its fixed
-        // closed-input message and never echoes what the value said.
-        return undefined
-    }
-}
-
-function captureBrowserCommandInput(value: unknown): Readonly<BrowserCommandInput> | undefined {
-    const captured = ownDataRecord(value, ['runtime', 'client', 'policy', 'kind'], ['role', 'state'])
-    if (!captured || captured.runtime === null || typeof captured.runtime !== 'object' || isProxy(captured.runtime)
-        || captured.client === null || typeof captured.client !== 'object' || isProxy(captured.client)
-        || captured.policy === null || typeof captured.policy !== 'object' || isProxy(captured.policy)
-        || typeof captured.kind !== 'string'
-        || (captured.role !== undefined && typeof captured.role !== 'string')) return undefined
-    let state: BrowserCommandInput['state']
-    if (captured.state !== undefined) {
-        const row = ownDataRecord(captured.state, ['namespace', 'stackId', 'ownerId'], [])
-        if (!row || row.namespace === null || typeof row.namespace !== 'object' || isProxy(row.namespace)
-            || typeof row.stackId !== 'string' || typeof row.ownerId !== 'string') return undefined
-        state = { namespace: row.namespace as StateNamespace, stackId: row.stackId as StackId, ownerId: row.ownerId as HolderId }
-    }
-    return { runtime: captured.runtime as BrowserRuntimeProjection, client: captured.client as BrowserProjectClient,
-        policy: captured.policy as BrowserRoutePolicy, kind: captured.kind as BrowserCommandKind,
-        ...(captured.role !== undefined ? { role: captured.role as string } : {}), ...(state ? { state } : {}) }
-}
-
 export function issueBrowserRoutePolicy(runtime: BrowserRuntimeProjection, input: Readonly<{ origin: string; routes: readonly BrowserRouteDeclaration[] }>): BrowserRoutePolicy {
     assertBrowserStorageStateCurrent(runtime)
     const captured = snapshotJson(input) as { origin?: unknown; routes?: unknown } | undefined
@@ -239,26 +201,16 @@ function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: strin
 
 // Returns undefined when the file fails a check; a filesystem error is thrown for the caller to name.
 function postcheckScreenshot(root: string, cockpitRoot: string, path: string, expected: { sha256: string; byteLength: number }): string | undefined {
-    let descriptor: number | undefined
-    try {
-        const rootStat = lstatSync(root)
-        if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || realpathSync(root) !== root) return undefined
-        const rel = relative(root, path)
-        if (!rel || rel.startsWith('..') || isAbsolute(rel) || resolve(root, rel) !== path || realpathSync(path) !== path) return undefined
-        const before = lstatSync(path)
-        if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || (before.mode & 0o7777) !== 0o600 || before.size !== expected.byteLength) return undefined
-        descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-        const opened = fstatSync(descriptor)
-        if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) return undefined
-        const bytes = Buffer.alloc(expected.byteLength)
-        let offset = 0
-        while (offset < bytes.length) { const read = readSync(descriptor, bytes, offset, bytes.length - offset, null); if (read === 0) break; offset += read }
-        if (offset !== bytes.length || createHash('sha256').update(bytes).digest('hex') !== expected.sha256) return undefined
-        const after = fstatSync(descriptor)
-        if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) return undefined
-        const receiptPath = relative(cockpitRoot, path)
-        return receiptPath && !receiptPath.startsWith('..') && !isAbsolute(receiptPath) ? receiptPath : undefined
-    } finally { if (descriptor !== undefined) closeSync(descriptor) }
+    const rootStat = lstatSync(root)
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || realpathSync(root) !== root) return undefined
+    const rel = relative(root, path)
+    if (!rel || rel.startsWith('..') || isAbsolute(rel) || resolve(root, rel) !== path || realpathSync(path) !== path) return undefined
+    const read = readBoundedFile(path, expected.byteLength)
+    const linked = lstatSync(path)
+    if (read.kind !== 'complete' || read.bytes.byteLength !== expected.byteLength || linked.nlink !== 1 || (linked.mode & 0o7777) !== 0o600
+        || createHash('sha256').update(read.bytes).digest('hex') !== expected.sha256) return undefined
+    const receiptPath = relative(cockpitRoot, path)
+    return receiptPath && !receiptPath.startsWith('..') && !isAbsolute(receiptPath) ? receiptPath : undefined
 }
 
 export function isIssuedBrowserCommandReceipt(value: unknown): value is BrowserCommandReceipt {
@@ -341,8 +293,7 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
 
 export async function executeBrowserCommand(value: BrowserCommandInput): Promise<BrowserCommandResult> {
     const deadline = Date.now() + COMMAND_TIMEOUT_MS
-    const input = captureBrowserCommandInput(value)
-    if (!input) return refusal('Browser command requires a closed own-data input')
+    const input = value
     if (!kinds.has(input.kind)) return refusal('Browser command kind is unsupported')
     let client: BrowserProjectClient | undefined
     let clientCause = ''

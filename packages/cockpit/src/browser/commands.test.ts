@@ -281,39 +281,6 @@ describe('browser driving commands', () => {
             .resolves.toMatchObject({ kind: 'complete' })
     })
 
-    it('refuses accessor, proxy and non-closed command inputs before reading them or dispatching', async () => {
-        const { runtime, client, policy, logPath } = await fixture()
-        const forged = { origin: 'http://outside.invalid', surfaces: [{ name: 'outside', url: 'http://outside.invalid/' }] }
-        const attempts: unknown[] = []
-        let reads = 0
-        const accessor = (key: 'runtime' | 'policy' | 'kind' | 'state', value: unknown) => {
-            const input = { runtime, client, policy, kind: 'drive' } as Record<string, unknown>
-            Object.defineProperty(input, key, { enumerable: true, get: () => { reads += 1; return value } })
-            return input
-        }
-        const swapping = { runtime, client, kind: 'drive' } as Record<string, unknown>
-        Object.defineProperty(swapping, 'policy', { enumerable: true, get: () => { reads += 1; return reads === 1 ? policy : forged } })
-        attempts.push(swapping, accessor('runtime', runtime), accessor('kind', 'drive'), accessor('state', {
-            namespace: {}, stackId: 'forged', ownerId: 'forged',
-        }), { runtime, client, policy, kind: 'drive', extra: true })
-        const nestedState = { namespace: {}, stackId: 'forged' } as Record<string, unknown>
-        Object.defineProperty(nestedState, 'ownerId', { enumerable: true, get: () => { reads += 1; return 'forged' } })
-        attempts.push({ runtime, client, policy, kind: 'drive', state: nestedState })
-        attempts.push({ runtime, client, policy, kind: 'drive', state: new Proxy({ namespace: {}, stackId: 'forged', ownerId: 'forged' }, {
-            get(target, key, receiver) { reads += 1; return Reflect.get(target, key, receiver) },
-        }) })
-        attempts.push(new Proxy({ runtime, client, policy, kind: 'drive' }, { get(target, key, receiver) {
-            reads += 1
-            return Reflect.get(target, key, receiver)
-        } }))
-        attempts.push({ runtime: new Proxy(runtime, {}), client, policy, kind: 'drive' })
-        for (const input of attempts) {
-            await expect(executeBrowserCommand(input as never)).resolves.toMatchObject({ kind: 'refusal' })
-        }
-        expect(reads).toBe(0)
-        expect(await calls(logPath)).toEqual([])
-    })
-
     it('requires a successful HTTP navigation response before issuing driving evidence', async () => {
         for (const mode of ['http-error', 'null-response'] as const) {
             const failed = await fixture({ mode })
