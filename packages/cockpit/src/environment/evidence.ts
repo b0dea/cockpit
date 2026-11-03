@@ -3,6 +3,7 @@ import { isAbsolute, normalize } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
+    RefusalError,
     ENVIRONMENT_CODES,
     EXECUTION_FAILURE_CODES,
     snapshotJson,
@@ -132,7 +133,7 @@ export function createEnvironmentSnapshot(input: EnvironmentSnapshotInput): Envi
         || typeof owned.stackId !== 'string' || typeof owned.configSha256 !== 'string' || typeof owned.createdAt !== 'string'
         || !STACK_ID.test(owned.stackId) || !SHA256.test(owned.configSha256) || !validInstant(owned.createdAt)
         || owned.creationSource !== 'resolved-config') {
-        throw new TypeError('environment snapshot provenance is invalid')
+        throw new RefusalError('environment snapshot provenance is invalid')
     }
     const intendedState = sanitize(owned.intendedState)
     const snapshotSha256 = digest(stableValue({

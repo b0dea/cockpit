@@ -7,7 +7,7 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, posix, relative } from 'node:path'
 
-import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import type { ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
@@ -29,7 +29,7 @@ function installedPackage(from: string, name: string): string {
         } catch (error) {
             if (!missing(error)) throw error
         }
-        if (dirname(directory) === directory) throw new Error(`guard dependency ${name} is not installed above ${from}`)
+        if (dirname(directory) === directory) throw new RefusalError(`guard dependency ${name} is not installed above ${from}`)
     }
 }
 
@@ -55,7 +55,7 @@ export function guardInstalledDirectories(packageRoot: string, consumerRoot: str
         found.add(spelled).add(real)
         if (visited.has(real)) continue
         visited.add(real)
-        if (found.size > GUARD_LOCATION_LIMITS.packageDirectories) throw new Error(`guard package closure exceeds ${GUARD_LOCATION_LIMITS.packageDirectories} directories`)
+        if (found.size > GUARD_LOCATION_LIMITS.packageDirectories) throw new RefusalError(`guard package closure exceeds ${GUARD_LOCATION_LIMITS.packageDirectories} directories`)
         const manifest = JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }
         for (const name of Object.keys(manifest.dependencies ?? {})) pending.push(installedPackage(real, name))
     }
@@ -126,7 +126,7 @@ export function guardSearchDirectories(searchPath: string, allowedRoots: readonl
         try { candidates.push(realpathSync(spelled)) } catch (error) { if (!missing(error)) throw error }
         for (const candidate of candidates) if (inside(candidate)) found.add(candidate)
     }
-    if (found.size > GUARD_LOCATION_LIMITS.searchPathDirectories) throw new Error(`guard search path exceeds ${GUARD_LOCATION_LIMITS.searchPathDirectories} directories inside the allowed roots`)
+    if (found.size > GUARD_LOCATION_LIMITS.searchPathDirectories) throw new RefusalError(`guard search path exceeds ${GUARD_LOCATION_LIMITS.searchPathDirectories} directories inside the allowed roots`)
     return [...found].sort()
 }
 
@@ -187,7 +187,7 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
         consumedFiles: [{ path: git.canonicalPath, sha256: git.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: git.executionMode }],
         filesystemChecks: [], compensation: [],
     })
-    if (!step) throw new TypeError(`guard Git query could not be planned in ${repository}`)
+    if (!step) throw new RefusalError(`guard Git query could not be planned in ${repository}`)
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
     if (outcome?.kind === 'complete') return outcome.stdout.toString('utf8').split('\0').filter(Boolean)
     return outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED

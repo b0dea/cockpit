@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     isCanonicalTimestamp,
     snapshotEnvironmentObservation,
@@ -74,7 +76,7 @@ export function projectInstallProgress(value: unknown): Readonly<{
 
 function issueObservation(value: EnvironmentObservation, identity?: InstallObservationIdentity): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('install observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('install observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     if (identity) issuedInstallObservationIdentities.set(snapshot, identity)
     return snapshot
@@ -265,8 +267,8 @@ export function deriveCacheKey(input: {
     readonly lockfileBytes: Uint8Array
     readonly physicalVolume: string
 }): CacheIdentity {
-    if (!CHECKOUT_ID.test(input.checkoutId)) throw new TypeError('checkout id is not canonical')
-    if (!PHYSICAL_VOLUME.test(input.physicalVolume)) throw new TypeError('physical volume is not canonical')
+    if (!CHECKOUT_ID.test(input.checkoutId)) throw new RefusalError('checkout id is not canonical')
+    if (!PHYSICAL_VOLUME.test(input.physicalVolume)) throw new RefusalError('physical volume is not canonical')
     const lockfileSha256 = createHash('sha256').update(input.lockfileBytes).digest('hex')
     const cacheId = createHash('sha256')
         .update(input.checkoutId).update('\0')
@@ -351,7 +353,7 @@ function exactKeys(value: object, expected: readonly string[]): boolean {
 
 function helperStep(authority: Pick<Authority, 'node' | 'helper' | 'settings'>, cwd: string, request: object): ExecutionStep {
     const requestBytes = JSON.stringify(request)
-    if (Buffer.byteLength(requestBytes) > 65_536) throw new TypeError('filesystem helper request exceeds its transport budget')
+    if (Buffer.byteLength(requestBytes) > 65_536) throw new RefusalError('filesystem helper request exceeds its transport budget')
     const candidate = Object.freeze({
         id: `install-filesystem-${(request as { operation: string }).operation}-${(request as { requestId: string }).requestId}`,
         argv: Object.freeze([authority.node.canonicalPath, authority.helper.path, requestBytes]) as readonly [string, ...string[]],
@@ -369,7 +371,7 @@ function helperStep(authority: Pick<Authority, 'node' | 'helper' | 'settings'>, 
         filesystemChecks: Object.freeze([{ path: cwd, expected: 'directory' as const }]), compensation: Object.freeze([]),
     })
     const snapshot = snapshotExecutionStep(candidate)
-    if (!snapshot) throw new TypeError('filesystem helper step is invalid')
+    if (!snapshot) throw new RefusalError('filesystem helper step is invalid')
     return snapshot
 }
 
@@ -389,9 +391,9 @@ async function runHelper(authority: Pick<Authority, 'node' | 'helper' | 'setting
     try {
         const text = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout)
         const value: unknown = JSON.parse(text)
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('not an object')
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new RefusalError('not an object')
         const record = value as Record<string, unknown>
-        if (record.version !== 1 || record.requestId !== (request as { requestId: string }).requestId || typeof record.kind !== 'string') throw new Error('mismatched response')
+        if (record.version !== 1 || record.requestId !== (request as { requestId: string }).requestId || typeof record.kind !== 'string') throw new RefusalError('mismatched response')
         const operation = (request as { operation: string }).operation
         const allowed = operation === 'acquire'
             ? record.kind === 'acquired' || record.kind === 'exists' ? ['version', 'requestId', 'kind', 'lock'] : []
@@ -400,28 +402,28 @@ async function runHelper(authority: Pick<Authority, 'node' | 'helper' | 'setting
                     : record.kind === 'residue' ? ['version', 'requestId', 'kind', 'path', 'entries'] : []
                 : operation === 'stamp' && record.kind === 'stamped' ? ['version', 'requestId', 'kind', 'path']
                     : operation === 'ensure-directory' && record.kind === 'complete' ? ['version', 'requestId', 'kind', 'path', 'dev', 'ino'] : []
-        if (allowed.length === 0 || Object.keys(record).sort().join('\0') !== allowed.sort().join('\0')) throw new Error('unexpected response shape')
-        if (`${JSON.stringify(record)}\n` !== text) throw new Error('non-canonical response')
+        if (allowed.length === 0 || Object.keys(record).sort().join('\0') !== allowed.sort().join('\0')) throw new RefusalError('unexpected response shape')
+        if (`${JSON.stringify(record)}\n` !== text) throw new RefusalError('non-canonical response')
         const root = (request as { root: string }).root
         const segments = (request as { segments: string[] }).segments
         const target = join(root, ...segments)
         if (operation === 'acquire') {
             const lock = record.lock
-            if (!lock || typeof lock !== 'object' || Array.isArray(lock)) throw new Error('invalid lock result')
+            if (!lock || typeof lock !== 'object' || Array.isArray(lock)) throw new RefusalError('invalid lock result')
             const row = lock as Record<string, unknown>
             const expected = record.kind === 'acquired' ? ['path', 'dev', 'ino', 'ownerBase64'] : ['path', 'dev', 'ino', 'entries', 'ownerBase64']
             if (Object.keys(row).sort().join('\0') !== expected.sort().join('\0') || row.path !== target
                 || !Number.isSafeInteger(row.dev) || !Number.isSafeInteger(row.ino)
                 || (record.kind === 'acquired' && row.ownerBase64 !== (request as { ownerBase64: string }).ownerBase64)
                 || (record.kind === 'exists' && (!Array.isArray(row.entries) || row.entries.some((entry) => typeof entry !== 'string')
-                    || row.ownerBase64 !== null && typeof row.ownerBase64 !== 'string'))) throw new Error('invalid lock result')
+                    || row.ownerBase64 !== null && typeof row.ownerBase64 !== 'string'))) throw new RefusalError('invalid lock result')
         } else if (operation === 'ensure-directory') {
-            if (record.path !== target || !Number.isSafeInteger(record.dev) || !Number.isSafeInteger(record.ino)) throw new Error('invalid directory result')
+            if (record.path !== target || !Number.isSafeInteger(record.dev) || !Number.isSafeInteger(record.ino)) throw new RefusalError('invalid directory result')
         } else if (operation === 'stamp') {
-            if (record.path !== join(target, (request as { name: string }).name)) throw new Error('invalid stamp result')
+            if (record.path !== join(target, (request as { name: string }).name)) throw new RefusalError('invalid stamp result')
         } else if (operation === 'release') {
             const expected = record.kind === 'released' ? target : join(dirname(target), (request as { quarantine: string }).quarantine)
-            if (record.path !== expected || (record.kind === 'residue' && (!Array.isArray(record.entries) || record.entries.some((entry) => typeof entry !== 'string')))) throw new Error('invalid release result')
+            if (record.path !== expected || (record.kind === 'residue' && (!Array.isArray(record.entries) || record.entries.some((entry) => typeof entry !== 'string')))) throw new RefusalError('invalid release result')
         }
         return { result: record }
     } catch (error) {
@@ -593,17 +595,17 @@ export async function planInstall(input: PlanInstallInput, options: ExecutionOpt
     try {
         const entries = (await readdir(lockParent)).filter((name) => name.startsWith(`.release-${identity.cacheId}-`))
         if (entries.length > 0) return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'an earlier exact-cache release requires recovery', join(lockParent, entries.sort()[0]!))
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'install lock inventory is unreadable', lockParent) }
+    } catch (error) { if (!hasErrorCode(error, 'ENOENT')) return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'install lock inventory is unreadable', lockParent) }
     const existingStamp = await stableFile(stampPath, 1_048_576)
     try {
         await lstat(stampPath)
         if (!existingStamp) return refuse(ENVIRONMENT_CODES.INSTALL_STALE_PATH, 'dependency cache stamp is unreadable or unsafe', stampPath)
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return refuse(ENVIRONMENT_CODES.INSTALL_STALE_PATH, 'dependency cache stamp cannot be inspected', stampPath)
+        if (!hasErrorCode(error, 'ENOENT')) return refuse(ENVIRONMENT_CODES.INSTALL_STALE_PATH, 'dependency cache stamp cannot be inspected', stampPath)
     }
     if (existingStamp?.equals(expectedStamp)) {
         try { await lstat(lockPath); return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'a stamped cache still has an install lock', lockPath) } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'install lock cannot be inspected', lockPath)
+            if (!hasErrorCode(error, 'ENOENT')) return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'install lock cannot be inspected', lockPath)
         }
         return issuePlan(request, identity, fingerprint, expectedStamp, dependency.compatibility, lockfile, stampPath, null, installStep, loadProbeStep, 'reuse')
     }
@@ -746,7 +748,7 @@ export async function observeDependencyInstall(input: {
     readonly observedAt: string
 }): Promise<EnvironmentObservation> {
     if (!/^stack:[a-f0-9]{64}$/.test(input.stackId) || !isCanonicalTimestamp(input.observedAt)) {
-        throw new TypeError('install observation input is malformed')
+        throw new RefusalError('install observation input is malformed')
     }
     const authority = issuedPlans.get(input.planned)
     const identity = authority && authority.compatibility.source === authority.policy.volume ? Object.freeze({

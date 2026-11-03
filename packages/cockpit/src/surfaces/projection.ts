@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, open, readlink, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 
-import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject, RefusalError, hasErrorCode } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, isMeasurementDate, type GuardSurfaceTarget, type HarnessRegistryRow } from './harness-registry.js'
 
@@ -294,7 +294,7 @@ function declaredRootIdentity(entry: FileIdentity, linkTarget: string | undefine
 
 async function rootEntryIdentity(path: string): Promise<{ readonly entry: FileIdentity; readonly identity: string }> {
     const entry = await lstat(path, { bigint: true })
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) throw new Error('sibling root is not a directory or symlink')
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) throw new RefusalError('sibling root is not a directory or symlink')
     const linkTarget = entry.isSymbolicLink() ? await readlink(path) : undefined
     return { entry, identity: declaredRootIdentity(entry, linkTarget) }
 }
@@ -365,7 +365,7 @@ async function finishRootObservation(
 
 async function pathIdentity(sourcePath: string): Promise<PathIdentity> {
     const entry = await lstat(sourcePath, { bigint: true })
-    if (!entry.isFile() && !entry.isSymbolicLink()) throw new Error('guide entry type is unsupported')
+    if (!entry.isFile() && !entry.isSymbolicLink()) throw new RefusalError('guide entry type is unsupported')
     const entryType = entry.isSymbolicLink() ? 'symlink' : 'file'
     const linkTarget = entryType === 'symlink' ? await readlink(sourcePath) : undefined
     const contentPath = await realpath(sourcePath)
@@ -384,7 +384,7 @@ async function readGuide(
     try {
         pathBefore = await pathIdentity(request.sourcePath)
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
+        if (hasErrorCode(error, 'ENOENT')) return 'missing'
         return diagnostic('PROJECTION_GUIDE_UNAVAILABLE', `guide entry could not be observed: ${request.sourcePath}`, { target: request.sourcePath })
     }
     if (!await rootAuthorityStable(requestRoot)) {
@@ -754,7 +754,7 @@ function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, 
         ? capabilities.find(row => row.target === targetName) : undefined
     if (!fact || !issuedInstructionCapabilities.has(fact) || fact.capability !== 'instructed'
         || fact.mechanism === 'rulesync-rules' || !isMeasurementDate(fact.characterizedOn)) {
-        throw new Error(`instruction capability is unavailable for ${targetName}`)
+        throw new RefusalError(`instruction capability is unavailable for ${targetName}`)
     }
     if (targetName === 'claudecode') return {
         target: targetName,

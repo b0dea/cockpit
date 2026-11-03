@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { z } from 'zod'
-import { errorCause, filesystemObjectIdentity, isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId } from '../environment/contract.js'
+import { errorCause, filesystemObjectIdentity, isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId, RefusalError } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock, readState, transactState, withStateScopedLock,
@@ -173,10 +173,10 @@ const COMMAND_TIMEOUT_MS = 30_000
 function observedFile(path: string, maxBytes: number): Buffer {
     let descriptor: number | undefined
     try {
-        if (realpathSync(path) !== path) throw new TypeError('noncanonical path')
+        if (realpathSync(path) !== path) throw new RefusalError('noncanonical path')
         descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
         const before = fstatSync(descriptor)
-        if (!before.isFile() || before.nlink !== 1 || before.size > maxBytes) throw new TypeError('unbounded file')
+        if (!before.isFile() || before.nlink !== 1 || before.size > maxBytes) throw new RefusalError('unbounded file')
         const buffer = Buffer.alloc(maxBytes + 1)
         let length = 0
         while (length < buffer.length) {
@@ -186,9 +186,9 @@ function observedFile(path: string, maxBytes: number): Buffer {
         }
         const bytes = buffer.subarray(0, length)
         const after = fstatSync(descriptor)
-        if (bytes.length > maxBytes || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new TypeError('changed file')
+        if (bytes.length > maxBytes || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new RefusalError('changed file')
         return bytes
-    } catch { throw new TypeError('browser test package file is missing, changed, noncanonical or exceeds its read bound') }
+    } catch { throw new RefusalError('browser test package file is missing, changed, noncanonical or exceeds its read bound') }
     finally { if (descriptor !== undefined) closeSync(descriptor) }
 }
 
@@ -200,14 +200,14 @@ function projectPackagePaths(root: string, runtime: BrowserRuntimeProjection): R
     projectManifestPath: string
     packageRoot: string
 }> {
-    if (!browserRuntimeExecutionReady(runtime)) throw new TypeError('browser project package requires an issued executable runtime')
+    if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('browser project package requires an issued executable runtime')
     const declaredManifest = runtime.runner.project.manifest
     const projectManifestPath = resolve(root, declaredManifest ?? 'package.json')
-    if (!isPackageDescendant(root, projectManifestPath)) throw new TypeError('browser project manifest escaped its cockpit root')
+    if (!isPackageDescendant(root, projectManifestPath)) throw new RefusalError('browser project manifest escaped its cockpit root')
     if (declaredManifest !== undefined) {
         const manifestBytes = observedBytes(projectManifestPath, 1_048_576)
         if (digest(manifestBytes) !== runtime.runner.project.manifestSha256) {
-            throw new TypeError('browser declared project manifest differs from its issued identity')
+            throw new RefusalError('browser declared project manifest differs from its issued identity')
         }
     }
     return Object.freeze({ projectManifestPath, packageRoot: resolve(dirname(projectManifestPath), 'node_modules/@playwright/test') })
@@ -220,22 +220,22 @@ export function observeBrowserProjectPackage(input: Readonly<{
 }>): BrowserTestPackage {
     const captured = snapshotJson({ cockpitDirectory: input.cockpitDirectory, artifactRoot: input.artifactRoot })
     const parsed = PackageObservation.safeParse(captured)
-    if (!parsed.success) throw new TypeError('browser project package observation requires a canonical root and registered relative artifact root')
+    if (!parsed.success) throw new RefusalError('browser project package observation requires a canonical root and registered relative artifact root')
     const root = parsed.data.cockpitDirectory
-    if (realpathSync(root) !== root) throw new TypeError('browser project package root must be canonical')
+    if (realpathSync(root) !== root) throw new RefusalError('browser project package root must be canonical')
     const directory = 'node_modules/@playwright/test' as const
     const { projectManifestPath, packageRoot } = projectPackagePaths(root, input.runtime)
     const manifestBytes = observedBytes(resolve(packageRoot, 'package.json'), 65_536)
     let manifest: unknown
-    try { manifest = JSON.parse(manifestBytes) } catch { throw new TypeError('browser test package manifest is invalid JSON') }
+    try { manifest = JSON.parse(manifestBytes) } catch { throw new RefusalError('browser test package manifest is invalid JSON') }
     const declared = Manifest.safeParse(manifest)
-    if (!declared.success) throw new TypeError('browser test package manifest is invalid')
+    if (!declared.success) throw new RefusalError('browser test package manifest is invalid')
     const cliAbsolute = resolve(packageRoot, declared.data.bin.playwright)
-    if (!isPackageDescendant(packageRoot, cliAbsolute)) throw new TypeError('browser test package CLI escaped its package root')
+    if (!isPackageDescendant(packageRoot, cliAbsolute)) throw new RefusalError('browser test package CLI escaped its package root')
     let moduleAbsolute: string
     try { moduleAbsolute = realpathSync(createRequire(projectManifestPath).resolve('@playwright/test')) }
-    catch { throw new TypeError('browser project module entry could not be resolved') }
-    if (!isPackageDescendant(packageRoot, moduleAbsolute)) throw new TypeError('browser project module escaped its package root')
+    catch { throw new RefusalError('browser project module entry could not be resolved') }
+    if (!isPackageDescendant(packageRoot, moduleAbsolute)) throw new RefusalError('browser project module escaped its package root')
     const cliBytes = observedBytes(cliAbsolute, 65_536)
     const moduleBytes = observedBytes(moduleAbsolute, 65_536)
     return Object.freeze({ directory, artifactRoot: parsed.data.artifactRoot,
@@ -251,21 +251,21 @@ function file(target: GuardSurfaceTarget, path: string, bytes: string): Rendered
 function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntimeProjection, root: string): BrowserTransportRow['cli'] {
     if (value === null) return null
     let manifest: unknown
-    try { manifest = JSON.parse(value.manifest.bytes) } catch { throw new TypeError('browser test package manifest is invalid JSON') }
+    try { manifest = JSON.parse(value.manifest.bytes) } catch { throw new RefusalError('browser test package manifest is invalid JSON') }
     const parsed = Manifest.safeParse(manifest)
     if (!parsed.success || parsed.data.version !== runtime.runner.project.driverVersion
         || value.cli.path !== parsed.data.bin.playwright || value.manifest.sha256 !== digest(value.manifest.bytes)
-        || value.cli.sha256 !== digest(value.cli.bytes)) throw new TypeError('browser test package does not match the pinned project driver and CLI bytes')
+        || value.cli.sha256 !== digest(value.cli.bytes)) throw new RefusalError('browser test package does not match the pinned project driver and CLI bytes')
     const { packageRoot } = projectPackagePaths(root, runtime)
     if (observedBytes(resolve(packageRoot, 'package.json'), 65_536) !== value.manifest.bytes
-        || observedBytes(resolve(packageRoot, value.cli.path), 65_536) !== value.cli.bytes) throw new TypeError('browser test package differs from installed bytes')
+        || observedBytes(resolve(packageRoot, value.cli.path), 65_536) !== value.cli.bytes) throw new RefusalError('browser test package differs from installed bytes')
     const lockBytes = observedBytes(resolve(root, runtime.runner.project.lockfile), 1_048_576)
     let lock: unknown
-    try { lock = JSON.parse(lockBytes) } catch { throw new TypeError('browser test package needs an authenticated npm lockfile') }
+    try { lock = JSON.parse(lockBytes) } catch { throw new RefusalError('browser test package needs an authenticated npm lockfile') }
     const locked = z.object({ packages: z.record(z.string(), z.unknown()) }).safeParse(lock)
     const entry = locked.success ? z.object({ version: Version }).safeParse(locked.data.packages[value.directory]) : null
     if (digest(lockBytes) !== runtime.runner.project.sha256 || !entry?.success || entry.data.version !== parsed.data.version) {
-        throw new TypeError('browser test package differs from the issued project lock identity')
+        throw new RefusalError('browser test package differs from the issued project lock identity')
     }
     return Object.freeze({ package: '@playwright/test', version: parsed.data.version,
         argv: Object.freeze(['node', resolve(packageRoot, value.cli.path)]), sha256: value.cli.sha256 })
@@ -273,16 +273,16 @@ function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntim
 
 function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserTransportRow, 'target' | 'version'>,
     runtime: BrowserRuntimeProjection, root: string): BrowserProjectClient {
-    if (value.artifactRoot !== runtime.generatedHostPaths[2]) throw new TypeError('browser project client artifact root must be the registered CLI artifact root')
+    if (value.artifactRoot !== runtime.generatedHostPaths[2]) throw new RefusalError('browser project client artifact root must be the registered CLI artifact root')
     const { projectManifestPath, packageRoot } = projectPackagePaths(root, runtime)
     let resolvedModule: string
     try { resolvedModule = realpathSync(createRequire(projectManifestPath).resolve('@playwright/test')) }
-    catch { throw new TypeError('browser project module entry could not be resolved') }
+    catch { throw new RefusalError('browser project module entry could not be resolved') }
     const declaredModule = resolve(packageRoot, value.module.path)
     if (resolvedModule !== declaredModule || !isPackageDescendant(packageRoot, resolvedModule)
         || value.module.sha256 !== digest(value.module.bytes)
         || observedBytes(resolvedModule, 1_048_576) !== value.module.bytes) {
-        throw new TypeError('browser project module entry differs from the installed resolved entry')
+        throw new RefusalError('browser project module entry differs from the installed resolved entry')
     }
     const manifestPath = resolve(packageRoot, 'package.json')
     const lockPath = resolve(root, runtime.runner.project.lockfile)
@@ -330,7 +330,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
     artifactIdentity: FilesystemIdentity | undefined): ExecutionStep {
     const controlAuthorities = browserRuntimeControlAuthorities(runtime)
     const controlPorts = browserRuntimeControlPorts(runtime)
-    if (!controlAuthorities || !controlPorts) throw new TypeError('browser operation requires issued control authorities')
+    if (!controlAuthorities || !controlPorts) throw new RefusalError('browser operation requires issued control authorities')
     const program = libexecProgram('browser-operation.cjs')
     // '--' ends Node's own options, so the program path can never be read as one.
     const argv = [client.node.path, '--', program.path, '--aria-limit', String(MAX_ARIA_BYTES), '--screenshot-limit', String(MAX_SCREENSHOT_BYTES),
@@ -550,7 +550,7 @@ function nativeMcp(target: GuardSurfaceTarget, command: string, args: readonly s
 function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonly BrowserTransportRow[], runtime: BrowserRuntimeProjection): RenderedSurfaceFile {
     if (template.split('{{browser}}').length !== 2 || /{{|}}/.test(template.replace('{{browser}}', ''))
         || !template.startsWith('---\nname: cockpit-browser\n') || /^(?:allowed-tools|tools|disallowedTools):/m.test(template)) {
-        throw new TypeError('browser skill template must contain one browser marker and retain browser tools')
+        throw new RefusalError('browser skill template must contain one browser marker and retain browser tools')
     }
     const auth = runtime.authentication.posture !== 'real'
         ? `Sign-in and persona selection are inapplicable: ${runtime.authentication.posture === 'none' ? 'the product has no sign-in' : 'authentication is bypassed'}.`
@@ -572,7 +572,7 @@ function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonl
 }
 
 function nativeProbe(row: BrowserTransportRow, files: readonly RenderedSurfaceFile[], wrappers: readonly Readonly<{ path: string; sha256: string }>[], runtime: BrowserRuntimeProjection, packageSha256: string | null, cockpitDirectory: string): BrowserNativeProbe {
-    if (runtime.connection.kind !== 'remote') throw new TypeError('browser native transport probes require an issued remote endpoint')
+    if (runtime.connection.kind !== 'remote') throw new RefusalError('browser native transport probes require an issued remote endpoint')
     const endpoint = runtime.connection.endpoint
     const native = files.find(file => file.target === row.target && !file.path.endsWith('/SKILL.md'))
     const root = runtime.generatedHostPaths[row.transport === 'mcp' ? 1 : 2]!
@@ -612,29 +612,29 @@ function nativeProbe(row: BrowserTransportRow, files: readonly RenderedSurfaceFi
 
 export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const captured = snapshotJson(input)
-    if (captured === undefined) throw new TypeError('browser surfaces require bounded plain data without accessors')
+    if (captured === undefined) throw new RefusalError('browser surfaces require bounded plain data without accessors')
     const parsed = Input.safeParse(captured)
-    if (!parsed.success) throw new TypeError('browser surfaces require canonical harness, test package and template data')
+    if (!parsed.success) throw new RefusalError('browser surfaces require canonical harness, test package and template data')
     const data = parsed.data
     const runtime = input.runtime
     assertBrowserStorageStateCurrent(runtime)
-    if (!browserRuntimeExecutionReady(runtime)) throw new TypeError('remote browser surfaces require an authenticated retained port lease')
+    if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('remote browser surfaces require an authenticated retained port lease')
     const cli = pinnedCli(data.testPackage, runtime, data.cockpitDirectory)
     // `approved` says the caller matched the declared server against [mcp.approved]; this one may carry a bound endpoint.
     const approval = { playwright: mcpApprovalDigest(data.mcp as McpDeclaration, data.cockpitDirectory) }
     const collected = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: [data.mcp],
         approved: data.approved ? approval : {}, targets: data.harnesses.map(row => row.target) })
-    if (collected.kind !== 'complete') throw new TypeError(`browser MCP declaration refused: ${collected.diagnostic.code}`)
+    if (collected.kind !== 'complete') throw new RefusalError(`browser MCP declaration refused: ${collected.diagnostic.code}`)
     const server = collected.result.servers[0]!
-    if (server.name !== 'playwright') throw new TypeError('browser MCP declaration must be the playwright server')
+    if (server.name !== 'playwright') throw new RefusalError('browser MCP declaration must be the playwright server')
     if (server.cwd !== data.cockpitDirectory) {
-        throw new TypeError('the playwright MCP declaration must come from a sibling whose dir is the cockpit directory itself (dir = "."), so the server starts there')
+        throw new RefusalError('the playwright MCP declaration must come from a sibling whose dir is the cockpit directory itself (dir = "."), so the server starts there')
     }
     if (!server.args.includes(runtime.mcp.image)) {
-        throw new TypeError(`the playwright MCP server's arguments must include browser.images.mcp.reference (${runtime.mcp.image})`)
+        throw new RefusalError(`the playwright MCP server's arguments must include browser.images.mcp.reference (${runtime.mcp.image})`)
     }
     if (runtime.connection.kind === 'remote' && !server.args.includes(runtime.connection.endpoint)) {
-        throw new TypeError('the playwright MCP server\'s arguments must include the bound browser endpoint')
+        throw new RefusalError('the playwright MCP server\'s arguments must include the bound browser endpoint')
     }
     const rows: BrowserTransportRow[] = []
     const files: RenderedSurfaceFile[] = []
@@ -667,7 +667,7 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const targets = rows.filter(row => row.transport === 'mcp' && row.declaration === 'instructed').map(row => row.target)
     const mcp = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: targets.length ? [data.mcp] : [],
         approved: targets.length ? approval : {}, targets: targets.length ? targets : data.harnesses.map(row => row.target) })
-    if (mcp.kind !== 'complete') throw new TypeError(`browser MCP collection refused: ${mcp.diagnostic.code}`)
+    if (mcp.kind !== 'complete') throw new RefusalError(`browser MCP collection refused: ${mcp.diagnostic.code}`)
     const probes = rows.filter(row => row.declaration === 'instructed').map(row => nativeProbe(row, files, mcp.result.wrappers, runtime, data.testPackage?.manifest.sha256 ?? null, data.cockpitDirectory))
     const projectPackage = data.testPackage !== null && 'artifactRoot' in data.testPackage && 'module' in data.testPackage
         ? data.testPackage as z.infer<typeof ProjectPackage> : null
@@ -795,7 +795,7 @@ export function validateBrowserNativeReceipt(probe: BrowserNativeProbe, receipt:
                 || digest(observedBytes(probe.transportIdentity.lock.path, 1_048_576)) !== probe.transportIdentity.lock.sha256) {
                 return refuse('browser pinned CLI, package manifest or lock bytes changed after projection')
             }
-        } catch (error) { return refuse(error instanceof Error ? error.message : 'browser pinned CLI observation failed') }
+        } catch (error) { return refuse(errorCause(error)) }
     }
     for (const output of [value.candidate, value.brokenControl]) {
         if (Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr) > probe.bounds.outputBytes
@@ -828,12 +828,12 @@ export function validateBrowserNativeReceipt(probe: BrowserNativeProbe, receipt:
     try {
         assertBrowserArtifactRegistration(runtime, value.cleanup.producedPaths)
     } catch (error) {
-        return refuse(`browser receipt ownership refused: ${error instanceof Error ? error.message : 'unknown observation error'}`)
+        return refuse(`browser receipt ownership refused: ${errorCause(error)}`)
     }
     let unregistered = false
     try { assertBrowserArtifactRegistration(runtime, [...value.cleanup.producedPaths, value.cleanup.unregisteredControl]) }
     catch (error) {
-        if (!(error instanceof TypeError) || !error.message.includes('unregistered')) return refuse('browser negative registration control failed unexpectedly')
+        if (!(error instanceof RefusalError) || !error.message.includes('unregistered')) return refuse('browser negative registration control failed unexpectedly')
         unregistered = true
     }
     if (!unregistered || expectedRemoved.has(value.cleanup.unregisteredControl)) return refuse('browser negative control is registered or was removed')

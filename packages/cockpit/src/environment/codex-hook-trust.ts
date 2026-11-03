@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path'
 import { parse as parseToml, TomlError } from 'smol-toml'
 
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
+import { RefusalError, tryParseJson, errorCause, hasErrorCode } from './contract.js'
 
 export const mechanism = {
     id: 'codex-hook-trust',
@@ -50,8 +51,8 @@ function sorted(value: unknown): unknown {
 
 /** The hooks Codex discovers in a hooks.json, keyed and hashed as Codex 0.165.0 does, or why not. */
 function codexHooks(bytes: string): readonly CodexHook[] | string {
-    let parsed: unknown
-    try { parsed = JSON.parse(bytes) } catch { return 'its hooks.json is not JSON' } // Parser text would quote the file.
+    const parsed = tryParseJson(bytes)
+    if (parsed === undefined) return 'its hooks.json is not JSON'
     if (!record(parsed) || !record(parsed.hooks)) return 'its hooks.json has no hooks object'
     const hooks: CodexHook[] = []
     for (const [event, groups] of Object.entries(parsed.hooks)) {
@@ -89,10 +90,10 @@ function codexHooks(bytes: string): readonly CodexHook[] | string {
 async function bounded(path: string): Promise<string | 'missing'> {
     try {
         const bytes = await readFile(path)
-        if (bytes.byteLength > MAX_FILE_BYTES) throw new Error(`${path} exceeds ${MAX_FILE_BYTES} bytes`)
+        if (bytes.byteLength > MAX_FILE_BYTES) throw new RefusalError(`${path} exceeds ${MAX_FILE_BYTES} bytes`)
         return bytes.toString('utf8')
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
+        if (hasErrorCode(error, 'ENOENT')) return 'missing'
         throw error
     }
 }
@@ -132,7 +133,7 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     const unverified = (reason: string) => Object.freeze([warning(
         `cockpit could not verify whether Codex trusts the guard hook in ${hooksPath} (${reason}); Codex skips a project hook until a person trusts it, and then runs tool calls without the guard`)])
     let hooksBytes: string | 'missing'
-    try { hooksBytes = await bounded(hooksPath) } catch (error) { return unverified(`reading it failed: ${(error as Error).message}`) }
+    try { hooksBytes = await bounded(hooksPath) } catch (error) { return unverified(`reading it failed: ${errorCause(error)}`) }
     if (hooksBytes === 'missing') return Object.freeze([])
     const hooks = codexHooks(hooksBytes)
     if (typeof hooks === 'string') return unverified(hooks)
@@ -142,7 +143,7 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     // Every cockpit publishes the Codex hook, so a person who never runs Codex here saw this warning on
     // every check. Codex creates its home on first run; without one no Codex session can skip the hook.
     try { await stat(home) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([])
+        if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
         return unverified(`reading ${home} failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'}`)
     }
     const codexConfig = join(home, 'config.toml')
@@ -164,7 +165,7 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     // Codex keys trust by the hooks.json path as the session directory spells it, which may or may
     // not resolve symbolic links, so trust recorded under either spelling counts.
     let canonical = root
-    try { canonical = await realpath(root) } catch (error) { return unverified(`resolving ${root} failed: ${(error as Error).message}`) }
+    try { canonical = await realpath(root) } catch (error) { return unverified(`resolving ${root} failed: ${errorCause(error)}`) }
     const results = [...new Set([hooksPath, join(canonical, HOOKS_PATH)])].map(source => trustFor(states, source, hooks))
     if (results.includes('trusted')) return Object.freeze([])
     const consequence = 'a Codex session started there skips it and runs tool calls without the guard'

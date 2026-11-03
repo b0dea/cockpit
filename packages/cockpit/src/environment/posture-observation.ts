@@ -9,6 +9,7 @@ import { isProxy } from 'node:util/types'
 import { loadCockpitConfig } from '../config/load.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type AddressingPosture, type AuthPosture } from '../schema.js'
 import { ENVIRONMENT_CODES, errorCause, snapshotJson, type CockpitId, type EnvironmentObservation,
+    RefusalError,
     type JsonSnapshot, type ObservationLifecycleStage, type StackId } from './contract.js'
 import { checkoutId, stackId as deriveStackId, type StackVariant } from './identity.js'
 import { authenticateLifecycleStageAuthority, type LifecycleStageAuthority } from './lifecycle-stage.js'
@@ -79,7 +80,7 @@ function currentConfigurationRevision(path: string): string | undefined {
             || after.mtimeNs !== opened.mtimeNs || after.ctimeNs !== opened.ctimeNs || total !== Number(opened.size)) return undefined
         return hash.digest('hex')
     } catch (error) {
-        throw new TypeError(`configuration could not be re-read after posture resolution: ${errorCause(error)}`)
+        throw new RefusalError(`configuration could not be re-read after posture resolution: ${errorCause(error)}`)
     } finally {
         if (descriptor !== undefined) {
             try { closeSync(descriptor) } catch { /* A failed identity check grants no authority. */ }
@@ -128,14 +129,14 @@ async function issueObservationPostures(
     let canonicalCheckoutPath: string
     try {
         if (!identity || typeof identity.cockpitId !== 'string' || typeof identity.checkoutPath !== 'string'
-            || normalize(identity.checkoutPath) !== identity.checkoutPath) throw new Error('invalid identity')
+            || normalize(identity.checkoutPath) !== identity.checkoutPath) throw new RefusalError('invalid identity')
         canonicalCheckoutPath = await realpath(identity.checkoutPath)
         expectedStackId = deriveStackId({
             cockpitId: identity.cockpitId as CockpitId,
             checkoutId: checkoutId({ checkoutPath: canonicalCheckoutPath }),
             variant: identity.variant as unknown as StackVariant,
         })
-    } catch { throw new TypeError('resolved posture configuration source is malformed') }
+    } catch { throw new RefusalError('resolved posture configuration source is malformed') }
     const issuedAt = Date.now()
     const observedAt = configuration && typeof configuration === 'object'
         && 'observed' in configuration && configuration.observed.state === 'available'
@@ -147,27 +148,27 @@ async function issueObservationPostures(
         || configuration.stackId !== expectedStackId
         || observedAt > issuedAt
         || issuedAt - observedAt > 30_000) {
-        throw new TypeError('resolved posture configuration source is malformed')
+        throw new RefusalError('resolved posture configuration source is malformed')
     }
     const configurationRoot = relative(canonicalCheckoutPath, dirname(configuration.source))
     if (configurationRoot === '..' || configurationRoot.startsWith(`..${sep}`) || isAbsolute(configurationRoot)) {
-        throw new TypeError('resolved posture configuration source is malformed')
+        throw new RefusalError('resolved posture configuration source is malformed')
     }
     const loaded = await loadCockpitConfig(configuration.source)
-    if (loaded.kind !== 'complete') throw new TypeError('resolved posture configuration source is unavailable')
+    if (loaded.kind !== 'complete') throw new RefusalError('resolved posture configuration source is unavailable')
     if (loaded.result.source.path !== configuration.source || loaded.result.source.sha256 !== configuration.observed.value) {
-        throw new TypeError('resolved posture configuration changed after observation')
+        throw new RefusalError('resolved posture configuration changed after observation')
     }
     const previousWindow = previous === undefined ? undefined : postureRefreshWindows.get(previous)
     if (previous !== undefined && (!previousWindow || previousWindow.cockpitId !== identity.cockpitId
         || previous.stackId !== configuration.stackId || previous.source !== loaded.result.source.path
         || previous.revision !== loaded.result.source.sha256)) {
-        throw new TypeError('resolved posture refresh does not match its initial authority')
+        throw new RefusalError('resolved posture refresh does not match its initial authority')
     }
     const evaluatedAt = previous?.evaluatedAt ?? configuration.observed.observedAt
     const windowExpiresAt = previousWindow?.expiresAt ?? Date.parse(evaluatedAt) + PREFLIGHT_OBSERVATION_WINDOW_MS
     if (!Number.isSafeInteger(windowExpiresAt) || issuedAt > windowExpiresAt) {
-        throw new TypeError('resolved posture refresh window expired')
+        throw new RefusalError('resolved posture refresh window expired')
     }
     const postures = new Set<string>(['environment'])
     if (loaded.result.config.sibling.some(({ toolchain }) => toolchain !== 'none')) postures.add('dependencies')
@@ -216,7 +217,7 @@ export async function refreshObservationPostures(input: ObservationPostureInput 
 }): Promise<ResolvedPostureAuthority> {
     const descriptor = input && typeof input === 'object' ? Object.getOwnPropertyDescriptor(input, 'previous') : undefined
     const previous = descriptor && 'value' in descriptor ? descriptor.value as ResolvedPostureAuthority : undefined
-    if (!previous) throw new TypeError('resolved posture refresh requires initial authority')
+    if (!previous) throw new RefusalError('resolved posture refresh requires initial authority')
     return issueObservationPostures(input, previous)
 }
 
@@ -275,34 +276,34 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     const evaluationInstant = Date.now()
     const authorityInputs = boundedDenseArray(context?.authorities)
     const stageInputs = boundedDenseArray(context?.stages)
-    if (!authorityInputs || authorityInputs.length === 0) throw new TypeError('preflight needs resolved posture authority')
+    if (!authorityInputs || authorityInputs.length === 0) throw new RefusalError('preflight needs resolved posture authority')
     const authorities = new Map<StackId, ResolvedPostureAuthority>()
     let windowStart = Number.NEGATIVE_INFINITY
     let windowEnd = Number.POSITIVE_INFINITY
     for (const authorityInput of authorityInputs) {
         const authority = authorityInput as ResolvedPostureAuthority
         const cockpitId = issuedPostureAuthorities.get(authority)
-        if (!cockpitId) throw new TypeError('preflight needs resolved posture authority')
-        if (authorities.has(authority.stackId)) throw new TypeError('preflight contains duplicate posture authority')
+        if (!cockpitId) throw new RefusalError('preflight needs resolved posture authority')
+        if (authorities.has(authority.stackId)) throw new RefusalError('preflight contains duplicate posture authority')
         const currentRevision = currentConfigurationRevision(authority.source)
-        if (currentRevision !== authority.revision) throw new TypeError('configuration changed after posture resolution')
+        if (currentRevision !== authority.revision) throw new RefusalError('configuration changed after posture resolution')
         const authorityStart = Date.parse(authority.evaluatedAt)
         const authorityEnd = Date.parse(authority.validThrough)
-        if (!Number.isFinite(authorityStart) || !Number.isFinite(authorityEnd) || authorityStart > authorityEnd) throw new TypeError('preflight posture authorities are incoherent')
-        if (evaluationInstant > authorityEnd) throw new TypeError('preflight posture authority has expired')
+        if (!Number.isFinite(authorityStart) || !Number.isFinite(authorityEnd) || authorityStart > authorityEnd) throw new RefusalError('preflight posture authorities are incoherent')
+        if (evaluationInstant > authorityEnd) throw new RefusalError('preflight posture authority has expired')
         authorities.set(authority.stackId, authority)
         windowStart = Math.max(windowStart, authorityStart)
         windowEnd = Math.min(windowEnd, authorityEnd)
     }
-    if (windowStart > windowEnd) throw new TypeError('preflight posture authorities are incoherent')
-    if (!stageInputs || stageInputs.length !== authorityInputs.length) throw new TypeError('preflight needs lifecycle stage authority')
+    if (windowStart > windowEnd) throw new RefusalError('preflight posture authorities are incoherent')
+    if (!stageInputs || stageInputs.length !== authorityInputs.length) throw new RefusalError('preflight needs lifecycle stage authority')
     const stages = new Map<StackId, ObservationLifecycleStage>()
     for (const stageInput of stageInputs) {
-        if (isProxy(stageInput) || stageInput === null || typeof stageInput !== 'object') throw new TypeError('preflight needs lifecycle stage authority')
+        if (isProxy(stageInput) || stageInput === null || typeof stageInput !== 'object') throw new RefusalError('preflight needs lifecycle stage authority')
         const stackDescriptor = Object.getOwnPropertyDescriptor(stageInput, 'stackId')
         const stageStackId = stackDescriptor && 'value' in stackDescriptor ? stackDescriptor.value : undefined
         const authority = typeof stageStackId === 'string' ? authorities.get(stageStackId as StackId) : undefined
-        if (!authority || stages.has(authority.stackId)) throw new TypeError('preflight needs one matching lifecycle stage authority per stack')
+        if (!authority || stages.has(authority.stackId)) throw new RefusalError('preflight needs one matching lifecycle stage authority per stack')
         const stage = authenticateLifecycleStageAuthority(
             stageInput,
             authority.stackId,
@@ -311,10 +312,10 @@ export function authenticateObservationPostureContext(context: PreflightContext)
             Date.parse(authority.validThrough),
             evaluationInstant,
         )
-        if (!stage) throw new TypeError('preflight needs authentic lifecycle stage authority')
+        if (!stage) throw new RefusalError('preflight needs authentic lifecycle stage authority')
         stages.set(authority.stackId, stage)
     }
-    if (stages.size !== authorities.size) throw new TypeError('preflight needs one matching lifecycle stage authority per stack')
+    if (stages.size !== authorities.size) throw new RefusalError('preflight needs one matching lifecycle stage authority per stack')
     const postureChecks = [...authorities.values()].flatMap((authority): PostureRequirementCheck[] =>
         judgePostureDeclaration(authority.environmentPostures, authority.postureRequirements).map(({ dimension, selected, pass, reason }) => Object.freeze({
             code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,

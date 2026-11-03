@@ -16,6 +16,8 @@ import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } fr
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     type EnvironmentDiagnostic,
@@ -323,16 +325,16 @@ function producers(input: {
         surfaces: async () => {
             const application = await checkedApplication
             const observations = application && observeGeneratedApplicationSurfaces(application)
-            if (!observations) throw new TypeError('surface health needs a current checked generated publication; run npx --no cockpit sync --config <your cockpit.toml>')
+            if (!observations) throw new RefusalError('surface health needs a current checked generated publication; run npx --no cockpit sync --config <your cockpit.toml>')
             return observations
         },
         generated: async () => {
             if (generated === undefined || !runningStack) return Object.freeze([])
             const [session, prepared] = await Promise.all([runtimeSession, generatedRuntime])
-            if (!session || !prepared) throw new TypeError('generated health needs authenticated runtime readiness')
+            if (!session || !prepared) throw new RefusalError('generated health needs authenticated runtime readiness')
             const observations = await observeGeneratedApplicationHealth(prepared.application,
                 { topology: session.readiness.topology, runtime: prepared.runtime }, input.execute)
-            if (!observations || !await stableSession()) throw new TypeError('generated environment observation is unavailable or changed')
+            if (!observations || !await stableSession()) throw new RefusalError('generated environment observation is unavailable or changed')
             return Object.freeze([observations.environment, observations.registryAuthentication])
         },
         data: async () => {
@@ -340,7 +342,7 @@ function producers(input: {
             if (generated === undefined || data === undefined || !runningStack) return Object.freeze([])
             const session = await runtimeSession
             const lifecycle = session?.lifecycle
-            if (!session || !lifecycle) throw new TypeError('data health needs authenticated runtime readiness')
+            if (!session || !lifecycle) throw new RefusalError('data health needs authenticated runtime readiness')
             const observation = await session.adapters.withGeneratedRuntime(
                 session.context,
                 session.readiness,
@@ -356,7 +358,7 @@ function producers(input: {
                     const runtimeAuthority = projectGeneratedApplicationRuntimeAuthority(application, {
                         topology: session.readiness.topology, runtime,
                     })
-                    if (!runtimeAuthority) throw new TypeError(`generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${cockpitCommand('up', { config: session.context.source.path })}`)
+                    if (!runtimeAuthority) throw new RefusalError(`generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${cockpitCommand('up', { config: session.context.source.path })}`)
                     const planned = await withLifecycleConfiguration(session.context, async (configuration) => planDataMode({
                         environment: generated,
                         mode: data.default_mode,
@@ -376,7 +378,7 @@ function producers(input: {
                                 operation,
                                 context,
                             )
-                            if (!step) throw new TypeError('generated data probe authority is unavailable')
+                            if (!step) throw new RefusalError('generated data probe authority is unavailable')
                             return step
                         },
                     }))
@@ -387,13 +389,13 @@ function producers(input: {
                     return observeDataMode({ plan: planned.plan, projection, outcomes: Object.freeze(outcomes) })
                 },
             )
-            if (!observation) throw new TypeError('data health observation is unavailable')
+            if (!observation) throw new RefusalError('data health observation is unavailable')
             return Object.freeze([observation])
         },
         external: async () => {
             if (generated === undefined || generated.vendors.length === 0 || !runningStack) return Object.freeze([])
             const [session, services] = await Promise.all([runtimeSession, currentServices])
-            if (!session || !services) throw new TypeError('external dependency health needs current runtime services')
+            if (!session || !services) throw new RefusalError('external dependency health needs current runtime services')
             const observation = await session.adapters.withGeneratedRuntime(
                 session.context,
                 session.readiness,
@@ -457,7 +459,7 @@ function producers(input: {
                         : undefined
                 },
             )
-            if (!observation) throw new TypeError('external dependency health observation is unavailable')
+            if (!observation) throw new RefusalError('external dependency health observation is unavailable')
             return Object.freeze([observation])
         },
         claims: async () => Object.freeze([await observeClaimState({
@@ -476,16 +478,16 @@ function producers(input: {
                 source: input.config.result.source.path,
                 checkoutId: input.checkout.checkoutId,
             })
-            if (!step) throw new TypeError('Git health observation could not be planned')
+            if (!step) throw new RefusalError('Git health observation could not be planned')
             const result = observeGit(step, await input.execute(step), {
                 stackId: input.stack,
                 checkoutId: input.checkout.checkoutId,
                 source: input.config.result.source.path,
             })
-            if (result.kind !== 'complete') throw new TypeError('Git health observation is unavailable')
+            if (result.kind !== 'complete') throw new RefusalError('Git health observation is unavailable')
             if (!runningStack) return result.observations
             const session = await stableSession()
-            if (!session) throw new TypeError('running checkout health needs unchanged runtime and lifecycle authority')
+            if (!session) throw new RefusalError('running checkout health needs unchanged runtime and lifecycle authority')
             const time = observedAt()
             const setup = await observeSetupCheckout({ source: input.config.result.source,
                 cockpitName: input.config.result.config.cockpit.name, observedAt: time,
@@ -493,7 +495,7 @@ function producers(input: {
             const running = await withSetupCheckoutProjection(setup, { source: input.config.result.source,
                 cockpitName: input.config.result.config.cockpit.name, evaluatedAt: Date.parse(time) },
             (projection) => observeRunningCheckout(session.readiness.topology, projection, session.context.runtimeSha256, time))
-            if (running?.kind !== 'complete') throw new TypeError('running checkout identity observation is unavailable')
+            if (running?.kind !== 'complete') throw new RefusalError('running checkout identity observation is unavailable')
             return Object.freeze([...result.observations, running.observation])
         },
         host: async () => {
@@ -502,11 +504,11 @@ function producers(input: {
                     const current = await machineFloor
                     // A stopped stack's unusable runtime is already a notice that names why.
                     if (!current && input.stopped) return Object.freeze([])
-                    if (!current) throw new TypeError('configured host capacity needs authenticated machine-floor execution evidence')
+                    if (!current) throw new RefusalError('configured host capacity needs authenticated machine-floor execution evidence')
                     return current
                 }
                 const current = await runtimeSession
-                if (!current) throw new TypeError('configured host capacity needs authenticated machine-floor execution evidence')
+                if (!current) throw new RefusalError('configured host capacity needs authenticated machine-floor execution evidence')
                 return current.readiness.hostObservations
             }
             return Object.freeze([])
@@ -516,12 +518,12 @@ function producers(input: {
             if (dependencies.length === 0 || input.stopped) return Object.freeze([])
             const [session, services] = await Promise.all([runtimeSession, currentServices])
             if (!generated || !session || !services) {
-                throw new TypeError('configured dependency health needs authenticated generated runtime services')
+                throw new RefusalError('configured dependency health needs authenticated generated runtime services')
             }
             const observations: EnvironmentObservation[] = []
             for (const sibling of dependencies) {
                 const generatedServices = generated.services.filter(({ sibling: owner }) => owner === sibling.slug)
-                if (generatedServices.length !== 1) throw new TypeError(`dependency service identity is ambiguous for ${sibling.slug}`)
+                if (generatedServices.length !== 1) throw new RefusalError(`dependency service identity is ambiguous for ${sibling.slug}`)
                 const service = generatedServices[0]!
                 const policies = service.mounts.flatMap((mount) => {
                     if (mount.kind !== 'volume') return []
@@ -533,7 +535,7 @@ function producers(input: {
                 })
                 const serviceEvidence = services.get(service.id)
                 if (policies.length !== 1 || !serviceEvidence) {
-                    throw new TypeError(`dependency runtime evidence is unavailable for ${sibling.slug}`)
+                    throw new RefusalError(`dependency runtime evidence is unavailable for ${sibling.slug}`)
                 }
                 const dependencyRuntime = projectDependencyRuntime({
                     topology: session.readiness.topology,
@@ -541,18 +543,18 @@ function producers(input: {
                     service: service.id,
                     volume: policies[0]!.volume,
                 })
-                if (!dependencyRuntime) throw new TypeError(`dependency runtime authority is unavailable for ${sibling.slug}`)
+                if (!dependencyRuntime) throw new RefusalError(`dependency runtime authority is unavailable for ${sibling.slug}`)
                 const runtimePlan = createDependencyRuntimePlan({ runtime: dependencyRuntime })
-                if (runtimePlan.kind !== 'planned') throw new TypeError(runtimePlan.reason)
+                if (runtimePlan.kind !== 'planned') throw new RefusalError(runtimePlan.reason)
                 const admitted = admitDependencyRuntime({
                     plan: runtimePlan,
                     inspectOutcome: await input.execute(runtimePlan.inspect),
                     architectureOutcome: await input.execute(runtimePlan.architecture),
                     abiOutcome: await input.execute(runtimePlan.abi),
                 })
-                if (admitted.kind !== 'complete') throw new TypeError(admitted.reason)
+                if (admitted.kind !== 'complete') throw new RefusalError(admitted.reason)
                 const load = policies[0]!.policy.load_probe
-                if (load.length === 0) throw new TypeError(`dependency load probe is empty for ${sibling.slug}`)
+                if (load.length === 0) throw new RefusalError(`dependency load probe is empty for ${sibling.slug}`)
                 const observation = await observeDependencyLoad({
                     binding: admitted.binding,
                     load: Object.freeze([...load]) as readonly [string, ...string[]],
@@ -561,7 +563,7 @@ function producers(input: {
                     stdoutLimitBytes: 1_048_576,
                     stderrLimitBytes: 1_048_576,
                 }, { execute: input.execute })
-                if (!observation) throw new TypeError(`dependency load observation is unavailable for ${sibling.slug}`)
+                if (!observation) throw new RefusalError(`dependency load observation is unavailable for ${sibling.slug}`)
                 observations.push(observation)
             }
             return Object.freeze(observations)
@@ -572,13 +574,13 @@ function producers(input: {
         ports: async () => {
             if (!runningStack) return Object.freeze([])
             const [session, services] = await Promise.all([stableSession(), currentServices])
-            if (!session || !services) throw new TypeError('runtime port health needs current lifecycle, lease and service identities')
+            if (!session || !services) throw new RefusalError('runtime port health needs current lifecycle, lease and service identities')
             const observation = await observeRuntimePortFamily({ topology: session.readiness.topology,
                 services: Object.freeze([...services.values()]), namespace: session.context.namespace,
                 listenerTimeoutMs: input.timeoutMs,
                 revalidate: async () => {
                     const fresh = await inspectCurrentServices()
-                    if (!fresh) throw new TypeError('runtime services or lifecycle changed during port observation')
+                    if (!fresh) throw new RefusalError('runtime services or lifecycle changed during port observation')
                     return Object.freeze([...fresh.values()])
                 } })
             return Object.freeze([observation])
@@ -589,11 +591,11 @@ function producers(input: {
                 const measured = await runtimeMeasurement
                 // A stopped stack's missing runtime is already a notice; its rows are left unobserved.
                 if (!measured && input.stopped) return Object.freeze([])
-                if (!measured) throw new TypeError('configured runtime measurement needs authenticated runtime identity evidence')
+                if (!measured) throw new RefusalError('configured runtime measurement needs authenticated runtime identity evidence')
                 return Object.freeze([measured])
             }
             const [session, services] = await Promise.all([stableSession(), currentServices])
-            if (!session || !services) throw new TypeError('configured runtime health needs current runtime execution evidence')
+            if (!session || !services) throw new RefusalError('configured runtime health needs current runtime execution evidence')
             return Object.freeze([...session.readiness.runtimeObservations,
                 observeRuntimeMountMaterialization({ topology: session.readiness.topology,
                     services: Object.freeze([...services.values()]), observedAt: observedAt() })])
@@ -647,7 +649,7 @@ async function checkoutProjection(
 async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>): Promise<readonly EnvironmentDiagnostic[]> {
     try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return Object.freeze([]) }
     catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze([])
+        if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
         throw error
     }
     // work review searches only canonical PATH directories, so doctor does too.
@@ -655,7 +657,7 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
         if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
         let canonical: string
         try { canonical = await realpath(directory) } catch (error) {
-            if (['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) continue
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES')) continue
             throw error
         }
         if (canonical === directory && (await resolveExecutablePath(join(directory, 'codex'))).state === 'available') return Object.freeze([])

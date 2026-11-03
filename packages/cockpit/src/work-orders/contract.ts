@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { tryParseJson } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-contract',
@@ -225,12 +226,8 @@ export function parseWorkOrder(input: Uint8Array): WorkOrderParseResult {
     const verification: { criterion: string; argv: readonly string[] }[] = []
     for (const line of body('Verification')) {
         const match = /^- (AC[1-7]) \| (\[.*\])$/.exec(line)
-        let argv: unknown
-        if (match) {
-            try { argv = JSON.parse(match[2]) } catch { // Parser text would quote the contract; the finding names the expected shape.
-                add('WO_VERIFICATION_INVALID', 'Verification', 'Verification argv must be a valid JSON array')
-            }
-        }
+        const argv = match ? tryParseJson(match[2]!) : undefined
+        if (match && argv === undefined) add('WO_VERIFICATION_INVALID', 'Verification', 'Verification argv must be a valid JSON array')
         if (!match || !criteria.some((criterion) => criterion.id === match[1])
             || !Array.isArray(argv) || !argv.length || argv.length > WORK_ORDER_LIMITS.arguments
             || argv.some((argument: unknown) => typeof argument !== 'string' || !argument.trim() || /[\x00-\x1f\x7f]/.test(argument))

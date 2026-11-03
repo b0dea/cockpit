@@ -8,6 +8,7 @@ import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { readBoundedInput } from '../config/load.js'
+import { errorCause, hasErrorCode } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'guard-local-identity', module: 'packages/cockpit/src/guards/local-identity.ts',
@@ -80,7 +81,7 @@ async function observeLocalFile(path: string): Promise<LocalFileObservation> {
             || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) return { kind: 'invalid' }
         return { kind: 'complete', status: after, bytes: read.bytes }
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'absent' } : { kind: 'invalid' }
+        return hasErrorCode(error, 'ENOENT') ? { kind: 'absent' } : { kind: 'invalid' }
     }
 }
 
@@ -89,7 +90,7 @@ async function directoryAt(path: string, create: boolean): Promise<string | unde
         const status = await lstat(path)
         return status.isDirectory() && !status.isSymbolicLink() ? undefined : `${path} is not a plain directory`
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !create) return `${path} is unavailable (${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`
+        if (!hasErrorCode(error, 'ENOENT') || !create) return `${path} is unavailable (${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`
     }
     await mkdir(path, { mode: 0o700 })
     return directoryAt(path, false)
@@ -133,6 +134,6 @@ export async function writeCockpitLocalFiles(root: string, files: readonly Reado
         }
         return { kind: 'complete' }
     } catch (error) {
-        return { kind: 'refusal', message: `${current} could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})` }
+        return { kind: 'refusal', message: `${current} could not be written (${errorCause(error)})` }
     }
 }

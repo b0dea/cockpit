@@ -86,13 +86,13 @@ describe('product-owned gates', () => {
         const result = await runGate(registry(), { gate: 'release', stack: { state: 'available' } }, {
             ...dependencies(), runProductTool: async invocation => {
                 calls.push(invocation.stage)
-                if (invocation.stage === 'unit') throw new Error('executable missing')
+                if (invocation.stage === 'unit') throw Object.assign(new Error('spawn product-tool ENOENT'), { code: 'ENOENT', syscall: 'spawn product-tool' })
                 return { kind: 'executed', exitCode: 0, signal: null, outputBytes: 1, assertion: 'passed' }
             },
         })
         expect(calls).toEqual(['unit', 'browser'])
         expect(result.verdict).toBe('DEGRADED')
-        expect(result.reasons.join(' ')).toContain('executable missing')
+        expect(result.reasons.join(' ')).toContain('spawn product-tool ENOENT')
         const drift = ['a'.repeat(64), 'b'.repeat(64)]
         expect((await runGate(registry(), { gate: 'focused' }, { ...dependencies(), subject: async () => drift.shift()! })).verdict).toBe('VOID')
     })

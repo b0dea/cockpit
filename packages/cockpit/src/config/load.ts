@@ -4,6 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'smol-toml'
 import {
+    RefusalError,
     ENVIRONMENT_CODES,
     type ConfigSourceSnapshot,
     type EnvironmentCommandOutcome,
@@ -33,7 +34,7 @@ export async function readBoundedInput(path: string): Promise<BoundedInputRead> 
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
         const opened = await file.stat()
-        if (!opened.isFile()) throw Object.assign(new Error('structured input is not a regular file'), { code: 'EISDIR' })
+        if (!opened.isFile()) throw Object.assign(new RefusalError('structured input is not a regular file'), { code: 'EISDIR' })
         if (opened.size > STRUCTURED_INPUT_BYTE_LIMIT) return Object.freeze({ kind: 'too-large' })
         const buffer = Buffer.allocUnsafe(STRUCTURED_INPUT_BYTE_LIMIT + 1)
         let offset = 0
@@ -52,7 +53,7 @@ export async function readBoundedInput(path: string): Promise<BoundedInputRead> 
             || namedAfter.dev !== opened.dev || namedAfter.ino !== opened.ino
             || namedAfter.size !== opened.size || namedAfter.mtimeMs !== opened.mtimeMs || namedAfter.ctimeMs !== opened.ctimeMs
             || offset !== opened.size
-        ) throw Object.assign(new Error('structured input changed while reading'), { code: 'EIO' })
+        ) throw Object.assign(new RefusalError('structured input changed while reading'), { code: 'EIO' })
         return Object.freeze({ kind: 'complete', bytes: Buffer.from(buffer.subarray(0, offset)) })
     } finally {
         await file.close()

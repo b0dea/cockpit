@@ -1,3 +1,4 @@
+import { hasErrorCode } from './contract.js'
 /**
  * Owns the leftovers of a `runtime measure` that was killed before the probe could clean up: the
  * probe's containers, network and volume on the daemon, and the private `cockpit-runtime-measure-*`
@@ -77,7 +78,7 @@ async function measureDirectories(temporaryDirectory: string, uid: number | unde
         if (!status.isDirectory() || status.isSymbolicLink() || (uid !== undefined && status.uid !== uid)) return undefined
         let owner: string | undefined
         try { owner = (await readFile(join(path, OWNER_FILE), 'utf8')).trim() } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            if (!hasErrorCode(error, 'ENOENT')) throw error
         }
         const alive = owner === undefined ? Date.now() - status.mtimeMs < UNOWNED_STALE_MS : !await gone(owner)
         return Object.freeze({ path, alive })

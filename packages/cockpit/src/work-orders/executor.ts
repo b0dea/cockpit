@@ -7,6 +7,7 @@ import {
     type WorkOrderWriter,
 } from './state.js'
 import { type WorkOrderStatusInput } from './status.js'
+import { errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-execution',
@@ -56,7 +57,7 @@ async function persist(
         }
         return { kind: 'complete', bytes }
     } catch (error) {
-        return { kind: 'refusal', reason: `Execution state readback failed: ${error instanceof Error ? error.message : String(error)}` }
+        return { kind: 'refusal', reason: `Execution state readback failed: ${errorCause(error)}` }
     }
 }
 
@@ -100,7 +101,7 @@ export async function executeWorkOrderStep(
     try {
         observation = normalizeVerificationObservation(await dependencies.execute(next.argv))
     } catch (error) {
-        observation = { kind: 'error', reason: error instanceof Error ? error.message : String(error) }
+        observation = { kind: 'error', reason: errorCause(error) }
     }
     const passed = verificationObservationPassed(observation)
     if (!passed) {

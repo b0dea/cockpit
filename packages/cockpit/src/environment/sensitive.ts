@@ -1,3 +1,5 @@
+import { RefusalError } from './contract.js'
+
 export const mechanism = {
     id: 'environment-sensitive-data',
     module: 'packages/cockpit/src/environment/sensitive.ts',
@@ -16,7 +18,7 @@ export function redactSensitiveText(value: string): string {
 }
 
 function redactStructured(value: unknown, key = '', depth = 0): unknown {
-    if (depth > 64) throw new TypeError('structured diagnostic exceeds the nesting limit')
+    if (depth > 64) throw new RefusalError('structured diagnostic exceeds the nesting limit')
     if (isSensitiveField(key)) return '[redacted]'
     if (Array.isArray(value)) return value.map(item => redactStructured(item, '', depth + 1))
     if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value)

@@ -1,4 +1,5 @@
 import {
+    RefusalError,
     ENVIRONMENT_CODES,
     snapshotEnvironmentObservation,
     snapshotJson,
@@ -25,7 +26,7 @@ const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('host observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('host observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -58,10 +59,10 @@ function metric(stackId: StackId, evidence: MachineFloorEvidence, code: Environm
 export function observeHostCapacity(input: {
     readonly evidence: MachineFloorEvidence
 }): readonly EnvironmentObservation[] {
-    if (input === null || typeof input !== 'object') throw new TypeError('machine-floor evidence is not authentic')
+    if (input === null || typeof input !== 'object') throw new RefusalError('machine-floor evidence is not authentic')
     const descriptors = Object.getOwnPropertyDescriptors(input)
     if (Object.keys(descriptors).length !== 1 || !descriptors.evidence || !('value' in descriptors.evidence)
-        || !isMachineFloorEvidence(descriptors.evidence.value)) throw new TypeError('machine-floor evidence is not authentic')
+        || !isMachineFloorEvidence(descriptors.evidence.value)) throw new RefusalError('machine-floor evidence is not authentic')
     const evidence = descriptors.evidence.value as MachineFloorEvidence
     const stackId = evidence.stackId
     const floor = snapshotJson(evidence.floor)
@@ -69,7 +70,7 @@ export function observeHostCapacity(input: {
         || floor === null || typeof floor !== 'object' || Array.isArray(floor)
         || Object.keys(floor).sort().join('\0') !== ['cpuMillis', 'freeDiskBytes', 'memoryBytes'].join('\0')
         || Object.values(floor).some((value) => !Number.isSafeInteger(value) || (value as number) < 1)) {
-        throw new TypeError('host capacity floor must use exact positive integer units')
+        throw new RefusalError('host capacity floor must use exact positive integer units')
     }
     const threshold = floor as unknown as HostCapacityFloor
     return Object.freeze([

@@ -15,6 +15,8 @@ import {
     type ForegroundProcessOutcome,
 } from '../environment-exec/execute.js'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     isCanonicalTimestamp,
@@ -366,7 +368,7 @@ export async function runGuardEvaluationApplication(
             let status: Stats
             try { status = lstatSync(path) }
             catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !directory) return unavailable(guardHeld(identity,
+                if (hasErrorCode(error, 'ENOENT') && !directory) return unavailable(guardHeld(identity,
                     `${identity.configPath} is missing`, 'guard policy comes from it', { kind: 'restore', path: configFile }))
                 throw error
             }
@@ -391,7 +393,7 @@ export async function runGuardEvaluationApplication(
         if (!node || node.canonicalPath !== identity.node || node.sha256 !== identity.nodeSha256) return changed(`the Node executable changed (now ${node?.canonicalPath ?? 'unreadable'})`)
         const read = async (root: string, path: string, maxBytes: number) => {
             const result = await readAnchoredFile(root, path, maxBytes, node, { execute: adapters.execute ?? executeProbe })
-            if (result.kind !== 'complete') throw new Error('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
+            if (result.kind !== 'complete') throw new RefusalError('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
             return result
         }
         const module = await read(dirname(identity.module), basename(identity.module), 16_777_216)
@@ -409,11 +411,11 @@ export async function runGuardEvaluationApplication(
         }))
         const readPublication = async () => {
             const batch = await readAnchoredBatches(identity.root, publicationRequests, node, { execute: adapters.execute ?? executeProbe })
-            if (batch?.kind !== 'complete' || batch.results.length !== publicationRequests.length) throw new Error('Guard publication read could not be authenticated.')
+            if (batch?.kind !== 'complete' || batch.results.length !== publicationRequests.length) throw new RefusalError('Guard publication read could not be authenticated.')
             return new Map(publicationRequests.map((request, index) => {
                 const result = batch.results[index]
                 if (result?.kind === 'missing') throw new GuardFileMissing(request.path)
-                if (result?.kind !== 'complete') throw new Error('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
+                if (result?.kind !== 'complete') throw new RefusalError('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
                 return [request.path, result] as const
             }))
         }
@@ -630,7 +632,7 @@ export async function runGuardEvaluationApplication(
     }
 }
 
-class GuardFileMissing extends Error {
+class GuardFileMissing extends RefusalError {
     constructor(readonly path: string) { super(`${path} is missing`) }
 }
 
@@ -691,11 +693,11 @@ export async function prepareGuardEvaluationPolicy(
                     let status: Stats
                     try { status = lstatSync(cursor) }
                     catch (error) {
-                        if ((error as NodeJS.ErrnoException).code === 'ENOENT') { exists = false; break }
+                        if (hasErrorCode(error, 'ENOENT')) { exists = false; break }
                         throw error
                     }
                     if (status.isSymbolicLink() || (index < segments.length - 1 || leaf === 'directory' ? !status.isDirectory() : !status.isFile())) {
-                        throw new Error(`guard policy ${label} path has a symlink or unexpected file type`)
+                        throw new RefusalError(`guard policy ${label} path has a symlink or unexpected file type`)
                     }
                     identities.set(cursor, status)
                     chain.push(guardIdentity(status))
@@ -707,7 +709,7 @@ export async function prepareGuardEvaluationPolicy(
                 const before = lstatSync(path)
                 if (!before.isDirectory() || before.isSymbolicLink() || realpathSync(path) !== path
                     || !isAbsolute(path) || path === '/' || /[\x00-\x1f\x7f]/.test(path)) {
-                    throw new Error('guard policy requires canonical directory authority')
+                    throw new RefusalError('guard policy requires canonical directory authority')
                 }
                 identities.set(path, before)
                 return path
@@ -719,21 +721,21 @@ export async function prepareGuardEvaluationPolicy(
             const templates: string[] = []
             for (const sibling of config.sibling) {
                 const root = resolve(siblingsRoot, sibling.dir)
-                if (!confinedPath(siblingsRoot, root)) throw new Error('guard policy sibling escapes its declared root')
+                if (!confinedPath(siblingsRoot, root)) throw new RefusalError('guard policy sibling escapes its declared root')
                 allowedRoots.add(directory(root))
                 for (const file of derived.result.secretPaths.filter(row => row.slug === sibling.slug)) {
                     const path = resolve(root, file.path)
-                    if (!confinedPath(root, path) || path === root) throw new Error('guard policy instance escapes its sibling root')
+                    if (!confinedPath(root, path) || path === root) throw new RefusalError('guard policy instance escapes its sibling root')
                     protect(root, path, 'file', 'instance')
                     instances.push(Object.freeze({ name: `${sibling.slug}-${createHash('sha256').update(file.path).digest('hex').slice(0, 12)}`, path }))
                 }
                 for (const file of sibling.environment_files ?? []) {
                     const path = resolve(root, file.template)
-                    if (!confinedPath(root, path) || path === root) throw new Error('guard policy environment template escapes its sibling root')
+                    if (!confinedPath(root, path) || path === root) throw new RefusalError('guard policy environment template escapes its sibling root')
                     templates.push(path)
                 }
             }
-            if (allowedRoots.size > 256 || instances.length > 256) throw new Error('guard policy exceeds restriction root or instance bounds')
+            if (allowedRoots.size > 256 || instances.length > 256) throw new RefusalError('guard policy exceeds restriction root or instance bounds')
             for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
             // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
             const configPath = loaded.source.path
@@ -747,7 +749,7 @@ export async function prepareGuardEvaluationPolicy(
                 const after = lstatSync(path)
                 if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
                     || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || before.size !== after.size) {
-                    throw new Error('guard policy root or instance identity changed during construction')
+                    throw new RefusalError('guard policy root or instance identity changed during construction')
                 }
             }
             const policy = Object.freeze({ canonicalRoot, configPath,
@@ -811,7 +813,7 @@ export async function prepareGuardEvaluationPolicy(
         const policy: GuardEvaluationPolicy = Object.freeze({ ...boundaries, projectCommands: Object.freeze(projectCommands) })
         return { kind: 'complete', status: 0, diagnostics: [], result: Object.freeze({ policy }) }
     } catch (error) {
-        return guardPolicyRefusal(error instanceof Error ? `guard policy construction failed: ${error.message}` : 'guard policy construction failed')
+        return guardPolicyRefusal(`guard policy construction failed: ${errorCause(error)}`)
     }
 }
 
@@ -2628,7 +2630,7 @@ async function prepareGeneratedBringup(
         }, (diagnostics) => { portRefusal = diagnostics; return undefined })
     }
     catch (error) { return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-        `generated publication failed: ${error instanceof Error ? error.message : String(error)}`, context.configPath) }
+        `generated publication failed: ${errorCause(error)}`, context.configPath) }
     if (portRefusal) return forwardedRefusal(portRefusal)
     const projected = generatedApplicationProjection(prepared)
     if (!projected || projected.sourceSha256 !== context.source.sha256 || projected.runtimeSha256 !== context.runtimeSha256) {
@@ -2891,7 +2893,7 @@ async function completeGeneratedBringup(
         return seededCheckpoint ? { ...seededCheckpoint, progress: progress() } : undefined
     } catch (error) {
         return refusal(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-            `generated lifecycle completion failed: ${error instanceof Error ? error.message : String(error)}`, context.stackId))
+            `generated lifecycle completion failed: ${errorCause(error)}`, context.stackId))
     }
 }
 
@@ -3285,7 +3287,7 @@ function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]): Envi
         code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
         message: `${count} under ${directory} cannot be read by this cockpit version (${reasons}), so their claims and port leases were ignored`,
         target: directory,
-        fix: `if no cockpit still uses them, stop any stack they started (docker compose ls lists them), then delete them: rm -rf ${skipped.map(({ path }) => shellQuote(path)).join(' ')}`,
+        fix: `ask the person who owns this machine whether any cockpit still uses them; if none does, stop any stack they started (docker compose ls lists them), then delete them: rm -rf ${skipped.map(({ path }) => shellQuote(path)).join(' ')}`,
     })
 }
 
@@ -4912,10 +4914,10 @@ function issueHealthObservationSource(
         const comparisons = loaded.config.sibling.map((sibling) => {
             const declared = sibling.remote === undefined ? undefined : resolveLocalRemote(sibling.remote, siblingsRoot)
             if (declared?.kind === 'unresolvable') {
-                throw new Error(`sibling ${sibling.slug}: cannot resolve declared local remote ${JSON.stringify(declared.declared)} (${declared.errno})`)
+                throw new RefusalError(`sibling ${sibling.slug}: cannot resolve declared local remote ${JSON.stringify(declared.declared)} (${declared.errno})`)
             }
             const checkoutRoot = resolve(siblingsRoot, sibling.dir)
-            if (!confinedPath(siblingsRoot, checkoutRoot)) throw new TypeError('sibling checkout escapes its configured root')
+            if (!confinedPath(siblingsRoot, checkoutRoot)) throw new RefusalError('sibling checkout escapes its configured root')
             return Object.freeze({
                 executable,
                 checkoutRoot,
@@ -4944,8 +4946,8 @@ function issueHealthObservationSource(
         issuedHealthObservationSources.set(source, prepared)
         return source
     } catch (error) {
-        throw new Error(
-            `health observation source could not be issued: ${error instanceof Error ? error.message : String(error)}`,
+        throw new RefusalError(
+            `health observation source could not be issued: ${errorCause(error)}`,
             { cause: error },
         )
     }
@@ -5028,7 +5030,7 @@ async function evaluateApplicationHealth(
     // Reject unauthenticated observations before comparison probes cross the process boundary.
     const initial = boundPreflightContext(await input.refreshPreflight(input.preflight), input.expectedPreflight)
     if (!initial || initial.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
-        throw new TypeError('health preflight authority could not preserve its observation window')
+        throw new RefusalError('health preflight authority could not preserve its observation window')
     }
     aggregateObservations(observations, initial, input.unobservable)
     const comparisons: ComparisonRemoteEvaluation[] = []
@@ -5038,7 +5040,7 @@ async function evaluateApplicationHealth(
     }
     const refreshed = boundPreflightContext(await input.refreshPreflight(initial), input.expectedPreflight)
     if (!refreshed || refreshed.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
-        throw new TypeError('health preflight authority could not preserve its observation window')
+        throw new RefusalError('health preflight authority could not preserve its observation window')
     }
     const preflight = aggregateObservations(observations, refreshed, input.unobservable)
     const frozenComparisons = Object.freeze(comparisons)
@@ -5188,7 +5190,7 @@ export async function runPreflight(
     } catch (error) {
         // A producer that refused (a configuration edited since `up`, for one) says why; its refusal
         // outranks the lost observation window that refusal caused.
-        return unavailablePreflight(`preflight requires authentic observation and lifecycle evidence: ${error instanceof Error ? error.message : String(error)}`, refused)
+        return unavailablePreflight(`preflight requires authentic observation and lifecycle evidence: ${errorCause(error)}`, refused)
     }
     const result = Object.freeze({
         verdict: health.verdict,
@@ -5280,7 +5282,7 @@ async function doctorHealth(
     } catch (error) {
         return unavailableDoctor(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            `doctor requires authentic observation and lifecycle evidence: ${error instanceof Error ? error.message : String(error)}`,
+            `doctor requires authentic observation and lifecycle evidence: ${errorCause(error)}`,
             await surfaceOverrides,
             await freshness,
             await declarations,
@@ -5421,7 +5423,7 @@ export async function runLogs(
         if (signal?.aborted) return logsCancelled(json)
         if (error instanceof DeclarationRefusalError) return Object.freeze({ kind: 'refusal', status: 2, result: null,
             diagnostics: Object.freeze([error.diagnostic]) })
-        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation is unavailable for service ${service}: ${error instanceof Error ? error.message : String(error)}`)
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation is unavailable for service ${service}: ${errorCause(error)}`)
     }
     if (signal?.aborted) return logsCancelled(json)
     const observed = ownDataValues(observation, ['request'], ['restart', 'generatedComposeAuthority', 'ownComposeAuthority'])
@@ -5440,7 +5442,7 @@ export async function runLogs(
     try {
         collected = await collectLogs(plan, execute, signal, observed?.restart as RestartWindow | undefined)
     } catch (error) {
-        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log collection failed for service ${service}: ${error instanceof Error ? error.message : String(error)}`)
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log collection failed for service ${service}: ${errorCause(error)}`)
     }
     if (collected.kind === 'unavailable') {
         return logsRefusal(collected.code, `the logs of service ${service} are unavailable: ${collected.reason}`)
@@ -5571,11 +5573,11 @@ export async function beginOperatorBaselineRecord(
 }
 
 function baselineObservationMessage(error: unknown): string {
-    return `baseline evidence observation is unavailable: ${error instanceof Error ? error.message : String(error)}`
+    return `baseline evidence observation is unavailable: ${errorCause(error)}`
 }
 
 function baselineRevalidationMessage(error: unknown): string {
-    const message = error instanceof TypeError ? error.message : ''
+    const message = error instanceof RefusalError ? error.message : ''
     return [
         'baseline config source changed',
         'baseline runtime topology changed',

@@ -1,6 +1,7 @@
 import { isValidatedWorkOrderPolicy, type ValidatedWorkOrderPolicy } from './intake.js'
 import { z } from 'zod'
 import { isParsedWorkOrder, WORK_ORDER_LIMITS, type ParsedWorkOrder } from './contract.js'
+import { RefusalError, errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-state',
@@ -161,7 +162,7 @@ export function readWorkOrderState(contract: ParsedWorkOrder, input: Uint8Array)
 
 export function encodeWorkOrderState(contract: ParsedWorkOrder, input: WorkOrderExecutionState): Uint8Array {
     const parsed = validateState(contract, input)
-    if (parsed.kind === 'refusal') throw new Error(`[${parsed.code}] ${parsed.message}`)
+    if (parsed.kind === 'refusal') throw new RefusalError(`[${parsed.code}] ${parsed.message}`)
     return Buffer.from(JSON.stringify(parsed.value))
 }
 
@@ -291,6 +292,6 @@ export async function persistWorkOrderProgress(contract: ParsedWorkOrder, policy
         if (!readback.equals(Buffer.from(bytes))) return refuse('WO_STATE_PERSIST_FAILED', 'Execution state write was acknowledged but exact readback differs; advancement is withheld')
         return readWorkOrderState(contract, readback)
     } catch (error) {
-        return refuse('WO_STATE_PERSIST_FAILED', `Execution state could not be persisted and confirmed: ${error instanceof Error ? error.message : String(error)}`)
+        return refuse('WO_STATE_PERSIST_FAILED', `Execution state could not be persisted and confirmed: ${errorCause(error)}`)
     }
 }

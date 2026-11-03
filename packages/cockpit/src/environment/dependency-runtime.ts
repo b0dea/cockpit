@@ -1,6 +1,7 @@
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { isProxy } from 'node:util/types'
 import {
+    RefusalError,
     errorCause,
     isCanonicalTimestamp,
     snapshotExecutionStep,
@@ -189,7 +190,7 @@ function text(outcome: ExecuteProbeOutcome, step: ExecutionStep, envelope: Depen
 function inspectIdentity(source: string, envelope: DependencyRuntimeEnvelope): { readonly imageId: string } | DependencyRuntimeRefusal {
     try {
         const parsed: unknown = JSON.parse(source.endsWith('\n') ? source.slice(0, -1) : source)
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new RefusalError('not an object')
         const value = parsed as Record<string, unknown>
         const labels = value.Labels
         const mounts = value.Mounts

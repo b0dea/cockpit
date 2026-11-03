@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isProxy } from 'node:util/types'
-import { snapshotJson, type JsonSnapshot } from '../environment/contract.js'
+import { snapshotJson, type JsonSnapshot, errorCause } from '../environment/contract.js'
 import {
     isParsedWorkOrder, parseWorkOrder, WORK_ORDER_LIMITS, type ParsedWorkOrder,
     type WorkOrderCriterion, type WorkOrderDecision, type WorkOrderSource,
@@ -562,7 +562,7 @@ function readCurrentRecord(contract: ParsedWorkOrder, store: WorkOrderAcceptance
         first = safeAcceptanceRecord(reader.call(store, contract.frontmatter.id))
         second = safeAcceptanceRecord(reader.call(store, contract.frontmatter.id))
     } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error)
+        const reason = errorCause(error)
         return refuse('WO_ACCEPTANCE_INVALID', `Current acceptance store read failed: ${reason}`)
     }
     if (!first || !second) return refuse('WO_ACCEPTANCE_INVALID', 'Current acceptance store returned an invalid bounded record')

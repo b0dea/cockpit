@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import { parseDocument } from 'yaml'
 
-import { INHERITED_TOOL_ENVIRONMENT, snapshotJson } from '../environment/contract.js'
+import { INHERITED_TOOL_ENVIRONMENT, snapshotJson, tryParseJson } from '../environment/contract.js'
 import { reservedPathSegment, SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
 import { harnessFact } from './harness-registry.js'
 
@@ -209,8 +209,8 @@ export function parseMcpDeclarationFile(input: unknown): McpParseOutcome {
     if (!parsed.success) return refuse('MCP_DECLARATION_INVALID', 'MCP source must be bounded authenticated declaration bytes')
     const { bytes, source, workingDirectory } = parsed.data
     if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) return refuse('MCP_DECLARATION_INVALID', 'MCP source digest does not match declaration bytes')
-    let value: unknown
-    try { value = JSON.parse(bytes) } catch { /* unparseable input is malformed; the caller refuses it. */ return refuse('MCP_DECLARATION_INVALID', 'MCP declaration is not valid JSON') }
+    const value = tryParseJson(bytes)
+    if (value === undefined) return refuse('MCP_DECLARATION_INVALID', 'MCP declaration is not valid JSON')
     const file = NativeFile.safeParse(value)
     if (!file.success) return refuse('MCP_DECLARATION_INVALID', 'MCP declaration contains unsupported command, environment or transport fields')
     const declarations: McpDeclaration[] = []

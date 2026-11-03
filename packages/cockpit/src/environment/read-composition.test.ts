@@ -8,6 +8,7 @@ import { runLogs } from './application.js'
 import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
 import { planLogs } from './logs.js'
 import type { EnvironmentBaseline } from './evidence.js'
+import { RefusalError } from './contract.js'
 
 const sha = (value: string) => value.padEnd(64, value[0] ?? 'a').slice(0, 64)
 const stackId = `stack:${sha('a')}`
@@ -392,7 +393,7 @@ describe('production read command composition', () => {
             get runtimeMeasurementProbeAuthority() { return getter() },
         }, vi.fn(async () => ({ kind: 'complete' })) as never)
 
-        await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toBeInstanceOf(TypeError)
+        await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toBeInstanceOf(RefusalError)
         expect(getter).not.toHaveBeenCalled()
     })
 

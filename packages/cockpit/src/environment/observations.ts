@@ -1,4 +1,5 @@
 import {
+    RefusalError,
     ENVIRONMENT_CODES,
     isCanonicalTimestamp,
     snapshotEnvironmentObservation,
@@ -215,9 +216,9 @@ export function validateObservationDeclarations(
 }
 
 const productionDeclarations = validateObservationDeclarations(allObservationDeclarations)
-if (productionDeclarations.kind !== 'valid') throw new Error(productionDeclarations.reason)
+if (productionDeclarations.kind !== 'valid') throw new RefusalError(productionDeclarations.reason)
 if (productionDeclarations.declarations.some(({ issuedAt }) => typeof issuedAt !== 'function')) {
-    throw new Error('production observation declaration lacks issuance authority')
+    throw new RefusalError('production observation declaration lacks issuance authority')
 }
 const validatedProductionDeclarations = productionDeclarations.declarations
 const issuedPreflights = new WeakSet<object>()
@@ -234,7 +235,7 @@ const RUNNING_STACK_ROWS = Object.freeze([
 const RUNTIME_ROWS = Object.freeze(['runtime-measurement', POSTURE_REQUIREMENT_OWNER])
 for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) {
     if (id !== POSTURE_REQUIREMENT_OWNER && !validatedProductionDeclarations.some((declaration) => declaration.id === id)) {
-        throw new Error(`stopped-stack applicability names an undeclared observation: ${id}`)
+        throw new RefusalError(`stopped-stack applicability names an undeclared observation: ${id}`)
     }
 }
 
@@ -370,25 +371,25 @@ function evaluatePreflight(
 ): PreflightEvaluation {
     const observations: EnvironmentObservation[] = []
     const observationInputs = boundedDenseArray(values)
-    if (!observationInputs) throw new TypeError('preflight observations must be a bounded dense array')
+    if (!observationInputs) throw new RefusalError('preflight observations must be a bounded dense array')
     const { evaluationInstant, authorities, stages, checks: postureChecks } = authenticateObservationPostureContext(context)
     if (authorities.size * validatedProductionDeclarations.length > STRUCTURED_INPUT_ENTRY_LIMIT) {
-        throw new TypeError('preflight aggregate exceeds its bounded declaration capacity')
+        throw new RefusalError('preflight aggregate exceeds its bounded declaration capacity')
     }
     const suppliedKeys = new Set<string>()
     for (const value of observationInputs) {
         const snapshot = snapshotEnvironmentObservation(value)
-        if (snapshot === undefined) throw new TypeError('environment observation is malformed')
+        if (snapshot === undefined) throw new RefusalError('environment observation is malformed')
         const declaration = validatedProductionDeclarations.find(({ owner, code }) => owner === snapshot.owner && code === snapshot.code)
-        if (!declaration) throw new TypeError('environment observation has no declared producer authority')
-        if (!declaration.isIssued(value)) throw new TypeError('environment observation is not producer-issued')
+        if (!declaration) throw new RefusalError('environment observation has no declared producer authority')
+        if (!declaration.isIssued(value)) throw new RefusalError('environment observation is not producer-issued')
         const producerIssuedAt = declaration.issuedAt?.(value)
-        if (producerIssuedAt === undefined) throw new TypeError('environment observation lacks producer issuance authority')
+        if (producerIssuedAt === undefined) throw new RefusalError('environment observation lacks producer issuance authority')
         const key = `${snapshot.stackId}\0${snapshot.owner}\0${snapshot.code}`
-        if (suppliedKeys.has(key)) throw new TypeError('preflight contains duplicate mechanism evidence')
+        if (suppliedKeys.has(key)) throw new RefusalError('preflight contains duplicate mechanism evidence')
         suppliedKeys.add(key)
         const authority = authorities.get(snapshot.stackId)
-        if (!authority) throw new TypeError('environment observation has no resolved posture authority')
+        if (!authority) throw new RefusalError('environment observation has no resolved posture authority')
         const applicability = declaredApplicability(declaration, authority, stages.get(authority.stackId)!, unobservable)
         const observedTime = Date.parse(snapshot.observed.observedAt)
         const freshness = observedTime < Date.parse(authority.evaluatedAt)
@@ -401,7 +402,7 @@ function evaluatePreflight(
             ? { kind: 'equal' as const, value: authority.revision }
             : snapshot.expectation
         const owned = snapshotEnvironmentObservation({ ...snapshot, applicability, freshness, expectation })
-        if (!owned) throw new TypeError('environment observation applicability could not be derived')
+        if (!owned) throw new RefusalError('environment observation applicability could not be derived')
         observations.push(owned)
     }
     const stackIds = [...authorities.keys()].sort(compareCodeUnits)
@@ -441,7 +442,7 @@ function evidenceValue(value: JsonSnapshot | undefined): string {
 }
 
 export function projectDoctor(preflight: PreflightEvaluation): DoctorProjection {
-    if (!issuedPreflights.has(preflight)) throw new TypeError('preflight evaluation is not authentic')
+    if (!issuedPreflights.has(preflight)) throw new RefusalError('preflight evaluation is not authentic')
     return Object.freeze({
         verdict: preflight.verdict,
         checks: Object.freeze(preflight.checks.map((check) => Object.freeze({
@@ -457,12 +458,12 @@ export function aggregateObservations(
     unobservable?: ReadonlyMap<string, string>,
 ): PreflightEvaluation {
     const groupInputs = boundedDenseArray(groups)
-    if (!groupInputs) throw new TypeError('observation groups must be a bounded dense array')
+    if (!groupInputs) throw new RefusalError('observation groups must be a bounded dense array')
     const values: EnvironmentObservation[] = []
     for (const group of groupInputs) {
         const observations = boundedDenseArray(group)
         if (!observations || values.length + observations.length > STRUCTURED_INPUT_ENTRY_LIMIT) {
-            throw new TypeError('observation groups must be a bounded dense array within the shared boundary')
+            throw new RefusalError('observation groups must be a bounded dense array within the shared boundary')
         }
         for (const observation of observations) values.push(observation as EnvironmentObservation)
     }

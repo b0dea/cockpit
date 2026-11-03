@@ -4,7 +4,7 @@ import { isProxy, isUint8Array } from "node:util/types"
 
 import { createHash } from 'node:crypto'
 
-import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, RefusalError, tryParseJson } from '../environment/contract.js'
 import { publicationCockpitId } from '../environment/identity.js'
 import { safeSurfacePath as safePath } from './contract.js'
 import { SURFACE_TARGETS } from './harness-registry.js'
@@ -157,10 +157,6 @@ function refusal(code: SurfaceDiagnostic['code'], message: string, target?: stri
     return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message, ...(target === undefined ? {} : { target }) }) })
 }
 
-function parseJson(value: string): unknown | undefined {
-    try { return JSON.parse(value) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
-}
-
 function sortedUniqueStrings(value: JsonSnapshot | undefined, allowed?: ReadonlySet<string>): value is JsonSnapshot & readonly string[] {
     return Array.isArray(value) && value.length > 0 && value.every((item, index) => typeof item === 'string'
         && HARNESS.test(item) && (allowed === undefined || allowed.has(item)) && (index === 0 || value[index - 1]! < item))
@@ -205,7 +201,7 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
             for (const member of value.region.members) {
                 if (!object(member) || !exact(member, ['key', 'valueBytes']) || typeof member.key !== 'string'
                     || !OPENCODE_KEYS.has(member.key) || member.key <= priorKey || typeof member.valueBytes !== 'string'
-                    || Buffer.byteLength(member.valueBytes) > MAX_FILE_BYTES || parseJson(member.valueBytes) === undefined) return undefined
+                    || Buffer.byteLength(member.valueBytes) > MAX_FILE_BYTES || tryParseJson(member.valueBytes) === undefined) return undefined
                 priorKey = member.key
             }
             if (typeof value.region.sha256 !== 'string' || digest(JSON.stringify(value.region.members)) !== value.region.sha256) return undefined
@@ -281,7 +277,7 @@ function uniqueJsonKeys(bytes: string): boolean {
             const end = stringEnd(bytes, index)
             if (end === undefined) return false
             if (container?.keys && container.expectsKey) {
-                const key = parseJson(bytes.slice(index, end))
+                const key = tryParseJson(bytes.slice(index, end))
                 if (typeof key !== 'string' || container.keys.has(key)) return false
                 container.keys.add(key)
                 container.expectsKey = false
@@ -322,7 +318,7 @@ function rootObject(original: string): RootObject | undefined {
     const masked = maskOwnerComments(original)
     if (!masked) return undefined
     const { bytes, owner } = masked
-    if (!object(snapshotGeneratedJson(parseJson(bytes))) || !uniqueJsonKeys(bytes)) return undefined
+    if (!object(snapshotGeneratedJson(tryParseJson(bytes))) || !uniqueJsonKeys(bytes)) return undefined
     let index = 0
     while (/\s/.test(bytes[index] ?? '')) index += 1
     if (bytes[index] !== '{') return undefined
@@ -345,8 +341,7 @@ function rootObject(original: string): RootObject | undefined {
         const start = index
         const keyEnd = stringEnd(bytes, index)
         if (keyEnd === undefined) return undefined
-        let key: unknown
-        try { key = JSON.parse(bytes.slice(index, keyEnd)) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
+        const key = tryParseJson(bytes.slice(index, keyEnd))
         if (typeof key !== 'string' || keys.has(key)) return undefined
         keys.add(key)
         index = keyEnd
@@ -367,7 +362,7 @@ function rootObject(original: string): RootObject | undefined {
 function rootMemberValues(bytes: string): readonly OpenCodeRootMember[] | undefined {
     const lexed = rootObject(bytes)
     const masked = maskOwnerComments(bytes)
-    const parsed = masked ? parseJson(masked.bytes) : undefined
+    const parsed = masked ? tryParseJson(masked.bytes) : undefined
     if (!lexed || parsed === undefined || parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     const record = parsed as Record<string, unknown>
     return lexed.members.map(member => ({ key: member.key, valueBytes: JSON.stringify(record[member.key]) }))
@@ -574,7 +569,7 @@ export function parseOwnershipManifest(bytes: string, authority: OwnershipAuthor
         || typeof captured.configPath !== "string" || dirname(captured.configPath) !== captured.root
         || typeof captured.cockpitId !== "string" || captured.cockpitId.length === 0
         || typeof bytes !== "string" || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return Object.freeze({ kind: "invalid" })
-    const record = ownRecord(parseJson(bytes))
+    const record = ownRecord(tryParseJson(bytes))
     if (typeof record?.format === "string" && /^cockpit-generated-ownership\/v[0-9]+$/.test(record.format)
         && Number(record.format.slice(record.format.lastIndexOf("v") + 1)) > 3) {
         return Object.freeze({ kind: "unsupported", format: record.format })
@@ -615,7 +610,7 @@ export function encodeOwnershipManifest(prepared: OwnershipManifestInput): Reado
     const payload = ownershipPayload(prepared)
     const bytes = `${JSON.stringify({ ...payload, integrity: sha256(JSON.stringify(payload)) }, null, 2)}\n`
     const parsed = parseOwnershipManifest(bytes, { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath })
-    if (parsed.kind !== "complete") throw new Error("generated ownership encoder received invalid authority or entries")
+    if (parsed.kind !== "complete") throw new RefusalError("generated ownership encoder received invalid authority or entries")
     return Object.freeze({ bytes, manifest: parsed.manifest })
 }
 

@@ -1,5 +1,6 @@
 import { get } from 'node:https'
 import { installedPackageMetadata } from './package-metadata.js'
+import { RefusalError, errorCause } from './environment/contract.js'
 
 export const mechanism = {
     id: 'release-freshness', module: 'packages/cockpit/src/freshness.ts',
@@ -39,32 +40,32 @@ async function query(factory: () => ReleaseMetadataTransport, now: number): Prom
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(new Error('release metadata query timed out')) }, TIMEOUT_MS)
+        timer = setTimeout(() => { controller.abort(); reject(new RefusalError('release metadata query timed out')) }, TIMEOUT_MS)
     })
     try {
         const transport = factory()
         const result = await Promise.race([timeout, (async () => {
             const response = await transport({ url: `https://registry.npmjs.org/${encodeURIComponent(installedPackageMetadata.name)}/latest`, signal: controller.signal })
-            if (response.status !== 200) throw new Error(`release metadata returned HTTP ${response.status}`)
+            if (response.status !== 200) throw new RefusalError(`release metadata returned HTTP ${response.status}`)
             const chunks: Uint8Array[] = []
             let size = 0
             for await (const chunk of response.body) {
                 size += chunk.byteLength
-                if (size > MAX_BYTES) { controller.abort(); throw new Error('release metadata exceeded byte limit') }
+                if (size > MAX_BYTES) { controller.abort(); throw new RefusalError('release metadata exceeded byte limit') }
                 chunks.push(chunk)
             }
             const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))
             if (value === null || typeof value !== 'object' || Array.isArray(value)
                 || !('name' in value) || value.name !== installedPackageMetadata.name || !('version' in value)
                 || typeof value.version !== 'string' || value.version.length > 256
-                || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value.version)) throw new Error('release metadata schema or package identity is invalid')
+                || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value.version)) throw new RefusalError('release metadata schema or package identity is invalid')
             return Object.freeze({ kind: 'known' as const, package: installedPackageMetadata.name,
                 installedVersion: installedPackageMetadata.version, latestVersion: value.version,
                 currency: value.version === installedPackageMetadata.version ? 'same-version' as const : 'different-version' as const, observedAt, expiresAt })
         })()])
         return result
     } catch (error) {
-        return Object.freeze({ kind: 'unknown', reason: error instanceof Error ? error.message : String(error), observedAt, expiresAt })
+        return Object.freeze({ kind: 'unknown', reason: errorCause(error), observedAt, expiresAt })
     } finally {
         if (timer) clearTimeout(timer)
         controller.abort()

@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { isProxy, isUint8Array } from 'node:util/types'
-import { hasErrorCode, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { hasErrorCode, RefusalError, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'guard-invocation-parser', module: 'packages/cockpit/src/guards/invocation-parser.ts',
@@ -41,9 +41,8 @@ export function isParsedGuardInput(value: unknown): value is Extract<GuardParseR
     return typeof value === 'object' && value !== null && parsedInputs.has(value)
 }
 
-class ParseFailure extends Error {}
 const shown = (word: string) => shownGuardWord(word)
-function refuse(reason: string): never { throw new ParseFailure(reason) }
+function refuse(reason: string): never { throw new RefusalError(reason) }
 /** A word as a refusal quotes it: JSON-escaped, with the controls a harness rejects in a reason escaped too, and bounded. */
 export function shownGuardWord(word: string): string {
     const characters = [...word]
@@ -482,6 +481,6 @@ export function parseGuardInput(input: unknown): GuardParseResult {
         parsedInputs.add(result)
         return result
     } catch (error) {
-        return { status: 'unavailable', reason: error instanceof ParseFailure ? error.message : 'Guard input capture failed.' }
+        return { status: 'unavailable', reason: error instanceof RefusalError ? error.message : 'Guard input capture failed.' }
     }
 }

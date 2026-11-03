@@ -13,6 +13,8 @@ import { join } from 'node:path'
 
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
+    isMissing,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     isCanonicalTimestamp,
@@ -42,7 +44,7 @@ const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('env-schema observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('env-schema observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -117,9 +119,8 @@ async function hasEnvSchema(root: string): Promise<{ adopted: boolean; unreadabl
     try {
         return { adopted: (await stat(join(root, ENV_SCHEMA_FILE))).isFile() }
     } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT' || code === 'ENOTDIR') return { adopted: false }
-        return { adopted: true, unreadable: `${ENV_SCHEMA_FILE} could not be inspected (${code ?? 'unknown error'})` }
+        if (isMissing(error)) return { adopted: false }
+        return { adopted: true, unreadable: `${ENV_SCHEMA_FILE} could not be inspected (${errorCause(error)})` }
     }
 }
 
@@ -247,7 +248,7 @@ export async function observeEnvSchemas(
             ? { state: 'unavailable', cause: unreadable }
             : await checkSibling(sibling, executable, shared, options.execute)]))
     const observedAt = new Date().toISOString()
-    if (!isCanonicalTimestamp(observedAt)) throw new TypeError('env-schema observation timestamp is not canonical')
+    if (!isCanonicalTimestamp(observedAt)) throw new RefusalError('env-schema observation timestamp is not canonical')
     const common = {
         code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY,
         owner: mechanism.id,

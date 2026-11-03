@@ -43,6 +43,8 @@ import {
 } from './application.js'
 import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
+    errorCause,
+    RefusalError,
     DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
     snapshotExecutionPlan,
@@ -568,7 +570,7 @@ export function createLifecycleCommandAdapters(
             ? await syncGeneratedEnvironment({ configPath: input.configPath }, { execute }, ports)
             : await checkGeneratedEnvironment({ configPath: input.configPath }, ports)
         if (outcome.kind !== 'complete') {
-            if (action === 'sync') throw new Error(outcome.diagnostics
+            if (action === 'sync') throw new RefusalError(outcome.diagnostics
                 .map(({ code, message, target }) => `${code}: ${message}${target ? ` (${target})` : ''}`).join('; '))
             onCheckRefusal?.(outcome.diagnostics)
             return undefined
@@ -893,7 +895,7 @@ export function createLifecycleCommandAdapters(
                     operation,
                     stepContext,
                 )
-                if (!resolved) throw new TypeError('generated data operation authority is unavailable')
+                if (!resolved) throw new RefusalError('generated data operation authority is unavailable')
                 return resolved
             },
         }))
@@ -986,7 +988,7 @@ export function createLifecycleCommandAdapters(
                 probeAuthority = typeof input.runtimeMeasurementProbeAuthority === 'function'
                     ? input.runtimeMeasurementProbeAuthority() : input.runtimeMeasurementProbeAuthority
             } catch (error) {
-                throw new TypeError('runtime measurement probe authority supplier failed', { cause: error })
+                throw new RefusalError('runtime measurement probe authority supplier failed', { cause: error })
             }
         }
         const observed = input.runtimeMeasurementProbeAuthority === undefined
@@ -1243,13 +1245,9 @@ export function createLifecycleCommandAdapters(
         if (acquired.kind !== 'complete') return undefined
         let retainOnFailure = false
         const compensationFailure = (error: unknown, cleanup: unknown) => {
-            const detail = (value: unknown) => value instanceof Error
-                && value.message.length > 0 && value.message.length <= 512
-                ? value.message.split('\n', 1)[0]!
-                : 'unknown failure'
-            return new AggregateError(
-                [error, cleanup],
-                `downstream port preparation failed: ${detail(error)}; acquired-holder compensation failed: ${detail(cleanup)}`,
+            return new RefusalError(
+                `downstream port preparation failed: ${errorCause(error)}; acquired-holder compensation failed: ${errorCause(cleanup)}`,
+                { cause: new AggregateError([error, cleanup]) },
             )
         }
         try {
@@ -1268,7 +1266,7 @@ export function createLifecycleCommandAdapters(
                     throw compensationFailure(error, cleanup)
                 }
                 if (compensated.kind !== 'complete') {
-                    const cleanup = new Error(compensated.diagnostics
+                    const cleanup = new RefusalError(compensated.diagnostics
                         .map(({ code, message, target }) => `${code}: ${message}${target ? ` (${target})` : ''}`).join('; '))
                     throw compensationFailure(error, cleanup)
                 }

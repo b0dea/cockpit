@@ -4,6 +4,7 @@ import type { ExecutionStep } from '../environment/contract.js'
 import { resolveNamedPath, type NamedPathInput } from '../references/named.js'
 import { bindSurfaceOwnershipIdentity, type SurfaceDesiredEntry } from '../surfaces/ownership.js'
 import { resolveExecutablePath } from '../environment/executable.js'
+import { errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'native-testing-guards',
@@ -150,7 +151,7 @@ export async function projectNativeHooks(input: NativeHookInput): Promise<Native
     if (typeof input.budget.prepareMeasurement !== 'function') return refusal('native hook requires a bounded measurement plan callback')
     let measurement: NativeHookMeasurement
     try { measurement = await input.budget.prepareMeasurement(entry) }
-    catch (error) { return refusal(`native hook measurement failed: ${error instanceof Error ? error.message : String(error)}`) }
+    catch (error) { return refusal(`native hook measurement failed: ${errorCause(error)}`) }
     const cost = await checkNativeHookBudget(entry, measurement, input.budget.policy)
     if (cost.kind !== 'within-budget') return cost
     const owned = bindSurfaceOwnershipIdentity([entry], input.cockpitId)

@@ -10,7 +10,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { beginOperatorReset, decodeLifecycleRecord, runDoctor, runDown, runReset, runSession, runSleep, runUp } from './application.js'
-import type { ExecutionStep } from './contract.js'
+import { RefusalError, type ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { runSiblingAdd, runSiblingRemove } from './sibling-registration.js'
@@ -481,7 +481,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
-        const failure = new Error('synthetic downstream failure')
+        const failure = new RefusalError('synthetic downstream failure')
 
         const rejected = adapters.withAcquiredPorts(loaded.result, async ({ projection }) => {
             const observedAt = new Date().toISOString()
@@ -502,12 +502,12 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         })
 
         const combined = await rejected.catch((error: unknown) => error)
-        expect(combined).toMatchObject({
+        expect(combined).toMatchObject({ cause: {
             errors: [failure, expect.objectContaining({ message: expect.stringContaining('CLAIM_CO_TENANT') })],
-        })
-        expect(combined).toBeInstanceOf(AggregateError)
-        expect((combined as AggregateError).message).toContain('downstream port preparation failed: synthetic downstream failure')
-        expect((combined as AggregateError).message).toContain('acquired-holder compensation failed: CLAIM_CO_TENANT')
+        } })
+        expect(combined).toBeInstanceOf(RefusalError)
+        expect((combined as RefusalError).message).toContain('downstream port preparation failed: synthetic downstream failure')
+        expect((combined as RefusalError).message).toContain('acquired-holder compensation failed: CLAIM_CO_TENANT')
     })
 
     it('retains a fresh holder when runtime dispatch succeeds before its adapter rejects', async () => {

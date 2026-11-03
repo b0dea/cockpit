@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
-import { parse } from 'smol-toml'
+import { parse, TomlError } from 'smol-toml'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, readBoundedInput } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -21,7 +21,7 @@ import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type Sibli
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { CockpitConfig, deriveSiblingVariable, Mount, runtimeDeclarationSha256, Sibling } from '../schema.js'
-import { ENVIRONMENT_CODES, filesystemObjectIdentity, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, filesystemObjectIdentity, type ExecutionStep, type FilesystemAncestorIdentity, RefusalError, hasErrorCode } from './contract.js'
 import { declaredRuntime } from './declaration.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { stackId } from './identity.js'
@@ -177,7 +177,7 @@ export async function initializeLocalGitRepository(
         }
         return { kind: 'complete' }
     } catch (error) {
-        return refuse(`the local repository could not be verified (${error instanceof Error ? error.message : String(error)})`)
+        return refuse(`the local repository could not be verified (${errorCause(error)})`)
     }
 }
 
@@ -196,7 +196,7 @@ async function confinedBelow(root: string, target: string): Promise<boolean> {
             const realRoot = await realpath(root)
             return real === realRoot || real.startsWith(`${realRoot}${sep}`)
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || probe === dirname(probe)) return false
+            if (!hasErrorCode(error, 'ENOENT') || probe === dirname(probe)) return false
             probe = dirname(probe)
         }
     }
@@ -207,7 +207,7 @@ async function kind(path: string): Promise<'absent' | 'directory' | 'other'> {
         const entry = await lstat(path)
         return entry.isDirectory() ? 'directory' : 'other'
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'
+        if (hasErrorCode(error, 'ENOENT')) return 'absent'
         throw error
     }
 }
@@ -226,7 +226,8 @@ function prepare(base: CockpitConfig, edit: SiblingEdit, siblings: readonly unkn
     const expected = { ...base, sibling: siblings } as CockpitConfig
     let parsed
     try { parsed = CockpitConfig.safeParse(parse(edit.text)) } catch (error) {
-        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `the edit would leave cockpit.toml unparseable (${error instanceof Error ? error.message.split('\n', 1)[0] : 'unknown'}); nothing was written`, 'sibling')
+        const where = error instanceof TomlError ? `at line ${error.line}, column ${error.column}` : errorCause(error)
+        return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `the edit would leave cockpit.toml unparseable (${where}); nothing was written`, 'sibling')
     }
     if (!parsed.success) {
         const issue = parsed.error.issues[0]
@@ -529,11 +530,11 @@ async function composeReferencesTo(configDir: string, config: CockpitConfig, row
         let text: string
         try {
             const read = await readBoundedInput(path)
-            if (read.kind === 'too-large') throw new Error('it exceeds the structured input limit')
+            if (read.kind === 'too-large') throw new RefusalError('it exceeds the structured input limit')
             text = Buffer.from(read.bytes).toString('utf8')
         } catch (error) {
             return refused('COMPOSE_TOPOLOGY_UNAVAILABLE',
-                `${path} could not be read (${(error as NodeJS.ErrnoException).code ?? (error instanceof Error ? error.message : 'unknown error')}), so cockpit cannot tell whether it still uses ${row.var}; nothing was written`, composeFile)
+                `${path} could not be read (${errorCause(error)}), so cockpit cannot tell whether it still uses ${row.var}; nothing was written`, composeFile)
         }
         if (variable.test(text)) found.push({ where: composeFile, detail: `mentions ${row.var}` })
     }
@@ -549,7 +550,7 @@ async function existingGuideProjections(configDir: string, row: Sibling): Promis
             await lstat(resolve(configDir, name))
             flagged.push(`${name} (guide projection)`)
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+            if (hasErrorCode(error, 'ENOENT')) continue
             flagged.push(`${name} (guide projection; could not be inspected: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`)
         }
     }

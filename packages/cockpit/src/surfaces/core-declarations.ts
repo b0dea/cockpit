@@ -2,6 +2,7 @@
 // bytes. Runtime rendering and release evidence must call this same constructor; neither may
 // independently reinterpret the skill collection or choose a different declaration shape.
 import type { SurfaceDeclaration } from '../schema.js'
+import { tryParseJson } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'core-surface-declarations',
@@ -25,12 +26,11 @@ type CoreAsset = Readonly<{ bytes: string }>
 export function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): readonly string[] | undefined {
     const bytes = assets.get('skills/collection.json')?.bytes
     if (bytes === undefined) return undefined
-    try {
-        const skills = (JSON.parse(bytes) as { skills?: unknown }).skills
-        return Array.isArray(skills) && skills.every(name => typeof name === 'string')
-            ? Object.freeze([...skills]) as readonly string[]
-            : undefined
-    } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
+    const parsed = tryParseJson(bytes)
+    const skills = parsed !== null && typeof parsed === 'object' ? (parsed as { skills?: unknown }).skills : undefined
+    return Array.isArray(skills) && skills.every(name => typeof name === 'string')
+        ? Object.freeze([...skills]) as readonly string[]
+        : undefined
 }
 
 export function coreSurfaceDeclarations(

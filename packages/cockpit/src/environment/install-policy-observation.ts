@@ -5,6 +5,8 @@ import { isAbsolute, join, normalize, relative, sep } from 'node:path'
 
 import { InstallPolicy, type InstallPolicy as InstallPolicyValue } from '../schema.js'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     isCanonicalTimestamp,
@@ -221,7 +223,7 @@ async function inspectLockfile(root: string, relativePath: string): Promise<Obse
                 ancestors: Object.freeze(ancestors),
             })
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return 'invalid'
+            if (!hasErrorCode(error, 'ENOENT')) return 'invalid'
             return Object.freeze({
                 state: 'missing' as const,
                 relativePath,
@@ -350,7 +352,7 @@ export async function withInstallPolicyProjection<T>(
             // The caller receives the contract error immediately; observing the invalid result prevents
             // a later rejection from becoming detached process state.
             void Promise.resolve(result).catch(() => undefined)
-            throw new TypeError('install policy projection callback must be synchronous')
+            throw new RefusalError('install policy projection callback must be synchronous')
         }
         return result as SynchronousResult<T>
     } finally {

@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'n
 import { fileURLToPath } from 'node:url'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type ExecutionStep, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, isMissing, RefusalError, type ExecutionStep, type StackId } from './contract.js'
 import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { runDown, runLogs, runReset, runSleep, runUp } from './application.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
@@ -131,8 +131,6 @@ function unavailable(
     })
 }
 
-class RuntimeProbeFailure extends Error {}
-
 function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value)
@@ -242,7 +240,7 @@ function runner(input: RuntimeProbeRequest, batchId: string, deadline: number): 
             const remainingMs = deadline - Date.now()
             if (remainingMs <= 0) {
                 sawTimeout = true
-                throw new RuntimeProbeFailure('the absolute runtime observation window expired before command spawn')
+                throw new RefusalError('the absolute runtime observation window expired before command spawn')
             }
             const argv = [selectedExecutable.canonicalPath, ...args] as [string, ...string[]]
             const artifactIndexes = artifact === undefined ? [] : argv.flatMap((part, index) => part === artifact.path ? [index] : [])
@@ -268,7 +266,7 @@ function runner(input: RuntimeProbeRequest, batchId: string, deadline: number): 
                 filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
             })
             const outcome = await executeProbe(step)
-            if (!executionOutcomeMatches(outcome, step)) throw new TypeError('runtime probe execution outcome is unauthenticated')
+            if (!executionOutcomeMatches(outcome, step)) throw new RefusalError('runtime probe execution outcome is unauthenticated')
             if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) sawTimeout = true
             return outcome
         },
@@ -356,7 +354,7 @@ async function emptyDirectory(path: string): Promise<boolean> {
         return canonical === path && (await readdir(path)).length === 0
     } catch (error) {
         // A missing directory is not an empty one; any other failure reaches the caller's refusal.
-        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) throw error
+        if (!isMissing(error)) throw error
         return false
     }
 }
@@ -450,7 +448,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const executeOwnerStep = async (step: ExecutionStep, stepDeadline: number): Promise<ExecuteProbeOutcome> => {
         if (Date.now() + step.timeoutMs > stepDeadline) {
             ownerTimedOut = true
-            throw new RuntimeProbeFailure('the absolute runtime observation window cannot fit the next authenticated owner step')
+            throw new RefusalError('the absolute runtime observation window cannot fit the next authenticated owner step')
         }
         const outcome = await executeProbe(step)
         if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) ownerTimedOut = true
@@ -462,7 +460,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     }
     const ownerExecute = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => executeOwnerStep(step, mutationDeadline)
     const cleanupOwnerExecute = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => executeOwnerStep(step, deadline)
-    const fail = (reason: string): never => { throw new RuntimeProbeFailure(reason) }
+    const fail = (reason: string): never => { throw new RefusalError(reason) }
     const fresh = (): void => { if (Date.now() >= mutationDeadline) fail('the runtime mutation window closed to reserve authenticated cleanup') }
     try {
         // A remote daemon's behaviour says nothing about this machine. Keep the selected endpoint
@@ -497,8 +495,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             executable: input.executable, cwd: input.cwd, env: runtimeEnvironment,
             timeoutMs: Math.min(input.timeoutMs, 30_000),
         }, ownerExecute)
-        if (runtime.kind !== 'complete') throw new RuntimeProbeFailure('the local Docker runtime is unavailable')
-        if (!versionAtLeast(runtime.composeVersion, input.composeFloor)) throw new RuntimeProbeFailure('the required Compose version is unavailable')
+        if (runtime.kind !== 'complete') throw new RefusalError('the local Docker runtime is unavailable')
+        if (!versionAtLeast(runtime.composeVersion, input.composeFloor)) throw new RefusalError('the required Compose version is unavailable')
         runtimeVersion = runtime.runtime.version
         composeVersion = runtime.composeVersion
 
@@ -537,7 +535,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const loadedContext = await lifecycle.load({ configPath })
         if (loadedContext.kind !== 'complete' || loadedContext.result === null) {
             const diagnostic = loadedContext.diagnostics[0]
-            throw new RuntimeProbeFailure(diagnostic
+            throw new RefusalError(diagnostic
                 ? `the production lifecycle owner refused the disposable checkout (${diagnostic.code}: ${diagnostic.message})`
                 : 'the production lifecycle owner could not authenticate the disposable checkout')
         }
@@ -632,7 +630,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             'config', '--format', 'json', '--no-interpolate', '--no-env-resolution',
         ], candidateArtifact)
         const topologyText = decode(topology)
-        if (topologyText === undefined) throw new RuntimeProbeFailure(`the exact topology projection failed (${refusalCategory(topology)}: ${generatedArtifactDetail(topology)})`)
+        if (topologyText === undefined) throw new RefusalError(`the exact topology projection failed (${refusalCategory(topology)}: ${generatedArtifactDetail(topology)})`)
         try {
             const parsed = JSON.parse(topologyText) as { services?: Record<string, { profiles?: unknown; volumes?: unknown; healthcheck?: unknown; labels?: unknown }> }
             profileProjected = Array.isArray(parsed.services?.profile_control?.profiles)
@@ -659,15 +657,15 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const containerId = decode(await execute.run('probe-container', [
             'ps', '-aq', '--filter', `label=${ownerLabel}`, '--filter', 'label=com.docker.compose.service=probe',
         ]))
-        if (!containerId || !owned!.containers.includes(containerId)) throw new RuntimeProbeFailure('the live probe container identity was not uniquely authenticated')
+        if (!containerId || !owned!.containers.includes(containerId)) throw new RefusalError('the live probe container identity was not uniquely authenticated')
         const inspected = decode(await execute.run('inspect', ['container', 'inspect', containerId, '--format', '{{json .}}']))
-        if (inspected === undefined) throw new RuntimeProbeFailure('the created container identity could not be inspected')
+        if (inspected === undefined) throw new RefusalError('the created container identity could not be inspected')
         const profileContainerId = decode(await execute.run('profile-container', [
             'ps', '-aq', '--filter', `label=${ownerLabel}`, '--filter', 'label=com.docker.compose.service=profile_control',
         ]))
-        if (!profileContainerId || !owned!.containers.includes(profileContainerId)) throw new RuntimeProbeFailure('the activated profile container identity was not uniquely authenticated')
+        if (!profileContainerId || !owned!.containers.includes(profileContainerId)) throw new RefusalError('the activated profile container identity was not uniquely authenticated')
         const profileInspected = decode(await execute.run('profile-inspect', ['container', 'inspect', profileContainerId, '--format', '{{json .}}']))
-        if (profileInspected === undefined) throw new RuntimeProbeFailure('the activated profile container identity could not be inspected')
+        if (profileInspected === undefined) throw new RefusalError('the activated profile container identity could not be inspected')
         try {
             const data = JSON.parse(inspected) as { Config?: { Labels?: Record<string, string> }; State?: { Health?: { Status?: string } }; Mounts?: { Source?: string }[] }
             const profileData = JSON.parse(profileInspected) as { Config?: { Labels?: Record<string, string> }; State?: { Status?: string } }
@@ -716,7 +714,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         noteRefusal('reset preview', reset)
         await ownerCleanup()
     } catch (error) {
-        failureReason = error instanceof RuntimeProbeFailure ? error.message : 'the installed runtime cell threw before it could close'
+        failureReason = error instanceof RefusalError ? error.message : 'the installed runtime cell threw before it could close'
     } finally {
         if (collisionFree) {
             try {

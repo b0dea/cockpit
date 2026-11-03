@@ -3,7 +3,7 @@
 // `generated` wins when both are present because it owns the Compose file it renders. Observing
 // what Compose resolves from those files belongs to compose-topology.ts, not here.
 import type { CockpitConfig } from '../schema.js'
-import { ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './contract.js'
+import { ENVIRONMENT_CODES, type EnvironmentDiagnostic, RefusalError } from './contract.js'
 
 export const mechanism = {
     id: 'environment-declaration',
@@ -48,7 +48,7 @@ export function serviceNotDeclared(service: string, declared: readonly string[])
 }
 
 /** Carries a declaration refusal through owners whose only failure channel is a thrown error. */
-export class DeclarationRefusalError extends Error {
+export class DeclarationRefusalError extends RefusalError {
     readonly diagnostic: EnvironmentDiagnostic
 
     constructor(diagnostic: EnvironmentDiagnostic) {

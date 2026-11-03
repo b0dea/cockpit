@@ -17,7 +17,7 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { EnvironmentFile, Sibling, type EnvironmentFile as EnvironmentFileDeclaration } from '../schema.js'
-import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId, RefusalError, hasErrorCode } from './contract.js'
 
 export const mechanism = {
     id: 'environment-template-seeding',
@@ -136,7 +136,7 @@ const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('template observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('template observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -151,22 +151,22 @@ function observationIssuedAt(value: unknown): number | undefined {
 
 export async function observeSiblingPresence(input: { readonly stackId: StackId; readonly observedAt: string; readonly siblingRoot: string; readonly sibling: unknown }): Promise<EnvironmentObservation> {
     const snapshot = snapshotJson(input)
-    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new TypeError('sibling presence input is malformed')
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new RefusalError('sibling presence input is malformed')
     const owned = snapshot as Readonly<Record<string, JsonSnapshot>>
     const sibling = Sibling.safeParse(owned.sibling)
     if (typeof owned.stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(owned.stackId)
         || typeof owned.observedAt !== 'string' || !isCanonicalTimestamp(owned.observedAt)
         || typeof owned.siblingRoot !== 'string' || !isAbsolute(owned.siblingRoot)
-        || normalize(owned.siblingRoot) !== owned.siblingRoot || !sibling.success) throw new TypeError('sibling presence input is malformed')
+        || normalize(owned.siblingRoot) !== owned.siblingRoot || !sibling.success) throw new RefusalError('sibling presence input is malformed')
     const path = resolve(owned.siblingRoot, sibling.data.dir)
     const confined = relative(owned.siblingRoot, path)
-    if (confined === '..' || confined.startsWith(`..${sep}`) || isAbsolute(confined)) throw new TypeError('sibling presence input is malformed')
+    if (confined === '..' || confined.startsWith(`..${sep}`) || isAbsolute(confined)) throw new RefusalError('sibling presence input is malformed')
     let present = false
     try {
         const status = await lstat(path)
         present = status.isDirectory() && !status.isSymbolicLink()
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new TypeError('sibling presence could not be observed')
+        if (!hasErrorCode(error, 'ENOENT')) throw new RefusalError('sibling presence could not be observed')
     }
     return issueObservation({ code: ENVIRONMENT_CODES.SIBLING_MISSING, owner: mechanism.id, stackId: owned.stackId as StackId, source: path,
         observed: { state: 'available', value: present, observedAt: owned.observedAt }, expectation: { kind: 'equal', value: true },
@@ -343,7 +343,7 @@ export async function inspectEnvironmentKeys(input: {
     let canonicalRoot: string
     try {
         const root = await lstat(input.siblingRoot, { bigint: true })
-        if (root.isSymbolicLink() || !root.isDirectory()) throw new Error('invalid root')
+        if (root.isSymbolicLink() || !root.isDirectory()) throw new RefusalError('invalid root')
         canonicalRoot = await realpath(input.siblingRoot)
     } catch {
         // The unreadable result carries the template-path code, not a cause.
@@ -414,12 +414,12 @@ export async function observeEnvironmentKeys(input: {
     readonly declaration: unknown
 }): Promise<readonly EnvironmentObservation[]> {
     const snapshot = snapshotJson(input)
-    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new TypeError('environment-key observation input is malformed')
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new RefusalError('environment-key observation input is malformed')
     const owned = snapshot as Readonly<Record<string, JsonSnapshot>>
     const declaration = EnvironmentFile.safeParse(owned.declaration)
     if (!declaration.success || typeof owned.stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(owned.stackId)
         || typeof owned.observedAt !== 'string' || !isCanonicalTimestamp(owned.observedAt) || typeof owned.siblingRoot !== 'string') {
-        throw new TypeError('environment-key observation input is malformed')
+        throw new RefusalError('environment-key observation input is malformed')
     }
     const inspection = await inspectEnvironmentKeys({
         siblingRoot: owned.siblingRoot,
@@ -689,7 +689,7 @@ export async function planEnvironmentSeed(input: {
         }
         return { kind: 'unchanged', siblingRoot: input.siblingRoot, destination }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (!hasErrorCode(error, 'ENOENT')) {
             return refusal(ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT, destination)
         }
     }
@@ -841,7 +841,7 @@ function seedFromPinnedDirectory(plan: EnvironmentSeedPlan & { kind: 'ready' }):
                                       path: plan.destination,
                                   }
                     } catch (error) {
-                        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+                        if (!hasErrorCode(error, 'EEXIST')) {
                             result = {
                                 kind: 'refusal',
                                 code: ENVIRONMENT_CODES.ENVIRONMENT_SEED_FAILED,
@@ -906,7 +906,7 @@ function seedFromPinnedDirectory(plan: EnvironmentSeedPlan & { kind: 'ready' }):
             try {
                 unlinkSync(temporaryName)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                if (!hasErrorCode(error, 'ENOENT')) {
                     result = {
                         kind: 'refusal',
                         code: ENVIRONMENT_CODES.ENVIRONMENT_SEED_FAILED,

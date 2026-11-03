@@ -8,6 +8,8 @@ import { loadCockpitConfig } from '../config/load.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     filesystemObjectIdentity,
@@ -395,7 +397,7 @@ async function boundedFileCheck(path: string): Promise<FilesystemCheck | undefin
         await lstat(path)
         return undefined
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        return hasErrorCode(error, 'ENOENT')
             ? Object.freeze({ path, expected: 'absent' as const })
             : undefined
     }
@@ -565,7 +567,7 @@ export async function observeEnvironmentIgnore<T>(
     const result: unknown = use()
     if (isPromiseLike(result)) {
         void Promise.resolve(result).catch(() => undefined)
-        throw new TypeError('environment ignore projection callback must be synchronous')
+        throw new RefusalError('environment ignore projection callback must be synchronous')
     }
     return result as SynchronousResult<T>
 }
@@ -795,7 +797,7 @@ async function authorityFingerprint(checks: readonly FilesystemCheck[]): Promise
                 await lstat(check.path)
                 return undefined
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+                if (!hasErrorCode(error, 'ENOENT')) return undefined
                 result.push([check.path, 'absent'])
                 continue
             }
@@ -910,7 +912,7 @@ async function worktreeAdministrativeAuthority(commonDirectory: string): Promise
         const rootStatus = await lstat(root)
         if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return undefined
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        return hasErrorCode(error, 'ENOENT')
             ? Object.freeze({ paths: Object.freeze([]), optionalFiles: Object.freeze([]) })
             : undefined
     }
@@ -1112,7 +1114,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
             } else return setupCheckoutFailure('Git administrative entry is invalid')
         } catch (error) {
             if ((allAdministrative.optionalFiles.includes(path) || worktreeConfigurationPaths.includes(path))
-                && (error as NodeJS.ErrnoException).code === 'ENOENT') continue
+                && hasErrorCode(error, 'ENOENT')) continue
             return setupCheckoutFailure('Git administrative entry is unavailable')
         }
     }
@@ -1201,7 +1203,7 @@ export async function withSetupCheckoutProjection<T>(
         const result: unknown = use(projection)
         if (isPromiseLike(result)) {
             void Promise.resolve(result).catch(() => undefined)
-            throw new TypeError('setup checkout projection callback must be synchronous')
+            throw new RefusalError('setup checkout projection callback must be synchronous')
         }
         return result as SynchronousResult<T>
     } finally {
@@ -1305,7 +1307,7 @@ function captureGeneratedCheckoutInput(input: unknown): Readonly<{
 
 async function pathAbsent(path: string): Promise<boolean> {
     try { await lstat(path); return false } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        return hasErrorCode(error, 'ENOENT')
     }
 }
 
@@ -1339,7 +1341,7 @@ export async function observeGeneratedCheckoutIdentity(input: {
             hasCheckout = true
             break
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return setupCheckoutFailure('generated checkout Git entry cannot be observed')
+            if (!hasErrorCode(error, 'ENOENT')) return setupCheckoutFailure('generated checkout Git entry cannot be observed')
         }
         absentGitEntries.push(gitEntry)
         const parent = dirname(candidate)
@@ -1499,7 +1501,7 @@ async function pathChecks(target: string, siblingsRoot: string): Promise<
             try {
                 stat = await lstat(current)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT' && current !== siblingsRoot) {
+                if (hasErrorCode(error, 'ENOENT') && current !== siblingsRoot) {
                     return {
                         kind: 'observation',
                         observation: available({
@@ -1535,7 +1537,7 @@ async function pathChecks(target: string, siblingsRoot: string): Promise<
             try {
                 dotGitStat = await lstat(dotGit)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                if (hasErrorCode(error, 'ENOENT')) {
                     return {
                         kind: 'observation',
                         observation: available({ kind: 'directory', filesystemChecks: checks }),
@@ -1572,7 +1574,7 @@ async function pathChecks(target: string, siblingsRoot: string): Promise<
             } else return { kind: 'observation', observation: failure('the .git entry has an invalid type'), checks }
             return { kind: 'continue', checks }
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {
+            if (hasErrorCode(error, 'ENOENT')) return {
                 kind: 'observation',
                 observation: available({ kind: 'absent', filesystemChecks: [...checks, { path: target, expected: 'absent' }] }),
                 checks,
@@ -1580,7 +1582,7 @@ async function pathChecks(target: string, siblingsRoot: string): Promise<
             return { kind: 'observation', observation: failure('the sibling path could not be inspected'), checks }
         }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (hasErrorCode(error, 'ENOENT')) {
             return {
                 kind: 'observation',
                 observation: failure('the siblings root is absent'),

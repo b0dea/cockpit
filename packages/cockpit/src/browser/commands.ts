@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { isIP } from 'node:net'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
-import { errorCause, snapshotJson, type HolderId, type StackId } from '../environment/contract.js'
+import { errorCause, snapshotJson, type HolderId, type StackId, RefusalError, hasErrorCode } from '../environment/contract.js'
 import { inspectBrowserDebuggerPreparation, type BrowserDebuggerPreparation } from '../environment/generated-application.js'
 import { type StateNamespace } from '../environment/state.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -177,36 +177,36 @@ export function issueBrowserRoutePolicy(runtime: BrowserRuntimeProjection, input
     assertBrowserStorageStateCurrent(runtime)
     const captured = snapshotJson(input) as { origin?: unknown; routes?: unknown } | undefined
     if (!captured || Object.keys(captured).sort().join(',') !== 'origin,routes') {
-        throw new TypeError('browser route policy requires closed origin and route declarations')
+        throw new RefusalError('browser route policy requires closed origin and route declarations')
     }
     if (typeof captured.origin !== 'string' || !Array.isArray(captured.routes)
-        || captured.routes.length === 0 || captured.routes.length > 64) throw new TypeError('browser route policy requires bounded declared routes')
+        || captured.routes.length === 0 || captured.routes.length > 64) throw new RefusalError('browser route policy requires bounded declared routes')
     let origin: URL
-    try { origin = new URL(captured.origin) } catch { throw new TypeError('browser application origin must be an absolute HTTP(S) origin') }
+    try { origin = new URL(captured.origin) } catch { throw new RefusalError('browser application origin must be an absolute HTTP(S) origin') }
     if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/'
         || origin.search || origin.hash || origin.origin !== captured.origin.replace(/\/$/, '')) {
-        throw new TypeError('browser application origin must be an absolute HTTP(S) origin without credentials, path, query or fragment')
+        throw new RefusalError('browser application origin must be an absolute HTTP(S) origin without credentials, path, query or fragment')
     }
     const controlAuthorities = browserRuntimeControlAuthorities(runtime)
     const controlPorts = browserRuntimeControlPorts(runtime)
     const originPort = Number(origin.port || (origin.protocol === 'http:' ? '80' : '443'))
     const originAuthority = `${origin.hostname}:${originPort}`
     if (!controlAuthorities || !controlPorts || controlAuthorities.includes(originAuthority) || controlPorts.includes(originPort)) {
-        throw new TypeError('browser application origin must be distinct from the browser-control proxy authority')
+        throw new RefusalError('browser application origin must be distinct from the browser-control proxy authority')
     }
     const names = new Set<string>(); const urls = new Set<string>()
     const surfaces: Array<Readonly<{ name: string; url: string }>> = []
     for (const candidate of captured.routes) {
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new TypeError('browser routes must be declared relative paths')
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new RefusalError('browser routes must be declared relative paths')
         const row = candidate as { name?: unknown; path?: unknown }
-        if (Object.keys(row).sort().join(',') !== 'name,path') throw new TypeError('browser route policy requires closed route declarations')
+        if (Object.keys(row).sort().join(',') !== 'name,path') throw new RefusalError('browser route policy requires closed route declarations')
         if (typeof row.name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(row.name)
             || typeof row.path !== 'string' || !row.path.startsWith('/') || row.path.startsWith('//') || row.path.includes('#')) {
-            throw new TypeError('browser routes must use unique names and declared relative HTTP paths without fragments')
+            throw new RefusalError('browser routes must use unique names and declared relative HTTP paths without fragments')
         }
         const url = new URL(row.path, origin)
         if (url.origin !== origin.origin || url.username || url.password || url.hash || names.has(row.name) || urls.has(url.href)) {
-            throw new TypeError('browser routes must remain unique and relative to the application origin')
+            throw new RefusalError('browser routes must remain unique and relative to the application origin')
         }
         names.add(row.name); urls.add(url.href)
         surfaces.push(Object.freeze({ name: row.name, url: url.href }))
@@ -294,14 +294,14 @@ function ensureArtifactRoot(root: string): string | undefined {
             }
             break
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return `Browser screenshot artifact root ${root} could not be inspected at ${ancestor}: ${(error as Error).message}`
+            if (!hasErrorCode(error, 'ENOENT')) return `Browser screenshot artifact root ${root} could not be inspected at ${ancestor}: ${errorCause(error)}`
             const parent = dirname(ancestor)
             if (parent === ancestor) return `Browser screenshot artifact root ${root} has no existing ancestor`
             ancestor = parent
         }
     }
     try { mkdirSync(root, { recursive: true, mode: 0o700 }) } catch (error) {
-        return `Browser screenshot artifact root ${root} could not be created: ${(error as Error).message}`
+        return `Browser screenshot artifact root ${root} could not be created: ${errorCause(error)}`
     }
     return undefined
 }

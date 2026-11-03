@@ -4,7 +4,7 @@ import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
-import { ENVIRONMENT_CODES, errorCause, parseJsonText, type EnvironmentDiagnostic } from './environment/contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, isMissing, parseJsonText, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand } from './fix-catalogue.js'
@@ -55,59 +55,50 @@ function object(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-// A refusal built from `error.message` can carry bytes from package.json: JSON.parse quotes the
-// text where it stopped. Only failures this module raises, whose text is fixed, are reported as
-// written; anything else is reduced to what errorCause admits.
-class MetadataFailure extends Error {}
-
-function failureReason(error: unknown): string {
-    return error instanceof MetadataFailure ? error.message : errorCause(error)
-}
-
 interface RootAuthority {
     readonly root: string
     readonly chain: readonly Readonly<{ path: string; dev: number; ino: number }>[]
 }
 
 async function captureRoot(root: string): Promise<RootAuthority> {
-    if (await realpath(root) !== root) throw new MetadataFailure('cockpit root is not canonical')
+    if (await realpath(root) !== root) throw new RefusalError('cockpit root is not canonical')
     const chain: Array<{ path: string; dev: number; ino: number }> = []
     for (let path = root;; path = dirname(path)) {
         const status = await lstat(path)
-        if (!status.isDirectory() || status.isSymbolicLink()) throw new MetadataFailure('cockpit root ancestry is redirected')
+        if (!status.isDirectory() || status.isSymbolicLink()) throw new RefusalError('cockpit root ancestry is redirected')
         chain.push({ path, dev: status.dev, ino: status.ino })
         if (dirname(path) === path) break
-        if (chain.length >= 64) throw new MetadataFailure('cockpit root ancestry exceeds the verification bound')
+        if (chain.length >= 64) throw new RefusalError('cockpit root ancestry exceeds the verification bound')
     }
     return Object.freeze({ root, chain: Object.freeze(chain) })
 }
 
 async function authenticateRoot(authority: RootAuthority): Promise<void> {
-    if (await realpath(authority.root) !== authority.root) throw new MetadataFailure('cockpit root was redirected')
+    if (await realpath(authority.root) !== authority.root) throw new RefusalError('cockpit root was redirected')
     for (const expected of authority.chain) {
         const status = await lstat(expected.path)
         if (!status.isDirectory() || status.isSymbolicLink() || status.dev !== expected.dev || status.ino !== expected.ino) {
-            throw new MetadataFailure('cockpit root ancestry changed')
+            throw new RefusalError('cockpit root ancestry changed')
         }
     }
 }
 
 async function readOptional(authority: RootAuthority, path: string): Promise<Readonly<{ bytes: string; mode: number; identity: string }> | undefined> {
-    if (dirname(path) !== authority.root) throw new MetadataFailure('team metadata escaped the cockpit root')
+    if (dirname(path) !== authority.root) throw new RefusalError('team metadata escaped the cockpit root')
     await authenticateRoot(authority)
     try {
         const stat = await lstat(path)
-        if (!stat.isFile() || stat.isSymbolicLink()) throw new MetadataFailure('not a regular file')
+        if (!stat.isFile() || stat.isSymbolicLink()) throw new RefusalError('not a regular file')
         const read = await readBoundedInput(path)
-        if (read.kind !== 'complete') throw new MetadataFailure('file exceeds the input limit')
+        if (read.kind !== 'complete') throw new RefusalError('file exceeds the input limit')
         await authenticateRoot(authority)
         let text: string
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) }
-        catch { throw new MetadataFailure(`${basename(path)} is not valid UTF-8`) } // The decoder throws only for invalid UTF-8.
+        catch { throw new RefusalError(`${basename(path)} is not valid UTF-8`) } // The decoder throws only for invalid UTF-8.
         return { bytes: text, mode: stat.mode,
             identity: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${createHash('sha256').update(read.bytes).digest('hex')}` }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (hasErrorCode(error, 'ENOENT')) {
             await authenticateRoot(authority)
             return undefined
         }
@@ -117,7 +108,7 @@ async function readOptional(authority: RootAuthority, path: string): Promise<Rea
 
 async function replaceAuthenticated(authority: RootAuthority, path: string, before: Awaited<ReturnType<typeof readOptional>>, bytes: string): Promise<void> {
     const directory = dirname(path)
-    if (directory !== authority.root) throw new MetadataFailure('team metadata escaped the cockpit root')
+    if (directory !== authority.root) throw new RefusalError('team metadata escaped the cockpit root')
     const temporary = join(directory, `.${path.slice(path.lastIndexOf('/') + 1)}.cockpit-${randomBytes(8).toString('hex')}`)
     let created = false
     try {
@@ -128,7 +119,7 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
         try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
         await authenticateRoot(authority)
         const current = await readOptional(authority, path)
-        if (current?.identity !== before?.identity) throw new MetadataFailure('file changed before replacement')
+        if (current?.identity !== before?.identity) throw new RefusalError('file changed before replacement')
         await authenticateRoot(authority)
         await rename(temporary, path)
         created = false
@@ -137,7 +128,7 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
         try {
             const status = await parent.stat()
             const expected = authority.chain[0]!
-            if (!status.isDirectory() || status.dev !== expected.dev || status.ino !== expected.ino) throw new MetadataFailure('cockpit root changed before sync')
+            if (!status.isDirectory() || status.dev !== expected.dev || status.ino !== expected.ino) throw new RefusalError('cockpit root changed before sync')
             await parent.sync()
         } finally { await parent.close() }
     } finally {
@@ -222,9 +213,8 @@ function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string):
 // manifest bytes, not by location: the bootstrap route runs init from a temporary install of the
 // same archive, and requiring the running copy to be the root's own install refused that resume.
 async function verifiedLocalPin(authority: RootAuthority, packageBytes: string | undefined): Promise<string | undefined> {
-    let manifest: unknown
     // An unparseable package.json is refused by the caller's own parse of the same bytes.
-    try { manifest = packageBytes === undefined ? undefined : JSON.parse(packageBytes) } catch { return undefined }
+    const manifest = packageBytes === undefined ? undefined : tryParseJson(packageBytes)
     const dependencies = object(manifest) && object(manifest.devDependencies) ? manifest.devDependencies : undefined
     const spec = dependencies?.[PACKAGE]
     if (typeof spec !== 'string' || !spec.startsWith('file:') || spec.length > 4096) return undefined
@@ -232,7 +222,7 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
     const installedPath = join(authority.root, 'node_modules', ...PACKAGE.split('/'))
     let installed: Awaited<ReturnType<typeof lstat>>
     try { installed = await lstat(installedPath) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+        if (hasErrorCode(error, 'ENOENT')) return undefined
         throw error
     }
     if (!installed.isDirectory() || installed.isSymbolicLink()) return undefined
@@ -245,9 +235,8 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
 
     const lockFile = await readOptional(authority, join(authority.root, 'package-lock.json'))
     if (!lockFile) return undefined
-    let lock: unknown
     // An unparseable lockfile verifies no pin; the caller then refuses the file: pin as unresolved.
-    try { lock = JSON.parse(lockFile.bytes) } catch { return undefined }
+    const lock = tryParseJson(lockFile.bytes)
     const packages = object(lock) && object(lock.packages) ? lock.packages : undefined
     const rootEntry = packages?.['']
     const rootDependencies = object(rootEntry) && object(rootEntry.devDependencies) ? rootEntry.devDependencies : undefined
@@ -295,8 +284,7 @@ async function holdsGitMetadata(directory: string): Promise<boolean> {
         await lstat(join(directory, '.git'))
         return true
     } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT' || code === 'ENOTDIR') return false
+        if (isMissing(error)) return false
         throw error
     }
 }
@@ -375,7 +363,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
             sourceSha256: loaded.result.source.sha256, files })
         return { kind: 'complete', authority: prepared }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${failureReason(error)})`, root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${errorCause(error)})`, root)
     }
 }
 
@@ -386,15 +374,15 @@ export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promis
     const { authority, files } = record
     try {
         const loaded = await loadCockpitConfig(record.configPath)
-        if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== record.sourceSha256) throw new MetadataFailure('configuration changed before metadata replacement')
+        if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== record.sourceSha256) throw new RefusalError('configuration changed before metadata replacement')
         await authenticateRoot(authority)
         for (const file of files) {
-            if ((await readOptional(authority, file.path))?.identity !== file.before?.identity) throw new MetadataFailure('team metadata changed before replacement')
+            if ((await readOptional(authority, file.path))?.identity !== file.before?.identity) throw new RefusalError('team metadata changed before replacement')
         }
         for (const file of files) if (file.before?.bytes !== file.bytes) await replaceAuthenticated(authority, file.path, file.before, file.bytes)
         return { kind: 'complete', changed: prepared.changes.length > 0, changes: prepared.changes }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${failureReason(error)})`, authority.root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${errorCause(error)})`, authority.root)
     }
 }
 
@@ -441,7 +429,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run npx --no cockpit sync --config <your cockpit.toml> to rewrite it', ignorePath)
         return { kind: 'complete', changed: false, changes: Object.freeze([]) }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${failureReason(error)})`, root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${errorCause(error)})`, root)
     }
 }
 
@@ -456,8 +444,8 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
     const root = dirname(resolve(configPath))
     const findings: EnvironmentDiagnostic[] = []
     const installed = join(root, 'node_modules', ...PACKAGE.split('/'))
-    const present = await lstat(installed).then((status) => status.isDirectory(), (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false
+    const present = await lstat(installed).then((status) => status.isDirectory(), (error: unknown) => {
+        if (isMissing(error)) return false
         throw error
     })
     if (!present) {
@@ -470,8 +458,8 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             fix: `in a terminal in ${root}, run npm install (package.json pins the version), then run npx --no cockpit sync --config <your cockpit.toml> so the guard hook runs the installed copy`,
         }))
     } else {
-        const read = await readBoundedInput(join(root, GUARD_LOCAL_PATHS.identity)).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === 'ENOENT') return undefined
+        const read = await readBoundedInput(join(root, GUARD_LOCAL_PATHS.identity)).catch((error: unknown) => {
+            if (hasErrorCode(error, 'ENOENT')) return undefined
             throw error
         })
         const identity = read?.kind === 'complete' ? parseGuardLocalIdentity(Buffer.from(read.bytes).toString('utf8')) : undefined

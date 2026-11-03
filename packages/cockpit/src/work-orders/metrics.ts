@@ -1,6 +1,7 @@
 import { WORK_ORDER_LIMITS } from './contract.js'
 import { WORK_ORDER_INTAKE_LIMITS, type WorkOrderCapacity } from './intake.js'
 import { assessWorkPressure } from './pressure.js'
+import { tryParseJson } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-metrics',
@@ -65,10 +66,8 @@ function processCounts(observation: WorkOrderProcessObservation): ProcessCounts 
         || !observation.stdout.trim() || Buffer.byteLength(observation.stdout) > WORK_ORDER_LIMITS.bytes) {
         return refuse('WO_METRICS_PROCESS', 'Process metrics require a named writer, bounded argv/output, exit 0, no signal and nonempty output')
     }
-    let decoded: unknown
-    try { decoded = JSON.parse(observation.stdout) } catch { // Parser text would quote the process output.
-        return refuse('WO_METRICS_PROCESS', 'Process metrics output is not valid JSON')
-    }
+    const decoded = tryParseJson(observation.stdout)
+    if (decoded === undefined) return refuse('WO_METRICS_PROCESS', 'Process metrics output is not valid JSON')
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)
         || Object.keys(decoded).length !== 4 || !('fixRuns' in decoded) || !('workOrderRuns' in decoded)
         || !('ceremonyArtifacts' in decoded) || !('productChanges' in decoded)

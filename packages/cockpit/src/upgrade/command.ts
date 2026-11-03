@@ -1,6 +1,6 @@
 import type { GeneratedEnvironmentCommandOutcome } from '../environment/generated-application.js'
 import { runConfiguredUpgradeApplication } from '../environment/upgrade-application.js'
-import { snapshotJson, type Diagnostic, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { errorCause, snapshotJson, type Diagnostic, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import type { SurfaceFeature } from '../surfaces/contract.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 
@@ -286,8 +286,7 @@ export async function upgradeCommand(
     try {
         discovered = await adapters.discoverAuthenticated(request)
     } catch (error) {
-        const reason = error instanceof Error && boundedText(error.message) ? error.message : 'unknown transport failure'
-        return refusal('UPGRADE_NETWORK_FAILED', `upgrade discovery failed: ${reason}`, request.configPath)
+        return refusal('UPGRADE_NETWORK_FAILED', `upgrade discovery failed: ${errorCause(error)}`, request.configPath)
     }
 
     const captured = snapshotJson(discovered)

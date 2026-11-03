@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
 
 import { WORK_ORDER_ID } from './contract.js'
+import { RefusalError } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-identity-observation',
@@ -37,28 +38,28 @@ function digest(value: string): string {
 
 function executed(result: WorkOrderIdentityGitResult, operation: string, exits: readonly number[] = [0]): Extract<WorkOrderIdentityGitResult, { kind: 'executed' }> {
     if (result.kind !== 'executed' || result.exitCode === null || !exits.includes(result.exitCode)
-        || result.stderr || result.truncated) throw new Error(`work-order identity ${operation} is unavailable`)
+        || result.stderr || result.truncated) throw new RefusalError(`work-order identity ${operation} is unavailable`)
     return result
 }
 
 function lines(value: string, operation: string): readonly string[] {
-    if (!value.endsWith('\n')) throw new Error(`work-order identity ${operation} is malformed`)
+    if (!value.endsWith('\n')) throw new RefusalError(`work-order identity ${operation} is malformed`)
     const rows = value.slice(0, -1).split('\n')
-    if (rows.some(row => !row)) throw new Error(`work-order identity ${operation} is malformed`)
+    if (rows.some(row => !row)) throw new RefusalError(`work-order identity ${operation} is malformed`)
     return rows
 }
 
 function parseWorktrees(value: string): readonly Readonly<{ root: string; head: string; metadata: readonly string[] }>[] {
-    if (!value.endsWith('\0\0')) throw new Error('work-order identity worktree inventory is malformed')
+    if (!value.endsWith('\0\0')) throw new RefusalError('work-order identity worktree inventory is malformed')
     const records = value.slice(0, -2).split('\0\0')
-    if (!records.length || records.length > MAX_WORKTREES) throw new Error('work-order identity worktree inventory exceeds its bound')
+    if (!records.length || records.length > MAX_WORKTREES) throw new RefusalError('work-order identity worktree inventory exceeds its bound')
     const roots = new Set<string>()
     return Object.freeze(records.map(record => {
         const fields = record.split('\0')
         const rootField = fields.shift()
         const headField = fields.shift()
         if (!rootField?.startsWith('worktree ') || !headField?.startsWith('HEAD ')) {
-            throw new Error('work-order identity worktree inventory is malformed')
+            throw new RefusalError('work-order identity worktree inventory is malformed')
         }
         const root = rootField.slice('worktree '.length)
         const head = headField.slice('HEAD '.length)
@@ -67,7 +68,7 @@ function parseWorktrees(value: string): readonly Readonly<{ root: string; head: 
             || fields.length < 1 || fields.length > 2
             || !/^(?:branch refs\/heads\/[^\u0000-\u0020~^:?*\\[]+|detached)$/.test(fields[0]!)
             || fields[1] !== undefined && !/^(?:locked|prunable)(?: [^\u0000]*)?$/.test(fields[1])) {
-            throw new Error('work-order identity worktree inventory is malformed')
+            throw new RefusalError('work-order identity worktree inventory is malformed')
         }
         roots.add(root)
         return Object.freeze({ root, head, metadata: Object.freeze(fields) })
@@ -81,7 +82,7 @@ export async function observeWorkOrderIdentity(input: Readonly<{
 }>): Promise<WorkOrderIdentityObservation> {
     if (!input || typeof input.root !== 'string' || !isAbsolute(input.root) || resolve(input.root) !== input.root
         || typeof input.id !== 'string' || !WORK_ORDER_ID.test(input.id)
-        || typeof input.executeGit !== 'function') throw new Error('work-order identity observation input is invalid')
+        || typeof input.executeGit !== 'function') throw new RefusalError('work-order identity observation input is invalid')
     const target = `workorders/${input.id}.md`
     const commonResult = executed(await input.executeGit(input.root,
         ['rev-parse', '--path-format=absolute', '--git-common-dir']), 'common directory')
@@ -89,7 +90,7 @@ export async function observeWorkOrderIdentity(input: Readonly<{
     const commonDirectory = commonRows.length === 1 ? commonRows[0]! : ''
     if (!commonDirectory || !isAbsolute(commonDirectory) || resolve(commonDirectory) !== commonDirectory
         || commonDirectory.includes('\0') || Buffer.byteLength(commonDirectory) > 4_096) {
-        throw new Error('work-order identity common directory is malformed')
+        throw new RefusalError('work-order identity common directory is malformed')
     }
 
     const refsResult = executed(await input.executeGit(input.root,
@@ -99,18 +100,18 @@ export async function observeWorkOrderIdentity(input: Readonly<{
         const object = row.slice(0, separator); const ref = row.slice(separator + 1)
         if (separator < 0 || !GIT_OBJECT_ID.test(object)
             || !/^refs\/(?:heads|remotes)\/[^\u0000-\u0020~^:?*\\[]+$/.test(ref)) {
-            throw new Error('work-order identity ref inventory is malformed')
+            throw new RefusalError('work-order identity ref inventory is malformed')
         }
         return Object.freeze({ object, ref })
     })
     if (refs.length > MAX_REFS || new Set(refs.map(row => row.ref)).size !== refs.length) {
-        throw new Error('work-order identity ref inventory is malformed or exceeds its bound')
+        throw new RefusalError('work-order identity ref inventory is malformed or exceeds its bound')
     }
     let claimedBy: WorkOrderIdentityObservation['claimedBy'] = null
     const refEvidence: Array<Readonly<{ object: string; target: string }>> = []
     for (const object of [...new Set(refs.map(row => row.object))].sort()) {
         const tree = executed(await input.executeGit(input.root, ['ls-tree', '-z', '--name-only', object, '--', target]), 'ref target')
-        if (tree.stdout !== '' && tree.stdout !== `${target}\0`) throw new Error('work-order identity ref target is malformed')
+        if (tree.stdout !== '' && tree.stdout !== `${target}\0`) throw new RefusalError('work-order identity ref target is malformed')
         if (tree.stdout) claimedBy = 'ref'
         refEvidence.push(Object.freeze({ object, target: tree.stdout }))
     }
@@ -120,12 +121,12 @@ export async function observeWorkOrderIdentity(input: Readonly<{
     const worktreeEvidence: Array<Readonly<{ root: string; head: string; metadata: readonly string[]; tracked: string; status: string }>> = []
     for (const worktree of worktrees) {
         const tracked = executed(await input.executeGit(worktree.root, ['ls-files', '-z', '--', target]), 'worktree target')
-        if (tracked.stdout !== '' && tracked.stdout !== `${target}\0`) throw new Error('work-order identity worktree target is malformed')
+        if (tracked.stdout !== '' && tracked.stdout !== `${target}\0`) throw new RefusalError('work-order identity worktree target is malformed')
         // Traditional mode names an ignored target file itself; matching mode names its ignored directory
         // instead, which it reports whether or not the target exists.
         const status = executed(await input.executeGit(worktree.root,
             ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignored=traditional', '--', target]), 'worktree status')
-        if (status.stdout && !status.stdout.endsWith('\0')) throw new Error('work-order identity worktree status is malformed')
+        if (status.stdout && !status.stdout.endsWith('\0')) throw new RefusalError('work-order identity worktree status is malformed')
         if (tracked.stdout || status.stdout) claimedBy = 'worktree'
         worktreeEvidence.push(Object.freeze({ ...worktree, tracked: tracked.stdout, status: status.stdout }))
     }

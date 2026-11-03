@@ -11,7 +11,7 @@ import { evaluateGuard } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
-import type { ExecutionStep, StackId } from './contract.js'
+import { RefusalError, type ExecutionStep, type StackId } from './contract.js'
 import { createMachineFloorPlan, collectMachineFloorEvidence, issueMachineFloorAuthority } from './runtime.js'
 import { observeHostCapacity } from './host-observation.js'
 import { projectMachineFloorConfig } from '../config/load.js'
@@ -367,7 +367,7 @@ describe('observation application runners', () => {
         expect(result.diagnostics.filter(row => row.code === 'STATE_RECORD_MALFORMED')).toEqual([{ severity: 'warning',
             code: 'STATE_RECORD_MALFORMED', target: cockpits,
             message: `2 state folders of other cockpits under ${cockpits} cannot be read by this cockpit version (format is not supported), so their claims and port leases were ignored`,
-            fix: `if no cockpit still uses them, stop any stack they started (docker compose ls lists them), then delete them: rm -rf '${cockpits}/one' '${cockpits}/two'` }])
+            fix: `ask the person who owns this machine whether any cockpit still uses them; if none does, stop any stack they started (docker compose ls lists them), then delete them: rm -rf '${cockpits}/one' '${cockpits}/two'` }])
     })
 
     it.each(['authenticated', 'bootstrap', 'missing', 'throwing'] as const)(
@@ -569,7 +569,7 @@ describe('observation application runners', () => {
 
     it('blocks unauthenticated lifecycle evidence instead of treating its stage label as authority', async () => {
         applicationOwners.observations.aggregateObservations = vi.fn(() => {
-            throw new TypeError('preflight needs authentic lifecycle stage authority')
+            throw new RefusalError('preflight needs authentic lifecycle stage authority')
         }) as never
 
         const source = await healthSourceFixture(context)
@@ -581,7 +581,7 @@ describe('observation application runners', () => {
 
     it('reports the refusal a producer recorded instead of the observation window it cost', async () => {
         applicationOwners.observations.aggregateObservations = vi.fn(() => {
-            throw new TypeError('health preflight authority could not preserve its observation window')
+            throw new RefusalError('health preflight authority could not preserve its observation window')
         }) as never
         const refusal = Object.freeze({ severity: 'error' as const, code: 'GENERATED_ENVIRONMENT_UNAVAILABLE' as const,
             message: 'the generated files do not match cockpit.toml', target: 'cockpit.toml' })
@@ -842,7 +842,7 @@ describe('observation application runners', () => {
         const write = vi.fn()
         const opened = await beginOperatorBaselineRecord(
             { configPath: '/synthetic/cockpit.toml' },
-            { observe: async () => observation, revalidate: async () => { throw new TypeError(`baseline ${field} changed`) }, write } as never,
+            { observe: async () => observation, revalidate: async () => { throw new RefusalError(`baseline ${field} changed`) }, write } as never,
         )
         if (!('decide' in opened)) throw new Error('operator baseline session was not issued')
         await expect(opened.decide('approve')).resolves.toMatchObject({
@@ -858,7 +858,7 @@ describe('observation application runners', () => {
         ['operator', (adapters: never) => beginOperatorBaselineRecord({ configPath: '/synthetic/cockpit.toml' }, adapters)],
     ] as const)('names why %s baseline observation failed', async (_entry, record) => {
         const write = vi.fn()
-        const observe = async () => { throw new TypeError('runtime evidence capture is unavailable: synthetic cause') }
+        const observe = async () => { throw new RefusalError('runtime evidence capture is unavailable: synthetic cause') }
 
         await expect(record({ observe, revalidate: vi.fn(), write } as never)).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{
@@ -876,7 +876,7 @@ describe('observation application runners', () => {
         const write = vi.fn()
         const result = await runBaselineRecord({
             configPath: '/synthetic/cockpit.toml', confirmation: 'confirmed', recordedAt: '2026-09-26T00:00:00.000Z',
-        }, { observe: async () => observation, revalidate: async () => { throw new TypeError('baseline previous baseline changed') }, write } as never)
+        }, { observe: async () => observation, revalidate: async () => { throw new RefusalError('baseline previous baseline changed') }, write } as never)
         expect(result).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE', message: 'baseline previous baseline changed' }],
         })
@@ -997,7 +997,7 @@ describe('observation application runners', () => {
         const order: string[] = []
         applicationOwners.observations.aggregateObservations = vi.fn(() => {
             order.push('authenticate')
-            throw new TypeError('lifecycle authority is not authentic')
+            throw new RefusalError('lifecycle authority is not authentic')
         }) as never
         const source = await healthSourceFixture(context, (name) => async () => {
             order.push(name)

@@ -8,6 +8,7 @@ import { basename, dirname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFenceMarkerFile } from '../../libexec/fence-marker.cjs'
 import {
+    hasErrorCode,
     ENVIRONMENT_CODES,
     EXECUTION_FAILURE_CODES,
     sameFilesystemObject,
@@ -60,7 +61,7 @@ function validExecutionFence(fence: ExecutionFence): boolean {
 async function secureFenceSocketDirectory(fence: ExecutionFence): Promise<boolean> {
     const directory = dirname(fence.socketPath)
     try { await mkdir(directory, { recursive: false, mode: 0o700 }) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return false
+        if (!hasErrorCode(error, 'EEXIST')) return false
     }
     try {
         const identity = await lstat(directory)
@@ -98,7 +99,7 @@ function readFenceMarker(fence: ExecutionFence): FenceMarker | undefined {
 }
 
 async function pathAbsent(path: string): Promise<boolean> {
-    try { await lstat(path); return false } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
+    try { await lstat(path); return false } catch (error) { return hasErrorCode(error, 'ENOENT') }
 }
 
 function issueFencedTermination(fence: ExecutionFence): FencedExecutionTermination {
@@ -187,7 +188,7 @@ async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string
 }
 
 function fencedProcessGone(pid: number): boolean {
-    try { process.kill(pid, 0); return false } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' }
+    try { process.kill(pid, 0); return false } catch (error) { return hasErrorCode(error, 'ESRCH') }
 }
 
 export async function repairFencedExecution(fence: ExecutionFence): Promise<
@@ -377,7 +378,7 @@ async function checkFilesystem(check: FilesystemCheck): Promise<boolean> {
         return total === opened.size && after.size === opened.size && after.mtimeMs === opened.mtimeMs
             && hash.digest('hex') === check.sha256
     } catch (error) {
-        return check.expected === 'absent' && (error as NodeJS.ErrnoException).code === 'ENOENT'
+        return check.expected === 'absent' && hasErrorCode(error, 'ENOENT')
     } finally {
         try { await handle?.close() } catch { /* A closed precondition descriptor carries no execution authority. */ }
     }
@@ -684,7 +685,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 process.kill(-runningProcess.pid, 0)
                 return false
             } catch (error) {
-                return (error as NodeJS.ErrnoException).code === 'ESRCH'
+                return hasErrorCode(error, 'ESRCH')
             }
         }
         let terminationDeadline = 0
@@ -1051,7 +1052,7 @@ export async function executeForegroundProcess(
                 process.kill(-child.pid, 0)
                 return false
             } catch (error) {
-                return (error as NodeJS.ErrnoException).code === 'ESRCH'
+                return hasErrorCode(error, 'ESRCH')
             }
         }
         const terminate = (terminationSignal: NodeJS.Signals): void => {

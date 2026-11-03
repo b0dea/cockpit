@@ -4,9 +4,12 @@ import {
     ENVIRONMENT_CODES,
     errorCause,
     hasErrorCode,
+    isMissing,
     OBSERVATION_PRODUCER_BYTE_LIMIT,
     OBSERVATION_REASON_BYTE_LIMIT,
     REFUSAL_CODES,
+    RefusalError,
+    tryParseJson,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     snapshotJson,
@@ -16,14 +19,20 @@ import {
     snapshotLifecyclePlan,
 } from './contract.js'
 
-it('names a system error whole and withholds any other message, without reading accessors', () => {
+it('names a system error and a cockpit refusal whole and withholds any other message, without reading accessors', () => {
     let system: unknown
     try { readFileSync('/nonexistent-cockpit-cause/file') } catch (error) { system = error }
     expect(errorCause(system)).toBe("ENOENT: no such file or directory, open '/nonexistent-cockpit-cause/file'")
     expect(hasErrorCode(system, 'EACCES', 'ENOENT')).toBe(true)
+    expect(isMissing(system)).toBe(true)
     let parse: unknown
     try { JSON.parse('SECRET_CANARY=private-value') } catch (error) { parse = error }
     expect(errorCause(parse)).toBe('SyntaxError')
+    expect(tryParseJson('SECRET_CANARY=private-value')).toBeUndefined()
+    // A refusal that names the parse failure carries cockpit's words through, and the parser's never.
+    const refusal = new RefusalError(`the settings file is not valid JSON (${errorCause(parse)}); fix it and rerun`)
+    expect(errorCause(refusal)).toBe('the settings file is not valid JSON (SyntaxError); fix it and rerun')
+    expect(errorCause(new RefusalError(`first line\n${'x'.repeat(2_000)}`))).toBe('first line')
     expect(errorCause(new Error('child stderr: private-value'))).toBe('Error')
     const hostile = Object.defineProperty(new Error(), 'message', { get() { throw new Error('read') } })
     expect(errorCause(hostile)).toBe('Error')

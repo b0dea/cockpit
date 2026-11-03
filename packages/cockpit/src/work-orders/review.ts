@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { snapshotJson } from '../environment/contract.js'
+import { snapshotJson, RefusalError, errorCause } from '../environment/contract.js'
 import {
     checkPreparedWorkOrderCurrency, normalizeVerificationObservation, verificationObservationPassed, type PreparedWorkOrderVerification, type VerificationObservation, type WorkOrderSubjectDependencies,
 } from '../grading/verifier.js'
@@ -153,9 +153,9 @@ export async function reviewWorkOrderWave(input: WorkOrderReviewInput, dependenc
         : Object.freeze({ kind: 'refusal' as const, reason })
     const persist = async () => {
         const bytes = reviewEvidenceBytes(input.subject, reviews)
-        if (Buffer.byteLength(bytes) > MAX_REVIEW_RECORD_BYTES) throw new Error('Review evidence exceeds its bounded persistence limit')
+        if (Buffer.byteLength(bytes) > MAX_REVIEW_RECORD_BYTES) throw new RefusalError('Review evidence exceeds its bounded persistence limit')
         await dependencies.store.write(bytes)
-        if (await dependencies.store.read() !== bytes) throw new Error('Persisted reviews differ from the current review evidence')
+        if (await dependencies.store.read() !== bytes) throw new RefusalError('Persisted reviews differ from the current review evidence')
         persistedReviews = Object.freeze([...reviews])
         persistedBytes = bytes
     }
@@ -189,7 +189,7 @@ export async function reviewWorkOrderWave(input: WorkOrderReviewInput, dependenc
                 try { result = normalizeVerificationObservation(await dependencies.rerun(command)) }
                 catch (error) {
                     result = normalizeVerificationObservation({ kind: 'error',
-                        reason: `Affected proof execution failed: ${error instanceof Error ? error.message : String(error)}` })
+                        reason: `Affected proof execution failed: ${errorCause(error)}` })
                 }
                 const argv = Object.freeze([...command])
                 reruns.push(immutable({ argv, result, digest: createHash('sha256').update(JSON.stringify({
@@ -228,6 +228,6 @@ export async function reviewWorkOrderWave(input: WorkOrderReviewInput, dependenc
         issuedReviewSets.set(result, input.subject)
         return Object.freeze({ kind: 'complete', reviews: result, bytes: persistedBytes! })
     } catch (error) {
-        return refusal(`Review failed: ${error instanceof Error ? error.message : String(error)}`)
+        return refusal(`Review failed: ${errorCause(error)}`)
     }
 }

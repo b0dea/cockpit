@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { isParsedWorkOrder, type ParsedWorkOrder, type WorkOrderCriterion } from '../work-orders/contract.js'
 import { isCurrentWorkOrderAcceptance, type AcceptedWorkOrder } from '../work-orders/intake.js'
+import { RefusalError, errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-verification',
@@ -117,22 +118,18 @@ function text(value: unknown, maximum = MAX_OUTPUT_BYTES): value is string {
     return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maximum
 }
 
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error)
-}
-
 async function observeSubject(input: GradingInput, dependencies: WorkOrderSubjectDependencies) {
     const contract = await dependencies.readWorkOrder()
     if (!isParsedWorkOrder(contract) || !isCurrentWorkOrderAcceptance(input.accepted, contract)) {
-        throw new Error('Current work-order does not match its issued operator acceptance')
+        throw new RefusalError('Current work-order does not match its issued operator acceptance')
     }
     const artifacts: GradingArtifact[] = []
     let totalBytes = 0
     for (const path of contract.authority) {
         const bytes = await dependencies.readArtifact(path)
-        if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_ARTIFACT_BYTES) throw new Error(`Artifact ${path} is unreadable or exceeds ${MAX_ARTIFACT_BYTES} bytes`)
+        if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_ARTIFACT_BYTES) throw new RefusalError(`Artifact ${path} is unreadable or exceeds ${MAX_ARTIFACT_BYTES} bytes`)
         totalBytes += bytes.byteLength
-        if (totalBytes > 8 * MAX_ARTIFACT_BYTES) throw new Error('Authority artifacts exceed the 8 MiB grading budget')
+        if (totalBytes > 8 * MAX_ARTIFACT_BYTES) throw new RefusalError('Authority artifacts exceed the 8 MiB grading budget')
         const captured = Buffer.from(bytes)
         artifacts.push({ path, digest: createHash('sha256').update(captured).digest('hex'), text: new TextDecoder('utf-8', { fatal: true }).decode(captured) })
     }
@@ -275,7 +272,7 @@ function gradeCriterion(criterion: WorkOrderCriterion, response: GraderResponse,
 export async function prepareWorkOrderVerification(input: GradingInput, dependencies: WorkOrderSubjectDependencies): Promise<PreparedWorkOrderVerification> {
     input = Object.freeze({ ...input })
     if (!isParsedWorkOrder(input.accepted.contract) || !text(input.author, 256) || !text(input.grader, 256) || input.author === input.grader) {
-        throw new Error('Grading requires an issued contract and independent named author and grader')
+        throw new RefusalError('Grading requires an issued contract and independent named author and grader')
     }
     const observed = await observeSubject(input, dependencies)
     const subject: PreparedWorkOrderVerification = immutable({
@@ -302,7 +299,7 @@ export async function checkPreparedWorkOrderCurrency(subject: PreparedWorkOrderV
         }
         return undefined
     } catch (error) {
-        return `Verification subject currency check failed: ${errorMessage(error)}`
+        return `Verification subject currency check failed: ${errorCause(error)}`
     }
 }
 
@@ -326,7 +323,7 @@ export async function verifyPreparedWorkOrder(subject: PreparedWorkOrderVerifica
         for (const command of current.contract.verification) {
             let result: VerificationObservation
             try { result = normalizeVerificationObservation(await dependencies.runVerification(command.argv)) }
-            catch (error) { result = { kind: 'error', reason: `Verification execution failed: ${errorMessage(error)}` } }
+            catch (error) { result = { kind: 'error', reason: `Verification execution failed: ${errorCause(error)}` } }
             verification.push(immutable({ ...command, result, digest: gradingDigest({ runId, ...command, result }) }))
         }
         const verified = await observeSubject(issued.input, dependencies)
@@ -337,7 +334,7 @@ export async function verifyPreparedWorkOrder(subject: PreparedWorkOrderVerifica
             criteria: current.contract.criteria.map(criterion => ({ criterion, digest: gradingDigest({ criterion, source: current.contract.sources.find(source => source.id === criterion.source) }) })) })
         let response: GraderResponse
         try { response = await dependencies.grade(context) }
-        catch (error) { response = { kind: 'error', reason: `Independent grading failed: ${errorMessage(error)}` } }
+        catch (error) { response = { kind: 'error', reason: `Independent grading failed: ${errorCause(error)}` } }
         if (response?.kind === 'assessment' && response.grader !== subject.grader) return refused('Independent grader identity differs from the authenticated launch')
         const after = await observeSubject(issued.input, dependencies)
         if (after.artifactDigest !== context.artifactDigest || after.contract.digest !== context.contract.digest) return refused('Current artifact or criterion changed during grading')
@@ -347,7 +344,7 @@ export async function verifyPreparedWorkOrder(subject: PreparedWorkOrderVerifica
         issuedGrades.set(grade, { input: issued.input, context })
         return grade
     } catch (error) {
-        return refused(`Current grading evidence could not be established: ${errorMessage(error)}`)
+        return refused(`Current grading evidence could not be established: ${errorCause(error)}`)
     }
 }
 
@@ -364,6 +361,6 @@ export async function checkGradeCurrency(grade: WorkOrderGrade, dependencies: Gr
         if (current.contract.digest !== issued.context.contract.digest || current.artifactDigest !== issued.context.artifactDigest) return 'Current artifact or accepted criterion changed after grading'
         return undefined
     } catch (error) {
-        return `Grade currency check failed: ${errorMessage(error)}`
+        return `Grade currency check failed: ${errorCause(error)}`
     }
 }

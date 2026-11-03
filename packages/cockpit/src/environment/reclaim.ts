@@ -26,6 +26,9 @@ import {
     type ReclaimCompleted,
 } from './claims.js'
 import {
+    hasErrorCode,
+    tryParseJson,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     filesystemObjectIdentity,
@@ -786,11 +789,8 @@ function inspectionRows(stdout: Buffer, ids: readonly string[]): readonly Record
     const rows: Record<string, unknown>[] = []
     for (const line of lines) {
         if (Buffer.byteLength(line) > INSPECTION_OBJECT_BUDGET) return undefined
-        let row: unknown
-        try { row = JSON.parse(line) } catch {
-            // Unparseable docker output is unproven; the caller refuses the discovery.
-            return undefined
-        }
+        // Unparseable docker output is unproven; the caller refuses the discovery.
+        const row = tryParseJson(line)
         if (row === null || typeof row !== 'object' || Array.isArray(row)) return undefined
         rows.push(row as Record<string, unknown>)
     }
@@ -981,11 +981,8 @@ function holderRows(stdout: Buffer): readonly { readonly id: string; readonly ne
     const rows: { id: string; networks: string[] }[] = []
     for (const line of text.split('\n')) {
         if (line.length === 0) continue
-        let row: unknown
-        try { row = JSON.parse(line) } catch {
-            // Unparseable docker output is unproven; the caller refuses the discovery.
-            return undefined
-        }
+        // Unparseable docker output is unproven; the caller refuses the discovery.
+        const row = tryParseJson(line)
         if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['id', 'networks'])) return undefined
         const { id, networks } = row as Record<string, unknown>
         if (typeof id !== 'string' || !RESOURCE_ID.test(id) || typeof networks !== 'string') return undefined
@@ -1171,11 +1168,8 @@ export function admitReclaimDiscovery(
         const resources: ReclaimResource[] = []
         for (const line of text.split('\n')) {
             if (line.length === 0) continue
-            let parsed: unknown
-            try { parsed = JSON.parse(line) } catch {
-                // Unparseable docker output is unproven; the caller refuses the discovery.
-                return undefined
-            }
+            // Unparseable docker output is unproven; the caller refuses the discovery.
+            const parsed = tryParseJson(line)
             if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
             const owned = dockerResource(parsed, kind)
             if (owned === undefined) return undefined
@@ -1552,7 +1546,7 @@ async function inspectHostPath(declaration: HostPathDeclaration): Promise<HostPa
                 }
                 ancestors.push(Object.freeze({ path: cursor, ...filesystemObjectIdentity(status) }))
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+                if (!hasErrorCode(error, 'ENOENT')) return undefined
                 return Object.freeze({ state: 'absent' })
             }
         }
@@ -2361,10 +2355,10 @@ function committedTargetIdentities(recovery: FailedReclaimRecovery): readonly Re
         const targets = [...recovery.completed, recovery.current, ...recovery.pending]
         const identities = targets.map((target) => {
             const commitment = target.targetCommitment
-            if (!commitment || createHash('sha256').update(commitment.body).digest('hex') !== commitment.sha256) throw new Error('invalid commitment')
+            if (!commitment || createHash('sha256').update(commitment.body).digest('hex') !== commitment.sha256) throw new RefusalError('invalid commitment')
             const parsed = snapshotCommittedTargetIdentity(JSON.parse(commitment.body))
             if (!parsed || parsed.targetId !== target.targetId
-                || commitment.body !== JSON.stringify(canonicalValue(parsed))) throw new Error('invalid identity')
+                || commitment.body !== JSON.stringify(canonicalValue(parsed))) throw new RefusalError('invalid identity')
             return parsed
         })
         return identities.length === targets.length ? Object.freeze(identities) : undefined
@@ -2647,16 +2641,16 @@ export async function reconcileAbsentReclaimAction(input: {
     try {
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.authority!)
-            || !('value' in descriptors.discovery!)) throw new Error('invalid input')
+            || !('value' in descriptors.discovery!)) throw new RefusalError('invalid input')
         const authority = descriptors.authority!.value as object
         const discovery = descriptors.discovery!.value as ReclaimDiscoverySnapshot
         const issued = absentReclaimExecutions.get(authority)
-        if (!issued) throw new Error('unissued absence action')
+        if (!issued) throw new RefusalError('unissued absence action')
         absentReclaimExecutions.delete(authority)
         const { pending, reservation, attempt, execution } = issued
         const observed = sameRuntimeAuthority(discovery, pending.runtime.stackId, pending.runtime.executable,
             pending.runtime.cwd, pending.runtime.env, pending.runtime.selection)
-        if (!observed || !admittedDiscoveries.has(discovery)) throw new Error('unissued absence discovery')
+        if (!observed || !admittedDiscoveries.has(discovery)) throw new RefusalError('unissued absence discovery')
         const remainder = reservation.actions.slice(attempt.actionIndex + 1)
             .filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId)
         const completed = new Set([...pending.removedTargetIds, pending.targetId])
@@ -2671,12 +2665,12 @@ export async function reconcileAbsentReclaimAction(input: {
             || !pending.targetIdentities.every(identity => completed.has(identity.targetId)
                 ? targetIsAbsent(identity, discovery.resources)
                 : remainder.includes(identity.targetId) && sameTargetIdentity(identity, discovery.resources))) {
-            throw new Error('fresh absence evidence does not match the reserved target set')
+            throw new RefusalError('fresh absence evidence does not match the reserved target set')
         }
         consumeAuthority(observed)
         const settled = settleReclaimDrainSuccess({ authority: execution,
             fact: reclaimCompletionFact(reservation, attempt, observed.finishedAt, remainder) })
-        if (!settled) throw new Error('absence completion authority is unavailable')
+        if (!settled) throw new RefusalError('absence completion authority is unavailable')
         if (remainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, observed)
         const resultAuthority = Object.freeze({})
         issuedReclaimCompleted.set(resultAuthority, settled)
@@ -2712,7 +2706,7 @@ function samePathTargetIdentity(expected: PathTargetIdentity): boolean {
 }
 
 function pathIsAbsent(path: string): boolean {
-    try { lstatSync(path); return false } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
+    try { lstatSync(path); return false } catch (error) { return hasErrorCode(error, 'ENOENT') }
 }
 
 function selectedRuntimeResources(
@@ -2844,7 +2838,7 @@ export function reconcileReclaimAction(input: {
     try {
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 3 || !('value' in descriptors.authority!)
-            || !('value' in descriptors.outcome!) || !('value' in descriptors.discovery!)) throw new Error('invalid input')
+            || !('value' in descriptors.outcome!) || !('value' in descriptors.discovery!)) throw new RefusalError('invalid input')
         authority = descriptors.authority!.value as object
         outcomeInput = descriptors.outcome!.value as ExecuteProbeOutcome
         discovery = descriptors.discovery!.value as ReclaimDiscoverySnapshot

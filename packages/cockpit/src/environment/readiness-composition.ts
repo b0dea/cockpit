@@ -9,7 +9,7 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { inspectTeamReadiness } from '../team-metadata.js'
 import { guardSearchPathRelativeEntry } from '../guards/protected-locations.js'
-import { ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing } from './contract.js'
 import { resolveGitExecutable } from './executable.js'
 import { inspectTrackedSecretFiles } from './git-observation.js'
 import { declaresNothingToRun } from './declaration.js'
@@ -38,7 +38,7 @@ type LoadedConfigResult = Awaited<ReturnType<typeof loadCockpitConfig>>
 
 async function isDirectory(path: string): Promise<boolean> {
     try { return (await lstat(path)).isDirectory() } catch (error) {
-        if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return false
+        if (isMissing(error)) return false
         throw error
     }
 }
@@ -87,12 +87,12 @@ export async function inspectProjectReadiness(
                 argvIndexes: [0], executable: true, executionMode: git.value.executionMode }],
             filesystemChecks: [], compensation: [],
         })
-        if (!step) throw new TypeError('the cockpit root Git probe could not be planned')
+        if (!step) throw new RefusalError('the cockpit root Git probe could not be planned')
         const outcome = authenticatedExecutionOutcome(await execute(step), step)
-        if (!outcome) throw new TypeError('the cockpit root Git probe returned unauthenticated evidence')
+        if (!outcome) throw new RefusalError('the cockpit root Git probe returned unauthenticated evidence')
         // Git exits non-zero outside a working tree; any other refusal is a probe that did not run.
         if (outcome.kind === 'refusal' && outcome.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) {
-            throw new TypeError(`the cockpit root Git probe did not run (${outcome.code})`)
+            throw new RefusalError(`the cockpit root Git probe did not run (${outcome.code})`)
         }
         if (outcome.kind === 'refusal') findings.push(Object.freeze({
             severity: 'warning' as const,
