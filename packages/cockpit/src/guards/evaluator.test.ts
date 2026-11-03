@@ -219,12 +219,6 @@ describe('resolved guard evaluation', () => {
         }
     })
 
-    it.each(['HEAD', '@'])('holds exactly granted symbolic source-only push %s for approval', (source) => {
-        const configured = policy()
-        configured.cockpitInvocations.push(candidate('git', ['push', 'origin', source]))
-        expect(decide(`git push origin ${source}`, configured)).toEqual({ decision: 'ask', reason: 'Push destination requires human approval.' })
-    })
-
     it('holds unresolved source-only revisions across push forms without overriding protected destinations or explicit safe destinations', () => {
         for (const source of ['HEAD', '@', 'FETCH_HEAD', 'ORIG_HEAD', 'AUTO_MERGE', 'refs/remotes/origin/HEAD', 'heads/main', 'HEAD~1', 'feature^', 'feature^{commit}', '@{u}', 'feature@{1}', 'feature..main', 'deadbeef', 'v1-2-gdeadbeef']) {
             for (const prefix of ['', '+']) {

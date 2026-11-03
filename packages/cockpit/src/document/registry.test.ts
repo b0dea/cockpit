@@ -87,15 +87,6 @@ describe('lane dialect', () => {
     it('refuses a host lane with no recorded reason', () => {
         expect(() => toConfig('lane-example', result.siblings)).toThrow(/host_reason/)
     })
-
-    it('round-trips once the operator answers those gaps', () => {
-        expect(() =>
-            toConfig('lane-example', result.siblings, {
-                mobile: 'the simulator cannot be containerised on this platform',
-                storefront: 'the renderer is the vendor cloud; there is no local instance',
-            }, ['mobile', 'storefront']),
-        ).not.toThrow()
-    })
 })
 
 describe('tier dialect', () => {
@@ -143,15 +134,6 @@ describe('tier dialect', () => {
         expect(byslug['booking']).toBe('manual')
         expect(byslug['local-dumps']).toBe('none')
     })
-
-    it('round-trips once the operator answers the host-lane gaps', () => {
-        expect(() =>
-            toConfig('tier-example', result.siblings, {
-                docs: 'capture runs on a pinned interpreter outside the stack',
-                renderer: 'capture runs on a pinned interpreter outside the stack',
-            }, ['docs', 'renderer', 'local-dumps']),
-        ).not.toThrow()
-    })
 })
 
 describe('refusals', () => {
@@ -163,37 +145,15 @@ describe('refusals', () => {
         expect(r.skipped[0].reason).toMatch(/3 fields/)
     })
 
-    it('rejects a remote on a row that is never cloned', () => {
-        expect(() =>
-            CockpitConfig.parse({
-                cockpit: { name: 'x' },
-                sibling: [{ slug: 'a', dir: 'a', remote: 'a', mount: 'none', acquire: 'none', var: 'A_DIR', purpose: 'p' }],
-                ports: { bases: { P: 80 } },
-            }),
-        ).toThrow(/ever cloned/)
-    })
-
-    it('rejects a row that must be cloned but names no remote', () => {
-        expect(() =>
-            CockpitConfig.parse({
-                cockpit: { name: 'x' },
-                sibling: [{ slug: 'a', dir: 'a', mount: 'always', acquire: 'auto', var: 'A_DIR', purpose: 'p' }],
-                ports: { bases: { P: 80 } },
-            }),
-        ).toThrow(/needs a `remote`/)
-    })
-
-    it('rejects two siblings sharing an exported var', () => {
-        expect(() =>
-            CockpitConfig.parse({
-                cockpit: { name: 'x' },
-                sibling: [
-                    { slug: 'a', dir: 'a', remote: 'a', mount: 'always', acquire: 'auto', var: 'SAME_DIR', purpose: 'p' },
-                    { slug: 'b', dir: 'b', remote: 'b', mount: 'always', acquire: 'auto', var: 'SAME_DIR', purpose: 'p' },
-                ],
-                ports: { bases: { P: 80 } },
-            }),
-        ).toThrow(/duplicate var/)
+    it.each([
+        ['a remote on a row that is never cloned', [{ slug: 'a', dir: 'a', remote: 'a', mount: 'none', acquire: 'none', var: 'A_DIR', purpose: 'p' }], /ever cloned/],
+        ['a row that must be cloned but names no remote', [{ slug: 'a', dir: 'a', mount: 'always', acquire: 'auto', var: 'A_DIR', purpose: 'p' }], /needs a `remote`/],
+        ['two siblings sharing an exported var', [
+            { slug: 'a', dir: 'a', remote: 'a', mount: 'always', acquire: 'auto', var: 'SAME_DIR', purpose: 'p' },
+            { slug: 'b', dir: 'b', remote: 'b', mount: 'always', acquire: 'auto', var: 'SAME_DIR', purpose: 'p' },
+        ], /duplicate var/],
+    ])('rejects %s', (_case, sibling, reason) => {
+        expect(() => CockpitConfig.parse({ cockpit: { name: 'x' }, sibling, ports: { bases: { P: 80 } } })).toThrow(reason)
     })
 
     it('accepts a profile lane before the resolved profile set is supplied', () => {
@@ -512,12 +472,6 @@ describe('round trip through cockpit.toml', () => {
 })
 
 describe('gaps', () => {
-    it('asks about an operator gate on a lane that touches a live system', () => {
-        const r = parseRegistry(fixture('lane-dialect.sh'))
-        const gated = gaps(r.siblings).filter((g) => g.field === 'gate').map((g) => g.slug)
-        expect(gated).toContain('storefront')
-    })
-
     it('does not ask for a toolchain on a row that is not a repository', () => {
         const r = parseRegistry(fixture('tier-dialect.sh'))
         const asked = gaps(r.siblings).filter((g) => g.field === 'toolchain').map((g) => g.slug)

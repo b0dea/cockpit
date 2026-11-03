@@ -478,36 +478,15 @@ sources = [{ path = "skills/alpha/SKILL.md", bytes = "---\\nname: alpha\\ndescri
         })
     })
 
-    it('refuses executable Markdown frontmatter before generator dispatch', async () => {
-        const fixture = await consumer('executable-frontmatter')
+    it.each([['executable-frontmatter', ''], ['bom-executable-frontmatter', '\uFEFF']])('refuses executable Markdown frontmatter before generator dispatch (%s)', async (name, prefix) => {
+        const fixture = await consumer(name)
         const marker = join(fixture.root, 'frontmatter-executed')
         const overlay = `
 [[surfaces.overlays]]
 name = "synthetic-agent"
 feature = "subagents"
 source = "surfaces/synthetic-agent.json"
-sources = [{ path = "subagents/synthetic-agent.md", bytes = ${JSON.stringify(`---javascript\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'executed'), { name: 'synthetic-agent' }\n---\nSynthetic instructions.\n`)} }]
-`
-        await writeFile(fixture.configPath, `${await readFile(fixture.configPath, 'utf8')}${overlay}`)
-
-        const result = await syncGeneratedEnvironment({ configPath: fixture.configPath })
-
-        await expect(lstat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
-        expect(result).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'CONFIG_SCHEMA_INVALID' })],
-        })
-    })
-
-    it('refuses BOM-prefixed executable Markdown frontmatter before generator dispatch', async () => {
-        const fixture = await consumer('bom-executable-frontmatter')
-        const marker = join(fixture.root, 'frontmatter-executed')
-        const overlay = `
-[[surfaces.overlays]]
-name = "synthetic-agent"
-feature = "subagents"
-source = "surfaces/synthetic-agent.json"
-sources = [{ path = "subagents/synthetic-agent.md", bytes = ${JSON.stringify(`\uFEFF---javascript\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'executed'), { name: 'synthetic-agent' }\n---\nSynthetic instructions.\n`)} }]
+sources = [{ path = "subagents/synthetic-agent.md", bytes = ${JSON.stringify(`${prefix}---javascript\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'executed'), { name: 'synthetic-agent' }\n---\nSynthetic instructions.\n`)} }]
 `
         await writeFile(fixture.configPath, `${await readFile(fixture.configPath, 'utf8')}${overlay}`)
 
