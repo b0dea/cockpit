@@ -208,16 +208,15 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `accept` | Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = "agent". | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `amend` | Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `answer` | Who answers an open question on an order. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `accept` | Who accepts a draft work order: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `amend` | Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `answer` | Who answers an open question on an order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `signoff` | Who closes a graded order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 
 ### `[autonomy]`
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `preset` | agent: every decision this table and [work.gates] leave unset defaults to agent. | string |  | exactly `"agent"` |
 | `sync` | Who may run a sync that writes: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
 | `reset` | Who may apply a reset, which deletes stack data. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |

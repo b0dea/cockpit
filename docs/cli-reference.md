@@ -595,21 +595,3 @@ Reads `cockpit.toml` from `--config`.
 | 0 | success |
 | 2 | failure |
 | 130 | cancelled |
-
-## cockpit browser debugger
-
-Prepare an explicitly requested browser debugger.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--role` | string | unset |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |

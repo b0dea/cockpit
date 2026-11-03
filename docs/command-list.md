@@ -49,4 +49,3 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit grade`: Independently grade uncommitted work against a criteria file, with no work order.
 - `cockpit browser drive`: Drive the declared application browser surfaces.
 - `cockpit browser screenshot`: Capture the declared application surfaces.
-- `cockpit browser debugger`: Prepare an explicitly requested browser debugger.

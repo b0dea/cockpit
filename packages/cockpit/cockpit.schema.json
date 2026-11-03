@@ -751,7 +751,7 @@
           "type": "object",
           "properties": {
             "accept": {
-              "description": "Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = \"agent\".",
+              "description": "Who accepts a draft work order: agent, person or ci. Default agent.",
               "type": "string",
               "enum": [
                 "agent",
@@ -760,7 +760,7 @@
               ]
             },
             "amend": {
-              "description": "Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci.",
+              "description": "Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci.",
               "type": "string",
               "enum": [
                 "agent",
@@ -769,7 +769,7 @@
               ]
             },
             "answer": {
-              "description": "Who answers an open question on an order. Default person.",
+              "description": "Who answers an open question on an order. Default agent.",
               "type": "string",
               "enum": [
                 "agent",
@@ -797,13 +797,6 @@
       "default": {},
       "type": "object",
       "properties": {
-        "preset": {
-          "description": "agent: every decision this table and [work.gates] leave unset defaults to agent.",
-          "type": "string",
-          "enum": [
-            "agent"
-          ]
-        },
         "sync": {
           "description": "Who may run a sync that writes: agent, person or ci. Default agent.",
           "type": "string",
