@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { isAbsolute, posix } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
@@ -367,12 +367,8 @@ export function inspectShippedRestrictionCapabilities(input: unknown): ShippedRe
     return result
 }
 
-function digest(bytes: string): string {
-    return createHash('sha256').update(bytes).digest('hex')
-}
-
 function file(path: string, bytes: string): RestrictionFile {
-    return { path, bytes, sha256: digest(bytes) }
+    return { path, bytes, sha256: sha256Hex(bytes) }
 }
 
 function shellLiteral(value: string): string {
@@ -507,7 +503,7 @@ function validFile(value: JsonSnapshot | undefined): value is JsonSnapshotObject
     return object(value) && exactKeys(value, ['path', 'bytes', 'sha256'])
         && typeof value.path === 'string' && safeScalar(value.path) && typeof value.bytes === 'string'
         && Buffer.byteLength(value.bytes) <= RESTRICTION_OUTPUT_LIMITS.scalarBytes
-        && typeof value.sha256 === 'string' && value.sha256 === digest(value.bytes)
+        && typeof value.sha256 === 'string' && value.sha256 === sha256Hex(value.bytes)
 }
 
 /** Capture the future registration without changing the operative installed guard. */

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { ADOPTABLE_SURFACE_PATHS, safeSurfacePath as safePath } from './contract.js'
@@ -42,8 +42,6 @@ function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
-
 function refuse(message: string, target?: string, fix?: string): SurfaceChangePlanResult {
     return { kind: 'refusal', diagnostic: { code: 'SURFACE_STATE_CONFLICT', message,
         ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) } }
@@ -81,7 +79,7 @@ function observedEntry(value: JsonSnapshot): SurfaceObservedEntry | undefined {
     if (!object(value) || typeof value.path !== 'string' || !safePath(value.path) || typeof value.kind !== 'string') return undefined
     if (value.kind === 'missing') return exactKeys(value, ['path', 'kind']) ? value as unknown as SurfaceObservedEntry : undefined
     if (value.kind === 'file') return exactKeys(value, ['path', 'kind', 'bytes', 'sha256', 'identity']) && typeof value.bytes === 'string'
-        && typeof value.sha256 === 'string' && value.sha256 === digest(value.bytes) && typeof value.identity === 'string' && value.identity.length > 0
+        && typeof value.sha256 === 'string' && value.sha256 === sha256Hex(value.bytes) && typeof value.identity === 'string' && value.identity.length > 0
         ? value as unknown as SurfaceObservedEntry : undefined
     if (value.kind === 'symlink') return exactKeys(value, ['path', 'kind', 'target', 'identity']) && typeof value.target === 'string'
         && typeof value.identity === 'string' && value.identity.length > 0 ? value as unknown as SurfaceObservedEntry : undefined

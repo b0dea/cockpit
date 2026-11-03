@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, open, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -263,10 +264,6 @@ function completeBundle(
     }
 }
 
-function sha256(bytes: string | Uint8Array): string {
-    return createHash('sha256').update(bytes).digest('hex')
-}
-
 // Each refusal names what differed so the unavailable diagnostic can say why authority failed.
 async function digestFile(path: string, maxBytes: number, executable = false): Promise<string> {
     let handle: Awaited<ReturnType<typeof open>> | undefined
@@ -498,7 +495,7 @@ function parseReadReceipt(bytes: Buffer): readonly ReadFileReceipt[] | undefined
         if (!file) return undefined
         const decoded = Buffer.from(item.bytesBase64, 'base64')
         total += decoded.byteLength
-        if (decoded.byteLength !== file.bytes || total > SURFACE_OUTPUT_MAX_BYTES || sha256(decoded) !== file.sha256) return undefined
+        if (decoded.byteLength !== file.bytes || total > SURFACE_OUTPUT_MAX_BYTES || sha256Hex(decoded) !== file.sha256) return undefined
         files.push({ ...file, bytesBase64: item.bytesBase64 })
     }
     return files
@@ -578,7 +575,7 @@ async function readPrivateReceipt(path: string, summary: ReceiptSummary): Promis
         const after = await handle.stat()
         if (after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size
             || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs
-            || sha256(bytes) !== summary.sha256 || !canonicalReceipt(bytes)) return undefined
+            || sha256Hex(bytes) !== summary.sha256 || !canonicalReceipt(bytes)) return undefined
         return bytes
     } catch {
         // an unavailable authority is refused by the caller.
@@ -691,7 +688,7 @@ async function runEstatePass(
             features: job.features,
             warningSourceSha256: (() => {
                 const source = job.batch.sources.find(item => item.path === 'permissions.jsonc')
-                return source ? sha256(source.bytes) : null
+                return source ? sha256Hex(source.bytes) : null
             })(),
             receiptOutput: job.generatorReceipt,
         })),

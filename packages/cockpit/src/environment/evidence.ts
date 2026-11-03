@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { isAbsolute, normalize } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
@@ -38,10 +38,6 @@ const CONTENT_SCRIPT = 'tmp=${TMPDIR:-/tmp}/cockpit-content-$$; cockpit_hash_fai
 
 type JsonPrimitive = null | boolean | number | string
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue }
-
-function digest(value: string): string {
-    return createHash('sha256').update(value).digest('hex')
-}
 
 function stableValue(value: JsonValue): string {
     if (Array.isArray(value)) return `[${value.map(stableValue).join(',')}]`
@@ -113,7 +109,7 @@ export function createEnvironmentSnapshot(input: EnvironmentSnapshotInput): Envi
         throw new RefusalError('environment snapshot provenance is invalid')
     }
     const intendedState = sanitize(owned.intendedState)
-    const snapshotSha256 = digest(stableValue({
+    const snapshotSha256 = sha256Hex(stableValue({
         stackId: owned.stackId,
         configSha256: owned.configSha256,
         createdAt: owned.createdAt,
@@ -379,12 +375,12 @@ export function captureRuntimeEvidence(input: RuntimeEvidenceInput): RuntimeEvid
     const observedBytes = { ...capture.observedBytes }
     const runtime = { ...capture.runtime }
     const stability = {
-        processIdentitySha256: digest(capture.processIdentity),
+        processIdentitySha256: sha256Hex(capture.processIdentity),
         contentHash: capture.contentHash,
     }
     const captureStartedAt = capture.startedAt
     const core = { stackId: capture.stackId, configSha256: capture.configSha256, runtime, observedAt, captureStartedAt, command, observedBytes, stability }
-    return { state: 'available', artifact: 'captured-runtime-evidence', schemaVersion: 1, ...core, evidenceSha256: digest(stableValue(core as unknown as JsonValue)) }
+    return { state: 'available', artifact: 'captured-runtime-evidence', schemaVersion: 1, ...core, evidenceSha256: sha256Hex(stableValue(core as unknown as JsonValue)) }
 }
 
 export type EnvironmentComparison =
@@ -465,7 +461,7 @@ function validSnapshot(value: unknown): value is EnvironmentSnapshot {
         && STACK_ID.test(snapshot.stackId) && SHA256.test(snapshot.configSha256) && validInstant(snapshot.createdAt)
         && snapshot.creationSource === 'resolved-config' && stableValue(sanitize(snapshot.intendedState)) === stableValue(snapshot.intendedState)
         && SHA256.test(snapshot.snapshotSha256)
-        && snapshot.snapshotSha256 === digest(stableValue(core))
+        && snapshot.snapshotSha256 === sha256Hex(stableValue(core))
 }
 
 function validAuthenticatedCapture(value: unknown): value is Omit<AuthenticatedStabilityCapture, typeof authenticatedCaptureBrand> {
@@ -545,7 +541,7 @@ function validEvidence(value: unknown): value is CapturedRuntimeEvidence {
         && evidence.observedBytes.stdout <= evidence.command.stdoutLimitBytes
         && evidence.observedBytes.stderr <= evidence.command.stderrLimitBytes
         && SHA256.test(evidence.stability.processIdentitySha256) && SHA256.test(evidence.stability.contentHash)
-        && SHA256.test(evidence.evidenceSha256) && evidence.evidenceSha256 === digest(stableValue(core as unknown as JsonValue))
+        && SHA256.test(evidence.evidenceSha256) && evidence.evidenceSha256 === sha256Hex(stableValue(core as unknown as JsonValue))
 }
 
 export function isRuntimeEvidenceAuthentic(rawEvidence: CapturedRuntimeEvidence): boolean {

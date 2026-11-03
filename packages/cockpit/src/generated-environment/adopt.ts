@@ -9,7 +9,7 @@
  * than introducing another runner. A sync that refuses before writing the merged file is rolled
  * back, so a refused adoption does not silently leave the team's settings moved aside.
  */
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { basename, dirname, resolve } from 'node:path'
 import { parse, TomlError } from 'smol-toml'
 
@@ -55,8 +55,6 @@ function canonical(value: unknown): string {
     return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
         ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : 1)) : item)
 }
-
-function digest(bytes: string | Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
 
 function adoptionTable(row: SurfaceAdoption): string {
     return [
@@ -206,18 +204,18 @@ export async function runSyncAdoption(
         if (configState === 'unknown') {
             try {
                 const current = await readAnchoredFile(root, basename(configPath), STRUCTURED_INPUT_BYTE_LIMIT, node, adapters)
-                if (current.kind === 'complete' && current.sha256 === digest(originalText)) restoreConfig = false
-                else if (current.kind === 'complete' && current.sha256 === digest(nextText)) restoreConfig = true
-                else failures.push(`cockpit.toml could not be matched to either the original or adopted configuration. Preserve it and restore the version whose SHA-256 is ${digest(originalText)} before retrying`)
+                if (current.kind === 'complete' && current.sha256 === sha256Hex(originalText)) restoreConfig = false
+                else if (current.kind === 'complete' && current.sha256 === sha256Hex(nextText)) restoreConfig = true
+                else failures.push(`cockpit.toml could not be matched to either the original or adopted configuration. Preserve it and restore the version whose SHA-256 is ${sha256Hex(originalText)} before retrying`)
             } catch (error) {
-                failures.push(`cockpit.toml could not be checked after the failed write (${errorCause(error)}). Preserve it and restore the version whose SHA-256 is ${digest(originalText)} before retrying`)
+                failures.push(`cockpit.toml could not be checked after the failed write (${errorCause(error)}). Preserve it and restore the version whose SHA-256 is ${sha256Hex(originalText)} before retrying`)
             }
         }
         if (restoreConfig) {
-            const fix = `restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`
+            const fix = `restore cockpit.toml to SHA-256 ${sha256Hex(originalText)} before retrying`
             try {
                 const restored = await writeVerifiedConfig({
-                    path: configPath, expectedSha256: digest(nextText), temporaryTag: 'adopt',
+                    path: configPath, expectedSha256: sha256Hex(nextText), temporaryTag: 'adopt',
                     edit: () => originalText,
                     isExactChange: (value) => canonical(value) === canonical(config),
                     messages: {
@@ -230,7 +228,7 @@ export async function runSyncAdoption(
                 })
                 if (restored.kind !== 'complete') failures.push(`${restored.message}; ${restored.fix}`)
             } catch (error) {
-                failures.push(`cockpit.toml restoration failed (${errorCause(error)}). Restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`)
+                failures.push(`cockpit.toml restoration failed (${errorCause(error)}). Restore cockpit.toml to SHA-256 ${sha256Hex(originalText)} before retrying`)
             }
         }
         for (const retained of uncertainty) failures.push(`recovery remains indeterminate for ${retained.item.path}. Preserve ${[retained.item.path, ...retained.retainedPaths].join(', ')} until the original inode is confirmed at ${retained.item.path} with SHA-256 ${retained.item.sha256}`)
@@ -271,7 +269,7 @@ export async function runSyncAdoption(
             },
         })
     } catch (error) {
-        return rollback(refused('SURFACE_ADOPTION_REFUSED', `writing cockpit.toml failed (${errorCause(error)}); owned recovery was attempted. Verify cockpit.toml has SHA-256 ${digest(originalText)} before retrying`, configPath), 'unknown')
+        return rollback(refused('SURFACE_ADOPTION_REFUSED', `writing cockpit.toml failed (${errorCause(error)}); owned recovery was attempted. Verify cockpit.toml has SHA-256 ${sha256Hex(originalText)} before retrying`, configPath), 'unknown')
     }
     if (written.kind !== 'complete') return rollback(refused(written.code, written.message, configPath, written.fix), 'unknown')
 

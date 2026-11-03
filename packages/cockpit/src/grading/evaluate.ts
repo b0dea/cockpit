@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -42,7 +43,6 @@ const STDERR_LIMIT_BYTES = 65_536
 const ANSWER_LIMIT_BYTES = 65_536
 const PROBE_TIMEOUT_MS = 30_000
 const CAUSE_CHARACTERS = 2_048
-const digest = (value: Uint8Array | string): string => createHash('sha256').update(value).digest('hex')
 // The tool ran and said why it gave no answer (signed out, rate-limited), so another tool may be tried.
 class ToolReportedFailure extends RefusalError {}
 // A tool that resumed a session it had already answered in could carry another run's context.
@@ -312,7 +312,7 @@ async function attempt(tool: EvaluatorTool, executable: Executable, request: Eva
         const schema = JSON.stringify(request.schema)
         await writeFile(requestPath, documentBytes, { flag: 'wx', mode: 0o600 })
         await writeFile(schemaPath, schema, { flag: 'wx', mode: 0o600 })
-        const requestDigest = digest(readFileSync(requestPath))
+        const requestDigest = sha256Hex(readFileSync(requestPath))
         const prompt = `Read exactly the request JSON at ${requestPath} with SHA-256 ${requestDigest}; follow its fixed evaluator instruction and reply with only one JSON object, and no other text, that matches the JSON Schema at ${schemaPath}.`
         // Agent tools load instruction files and project configuration from their working root, and in
         // the repository those are files the graded agent can write. The private run directory holds
@@ -324,7 +324,7 @@ async function attempt(tool: EvaluatorTool, executable: Executable, request: Eva
         const schemaIndex = args.indexOf(schemaPath)
         const outcome = await runStep(executable, args, { cwd: runRoot, env, timeoutMs: request.timeoutMs, stdoutLimitBytes: STDOUT_LIMIT_BYTES, paths: [responsePath],
             labels: { owner: 'independent-evaluator', role: request.role, tool, requestDigest },
-            consumed: schemaIndex === -1 ? [] : [{ path: schemaPath, sha256: digest(schema), maxBytes: ANSWER_LIMIT_BYTES, argvIndexes: [schemaIndex + 1], executable: false }] })
+            consumed: schemaIndex === -1 ? [] : [{ path: schemaPath, sha256: sha256Hex(schema), maxBytes: ANSWER_LIMIT_BYTES, argvIndexes: [schemaIndex + 1], executable: false }] })
         if (outcome.kind === 'failed') {
             const reported = spec.cause(outcome.stdout, outcome.stderr)
             if (outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {

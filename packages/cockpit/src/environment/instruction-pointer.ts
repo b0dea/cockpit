@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
@@ -16,7 +17,6 @@ export type InstructionPointerResult = Readonly<{
     target: string
 }> | Readonly<{ kind: 'refusal'; path: string; reason: string }>
 
-const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 function block(target: string): string {
     const destination = target.split('/').map(segment => encodeURIComponent(segment)).join('/')
     return `${BEGIN}\nRead [the cockpit instructions](<${destination}>) before editing this repository.\n${END}`
@@ -82,7 +82,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
         if (!input.write) return { kind: 'offered', path, target }
         if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before writing' }
         const next = `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}${desired}\n`
-        const originalSha256 = read?.kind === 'complete' ? digest(read.bytes) : undefined
+        const originalSha256 = read?.kind === 'complete' ? sha256Hex(read.bytes) : undefined
         if (before) {
             const temporary = join(dirname(path), `.${basename(path)}.cockpit-pointer-${randomBytes(8).toString('hex')}`)
             let temporaryCreated = false
@@ -95,7 +95,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
                 const current = await lstat(path)
                 const reread = await readBoundedInput(path)
                 if (current.dev !== before.dev || current.ino !== before.ino || current.size !== before.size
-                    || current.mtimeMs !== before.mtimeMs || reread.kind !== 'complete' || digest(reread.bytes) !== originalSha256) {
+                    || current.mtimeMs !== before.mtimeMs || reread.kind !== 'complete' || sha256Hex(reread.bytes) !== originalSha256) {
                     return { kind: 'refusal', path, reason: 'AGENTS.md changed before the pointer could be written' }
                 }
                 await rename(temporary, path)

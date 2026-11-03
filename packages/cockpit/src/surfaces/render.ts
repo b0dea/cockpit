@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { isAbsolute } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
@@ -97,11 +97,9 @@ function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
-
 export function surfaceModelSha256(value: unknown): string | undefined {
     const captured = snapshotGeneratedJson(value)
-    return captured === undefined ? undefined : digest(JSON.stringify(captured))
+    return captured === undefined ? undefined : sha256Hex(JSON.stringify(captured))
 }
 
 function refuse(code: SurfaceDiagnostic['code'], message: string, target?: string): SurfaceRenderResult {
@@ -111,7 +109,7 @@ function refuse(code: SurfaceDiagnostic['code'], message: string, target?: strin
 function validFileFields(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return object(value) && safePath(value.path)
         && typeof value.bytes === 'string' && Buffer.byteLength(value.bytes) <= 65_536
-        && typeof value.sha256 === 'string' && value.sha256 === digest(value.bytes)
+        && typeof value.sha256 === 'string' && value.sha256 === sha256Hex(value.bytes)
 }
 
 function validFile(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
@@ -513,7 +511,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     for (const wrapper of captured.mcp.result.wrappers) {
         if (!validFile(wrapper)) return refuse('SURFACE_INPUT_INVALID', 'MCP wrapper output is malformed')
         const server = captured.mcp.result.servers.find(row => object(row) && typeof row.name === 'string'
-            && wrapper.path === `.cockpit/mcp/${digest(row.name)}.sh`)
+            && wrapper.path === `.cockpit/mcp/${sha256Hex(row.name)}.sh`)
         const harnesses = object(server) ? captured.mcp.result.harnesses.filter(row => object(row)
             && Array.isArray(row.servers) && row.servers.some(transport => object(transport) && transport.name === server.name))
             .map(row => (row as JsonSnapshotObject).target as string) : []
@@ -561,7 +559,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         for (const fragment of fragments) {
             const baseRow = captured.generated.files.find(row => object(row) && row.target === fragment.target && row.path === path)
             if (baseRow === undefined) {
-                if (fragment.baseSha256 !== digest('')) return refuse('SURFACE_INPUT_INVALID', 'native fragment is not bound to an absent base', path)
+                if (fragment.baseSha256 !== sha256Hex('')) return refuse('SURFACE_INPUT_INVALID', 'native fragment is not bound to an absent base', path)
             } else if (!object(baseRow) || baseRow.sha256 !== fragment.baseSha256) {
                 return refuse('SURFACE_INPUT_INVALID', 'native fragment base digest does not match generated output', path)
             } else replaced.add(`${fragment.target}\0${baseRow.bytes as string}`)
@@ -599,7 +597,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         const scope = sharedScope(contributions)
         if (!scope) return refuse('SURFACE_PATH_CONFLICT', 'producers emitted inconsistent scopes for one physical path', path)
         entries.push({ kind: 'file', path, harnesses, scope, capability: weakest(contributions.map(row => row.capability)), writer: 'cockpit', schemaVersion: 1,
-            ownership: 'whole-file', bytes, sha256: digest(bytes) })
+            ownership: 'whole-file', bytes, sha256: sha256Hex(bytes) })
     }
     for (const [path, contributions] of markdown) {
         const generatorRows = path === 'CLAUDE.md' ? [] : captured.generated.files.filter(row => object(row) && row.path === path)
@@ -615,7 +613,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         if (!scope) return refuse('SURFACE_PATH_CONFLICT', 'producers emitted inconsistent scopes for one physical path', path)
         entries.push({ kind: 'shared-region', path, harnesses, scope, capability: weakest(contributions.map(row => row.capability)), writer: 'cockpit', schemaVersion: 1,
             ownership: 'shared-region', regionId: 'cockpit-instructions', region: { format: 'markdown-delimited',
-                begin: '<!-- cockpit:instructions:start -->', end: '<!-- cockpit:instructions:end -->', bytes: body, sha256: digest(body) } })
+                begin: '<!-- cockpit:instructions:start -->', end: '<!-- cockpit:instructions:end -->', bytes: body, sha256: sha256Hex(body) } })
     }
 
     const openCode = whole.get('opencode.jsonc') ?? []
@@ -632,7 +630,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         if (!scope) return refuse('SURFACE_PATH_CONFLICT', 'producers emitted inconsistent scopes for one physical path', 'opencode.jsonc')
         entries.push({ kind: 'shared-region', path: 'opencode.jsonc', harnesses, scope, capability: weakest(contributions.map(row => row.capability)), writer: 'cockpit', schemaVersion: 1,
             ownership: 'shared-region', regionId: 'cockpit-opencode-root-properties',
-            region: { format: 'opencode-json-root-properties', members: grouped, sha256: digest(JSON.stringify(grouped)) } })
+            region: { format: 'opencode-json-root-properties', members: grouped, sha256: sha256Hex(JSON.stringify(grouped)) } })
     }
     entries.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
     const ownership = classifySurfaceOwnership({ configuredHarnesses: configured, entries })

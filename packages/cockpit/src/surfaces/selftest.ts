@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 
 import type { GeneratedCustomSurfaceSelftestInput, GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
@@ -140,10 +140,6 @@ const FEATURE_CAPABILITY = Object.freeze<Partial<Record<SurfaceFeature, Selftest
     skills: 'skill-parity',
 })
 
-function digest(value: string): string {
-    return createHash('sha256').update(value).digest('hex')
-}
-
 function compareCodeUnits(left: string, right: string): number {
     return left < right ? -1 : left > right ? 1 : 0
 }
@@ -157,7 +153,7 @@ type ProjectedCustomHarness = GeneratedSurfaceSelftestProjection['declarations']
 
 function declarationDigest(declaration: ProjectedCustomHarness): string | undefined {
     const captured = snapshotGeneratedJson(declaration)
-    return captured === undefined ? undefined : digest(JSON.stringify(captured))
+    return captured === undefined ? undefined : sha256Hex(JSON.stringify(captured))
 }
 
 function customKey(harness: string, feature: SurfaceFeature): string {
@@ -203,7 +199,7 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         entries: captured.entries,
         custom: captured.custom,
     }
-    if (digest(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
+    if (sha256Hex(JSON.stringify(payload)) !== captured.manifestSha256) return undefined
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })
     if (ownership.kind !== 'complete') return undefined
     const configured = new Set(captured.configuredHarnesses)

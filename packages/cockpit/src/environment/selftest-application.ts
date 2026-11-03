@@ -1,5 +1,6 @@
 import { exactKeys } from '../exact-keys.js'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
@@ -148,10 +149,6 @@ function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestComman
         || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
         || probeSpecificationsPath.includes('\0') || !env) return undefined
     return { configPath, probeSpecificationsPath, env }
-}
-
-function sha256(value: string | Buffer): string {
-    return createHash('sha256').update(value).digest('hex')
 }
 
 function refusal(code: Extract<SurfaceSelftestCommandOutcome, { kind: 'refusal' }>['code'], reason: string): SurfaceSelftestCommandOutcome {
@@ -319,7 +316,7 @@ function event(
     return {
         cwd, command: [...command], exitCode: execution.execution.exitCode,
         signal: execution.execution.signal, result, code, stdout, stderr,
-        stdoutSha256: sha256(stdout), stderrSha256: sha256(stderr),
+        stdoutSha256: sha256Hex(stdout), stderrSha256: sha256Hex(stderr),
     }
 }
 
@@ -390,7 +387,7 @@ async function writeControlPair(
     const brokenBytes = '{\n'
     await writeFile(candidate, candidateBytes, { flag: 'wx', mode: 0o600 })
     await writeFile(broken, brokenBytes, { flag: 'wx', mode: 0o600 })
-    return { candidate, broken, candidateSha256: sha256(candidateBytes), brokenSha256: sha256(brokenBytes) }
+    return { candidate, broken, candidateSha256: sha256Hex(candidateBytes), brokenSha256: sha256Hex(brokenBytes) }
 }
 
 function consumedExecutable(executable: ResolvedExecutable): ConsumedFile {
@@ -517,7 +514,7 @@ async function runEvidenceProbe(
     void _transcriptSha256
     const transcriptBytes = JSON.stringify(transcriptRecord)
     await writeFile(transcript, transcriptBytes, { flag: 'wx', mode: 0o600 })
-    return { ...record, transcriptSha256: sha256(transcriptBytes) }
+    return { ...record, transcriptSha256: sha256Hex(transcriptBytes) }
 }
 
 export async function runSurfaceSelftestApplication(
@@ -616,7 +613,7 @@ export async function runConfiguredSurfaceSelftestApplication(
     const specifications = artifact.specifications as readonly SelftestProbeSpecification[]
     const plan = planSurfaceSelftest(checked.result.application.surfaceSelftest, specifications)
     if (plan.kind === 'refusal') return refusal(plan.code, plan.reason)
-    const artifactSha256 = sha256(bytes)
+    const artifactSha256 = sha256Hex(bytes)
     const candidate: SurfaceSelftestProbeSpecificationsCandidate = {
         canonicalPath: artifactPath,
         sha256: artifactSha256,

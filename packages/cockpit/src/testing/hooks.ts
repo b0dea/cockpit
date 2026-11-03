@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import type { ExecutionStep } from '../environment/contract.js'
 import { resolveNamedPath, type NamedPathInput } from '../references/named.js'
@@ -36,7 +36,6 @@ export const NATIVE_HOOK_COST_SCRIPT = `{
     done
 } | /bin/sh "$1"`
 
-const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const refusal = (reason: string): HookRefusal => ({ kind: 'refusal', reason })
 
 function policyLimit(policy: NativeHookPolicy): number | HookRefusal {
@@ -44,7 +43,7 @@ function policyLimit(policy: NativeHookPolicy): number | HookRefusal {
     if (reference.kind !== 'resolved') return refusal(`native hook budget policy is unavailable: ${policy.path}`)
     const owner = policy.manifest.entries.find(entry => entry.path === policy.path)
     if (!owner || owner.kind !== 'file' || typeof policy.bytes !== 'string' || Buffer.byteLength(policy.bytes) > 64
-        || digest(policy.bytes) !== owner.sha256) return refusal('native hook budget must bind exact policy bytes to the ownership manifest')
+        || sha256Hex(policy.bytes) !== owner.sha256) return refusal('native hook budget must bind exact policy bytes to the ownership manifest')
     const marker = /^native-hook-ms=([1-9][0-9]*)\n$/.exec(policy.bytes)
     const limitMs = marker ? Number(marker[1]) : Number.NaN
     return Number.isSafeInteger(limitMs) ? limitMs : refusal('native hook policy must declare one positive native-hook-ms cap')
@@ -66,10 +65,10 @@ export async function checkNativeHookBudget(entry: NativeHookEntry, measurement:
         && argv[3] === 'native-hook-cost' && oid(argv[5]!) && oid(argv[6]!) && argv[5]!.length === argv[6]!.length && argv[5] !== argv[6]
     const marker = /^# cockpit:budget name=native-hook-ms limit-ms=([1-9][0-9]*)$/m.exec(entry.bytes)
     const limitMs = marker ? Number(marker[1]) : Number.NaN
-    if (!file || !workload || entry.writer !== 'cockpit' || digest(entry.bytes) !== entry.sha256 || limitMs !== cap) {
+    if (!file || !workload || entry.writer !== 'cockpit' || sha256Hex(entry.bytes) !== entry.sha256 || limitMs !== cap) {
         return refusal('native hook requires intact bytes, an authenticated policy cap and the exact 128-update ancestry workload')
     }
-    const executionSha256 = digest(JSON.stringify(measurement))
+    const executionSha256 = sha256Hex(JSON.stringify(measurement))
     const started = performance.now()
     const outcome = authenticatedExecutionOutcome(await executeProbe(measurement), measurement)
     const measuredMs = Math.ceil(performance.now() - started)
@@ -141,7 +140,7 @@ export async function projectNativeHooks(input: NativeHookInput): Promise<Native
     const harnesses = [...new Set(input.harnesses)].sort()
     if (!harnesses.length) return refusal('native hook requires configured harness ownership')
     const entry: NativeHookEntry = { path: '.githooks/pre-push', kind: 'file', ownership: 'whole-file',
-        harnesses: harnesses as [string, ...string[]], writer: 'cockpit', schemaVersion: 1, scope: 'scoped', capability: 'instructed', bytes, sha256: digest(bytes) }
+        harnesses: harnesses as [string, ...string[]], writer: 'cockpit', schemaVersion: 1, scope: 'scoped', capability: 'instructed', bytes, sha256: sha256Hex(bytes) }
     if (typeof input.budget.prepareMeasurement !== 'function') return refusal('native hook requires a bounded measurement plan callback')
     let measurement: NativeHookMeasurement
     try { measurement = await input.budget.prepareMeasurement(entry) }

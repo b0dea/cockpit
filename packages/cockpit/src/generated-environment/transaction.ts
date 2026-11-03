@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { lstat, mkdtemp, open, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -92,10 +93,6 @@ const TRANSACTION_TIMEOUT_MS = 180_000
 const PUBLICATION_HELPER_SLOT_MS = 500
 const PUBLICATION_HELPER_CALLS_PER_GROUP = 6
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
-function sha256(value: string | Uint8Array): string {
-    return createHash('sha256').update(value).digest('hex')
-}
-
 function ownRecord(value: unknown): Record<string, unknown> | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)
@@ -467,7 +464,7 @@ export async function readAnchoredFile(
         } finally {
             await handle.close()
         }
-        if (sha256(bytes) !== receipt.sha256) return { kind: 'invalid' }
+        if (sha256Hex(bytes) !== receipt.sha256) return { kind: 'invalid' }
         return {
             kind: 'complete' as const, bytes, sha256: receipt.sha256,
             identity: { root: readRoot, chain: chain as DirectoryIdentity[], file },
@@ -537,7 +534,7 @@ export async function readAnchoredEntry(
             }
             bytes = Buffer.concat(chunks, total)
         } finally { await handle.close() }
-        if (sha256(bytes) !== simple.sha256) return { kind: 'invalid' }
+        if (sha256Hex(bytes) !== simple.sha256) return { kind: 'invalid' }
         return { kind: 'file', bytes, sha256: simple.sha256, mode: simple.mode as number,
             identity: { root: readRoot, chain: chain as DirectoryIdentity[], file } }
     } catch { /* a failed anchored read is invalid; the caller refuses it. */ return { kind: 'invalid' } } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
@@ -760,7 +757,7 @@ async function readAnchoredBatch(
             || (summary.receiptBytes as number) < 1 || (summary.receiptBytes as number) > MAX_AUTHENTICATED_READ_BATCH_RECEIPT_BYTES
             || typeof summary.receiptSha256 !== 'string' || !SHA256.test(summary.receiptSha256)) return undefined
         const receiptBytes = await readPrivateOutput(receiptOutput, MAX_AUTHENTICATED_READ_BATCH_RECEIPT_BYTES)
-        if (!receiptBytes || receiptBytes.length !== summary.receiptBytes || sha256(receiptBytes) !== summary.receiptSha256) return undefined
+        if (!receiptBytes || receiptBytes.length !== summary.receiptBytes || sha256Hex(receiptBytes) !== summary.receiptSha256) return undefined
         const receiptText = new TextDecoder('utf-8', { fatal: true }).decode(receiptBytes)
         const receiptValue = JSON.parse(receiptText) as unknown
         if (JSON.stringify(receiptValue) + '\n' !== receiptText) return undefined
@@ -805,7 +802,7 @@ async function readAnchoredBatch(
             if (!readRoot || readRoot.dev !== rootStatus.dev || readRoot.ino !== rootStatus.ino || !file || !chain
                 || chain.length !== parts.length - 1 || chain.some(entry => !entry)) return undefined
             const bytes = await readPrivateOutput(expected.output, expected.maxBytes)
-            if (!bytes || sha256(bytes) !== row.sha256) return { kind: 'invalid', index }
+            if (!bytes || sha256Hex(bytes) !== row.sha256) return { kind: 'invalid', index }
             const identity = { root: readRoot, chain: chain as DirectoryIdentity[], file }
             results.push(expected.action === 'read-entry'
                 ? { kind: 'file', bytes, sha256: row.sha256, mode: row.mode as number, identity }
@@ -1439,7 +1436,7 @@ function staleRemovalRequest(
         sourceSha256: prepared.sourceSha256,
         entries: entries.sort((left, right) => compareCodeUnits(left.path, right.path)),
     }
-    return { ...payload, digest: sha256(JSON.stringify(payload)) }
+    return { ...payload, digest: sha256Hex(JSON.stringify(payload)) }
 }
 
 async function staleRemovalApproved(
@@ -1593,7 +1590,7 @@ async function admitBootstrapPlan(
     const mutations = [...serializable.mutations]
     if (mutations.length > desired.length || new Set(mutations.map(row => row.path)).size !== mutations.length
         || mutations.some(row => !exactPath(serializable.root, row.path) || row.phase !== 'desired' || row.operation !== 'write-file'
-            || typeof row.bytes !== 'string' || row.sha256 !== sha256(row.bytes))) {
+            || typeof row.bytes !== 'string' || row.sha256 !== sha256Hex(row.bytes))) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap publication contains an undeclared or non-exact operation', 'generated-environment')
     }
     const paths = desired.map(entry => entry.path)
@@ -1609,7 +1606,7 @@ async function admitBootstrapPlan(
         const observed = await readState(refreshInput.address as BootstrapStateAddress)
         const record = observed.kind === 'complete' ? observed.value : undefined
         if (!record) return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap refresh state could not be authenticated', 'generated-environment')
-        const priorPreviewSha256 = sha256(JSON.stringify({ target: record.target, sources: record.value.sources,
+        const priorPreviewSha256 = sha256Hex(JSON.stringify({ target: record.target, sources: record.value.sources,
             files: record.value.published }))
         if (record.revision !== refreshInput.revision || record.value.commandSha256 !== refreshInput.commandSha256
             || record.value.previewSha256 !== priorPreviewSha256 || record.value.stage !== 'surface-published'
@@ -1791,7 +1788,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
             if (previous.kind === 'shared-region' && current.kind === 'file') {
                 const removed = removeSharedOwnership(new TextDecoder('utf-8', { fatal: true }).decode(current.bytes), previous, prior)
                 if (removed.kind !== 'complete' || mutation.operation !== 'write-file' || mutation.bytes !== removed.bytes
-                    || mutation.sha256 !== sha256(removed.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'shared removal must preserve the exact foreign postimage', path)
+                    || mutation.sha256 !== sha256Hex(removed.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'shared removal must preserve the exact foreign postimage', path)
             } else if (mutation.operation !== 'remove-file') {
                 return refuse('GENERATED_PUBLICATION_FAILED', 'removal does not name the exact owned leaf kind', path)
             }
@@ -1800,7 +1797,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
                 return refuse('GENERATED_PUBLICATION_FAILED', 'write destination lacks applicable ownership', path)
             }
             if (mutation.operation !== 'write-file' || typeof mutation.bytes !== 'string' || Buffer.byteLength(mutation.bytes) > MAX_GENERATED_BYTES
-                || mutation.sha256 !== sha256(mutation.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'file publication has invalid bounded bytes', path)
+                || mutation.sha256 !== sha256Hex(mutation.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'file publication has invalid bounded bytes', path)
             const post = { kind: 'file' as const, bytes: Buffer.from(mutation.bytes), sha256: mutation.sha256, identity: current.kind === 'file' ? current.identity
                 : { root: captured.rootIdentity, chain: [], file: captured.rootIdentity }, mode: 0o600 }
             if (classifyEntry(nextFact, post) !== 'unchanged') return refuse('GENERATED_PUBLICATION_FAILED', 'write postimage differs from its declared ownership', path)
@@ -1817,8 +1814,8 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         checks.push({ path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1, ...(current.kind === 'file' ? { identity: current.identity } : {}) })
     }
     checks.push({ path: OWNERSHIP_PATH, expected: ledgerState, maxBytes: ledger.kind === 'file' ? Math.max(1, ledger.bytes.byteLength) : 1, ...(ledger.kind === 'file' ? { identity: ledger.identity } : {}) })
-    if (ledger.kind !== 'file' || ledger.sha256 !== sha256(captured.nextLedgerBytes)) mutations.push({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
-        bytes: captured.nextLedgerBytes, sha256: sha256(captured.nextLedgerBytes), expected: ledgerState })
+    if (ledger.kind !== 'file' || ledger.sha256 !== sha256Hex(captured.nextLedgerBytes)) mutations.push({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
+        bytes: captured.nextLedgerBytes, sha256: sha256Hex(captured.nextLedgerBytes), expected: ledgerState })
     const groups = groupMutations(mutations)
     const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0
     if (!groups || count > MAX_OWNED_FILES + 1 || count * PUBLICATION_HELPER_CALLS_PER_GROUP * PUBLICATION_HELPER_SLOT_MS > TRANSACTION_TIMEOUT_MS) {

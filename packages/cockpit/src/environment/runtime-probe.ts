@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { open, readFile, readdir, realpath, rm, mkdir, writeFile } from 'node:fs/promises'
 import { arch, platform } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
@@ -151,10 +152,6 @@ function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
         image: { ...captured.image },
         installedModule: { ...captured.installedModule },
     }
-}
-
-function hash(value: string | Buffer): string {
-    return createHash('sha256').update(value).digest('hex')
 }
 
 function confined(root: string, target: string): boolean {
@@ -354,7 +351,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const [canonicalModule, moduleBytes] = await Promise.all([realpath(modulePath), readFile(modulePath)])
         const installedSuffix = join('node_modules', '@b00dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js')
         if (!canonicalModule.endsWith(installedSuffix)
-            || canonicalModule !== input.installedModule.canonicalPath || hash(moduleBytes) !== input.installedModule.sha256
+            || canonicalModule !== input.installedModule.canonicalPath || sha256Hex(moduleBytes) !== input.installedModule.sha256
             || !await emptyDirectory(input.cwd)) {
             return unavailable(input, 'the installed module identity or disposable probe directory could not be authenticated')
         }
@@ -392,8 +389,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const marker = `cockpit-runtime-${randomBytes(16).toString('hex')}`
     const brokenSource = 'services:\n  probe: [\n'
     let candidateSource = 'services: {}\n'
-    let candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
-    const controlArtifact = { path: controlPath, sha256: hash(brokenSource) }
+    let candidateArtifact = { path: candidatePath, sha256: sha256Hex(candidateSource) }
+    const controlArtifact = { path: controlPath, sha256: sha256Hex(brokenSource) }
     const execute = runner(input, batchId, mutationDeadline)
     const cleanupExecute = runner(input, batchId, deadline)
     const checks: Record<string, boolean> = {
@@ -532,7 +529,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             'dev.b0dea.cockpit.stack-id': context.stackId,
             'dev.b0dea.cockpit.config-sha256': context.runtimeSha256,
             'dev.b0dea.cockpit.owner-id': context.cockpitId,
-            'dev.b0dea.cockpit.generation-id': hash(`compose-volume-generation\0${context.runtimeSha256}`),
+            'dev.b0dea.cockpit.generation-id': sha256Hex(`compose-volume-generation\0${context.runtimeSha256}`),
             [ownerLabelName]: batchId,
             [PROBE_OWNER_LABEL]: input.owner,
         }
@@ -588,7 +585,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             'volumes:', `  ${PROBE_VOLUME_KEY}:`, `    name: ${JSON.stringify(volumeName)}`, '    labels:', ...labelLines,
             'networks:', '  probe_net:', `    name: ${JSON.stringify(`${projectName}-network`)}`, '    labels:', ...labelLines, '',
         ].join('\n')
-        candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
+        candidateArtifact = { path: candidatePath, sha256: sha256Hex(candidateSource) }
         await writeFile(defaultEnvironmentPath, 'DEFAULT_ENV_CANARY=unauthenticated\n', { mode: 0o600 })
         await writeFile(serviceEnvironmentPath, 'SERVICE_ENV_CANARY=service-file\n', { mode: 0o600 })
         await writeFile(candidatePath, candidateSource, { mode: 0o600 })

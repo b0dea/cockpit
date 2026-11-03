@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
 import { readinessReport, type ReadinessReport } from '../readiness.js'
@@ -246,10 +246,6 @@ export type InitApplicationOutcome =
     | (InitOutcomeBase & Readonly<{ kind: 'pending' | 'artifact' | 'complete'; status: 0 }>)
     | (InitOutcomeBase & Readonly<{ kind: 'pending-dependency' | 'refusal'; status: 2 }>)
 
-function sha256(value: string): string {
-    return createHash('sha256').update(value).digest('hex')
-}
-
 // The document owner reports the open question as a blocking gap because a standalone draft with
 // it is invalid. Here the run stops at that question and exits 0, so an error read as a failure.
 function questionNotices(diagnostics: readonly Diagnostic[]): Diagnostic[] {
@@ -359,7 +355,7 @@ function nameProposal(root: string): readonly InferredItem[] {
 }
 
 function commandDigest(input: InitApplicationInput): string {
-    return sha256(JSON.stringify({ root: input.root, target: input.target, tools: input.tools, registry: input.registry ?? null,
+    return sha256Hex(JSON.stringify({ root: input.root, target: input.target, tools: input.tools, registry: input.registry ?? null,
         ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
         ...(input.cockpitRoot?.kind === 'dedicated' ? { firstSibling: input.cockpitRoot.firstSibling } : {}) }))
 }
@@ -592,7 +588,7 @@ async function initStagesFrom(
         prepared = await adapters.prepareBootstrap({ root: input.root, target: input.target, tools: input.tools })
         if (prepared.kind !== 'complete') {
             return ownerRefusal(prepared, current?.value.stage ?? 'surface-previewed', current === null ? {
-                root: input.root, target: input.target, sources: [], files: [], previewSha256: sha256('unavailable'),
+                root: input.root, target: input.target, sources: [], files: [], previewSha256: sha256Hex('unavailable'),
             } : recordedProjection(current))
         }
     }
@@ -731,7 +727,7 @@ async function initStagesFrom(
             if (!SHA256.test(sourceObservationSha256)) return refused('GREENFIELD_OBSERVATION_INVALID',
                 'estate classification omitted its stable source observation digest', input.root)
         } else {
-            sourceObservationSha256 = sha256(JSON.stringify({ root: boundInput.root, registry: resolve(boundInput.registry!),
+            sourceObservationSha256 = sha256Hex(JSON.stringify({ root: boundInput.root, registry: resolve(boundInput.registry!),
                 commandSha256: expectedCommand }))
         }
         let state = current.value.greenfield
@@ -760,7 +756,7 @@ async function initStagesFrom(
             || proposed.questionId !== state?.questions[state.answers.length]?.id)) {
             return refused('GREENFIELD_ANSWER_INVALID', 'configuration answer does not match the next persisted question and provenance', address.path)
         }
-        const answers = proposed ? [...priorAnswers, { ...proposed, sha256: sha256(proposed.bytes) }] : [...priorAnswers]
+        const answers = proposed ? [...priorAnswers, { ...proposed, sha256: sha256Hex(proposed.bytes) }] : [...priorAnswers]
         const documented = await adapters.document({ root: boundInput.root, registry: boundInput.registry, output: destination, ...documentEstate(boundInput),
             configuration: { sourceObservationSha256, ...(classification ? { classification: classification.classification } : {}), answers, tools: input.tools } })
         if (documented.artifact === null) {
@@ -846,7 +842,7 @@ async function initStagesFrom(
             if (refreshed.kind !== 'complete') return stateFailure(refreshed)
             current = refreshed.value
         }
-        const artifactSha256 = sha256(documented.artifact)
+        const artifactSha256 = sha256Hex(documented.artifact)
         const persisted = await persist(namespace, address, boundInput, projection, adapters, 'draft-prepared', current, {
             published: current.value.published, destination: 'cockpit.toml', artifactBytes: documented.artifact, artifactSha256,
             greenfield: resolvedState,
@@ -877,7 +873,7 @@ async function initStagesFrom(
                 : row) }, current.value.stage, projection)
     }
     if (currentDocument.destination !== destination || currentDocument.artifact !== current.value.artifactBytes
-        || sha256(currentDocument.artifact) !== current.value.artifactSha256) {
+        || sha256Hex(currentDocument.artifact) !== current.value.artifactSha256) {
         return refused('INIT_DRAFT_SOURCE_CHANGED',
             'current configuration sources no longer reproduce the persisted cockpit.toml', destination)
     }

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { lstatSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
@@ -134,7 +134,6 @@ const Input = z.object({
     mcp: z.unknown(), approved: z.boolean(), testPackage: Package.nullable(), skillTemplate: z.string().max(16_384),
 }).strict()
 const Manifest = z.object({ name: z.literal('@playwright/test'), version: Version, bin: z.object({ playwright: GeneratedHostPath }) })
-const digest = (bytes: string | Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 const MAX_SCREENSHOT_BYTES = 8_388_608
 const COMMAND_TIMEOUT_MS = 30_000
 // A filesystem error names the file itself; only the checks here need their own refusal.
@@ -158,7 +157,7 @@ function projectPackagePaths(root: string, runtime: BrowserRuntimeProjection): R
     if (!isPackageDescendant(root, projectManifestPath)) throw new RefusalError('browser project manifest escaped its cockpit root')
     if (declaredManifest !== undefined) {
         const manifestBytes = observedBytes(projectManifestPath, 1_048_576)
-        if (digest(manifestBytes) !== runtime.project.manifestSha256) {
+        if (sha256Hex(manifestBytes) !== runtime.project.manifestSha256) {
             throw new RefusalError('browser declared project manifest differs from its issued identity')
         }
     }
@@ -191,13 +190,13 @@ export function observeBrowserProjectPackage(input: Readonly<{
     const cliBytes = observedBytes(cliAbsolute, 65_536)
     const moduleBytes = observedBytes(moduleAbsolute, 65_536)
     return { directory, artifactRoot: parsed.data.artifactRoot,
-        manifest: { bytes: manifestBytes, sha256: digest(manifestBytes) },
-        cli: { path: relative(packageRoot, cliAbsolute), bytes: cliBytes, sha256: digest(cliBytes) },
-        module: { path: relative(packageRoot, moduleAbsolute), bytes: moduleBytes, sha256: digest(moduleBytes) } }
+        manifest: { bytes: manifestBytes, sha256: sha256Hex(manifestBytes) },
+        cli: { path: relative(packageRoot, cliAbsolute), bytes: cliBytes, sha256: sha256Hex(cliBytes) },
+        module: { path: relative(packageRoot, moduleAbsolute), bytes: moduleBytes, sha256: sha256Hex(moduleBytes) } }
 }
 
 function file(target: GuardSurfaceTarget, path: string, bytes: string): RenderedSurfaceFile {
-    return { target, path, bytes, sha256: digest(bytes) }
+    return { target, path, bytes, sha256: sha256Hex(bytes) }
 }
 
 function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntimeProjection, root: string): BrowserTransportRow['cli'] {
@@ -206,8 +205,8 @@ function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntim
     try { manifest = JSON.parse(value.manifest.bytes) } catch { throw new RefusalError('browser test package manifest is invalid JSON') }
     const parsed = Manifest.safeParse(manifest)
     if (!parsed.success || parsed.data.version !== runtime.project.driverVersion
-        || value.cli.path !== parsed.data.bin.playwright || value.manifest.sha256 !== digest(value.manifest.bytes)
-        || value.cli.sha256 !== digest(value.cli.bytes)) throw new RefusalError('browser test package does not match the pinned project driver and CLI bytes')
+        || value.cli.path !== parsed.data.bin.playwright || value.manifest.sha256 !== sha256Hex(value.manifest.bytes)
+        || value.cli.sha256 !== sha256Hex(value.cli.bytes)) throw new RefusalError('browser test package does not match the pinned project driver and CLI bytes')
     const { packageRoot } = projectPackagePaths(root, runtime)
     if (observedBytes(resolve(packageRoot, 'package.json'), 65_536) !== value.manifest.bytes
         || observedBytes(resolve(packageRoot, value.cli.path), 65_536) !== value.cli.bytes) throw new RefusalError('browser test package differs from installed bytes')
@@ -216,7 +215,7 @@ function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntim
     try { lock = JSON.parse(lockBytes) } catch { throw new RefusalError('browser test package needs an authenticated npm lockfile') }
     const locked = z.object({ packages: z.record(z.string(), z.unknown()) }).safeParse(lock)
     const entry = locked.success ? z.object({ version: Version }).safeParse(locked.data.packages[value.directory]) : null
-    if (digest(lockBytes) !== runtime.project.sha256 || !entry?.success || entry.data.version !== parsed.data.version) {
+    if (sha256Hex(lockBytes) !== runtime.project.sha256 || !entry?.success || entry.data.version !== parsed.data.version) {
         throw new RefusalError('browser test package differs from the issued project lock identity')
     }
     return { package: '@playwright/test', version: parsed.data.version,
@@ -232,7 +231,7 @@ function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserT
     catch { throw new RefusalError('browser project module entry could not be resolved') }
     const declaredModule = resolve(packageRoot, value.module.path)
     if (resolvedModule !== declaredModule || !isPackageDescendant(packageRoot, resolvedModule)
-        || value.module.sha256 !== digest(value.module.bytes)
+        || value.module.sha256 !== sha256Hex(value.module.bytes)
         || observedBytes(resolvedModule, 1_048_576) !== value.module.bytes) {
         throw new RefusalError('browser project module entry differs from the installed resolved entry')
     }
@@ -243,7 +242,7 @@ function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserT
     const client = {
         package: '@playwright/test' as const, target: row.target, version: row.version, cwd: root,
         artifactRoot: resolve(root, value.artifactRoot),
-        node: { path: nodePath, sha256: createHash('sha256').update(nodeBytes).digest('hex'), maxBytes: nodeBytes.byteLength },
+        node: { path: nodePath, sha256: sha256Hex(nodeBytes), maxBytes: nodeBytes.byteLength },
         module: { path: resolvedModule, sha256: value.module.sha256, maxBytes: 1_048_576 },
         manifest: { path: manifestPath, sha256: value.manifest.sha256, maxBytes: 65_536 },
         lock: { path: lockPath, sha256: runtime.project.sha256, maxBytes: 1_048_576 },
@@ -313,7 +312,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
             { path: client.module.path, sha256: client.module.sha256, maxBytes: client.module.maxBytes, argvIndexes: [index(client.module.path)], executable: false as const },
             { path: client.manifest.path, sha256: client.manifest.sha256, maxBytes: client.manifest.maxBytes, argvIndexes: [index(client.manifest.path)], executable: false as const },
             { path: client.lock.path, sha256: client.lock.sha256, maxBytes: client.lock.maxBytes, argvIndexes: [index(client.lock.path)], executable: false as const },
-            ...(statePath && stateBytes ? [{ path: statePath, sha256: digest(stateBytes), maxBytes: 1_048_576,
+            ...(statePath && stateBytes ? [{ path: statePath, sha256: sha256Hex(stateBytes), maxBytes: 1_048_576,
                 argvIndexes: [index(statePath)], executable: false as const }] : []),
         ],
         filesystemChecks: [{ path: client.artifactRoot, expected: 'directory' as const,
@@ -434,7 +433,7 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
     }
     const address = binding.namespace.paths.coordination(binding.stackId)
     if (auth.policy === 'per-worker') {
-        const scope = issueStateScopedLock(namespace, { owner: 'browser-worker', identity: digest(`${binding.stackId}\0${role!}`) })
+        const scope = issueStateScopedLock(namespace, { owner: 'browser-worker', identity: sha256Hex(`${binding.stackId}\0${role!}`) })
         if (!scope) return { kind: 'refusal', reason: 'Per-worker browser authentication could not issue its canonical worker claim' }
         const locked = await withStateScopedLock(namespace, scope, { ownerId: state.ownerId, contentionTimeoutMs: 0 }, async () => {
             const before = await readState(address)

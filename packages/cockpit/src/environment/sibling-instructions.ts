@@ -6,7 +6,8 @@
 // .cursorrules, .cursor/rules, GEMINI.md, .github/copilot-instructions.md or .windsurfrules. So a
 // repository's instructions reach every tool alike only when AGENTS.md holds them and CLAUDE.md
 // imports it; anything else leaves some tool without them.
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -132,8 +133,6 @@ export type SiblingInstructionFilesResult =
     | Readonly<{ kind: 'offered' | 'written'; root: string; change: SiblingInstructionFilesChange }>
     | Readonly<{ kind: 'refusal'; root: string; reason: string }>
 
-const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
-
 async function createExclusive(path: string, bytes: Uint8Array | string, mode: number): Promise<void> {
     const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode)
     try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
@@ -183,7 +182,7 @@ export async function synchronizeSiblingInstructionFiles(input: Readonly<{ sibli
                 const current = await lstat(claudePath)
                 const reread = await readBoundedInput(claudePath)
                 if (!current.isFile() || current.dev !== before.dev || current.ino !== before.ino || current.size !== before.size
-                    || current.mtimeMs !== before.mtimeMs || reread.kind !== 'complete' || digest(reread.bytes) !== digest(original)) {
+                    || current.mtimeMs !== before.mtimeMs || reread.kind !== 'complete' || sha256Hex(reread.bytes) !== sha256Hex(original)) {
                     throw new RefusalError('CLAUDE.md changed before it could be replaced')
                 }
                 await rename(temporary, claudePath)

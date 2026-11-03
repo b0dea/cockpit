@@ -2,7 +2,7 @@ import { installedPackageMetadata } from "../package-metadata.js"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { isProxy, isUint8Array } from "node:util/types"
 
-import { createHash } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, RefusalError, tryParseJson } from '../environment/contract.js'
 import { publicationCockpitId } from '../environment/identity.js'
@@ -113,7 +113,7 @@ export function bindSurfaceOwnershipIdentity(entries: readonly SurfaceDesiredEnt
         if (entry.region.bytes.includes(OWNER_PREFIX)) return refusal('SURFACE_OWNERSHIP_INVALID', 'generated Markdown body contains a reserved owner marker', entry.path)
         const [begin, end] = ownerMarkers(cockpitId, 'markdown')
         const bytes = `${begin}\n${entry.region.bytes}${end}\n`
-        bound.push({ ...entry, region: { ...entry.region, bytes, sha256: digest(bytes) } })
+        bound.push({ ...entry, region: { ...entry.region, bytes, sha256: sha256Hex(bytes) } })
     }
     return classifySurfaceOwnership({ configuredHarnesses: [...new Set(entries.flatMap(entry => entry.harnesses))].sort(), entries: bound })
 }
@@ -121,8 +121,6 @@ export function bindSurfaceOwnershipIdentity(entries: readonly SurfaceDesiredEnt
 function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
-
-function digest(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex') }
 
 function refusal(code: SurfaceDiagnostic['code'], message: string, target?: string, fix?: string): Extract<SurfaceOwnershipResult, { kind: 'refusal' }> {
     return { kind: 'refusal', diagnostic: { code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) } }
@@ -146,7 +144,7 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
     if (value.kind === 'file') {
         if (!exactKeys(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'bytes', 'sha256'])
             || value.ownership !== 'whole-file' || typeof value.bytes !== 'string' || Buffer.byteLength(value.bytes) > MAX_FILE_BYTES
-            || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256) || digest(value.bytes) !== value.sha256
+            || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256) || sha256Hex(value.bytes) !== value.sha256
             || Object.hasOwn(MARKDOWN, value.path) || value.path === OPENCODE_PATH) return undefined
     } else if (value.kind === 'shared-region') {
         if (!exactKeys(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
@@ -158,7 +156,7 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
                 || typeof value.region.bytes !== 'string' || !value.region.bytes.endsWith('\n') || Buffer.byteLength(value.region.bytes) > MAX_FILE_BYTES
                 || value.region.bytes.includes(markdown.begin) || value.region.bytes.includes(markdown.end)
                 || value.region.bytes.includes(OWNER_PREFIX) && markdownOwner(value.region.bytes) === undefined
-                || typeof value.region.sha256 !== 'string' || digest(value.region.bytes) !== value.region.sha256) return undefined
+                || typeof value.region.sha256 !== 'string' || sha256Hex(value.region.bytes) !== value.region.sha256) return undefined
         } else if (value.path === OPENCODE_PATH) {
             if (value.regionId !== OPENCODE_REGION && openCodeOwner(value.regionId) === undefined || !exactKeys(value.region, ['format', 'members', 'sha256'])
                 || value.region.format !== 'opencode-json-root-properties' || !Array.isArray(value.region.members)
@@ -170,7 +168,7 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
                     || Buffer.byteLength(member.valueBytes) > MAX_FILE_BYTES || tryParseJson(member.valueBytes) === undefined) return undefined
                 priorKey = member.key
             }
-            if (typeof value.region.sha256 !== 'string' || digest(JSON.stringify(value.region.members)) !== value.region.sha256) return undefined
+            if (typeof value.region.sha256 !== 'string' || sha256Hex(JSON.stringify(value.region.members)) !== value.region.sha256) return undefined
         } else return undefined
     } else return undefined
     return value as unknown as SurfaceDesiredEntry
@@ -391,7 +389,7 @@ function openCodeOwnedGroup(existing: string, keys: readonly string[]): {
         separatorPrefix = existing.slice(groupEnd, separator)
         finish = separator + 1
     }
-    return { finish, separatorPrefix, sha256: digest(JSON.stringify(group)) }
+    return { finish, separatorPrefix, sha256: sha256Hex(JSON.stringify(group)) }
 }
 
 export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesiredEntry, priorOwned?: OwnershipEntry, manifest?: OwnershipManifest): SharedPostimageResult {
@@ -410,7 +408,7 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
         // Bytes that match the prior record are cockpit's own under whatever id their markers carry,
         // which differs from the desired one only after `cockpit.name` was renamed.
         const recorded = current !== undefined && priorOwned?.kind === 'shared-region' && priorOwned.region.format === 'markdown-delimited'
-            && digest(current.bytes) === priorOwned.region.sha256
+            && sha256Hex(current.bytes) === priorOwned.region.sha256
         const expectedOwner = recorded ? markdownOwner(current.bytes) : authority?.cockpitId ?? markdownOwner(entry.region.bytes)
         if (existingBytes.includes(OWNER_PREFIX) && (!current || !markdownOwner(current.bytes)
             || existingBytes.split(OWNER_PREFIX).length !== 3 || expectedOwner !== undefined && markdownOwner(current.bytes) !== expectedOwner)) {
@@ -420,7 +418,7 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
         if (current && (!priorOwned || priorOwned.kind !== 'shared-region' || priorOwned.region.format !== 'markdown-delimited')) {
             return refusal('SURFACE_STATE_CONFLICT', 'cockpit markers are present but the ownership record has no region for them', entry.path)
         }
-        if (current && priorOwned?.kind === 'shared-region' && digest(current.bytes) !== priorOwned.region.sha256) {
+        if (current && priorOwned?.kind === 'shared-region' && sha256Hex(current.bytes) !== priorOwned.region.sha256) {
             return refusal('SURFACE_STATE_CONFLICT', "the text between cockpit's markers was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits", entry.path, SURFACE_HAND_EDIT_FIX)
         }
         if (!current && priorOwned) return refusal('SURFACE_STATE_CONFLICT', 'prior Markdown region is missing', entry.path)
@@ -466,7 +464,7 @@ export function removeSharedOwnership(existingBytes: string, priorOwned: Ownersh
             || existingBytes.split(OWNER_PREFIX).length !== 3 || authority && markdownOwner(current.bytes) !== manifest?.cockpitId)) {
             return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown owner markers are foreign or ambiguous', priorOwned.path)
         }
-        if (!current || digest(current.bytes) !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown region changed', priorOwned.path, SURFACE_HAND_EDIT_FIX)
+        if (!current || sha256Hex(current.bytes) !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown region changed', priorOwned.path, SURFACE_HAND_EDIT_FIX)
         return { kind: 'complete', bytes: `${existingBytes.slice(0, current.start)}${existingBytes.slice(current.finish)}` }
     }
     const parsed = rootObject(existingBytes)
@@ -518,7 +516,7 @@ const issuedManifests = new WeakMap<object, OwnershipAuthority>()
 const OWNERSHIP_PATH = ".cockpit/generated-environment-ownership.json"
 const MAX_OWNERSHIP_BYTES = 1_048_576
 const MAX_OWNED_FILES = 256
-const sha256 = digest
+const sha256 = sha256Hex
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 function confinedOwnershipPath(root: string, path: string): boolean {
     const offset = relative(root, resolve(root, path))
@@ -794,7 +792,7 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
             if (row.kind === 'missing') state = 'missing'
             else if (row.kind === 'file' && typeof row.identity === 'string' && row.identity.length > 0
                 && bytes !== undefined) {
-                rawSha256 = digest(bytes)
+                rawSha256 = sha256Hex(bytes)
                 if (entry.kind === 'file') state = rawSha256 === entry.sha256 ? 'unchanged' : 'modified'
                 else if (entry.kind === 'shared-region') {
                     let text: string | undefined
@@ -803,7 +801,7 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
                         const region = markdownOwnedBytes(text, entry.region.begin, entry.region.end)
                         const owner = region && markdownOwner(region.bytes)
                         if (region && (!text.includes(OWNER_PREFIX) || owner === fact.authority.cockpitId && text.split(OWNER_PREFIX).length === 3)) {
-                            state = digest(region.bytes) === entry.region.sha256 ? 'unchanged' : 'modified'
+                            state = sha256Hex(region.bytes) === entry.region.sha256 ? 'unchanged' : 'modified'
                         } else if (!text.includes(OWNER_PREFIX) && !text.includes(entry.region.begin) && !text.includes(entry.region.end)) state = 'missing'
                     } else if (text !== undefined && entry.region.format === 'opencode-json-root-properties') {
                         const parsed = rootObject(text)

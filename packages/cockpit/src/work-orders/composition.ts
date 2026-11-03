@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { sha256Hex } from '../sha256.js'
 import {
     closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync, readdirSync,
 } from 'node:fs'
@@ -114,7 +115,6 @@ const MAX_DIFF_BYTES = 65_536
 const MAX_CHANGE_BYTES = 1_048_576
 const VERIFICATION_TIMEOUT_FIELD = 'work.verification_timeout_seconds'
 const DEFAULT_EXECUTABLE_DIRECTORIES = Object.freeze(['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])
-const digest = (value: Uint8Array | string): string => createHash('sha256').update(value).digest('hex')
 // Work-order coordination files change as the work is tracked, not as the product changes: the orders,
 // cockpit's records of them and the recorded policy never make a gate's proof stale.
 const COORDINATION_PATHS: ReadonlySet<string> = new Set(['workorders/', `${WORK_RECORD_DIRECTORY}/`, '.cockpit/policy.json'])
@@ -128,7 +128,7 @@ function boundedName(value: unknown): value is string {
 function exactSource(source: SourceProvenance): boolean {
     try {
         const bytes = readExactFile(source.path, source.byteLength)
-        return bytes.byteLength === source.byteLength && digest(bytes) === source.sha256
+        return bytes.byteLength === source.byteLength && sha256Hex(bytes) === source.sha256
     } catch { return false } // A source that cannot be read back cannot be shown to be the admitted bytes; callers refuse it as changed.
 }
 
@@ -553,7 +553,7 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
         }
     }
     return { path: repository.identity, revision: observedStatus.revision,
-        worktreeDigest: digest(JSON.stringify({ revision: observedStatus.revision, changes })) }
+        worktreeDigest: sha256Hex(JSON.stringify({ revision: observedStatus.revision, changes })) }
 }
 
 export function isWorkApplicationComposition(value: unknown): value is WorkApplicationComposition {
@@ -713,7 +713,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         let evaluator: EvaluatorAuthority
         try { evaluator = await resolveEvaluator() }
         catch (error) { return { refusal: { code: 'EVALUATOR_UNAVAILABLE', message: errorCause(error), fix: `run ${cockpitCommand('sync', { config: config.source.path })}` } } }
-        if (evaluator.restriction !== 'instructed' || digest(evaluator.bytes) !== evaluator.sha256) {
+        if (evaluator.restriction !== 'instructed' || sha256Hex(evaluator.bytes) !== evaluator.sha256) {
             return { refusal: { code: 'EVALUATOR_UNAVAILABLE', message: 'the shipped evaluator instructions could not be authenticated', fix: `run ${cockpitCommand('sync', { config: config.source.path })}` } }
         }
         // The shipped instructions carry notes to cockpit's maintainers that are not addressed to the grader.
@@ -731,7 +731,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         store: createWorkStore(root), recordedPolicy: () => readRecordedPolicy(root), orderIds, readOrder,
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
-            .map(source => [source, digest(readSource(source))])),
+            .map(source => [source, sha256Hex(readSource(source))])),
         heads, runCheck, changes, evaluate: gradeIndependently, browser, gate,
     }
     issuedCompositions.add(composition)
@@ -783,7 +783,7 @@ function productGateDependencies(root: string, source: SourceProvenance,
                 observed.push(await observeRepositorySubject(repository, repository.root === root ? COORDINATION_PATHS : new Set(),
                     executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES, repository.sensitivePaths, repository.forbiddenTargets))
             }
-            return digest(JSON.stringify({ source: digest(readBounded(root, relative(root, source.path))), repositories: observed }))
+            return sha256Hex(JSON.stringify({ source: sha256Hex(readBounded(root, relative(root, source.path))), repositories: observed }))
         },
         runProductTool: async (invocation: ProductGateInvocation) => {
             const observed = await executeBounded(root, invocation.command, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
@@ -893,7 +893,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             const routes = [...routesByUrl.values()]
             if (!routes.length) throw new RefusalError('browser application routes are missing or ambiguous')
             const skillBytes = browserAuthority.skillTemplate.bytes
-            if (digest(skillBytes) !== browserAuthority.skillTemplate.sha256) throw new RefusalError('browser skill template authority is malformed')
+            if (sha256Hex(skillBytes) !== browserAuthority.skillTemplate.sha256) throw new RefusalError('browser skill template authority is malformed')
             const harnessRows = config.browser.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
                 ? [{ target: row.target, version: row.version }] : [])
             const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: config.cockpitRoot,
