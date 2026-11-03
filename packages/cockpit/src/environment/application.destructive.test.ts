@@ -12,7 +12,7 @@ const executionFence = (id: string) => {
 }
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'consumeLifecycleIssuance' | 'planDown' | 'planResetLifecycle'>>,
-    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeStopped' | 'consumeRuntimeStopped' | 'createRuntimeStopObservationPlan' | 'createRuntimeStopPlan'>>,
+    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'stopRuntime'>>,
     claims: {} as Partial<Pick<typeof import('./claims.js'), 'discardDrainReservationAuthority' | 'finalizeDrainOutcome' | 'prepareDrainOutcomePublication' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'consumeReclaimCompleted' | 'keptTeardownResources' | 'planReset' | 'planTeardown' | 'projectRecoveredResetActionTargets' | 'projectResetActionTargets' | 'projectTeardownActionTargets' | 'reconcileReclaimAction' | 'redeemReclaimAction'>>,
 }))
@@ -29,10 +29,7 @@ vi.mock('./runtime.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./runtime.js')>()
     return {
         ...actual,
-        admitRuntimeStopped: (...args: Parameters<typeof actual.admitRuntimeStopped>) => applicationOwners.runtime.admitRuntimeStopped?.(...args) ?? actual.admitRuntimeStopped(...args),
-        consumeRuntimeStopped: (...args: Parameters<typeof actual.consumeRuntimeStopped>) => applicationOwners.runtime.consumeRuntimeStopped?.(...args) ?? actual.consumeRuntimeStopped(...args),
-        createRuntimeStopObservationPlan: (...args: Parameters<typeof actual.createRuntimeStopObservationPlan>) => applicationOwners.runtime.createRuntimeStopObservationPlan?.(...args) ?? actual.createRuntimeStopObservationPlan(...args),
-        createRuntimeStopPlan: (...args: Parameters<typeof actual.createRuntimeStopPlan>) => applicationOwners.runtime.createRuntimeStopPlan?.(...args) ?? actual.createRuntimeStopPlan(...args),
+        stopRuntime: (...args: Parameters<typeof actual.stopRuntime>) => applicationOwners.runtime.stopRuntime?.(...args) ?? actual.stopRuntime(...args),
     }
 })
 vi.mock('./claims.js', async (importOriginal) => {
@@ -457,10 +454,11 @@ describe('destructive application contracts', () => {
                 }),
             } as never
         }
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'runtime-stop', executionFence: executionFence('reset-stop') } }) as never
-        applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'runtime-observe' } }) as never
-        applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: Object.freeze({}) }) as never
-        applicationOwners.runtime.consumeRuntimeStopped = () => Object.freeze({}) as never
+        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
+            await execute({ id: 'runtime-stop' } as never)
+            await execute({ id: 'runtime-observe' } as never)
+            return { kind: 'stopped', authority: Object.freeze({}), fence: executionFence('reset-stop') } as never
+        }
         applicationOwners.claims.prepareDrainOutcomePublication = async () => {
             events.push('publication')
             return { kind: 'complete', value: Object.freeze({}) } as never

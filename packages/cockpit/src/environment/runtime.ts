@@ -20,6 +20,8 @@ import {
     snapshotJson,
     type EnvironmentCommandOutcome,
     type EnvironmentObservation,
+    type ExecutionFailureCode,
+    type ExecutionFence,
     type ExecutionPlan,
     type ExecutionStep,
     type JsonSnapshot,
@@ -3326,208 +3328,106 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
     }
 }
 
-export type RuntimeStopPlan =
-    | { readonly kind: 'planned'; readonly step: ExecutionStep }
+export type RuntimeStopOutcome =
+    /** Compose stopped the stack and a fresh `ps` found nothing running. */
+    | { readonly kind: 'stopped'; readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence }
+    /** The stop never started, so the drain attempt is settled as failed and nothing changed. */
+    | { readonly kind: 'not-started'; readonly code: ExecutionFailureCode; readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence }
+    /** No proof either way; the drain attempt stays open and its fence stays for repair. */
     | { readonly kind: 'unavailable'; readonly reason: string }
-
-export type RuntimeStopObservationPlan =
-    | { readonly kind: 'planned'; readonly step: ExecutionStep }
-    | { readonly kind: 'unavailable'; readonly reason: string }
-
-declare const runtimeStoppedAuthorityBrand: unique symbol
-export interface RuntimeStoppedAuthority {
-    readonly [runtimeStoppedAuthorityBrand]: true
-}
-
-declare const runtimeStopFailureAuthorityBrand: unique symbol
-export interface RuntimeStopFailureAuthority {
-    readonly [runtimeStopFailureAuthorityBrand]: true
-}
-
-interface RuntimeStopContract {
-    readonly topology: TopologyEvidenceContract
-    readonly reservation: DrainReservation
-    readonly execution: RuntimeDrainExecutionAuthority
-}
-
-interface RuntimeStopObservationContract extends RuntimeStopContract {
-    readonly stopFinishedAt: string
-}
-
-const issuedRuntimeStopPlans = new WeakMap<object, RuntimeStopContract>()
-const consumedRuntimeStopPlans = new WeakSet<object>()
-const issuedRuntimeStopObservationPlans = new WeakMap<object, RuntimeStopObservationContract>()
-const consumedRuntimeStopObservationPlans = new WeakSet<object>()
-const issuedRuntimeStoppedAuthorities = new WeakMap<object, DrainOutcomeAuthority>()
-const issuedRuntimeStopFailureAuthorities = new WeakMap<object, DrainOutcomeAuthority>()
 
 function unavailableRuntimeStop(error?: unknown): { readonly kind: 'unavailable'; readonly reason: string } {
     return { kind: 'unavailable', reason: unavailableReason('runtime stop evidence is unavailable', error) }
 }
 
-export function createRuntimeStopPlan(input: {
+function receiptWithin(outcome: ExecuteProbeOutcome, notBefore: string, notAfter: string): outcome is ExecuteProbeOutcome & { readonly receipt: NonNullable<ExecuteProbeOutcome['receipt']> } {
+    const receipt = outcome.receipt
+    return receipt !== undefined && isCanonicalTimestamp(receipt.startedAt) && isCanonicalTimestamp(receipt.finishedAt)
+        && Date.parse(receipt.startedAt) >= Date.parse(notBefore)
+        && Date.parse(receipt.startedAt) <= Date.parse(receipt.finishedAt)
+        && Date.parse(receipt.finishedAt) <= Date.parse(notAfter)
+        && Date.parse(receipt.finishedAt) <= Date.now()
+}
+
+/**
+ * Runs the drain's runtime-stop action: `compose stop` under the attempt's execution fence, then a
+ * fresh `ps` that must find nothing running, and settles the attempt with the claims broker.
+ */
+export async function stopRuntime(input: {
     readonly topology: RuntimeTopologyEvidence
     readonly attempt: DrainAttemptAuthority
-}): RuntimeStopPlan {
-    try {
-        const captured = captureOwnValues(input, ['topology', 'attempt'])
-        const topology = captured?.topology as RuntimeTopologyEvidence | undefined
-        const attemptAuthority = captured?.attempt as DrainAttemptAuthority | undefined
-        const topologyContract = topology && typeof topology === 'object' ? issuedTopologyEvidence.get(topology) : undefined
-        const candidate = attemptAuthority && typeof attemptAuthority === 'object'
-            ? inspectDrainAttemptAuthority(attemptAuthority) : undefined
-        const reservation = candidate?.reservation
-        const attempt = candidate?.attempt
-        const now = Date.now()
-        if (!topologyContract || !reservation || !attempt || attempt.status !== 'active'
-            || reservation.stackId !== topologyContract.stackId
-            || reservation.configSha256 !== topologyContract.configSha256
-            || attempt.currentStage !== 'runtime-stop' || attempt.currentTarget !== reservation.stackId
-            || now < Date.parse(topologyContract.observationWindow.startedAt)
-            || now > Date.parse(topologyContract.observationWindow.expiresAt)
-            || now < Date.parse(attempt.committedAt) || now > Date.parse(attempt.validThrough)) return unavailableRuntimeStop()
-        const remainingMs = Date.parse(attempt.validThrough) - now
-        const step = derivedComposeStep(
-            { ...topologyContract.step, timeoutMs: topologyContract.step.timeoutMs + COMPOSE_STOP_GRACE_MS * dependencyLevels(topologyContract.services) },
-            `runtime:docker-compose:stop:${topologyContract.runtime.projectName}`,
-            'stop',
-            ['--progress', 'quiet', 'stop'],
-            OUTPUT_LIMIT_BYTES,
-            reservation.generation,
-            remainingMs,
-            attempt.validThrough,
-            topologyContract.runtime.interpolatedNames,
-        )
-        if (!step) return unavailableRuntimeStop()
-        const execution = openRuntimeDrainExecution({ authority: attemptAuthority!, candidate: candidate! })
-        if (!execution) return unavailableRuntimeStop()
-        const fence = inspectDrainExecutionFence(execution)
-        const fencedStep = fence && snapshotExecutionStep({ ...step, executionFence: fence })
-        if (!fencedStep) return unavailableRuntimeStop()
-        const plan = { kind: 'planned' as const, step: fencedStep }
-        issuedRuntimeStopPlans.set(plan, Object.freeze({ topology: topologyContract, reservation, execution }))
-        return plan
-    } catch (error) { return unavailableRuntimeStop(error) }
-}
-
-export function createRuntimeStopObservationPlan(input: {
-    readonly plan: RuntimeStopPlan
-    readonly outcome: ExecuteProbeOutcome
-}): RuntimeStopObservationPlan {
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = captured?.plan as RuntimeStopPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeStopPlans.has(plan)) return unavailableRuntimeStop()
-        const contract = issuedRuntimeStopPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.step) : undefined
-        consumedRuntimeStopPlans.add(plan)
-        if (!contract || !outcome || outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0 || !outcome.receipt
-            || !isCanonicalTimestamp(outcome.receipt.startedAt) || !isCanonicalTimestamp(outcome.receipt.finishedAt)
-            || Date.parse(outcome.receipt.startedAt) < Date.parse(contract.reservation.attempt!.committedAt)
-            || Date.parse(outcome.receipt.startedAt) > Date.parse(outcome.receipt.finishedAt)
-            || Date.parse(outcome.receipt.finishedAt) > Date.parse(contract.reservation.attempt!.validThrough)
-            || Date.parse(outcome.receipt.finishedAt) > Date.now()) return unavailableRuntimeStop()
-        const step = derivedComposeStep(
-            contract.topology.step,
-            `runtime:docker-compose:stopped:${contract.topology.runtime.projectName}`,
-            'ps-stopped',
-            ['ps', '--format', 'json', '--status', 'running'],
-            OUTPUT_LIMIT_BYTES,
-            contract.reservation.generation,
-            MAX_OBSERVATION_WINDOW_MS,
-            undefined,
-            contract.topology.runtime.interpolatedNames,
-        )
-        if (!step) return unavailableRuntimeStop()
-        const observation = { kind: 'planned' as const, step }
-        issuedRuntimeStopObservationPlans.set(observation, Object.freeze({ ...contract, stopFinishedAt: outcome.receipt.finishedAt }))
-        return observation
-    } catch (error) { return unavailableRuntimeStop(error) }
-}
-
-export function admitRuntimeStopped(input: {
-    readonly plan: RuntimeStopObservationPlan
-    readonly outcome: ExecuteProbeOutcome
-}): { readonly kind: 'complete'; readonly authority: RuntimeStoppedAuthority } | { readonly kind: 'unavailable'; readonly reason: string } {
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = captured?.plan as RuntimeStopObservationPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeStopObservationPlans.has(plan)) return unavailableRuntimeStop()
-        const contract = issuedRuntimeStopObservationPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.step) : undefined
-        consumedRuntimeStopObservationPlans.add(plan)
-        if (!contract || !outcome || outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0 || outcome.stdout.byteLength !== 0
-            || !outcome.receipt || !isCanonicalTimestamp(outcome.receipt.startedAt) || !isCanonicalTimestamp(outcome.receipt.finishedAt)
-            || Date.parse(outcome.receipt.startedAt) < Date.parse(contract.stopFinishedAt)
-            || Date.parse(outcome.receipt.startedAt) > Date.parse(outcome.receipt.finishedAt)
-            || Date.parse(outcome.receipt.finishedAt) > Date.parse(contract.reservation.attempt!.validThrough)
-            || Date.parse(outcome.receipt.finishedAt) > Date.now()) return unavailableRuntimeStop()
-        const fact = {
-            purpose: contract.reservation.purpose,
-            stackId: contract.reservation.stackId,
-            configSha256: contract.reservation.configSha256,
-            planDigest: contract.reservation.planDigest,
-            operationBasis: contract.reservation.operationBasis,
-            coordinationRevision: contract.reservation.coordinationRevision,
-            reservationId: contract.reservation.reservationId,
-            reservedAt: contract.reservation.reservedAt,
-            generation: contract.reservation.generation,
-            attemptId: contract.reservation.attempt!.attemptId,
-            attemptRevision: contract.reservation.attempt!.committedRevision,
-            attemptCommittedAt: contract.reservation.attempt!.committedAt,
-            validThrough: contract.reservation.attempt!.validThrough,
-            actionIndex: contract.reservation.attempt!.actionIndex,
-            currentTarget: contract.reservation.attempt!.currentTarget,
-            currentStage: contract.reservation.attempt!.currentStage,
-            observedAt: outcome.receipt.finishedAt,
-        } satisfies RuntimeStopped
-        const settled = settleRuntimeDrainSuccess({ authority: contract.execution, fact })
-        if (!settled) return unavailableRuntimeStop()
-        const authority = {} as RuntimeStoppedAuthority
-        issuedRuntimeStoppedAuthorities.set(authority, settled)
-        return { kind: 'complete', authority }
-    } catch (error) { return unavailableRuntimeStop(error) }
-}
-
-export function admitRuntimeStopFailure(input: {
-    readonly plan: RuntimeStopPlan
-    readonly outcome: ExecuteProbeOutcome
-}): { readonly kind: 'complete'; readonly authority: RuntimeStopFailureAuthority } | { readonly kind: 'unavailable'; readonly reason: string } {
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = captured?.plan as RuntimeStopPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeStopPlans.has(plan)) return unavailableRuntimeStop()
-        const contract = issuedRuntimeStopPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.step) : undefined
-        consumedRuntimeStopPlans.add(plan)
-        if (!contract || !outcome || outcome.kind !== 'refusal' || outcome.receipt !== undefined
-            || outcome.execution.started || outcome.execution.signal !== null || outcome.execution.exitCode === 0) return unavailableRuntimeStop()
-        const attempt = contract.reservation.attempt!
-        const failedAt = new Date().toISOString()
-        const fact = { ...attempt, failedAt } satisfies DrainAttemptFailure
-        const settled = settleRuntimeDrainFailure({ authority: contract.execution, fact })
-        if (!settled) return unavailableRuntimeStop()
-        const authority = {} as RuntimeStopFailureAuthority
-        issuedRuntimeStopFailureAuthorities.set(authority, settled)
-        return { kind: 'complete', authority }
-    } catch (error) { return unavailableRuntimeStop(error) }
-}
-
-export function consumeRuntimeStopFailure(authority: RuntimeStopFailureAuthority): DrainOutcomeAuthority | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const outcome = issuedRuntimeStopFailureAuthorities.get(authority)
-    if (!outcome) return undefined
-    issuedRuntimeStopFailureAuthorities.delete(authority)
-    return outcome
-}
-
-export function consumeRuntimeStopped(authority: RuntimeStoppedAuthority): DrainOutcomeAuthority | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const outcome = issuedRuntimeStoppedAuthorities.get(authority)
-    if (!outcome) return undefined
-    issuedRuntimeStoppedAuthorities.delete(authority)
-    return outcome
+    readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+}): Promise<RuntimeStopOutcome> {
+    const topology = issuedTopologyEvidence.get(input.topology)
+    const candidate = inspectDrainAttemptAuthority(input.attempt)
+    const reservation = candidate?.reservation
+    const attempt = candidate?.attempt
+    const now = Date.now()
+    if (!topology || !reservation || !attempt || attempt.status !== 'active'
+        || reservation.stackId !== topology.stackId
+        || reservation.configSha256 !== topology.configSha256
+        || attempt.currentStage !== 'runtime-stop' || attempt.currentTarget !== reservation.stackId
+        || now < Date.parse(topology.observationWindow.startedAt)
+        || now > Date.parse(topology.observationWindow.expiresAt)
+        || now < Date.parse(attempt.committedAt) || now > Date.parse(attempt.validThrough)) return unavailableRuntimeStop()
+    const step = derivedComposeStep(
+        { ...topology.step, timeoutMs: topology.step.timeoutMs + COMPOSE_STOP_GRACE_MS * dependencyLevels(topology.services) },
+        `runtime:docker-compose:stop:${topology.runtime.projectName}`,
+        'stop',
+        ['--progress', 'quiet', 'stop'],
+        OUTPUT_LIMIT_BYTES,
+        reservation.generation,
+        Date.parse(attempt.validThrough) - now,
+        attempt.validThrough,
+        topology.runtime.interpolatedNames,
+    )
+    if (!step) return unavailableRuntimeStop()
+    const execution = openRuntimeDrainExecution({ authority: input.attempt, candidate: candidate! })
+    const fence = execution && inspectDrainExecutionFence(execution)
+    if (!execution || !fence) return unavailableRuntimeStop()
+    const stopped = await input.execute({ ...step, executionFence: fence })
+    if (stopped.kind === 'refusal') {
+        // Only a stop that provably never started leaves the stack as it was.
+        if (stopped.receipt !== undefined || stopped.execution.started || stopped.execution.signal !== null
+            || stopped.execution.exitCode === 0) return unavailableRuntimeStop()
+        const settled = settleRuntimeDrainFailure({ authority: execution, fact: { ...attempt, failedAt: new Date().toISOString() } satisfies DrainAttemptFailure })
+        return settled ? { kind: 'not-started', code: stopped.code, authority: settled, fence } : unavailableRuntimeStop()
+    }
+    if (stopped.stderr.byteLength !== 0 || !receiptWithin(stopped, attempt.committedAt, attempt.validThrough)) return unavailableRuntimeStop()
+    const observationStep = derivedComposeStep(
+        topology.step,
+        `runtime:docker-compose:stopped:${topology.runtime.projectName}`,
+        'ps-stopped',
+        ['ps', '--format', 'json', '--status', 'running'],
+        OUTPUT_LIMIT_BYTES,
+        reservation.generation,
+        MAX_OBSERVATION_WINDOW_MS,
+        undefined,
+        topology.runtime.interpolatedNames,
+    )
+    if (!observationStep) return unavailableRuntimeStop()
+    const observed = await input.execute(observationStep)
+    if (observed.kind !== 'complete' || observed.stderr.byteLength !== 0 || observed.stdout.byteLength !== 0
+        || !receiptWithin(observed, stopped.receipt.finishedAt, attempt.validThrough)) return unavailableRuntimeStop()
+    const fact = {
+        purpose: reservation.purpose,
+        stackId: reservation.stackId,
+        configSha256: reservation.configSha256,
+        planDigest: reservation.planDigest,
+        operationBasis: reservation.operationBasis,
+        coordinationRevision: reservation.coordinationRevision,
+        reservationId: reservation.reservationId,
+        reservedAt: reservation.reservedAt,
+        generation: reservation.generation,
+        attemptId: attempt.attemptId,
+        attemptRevision: attempt.committedRevision,
+        attemptCommittedAt: attempt.committedAt,
+        validThrough: attempt.validThrough,
+        actionIndex: attempt.actionIndex,
+        currentTarget: attempt.currentTarget,
+        currentStage: attempt.currentStage,
+        observedAt: observed.receipt.finishedAt,
+    } satisfies RuntimeStopped
+    const settled = settleRuntimeDrainSuccess({ authority: execution, fact })
+    return settled ? { kind: 'stopped', authority: settled, fence } : unavailableRuntimeStop()
 }

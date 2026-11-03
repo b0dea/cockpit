@@ -31,12 +31,7 @@ import {
     createRuntimeServicePlan,
     createRuntimeServiceRevalidationPlan,
     createRuntimeTopologyPlan,
-    createRuntimeStopPlan,
-    createRuntimeStopObservationPlan,
-    admitRuntimeStopped,
-    admitRuntimeStopFailure,
-    consumeRuntimeStopFailure,
-    consumeRuntimeStopped,
+    stopRuntime,
     isRuntimeServiceEvidence,
     isRuntimeObservation,
     isRuntimeTopologyEvidence,
@@ -59,7 +54,7 @@ import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js
 import { resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { readState, selectStateRoot, transactState } from './state.js'
-import type { CheckoutId, HolderId } from './contract.js'
+import type { CheckoutId, ExecutionStep, HolderId } from './contract.js'
 import type { LocalRuntimeMeasurements, RuntimeMeasurementRow } from './runtime-measurement-record.js'
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
@@ -1130,82 +1125,75 @@ fi
         return { ...attempted, namespace: namespace.value }
     }
 
-    it('issues one runtime-stopped fact only after the exact stop and fresh negative observation', async () => {
+    function recordingExecutor() {
+        const steps: ExecutionStep[] = []
+        return { steps, execute: async (step: ExecutionStep) => { steps.push(step); return executeProbe(step) } }
+    }
+
+    it('settles the drain as stopped only after the fenced stop and a fresh negative observation', async () => {
         const topology = await topologyEvidence({ services: { api: {} } })
         if (topology.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
         const drain = await drainAuthority(topology)
-        expect(createRuntimeStopPlan({ topology: topology.admitted.topology, attempt: { ...drain.authority } as never }).kind).toBe('unavailable')
-        const stop = createRuntimeStopPlan({ topology: topology.admitted.topology, attempt: drain.authority })
-        if (stop.kind !== 'planned') throw new Error(stop.reason)
-        expect(stop.step.spawnNotAfter).toBe(drain.attempt.validThrough)
-        expect(stop.step.timeoutMs).toBeLessThanOrEqual(Date.parse(drain.attempt.validThrough) - Date.now() + 10)
-        expect(createRuntimeStopPlan({ topology: topology.admitted.topology, attempt: drain.authority }).kind).toBe('unavailable')
+        const copied = recordingExecutor()
+        expect(await stopRuntime({ topology: topology.admitted.topology, attempt: { ...drain.authority } as never, execute: copied.execute }))
+            .toMatchObject({ kind: 'unavailable' })
+        expect(copied.steps).toEqual([])
+        const recorded = recordingExecutor()
+        const startedAt = Date.now()
+        const stopped = await stopRuntime({ topology: topology.admitted.topology, attempt: drain.authority, execute: recorded.execute })
+        expect(stopped.kind).toBe('stopped')
+        if (stopped.kind !== 'stopped') return
+        const [stop, observation] = recorded.steps
+        expect(recorded.steps.map((step) => step.argv.slice(-1)[0])).toEqual(['stop', 'running'])
+        expect(stop!.spawnNotAfter).toBe(drain.attempt.validThrough)
+        expect(stop!.executionFence).toEqual(stopped.fence)
+        expect(stop!.timeoutMs).toBeLessThanOrEqual(Date.parse(drain.attempt.validThrough) - startedAt)
+        expect(observation!.executionFence).toBeUndefined()
+        // One attempt runs once: a second stop on the same attempt executes nothing.
+        const replayed = recordingExecutor()
+        expect(await stopRuntime({ topology: topology.admitted.topology, attempt: drain.authority, execute: replayed.execute }))
+            .toMatchObject({ kind: 'unavailable' })
+        expect(replayed.steps).toEqual([])
         // A service that ignores SIGTERM holds `compose stop` for Compose's 10s stop grace, so the
         // stop gets that grace on top of the ordinary command budget.
         const budgeted = await topologyEvidence({ services: { api: {} } }, [], { timeoutMs: 10_000 })
         if (budgeted.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
-        const budgetedStop = createRuntimeStopPlan({ topology: budgeted.admitted.topology, attempt: (await drainAuthority(budgeted)).authority })
-        if (budgetedStop.kind !== 'planned') throw new Error(budgetedStop.reason)
-        expect(budgetedStop.step.timeoutMs).toBe(20_000)
+        const budgetedSteps = recordingExecutor()
+        await stopRuntime({ topology: budgeted.admitted.topology, attempt: (await drainAuthority(budgeted)).authority, execute: budgetedSteps.execute })
+        expect(budgetedSteps.steps[0]!.timeoutMs).toBe(20_000)
         // Compose stops a dependent before its dependency, so a two-level stack pays the grace twice.
         const layered = await topologyEvidence({ services: { api: {}, web: { depends_on: { api: {} } } } }, [], { timeoutMs: 10_000 })
         if (layered.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
-        const layeredStop = createRuntimeStopPlan({ topology: layered.admitted.topology, attempt: (await drainAuthority(layered)).authority })
-        if (layeredStop.kind !== 'planned') throw new Error(layeredStop.reason)
+        const layeredSteps = recordingExecutor()
+        await stopRuntime({ topology: layered.admitted.topology, attempt: (await drainAuthority(layered)).authority, execute: layeredSteps.execute })
         // 10s budget + 2 x 10s grace, held to the 30s the fixture attempt remains valid.
-        expect(layeredStop.step.timeoutMs).toBeGreaterThan(25_000)
-        const observation = createRuntimeStopObservationPlan({ plan: stop, outcome: await executeProbe(stop.step) })
-        if (observation.kind !== 'planned') throw new Error(observation.reason)
-        expect(createRuntimeStopObservationPlan({ plan: stop, outcome: await executeProbe(stop.step) }).kind).toBe('unavailable')
-        const observationOutcome = await executeProbe(observation.step)
-        expect(admitRuntimeStopped({ plan: { ...observation } as never, outcome: observationOutcome }).kind).toBe('unavailable')
-        const stopped = admitRuntimeStopped({ plan: observation, outcome: observationOutcome })
-        expect(stopped.kind).toBe('complete')
-        if (stopped.kind !== 'complete') return
-        expect(admitRuntimeStopped({ plan: observation, outcome: await executeProbe(observation.step) }).kind).toBe('unavailable')
-        expect(consumeRuntimeStopFailure(stopped.authority as never)).toBeUndefined()
-        expect(consumeRuntimeStopped({ ...stopped.authority } as never)).toBeUndefined()
-        const outcome = consumeRuntimeStopped(stopped.authority)
-        expect(outcome).toEqual({})
-        if (!outcome) throw new Error('runtime outcome unavailable')
+        expect(layeredSteps.steps[0]!.timeoutMs).toBeGreaterThan(25_000)
         const record = await readState(drain.namespace.paths.coordination(stack))
         if (record.kind !== 'complete') throw new Error('runtime attempt record unavailable')
-        expect(reduceDrainOutcome({ authority: outcome, record: record.value }))
+        expect(reduceDrainOutcome({ authority: stopped.authority, record: record.value }))
             .toMatchObject({ holders: [], lease: { released: true }, drain: null })
-        expect(consumeRuntimeStopped(stopped.authority)).toBeUndefined()
     })
 
-    it('issues failure authority only when authenticated execution proves the stop never started', async () => {
+    it('settles the drain as failed only when the stop provably never started', async () => {
         const startedTopology = await topologyEvidence({ services: { api: {} } }, [{ StopExitCode: 9 }])
         if (startedTopology.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
         const startedDrain = await drainAuthority(startedTopology)
-        const startedStop = createRuntimeStopPlan({ topology: startedTopology.admitted.topology, attempt: startedDrain.authority })
-        if (startedStop.kind !== 'planned') throw new Error(startedStop.reason)
-        const startedOutcome = await executeProbe(startedStop.step)
-        expect(startedOutcome).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, execution: { started: true, exitCode: 9, signal: null } })
-        expect(admitRuntimeStopFailure({ plan: startedStop, outcome: startedOutcome })).toMatchObject({ kind: 'unavailable' })
+        const started = recordingExecutor()
+        expect(await stopRuntime({ topology: startedTopology.admitted.topology, attempt: startedDrain.authority, execute: started.execute }))
+            .toMatchObject({ kind: 'unavailable' })
+        expect(started.steps).toHaveLength(1)
 
         const topology = await topologyEvidence({ services: { api: {} } })
         if (topology.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
         const drain = await drainAuthority(topology)
-        const stop = createRuntimeStopPlan({ topology: topology.admitted.topology, attempt: drain.authority })
-        if (stop.kind !== 'planned') throw new Error(stop.reason)
         writeFileSync(topology.runtimeExecutable.canonicalPath, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
-        const outcome = await executeProbe(stop.step)
-        expect(outcome).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, execution: { started: false, signal: null } })
-        expect(outcome).not.toHaveProperty('receipt')
-        vi.useFakeTimers()
-        vi.setSystemTime(Date.parse(drain.attempt.validThrough) + 1)
-        expect(admitRuntimeStopFailure({ plan: { ...stop } as never, outcome })).toMatchObject({ kind: 'unavailable' })
-        const failed = admitRuntimeStopFailure({ plan: stop, outcome })
-        vi.useRealTimers()
-        expect(failed.kind).toBe('complete')
-        if (failed.kind !== 'complete') return
-        expect(consumeRuntimeStopped(failed.authority as never)).toBeUndefined()
-        expect(consumeRuntimeStopFailure({ ...failed.authority } as never)).toBeUndefined()
-        expect(consumeRuntimeStopFailure(failed.authority)).toEqual({})
-        expect(consumeRuntimeStopFailure(failed.authority)).toBeUndefined()
-        expect(createRuntimeStopObservationPlan({ plan: stop, outcome }).kind).toBe('unavailable')
+        const failed = await stopRuntime({ topology: topology.admitted.topology, attempt: drain.authority, execute: async (step) => {
+            const outcome = await executeProbe(step)
+            expect(outcome).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, execution: { started: false, signal: null } })
+            expect(outcome).not.toHaveProperty('receipt')
+            return outcome
+        } })
+        expect(failed).toMatchObject({ kind: 'not-started', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, authority: {} })
     })
 
     it('uses the secret-blind config argv and retains only bounded topology fields', async () => {

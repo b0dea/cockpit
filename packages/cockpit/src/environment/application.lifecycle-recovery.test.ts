@@ -13,7 +13,7 @@ const executionFence = (id: string) => {
 }
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp' | 'planSleep'>>,
-    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'admitRuntimeServiceInspectFailure' | 'admitRuntimeServiceObservation' | 'admitRuntimeServiceRevalidation' | 'admitRuntimeServiceRevalidationStatus' | 'admitRuntimeServiceStageOutcome' | 'admitRuntimeStopped' | 'consumeRuntimeStopped' | 'createRuntimeServiceHealthPlan' | 'createRuntimeServicePlan' | 'createRuntimeServiceRevalidationPlan' | 'createRuntimeStopObservationPlan' | 'createRuntimeStopPlan' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder'>>,
+    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'admitRuntimeServiceInspectFailure' | 'admitRuntimeServiceObservation' | 'admitRuntimeServiceRevalidation' | 'admitRuntimeServiceRevalidationStatus' | 'admitRuntimeServiceStageOutcome' | 'createRuntimeServiceHealthPlan' | 'createRuntimeServicePlan' | 'createRuntimeServiceRevalidationPlan' | 'stopRuntime' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder'>>,
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'admitFailureLogs' | 'planFailureLogs'>>,
     claims: {} as Partial<Pick<typeof import('./claims.js'), 'finalizeDrainOutcome' | 'inspectSleepDrainRecovery' | 'prepareDrainOutcomePublication' | 'recoverSleepDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder' | 'deriveEntrypoints' | 'observeRetainedPortFamily' | 'projectRetainedPortFamilyResult' | 'releasePortFamily'>>,
@@ -38,13 +38,10 @@ vi.mock('./runtime.js', async (importOriginal) => {
         admitRuntimeServiceRevalidation: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidation>) => applicationOwners.runtime.admitRuntimeServiceRevalidation?.(...args) ?? actual.admitRuntimeServiceRevalidation(...args),
         admitRuntimeServiceRevalidationStatus: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidationStatus>) => applicationOwners.runtime.admitRuntimeServiceRevalidationStatus?.(...args) ?? actual.admitRuntimeServiceRevalidationStatus(...args),
         admitRuntimeServiceStageOutcome: (...args: Parameters<typeof actual.admitRuntimeServiceStageOutcome>) => applicationOwners.runtime.admitRuntimeServiceStageOutcome?.(...args) ?? actual.admitRuntimeServiceStageOutcome(...args),
-        admitRuntimeStopped: (...args: Parameters<typeof actual.admitRuntimeStopped>) => applicationOwners.runtime.admitRuntimeStopped?.(...args) ?? actual.admitRuntimeStopped(...args),
-        consumeRuntimeStopped: (...args: Parameters<typeof actual.consumeRuntimeStopped>) => applicationOwners.runtime.consumeRuntimeStopped?.(...args) ?? actual.consumeRuntimeStopped(...args),
+        stopRuntime: (...args: Parameters<typeof actual.stopRuntime>) => applicationOwners.runtime.stopRuntime?.(...args) ?? actual.stopRuntime(...args),
         createRuntimeServiceHealthPlan: (...args: Parameters<typeof actual.createRuntimeServiceHealthPlan>) => applicationOwners.runtime.createRuntimeServiceHealthPlan?.(...args) ?? actual.createRuntimeServiceHealthPlan(...args),
         createRuntimeServicePlan: (...args: Parameters<typeof actual.createRuntimeServicePlan>) => applicationOwners.runtime.createRuntimeServicePlan?.(...args) ?? actual.createRuntimeServicePlan(...args),
         createRuntimeServiceRevalidationPlan: (...args: Parameters<typeof actual.createRuntimeServiceRevalidationPlan>) => applicationOwners.runtime.createRuntimeServiceRevalidationPlan?.(...args) ?? actual.createRuntimeServiceRevalidationPlan(...args),
-        createRuntimeStopObservationPlan: (...args: Parameters<typeof actual.createRuntimeStopObservationPlan>) => applicationOwners.runtime.createRuntimeStopObservationPlan?.(...args) ?? actual.createRuntimeStopObservationPlan(...args),
-        createRuntimeStopPlan: (...args: Parameters<typeof actual.createRuntimeStopPlan>) => applicationOwners.runtime.createRuntimeStopPlan?.(...args) ?? actual.createRuntimeStopPlan(...args),
         observeRuntimeServiceColdStart: (...args: Parameters<typeof actual.observeRuntimeServiceColdStart>) => applicationOwners.runtime.observeRuntimeServiceColdStart?.(...args) ?? actual.observeRuntimeServiceColdStart(...args),
         resolveRuntimeServiceOrder: (...args: Parameters<typeof actual.resolveRuntimeServiceOrder>) => applicationOwners.runtime.resolveRuntimeServiceOrder?.(...args) ?? actual.resolveRuntimeServiceOrder(...args),
     }
@@ -884,10 +881,11 @@ describe('lifecycle application contracts', () => {
             events.push('attempt')
             return { kind: 'complete', authority: attemptAuthority } as never
         }
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop', executionFence: executionFence('sleep-stop') } }) as never
-        applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'postcheck' } }) as never
-        applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.consumeRuntimeStopped = () => outcomeAuthority as never
+        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
+            await execute({ id: 'stop' } as never)
+            await execute({ id: 'postcheck' } as never)
+            return { kind: 'stopped', authority: outcomeAuthority, fence: executionFence('sleep-stop') } as never
+        }
         applicationOwners.claims.prepareDrainOutcomePublication = async () => {
             expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
                 kind: 'complete',
@@ -943,10 +941,11 @@ describe('lifecycle application contracts', () => {
         } as never)
         applicationOwners.claims.reserveDrain = async () => ({ kind: 'complete', authority: {} }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop', executionFence: executionFence('sleep-indeterminate') } }) as never
-        applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'postcheck' } }) as never
-        applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.consumeRuntimeStopped = () => ({}) as never
+        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
+            await execute({ id: 'stop' } as never)
+            await execute({ id: 'postcheck' } as never)
+            return { kind: 'stopped', authority: ({}), fence: executionFence('sleep-indeterminate') } as never
+        }
         applicationOwners.claims.prepareDrainOutcomePublication = async () => ({
             kind: 'indeterminate', code: 'STATE_DURABILITY_INDETERMINATE',
             message: 'drain publication durability is indeterminate', target: context.stackId,
@@ -1015,10 +1014,11 @@ describe('lifecycle application contracts', () => {
         }
         applicationOwners.claims.reserveDrain = async () => { events.push('reserve'); return {} as never }
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop', executionFence: executionFence('sleep-recovery') } }) as never
-        applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'postcheck' } }) as never
-        applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.consumeRuntimeStopped = () => ({}) as never
+        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
+            await execute({ id: 'stop' } as never)
+            await execute({ id: 'postcheck' } as never)
+            return { kind: 'stopped', authority: ({}), fence: executionFence('sleep-recovery') } as never
+        }
         applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
         applicationOwners.claims.finalizeDrainOutcome = () => true
 

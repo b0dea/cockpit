@@ -160,12 +160,7 @@ import {
     createRuntimeServiceRevalidationPlan,
     observeRuntimeServiceColdStart,
     resolveRuntimeServiceOrder,
-    admitRuntimeStopped,
-    admitRuntimeStopFailure,
-    consumeRuntimeStopped,
-    consumeRuntimeStopFailure,
-    createRuntimeStopObservationPlan,
-    createRuntimeStopPlan,
+    stopRuntime,
     type RuntimeLifecycleProjection,
     type RuntimeAdapterAuthority,
     type RuntimeServiceEvidence,
@@ -3406,26 +3401,13 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             attempted.diagnostics[0]?.message ?? 'sleep attempt could not be reserved',
             attempted.diagnostics[0]?.target ?? context.stackId,
         )
-        const stop = createRuntimeStopPlan({ topology: issuance.topology, attempt: attempted.authority })
-        if (stop.kind !== 'planned') return repairRequired(context)
-        const fence = stop.step.executionFence
-        if (!fence) return repairRequired(context)
-        const stopped = await adapters.execute(stop.step)
-        if (stopped.kind === 'refusal') {
-            const failure = admitRuntimeStopFailure({ plan: stop, outcome: stopped })
-            if (failure.kind !== 'complete') return repairRequired(context)
-            const authority = consumeRuntimeStopFailure(failure.authority)
-            if (!authority) return repairRequired(context)
+        const stopped = await stopRuntime({ topology: issuance.topology, attempt: attempted.authority, execute: (step) => adapters.execute(step) })
+        if (stopped.kind === 'unavailable') return repairRequired(context)
+        const { authority, fence } = stopped
+        if (stopped.kind === 'not-started') {
             const finalized = await publishDrainOutcome(context, authority, fence)
             return finalized ?? lifecycleRefusal(stopped.code, 'runtime stop did not start', context.stackId)
         }
-        const observationPlan = createRuntimeStopObservationPlan({ plan: stop, outcome: stopped })
-        if (observationPlan.kind !== 'planned') return repairRequired(context)
-        const observation = await adapters.execute(observationPlan.step)
-        const admitted = admitRuntimeStopped({ plan: observationPlan, outcome: observation })
-        if (admitted.kind !== 'complete') return repairRequired(context)
-        const authority = consumeRuntimeStopped(admitted.authority)
-        if (!authority) return repairRequired(context)
         const invalidated = await invalidateCompletedLifecycle(
             context,
             planned.request.operationBasis,
@@ -3697,24 +3679,10 @@ async function executeRuntimeDrain(
     attempt: Awaited<ReturnType<typeof reserveDrainAttempt>>,
 ): Promise<{ readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence } | Extract<DownCommandResult, { kind: 'refusal' }>> {
     if (attempt.kind !== 'complete') return forwardedRefusal(attempt.diagnostics)
-    const stop = createRuntimeStopPlan({ topology, attempt: attempt.authority })
-    if (stop.kind !== 'planned') return destructiveRepairRequired(context)
-    const fence = stop.step.executionFence
-    if (!fence) return destructiveRepairRequired(context)
-    const outcome = await adapters.execute(stop.step)
-    if (outcome.kind === 'refusal') {
-        const failure = admitRuntimeStopFailure({ plan: stop, outcome })
-        if (failure.kind !== 'complete') return destructiveRepairRequired(context)
-        const authority = consumeRuntimeStopFailure(failure.authority)
-        return authority ? { authority, fence } : destructiveRepairRequired(context)
-    }
-    const observationPlan = createRuntimeStopObservationPlan({ plan: stop, outcome })
-    if (observationPlan.kind !== 'planned') return destructiveRepairRequired(context)
-    const observed = await adapters.execute(observationPlan.step)
-    const admitted = admitRuntimeStopped({ plan: observationPlan, outcome: observed })
-    if (admitted.kind !== 'complete') return destructiveRepairRequired(context)
-    const authority = consumeRuntimeStopped(admitted.authority)
-    if (!authority) return destructiveRepairRequired(context)
+    const stopped = await stopRuntime({ topology, attempt: attempt.authority, execute: (step) => adapters.execute(step) })
+    if (stopped.kind === 'unavailable') return destructiveRepairRequired(context)
+    const { authority, fence } = stopped
+    if (stopped.kind === 'not-started') return { authority, fence }
     const reservation = attempt.authority.reservation
     if (reservation.purpose === 'down' && reservation.actions.length === 1) {
         const invalidated = await invalidateCompletedLifecycle(context, reservation.operationBasis, reservation.generation, 'down')
