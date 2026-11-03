@@ -1,4 +1,4 @@
-import { decide, policyWeakening, weakeningDigest, writeRecordedPolicy, type EffectivePolicy, type PolicyWeakening } from '../autonomy.js'
+import { decide, policyWeakening, policyWeakeningDiagnostic, weakeningDigest, writeRecordedPolicy, type EffectivePolicy, type PolicyWeakening } from '../autonomy.js'
 import { loadAutonomyPolicy } from '../config/load.js'
 import type { Decider } from '../schema.js'
 import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
@@ -86,11 +86,8 @@ function autonomyRefusal(field: string, decider: Decider, admission: OperatorAdm
 // A weakening the last sync did not accept is not in force: the command it would let through
 // refuses, as sync does, until a person accepts it there or the change is reverted.
 function weakeningRefusal(weakened: readonly PolicyWeakening[], unchanged: string, result: unknown = null): OperatorCommandOutcome {
-    const shown = weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`).join('; ')
-    return { status: 2, result, diagnostics: [{ severity: 'error' as const, target: 'autonomy',
-        code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
-        message: `cockpit.toml weakens the policy the last sync recorded (${shown}); ${unchanged}`,
-        fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' }] }
+    const diagnostic = policyWeakeningDiagnostic(weakened)
+    return { status: 2, result, diagnostics: [{ ...diagnostic, message: `${diagnostic.message}; ${unchanged}` }] }
 }
 
 export async function runResetOperatorApplication(

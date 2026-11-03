@@ -45,7 +45,7 @@ import { CockpitConfig, type EntrypointDerivative, type EvaluatorTool, type Inst
 import { pinnedPolicyDenial } from '../guards/policy-pin.js'
 import { evaluateGuard, foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../command-table.js'
-import { effectivePolicy } from '../autonomy.js'
+import { effectivePolicy, policyWeakening, policyWeakeningDiagnostic, readRecordedPolicy } from '../autonomy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
@@ -4226,6 +4226,16 @@ async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>
     }]
 }
 
+// The same weakening `check` fails on: a policy cockpit.toml sets below the one the last sync recorded
+// is not in force, and doctor is where an agent looks first.
+async function doctorPolicyDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
+    const loaded = await loading
+    if (loaded.kind !== 'complete') return []
+    const recorded = await readRecordedPolicy(dirname(loaded.result.source.path))
+    const weakened = recorded ? policyWeakening(recorded, effectivePolicy(loaded.result.config)) : []
+    return weakened.length ? [{ ...policyWeakeningDiagnostic(weakened), severity: 'warning' as const }] : []
+}
+
 export type DoctorCommandResult = Readonly<{
     kind: 'complete'
     status: 0
@@ -4772,8 +4782,8 @@ export async function runDoctor(
         return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
             ? adapters.inspectHookTrust?.() ?? [] : []
     }
-    const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
-        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
+    const [outcome, guardHosts, unconfirmed, policyWeakened, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
+        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorPolicyDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
         doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? []])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'
@@ -4781,7 +4791,7 @@ export async function runDoctor(
         ? stateInventory.diagnostics.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const,
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
-    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState]
+    const warnings = [...unconfirmed, ...policyWeakened, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero

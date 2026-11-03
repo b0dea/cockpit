@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
@@ -174,6 +174,15 @@ describe('observation application runners', () => {
                 message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
                 fix: expect.stringContaining('delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config') }])
             expect(await doctorFor('')).toEqual([])
+            // A policy the last sync recorded stronger than cockpit.toml now declares is reported, not silently weaker.
+            mkdirSync(join(directory, '.cockpit'))
+            const person = { accept: 'person', amend: 'person', answer: 'person', signoff: 'person' }
+            writeFileSync(join(directory, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: {
+                grading: 'independent', gates: person, autonomy: { sync: 'person', stale_delete: 'person', reset: 'person', mcp_approve: 'person' } } }))
+            const weakened = (await runDoctor({ configPath: join(directory, 'cockpit.toml') }, { load: async () => undefined, execute: vi.fn() }))
+                .diagnostics.filter(row => row.code === 'POLICY_WEAKENING_UNCONFIRMED')
+            expect(weakened).toEqual([expect.objectContaining({ severity: 'warning', target: 'autonomy',
+                message: expect.stringContaining('work.gates.accept: person -> agent') })])
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
