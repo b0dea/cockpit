@@ -126,19 +126,21 @@ describe('operator application admission', () => {
 
     it('applies a reset without a person only where [autonomy] reset allows it', async () => {
         const decide = vi.fn(async () => Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result: null }))
-        const run = (reset: string, ci?: string) => {
+        const run = (reset: string, ci?: string, recorded?: string) => {
             const begin = vi.fn(async () => Object.freeze({ preview, decide }))
             const confirm = vi.fn()
             return { begin, confirm, outcome: runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
                 { interactive: false, apply: true, json: false, ci, terminal: false },
-                { preview: vi.fn(), begin, confirm, policy: policyAdapter(policyOf({ reset })).load }) }
+                { preview: vi.fn(), begin, confirm, policy: policyAdapter(policyOf({ reset }), recorded ? policyOf({ reset: recorded }) : undefined).load }) }
         }
         const agent = run('agent')
         expect((await agent.outcome).status).toBe(0)
         expect(decide).toHaveBeenCalledExactlyOnceWith('approve')
         expect(agent.confirm).not.toHaveBeenCalled()
-        for (const [reset, ci, code] of [['person', undefined, 'AUTONOMY_PERSON_REQUIRED'], ['ci', undefined, 'AUTONOMY_CI_ONLY']] as const) {
-            const refused = run(reset, ci)
+        // cockpit.toml weakened to agent after sync recorded person: the recorded decider stands until sync accepts it.
+        for (const [reset, ci, code, recorded] of [['person', undefined, 'AUTONOMY_PERSON_REQUIRED', undefined], ['ci', undefined, 'AUTONOMY_CI_ONLY', undefined],
+            ['agent', undefined, 'POLICY_WEAKENING_UNCONFIRMED', 'person']] as const) {
+            const refused = run(reset, ci, recorded)
             expect((await refused.outcome).diagnostics[0]?.code, reset).toBe(code)
             expect(refused.begin).not.toHaveBeenCalled()
         }

@@ -100,6 +100,16 @@ function autonomyRefusal(field: string, decider: Decider, admission: OperatorAdm
             fix: 'push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync' })]) })
 }
 
+// A weakening the last sync did not accept is not in force: the command it would let through
+// refuses, as sync does, until a person accepts it there or the change is reverted.
+function weakeningRefusal(weakened: readonly PolicyWeakening[], unchanged: string, result: unknown = null): OperatorCommandOutcome {
+    const shown = weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`).join('; ')
+    return Object.freeze({ status: 2, result, diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, target: 'autonomy',
+        code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
+        message: `cockpit.toml weakens the policy the last sync recorded (${shown}); ${unchanged}`,
+        fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' })]) })
+}
+
 export async function runResetOperatorApplication(
     input: ResetCommandInput,
     admission: OperatorAdmission,
@@ -108,6 +118,8 @@ export async function runResetOperatorApplication(
     if (!admission.interactive && admission.apply) {
         const policy = await adapters.policy(input.configPath)
         if (!isPolicy(policy)) return policy
+        const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current).filter(row => row.field === 'autonomy.reset') : []
+        if (weakened.length) return weakeningRefusal(weakened, 'nothing was reset')
         const refused = autonomyRefusal('reset', policy.current.autonomy.reset, admission)
         if (refused) return refused
         const opened = await adapters.begin(input)
@@ -183,13 +195,7 @@ export async function runSyncOperatorApplication(
     const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
     if (weakened.length) {
         const digest = weakeningDigest(policy.recorded!, policy.current)
-        const shown = weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`).join('; ')
-        if (!admission.interactive) {
-            return Object.freeze({ status: 2, result: Object.freeze({ weakened, digest }), diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, target: 'autonomy',
-                code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
-                message: `cockpit.toml weakens the policy the last sync recorded (${shown}); nothing was written`,
-                fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' })]) })
-        }
+        if (!admission.interactive) return weakeningRefusal(weakened, 'nothing was written', Object.freeze({ weakened, digest }))
         if (await adapters.confirmPolicyWeakening({ weakened, digest }) !== digest) {
             return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the typed digest did not match the policy weakening shown; nothing was written', 'autonomy')
         }

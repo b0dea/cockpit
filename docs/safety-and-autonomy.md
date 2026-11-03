@@ -341,7 +341,8 @@ Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. 
 a field weaker than that record, such as a gate moved from `person` to `agent` or grading from
 `independent` to `self`, writes nothing and reports `POLICY_WEAKENING_UNCONFIRMED` with the change and
 its digest; a person runs `sync --interactive`, reads it and types the digest. Until then every work
-command refuses to run under the weaker policy. A stronger policy needs nobody.
+command refuses to run under the weaker policy, and so does `reset --apply` when `[autonomy] reset` is
+the weakened field. A stronger policy needs nobody.
 
 What no setting relaxes: reads of secrets and declared instances, pushes to protected branches,
 writes to guard controls, and the policy pin. What only a person can do: trust Codex's hooks, trust a
