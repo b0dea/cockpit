@@ -9,6 +9,7 @@ import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationFo
 import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
+import { exactKeys } from '../exact-keys.js'
 
 export interface LogRequest {
     runtime: 'docker-compose'
@@ -56,12 +57,6 @@ function validInstant(value: string): boolean {
         if (offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) return false
     }
     return Number.isFinite(Date.parse(value))
-}
-
-function exactKeys(value: object, expected: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const keys = [...expected].sort()
-    return actual.length === keys.length && actual.every((key, index) => key === keys[index])
 }
 
 function captureOwnValues(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {

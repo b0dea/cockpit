@@ -224,13 +224,18 @@ describe('diagnostic inventory', () => {
                 // One place states a fix and another computes its own: neither is the code's fix.
                 "export function partialFirst() { return { code: 'PARTIAL_FAILURE', message: 'm', fix: 'repair the partial input' } }",
                 "export function partialSecond(detail: string) { return { code: 'PARTIAL_FAILURE', message: 'm', fix: `repair ${detail}` } }",
+                // A shared constructor imported under a local name states its fix at the call too.
+                "import { shared as refuse } from './shared.js'",
+                "export function imported() { return refuse('IMPORTED_FAILURE', 'm', undefined, 'repair the imported input') }",
             ].join('\n')],
+            ['packages/cockpit/src/synthetic/shared.ts', 'export function shared(code: string, message: string, target?: string, fix?: string) { return { code, message, target, fix } }'],
         ]))
         expect(Object.fromEntries(found.remedies)).toEqual({
             REGISTERED_FAILURE: { kind: 'fixed', fix: 'repair the registered input' },
             AGREED_FAILURE: { kind: 'fixed', fix: 'repair the shared input' },
             DIFFERING_FAILURE: { kind: 'varies' },
             PARTIAL_FAILURE: { kind: 'varies' },
+            IMPORTED_FAILURE: { kind: 'fixed', fix: 'repair the imported input' },
         })
     })
 })

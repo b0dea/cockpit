@@ -12,6 +12,7 @@ import {
     type SurfaceDiagnostic,
     type SurfacePriorOwnedEntry,
 } from './ownership.js'
+import { exactKeys } from '../exact-keys.js'
 
 export type SurfaceObservedEntry =
     | Readonly<{ path: string; kind: 'missing' }>
@@ -41,12 +42,6 @@ function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function exact(value: JsonSnapshotObject, required: readonly string[]): boolean {
-    const keys = Object.keys(value).sort()
-    const expected = [...required].sort()
-    return keys.length === expected.length && keys.every((key, index) => key === expected[index])
-}
-
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
 
 function refuse(message: string, target?: string, fix?: string): SurfaceChangePlanResult {
@@ -65,32 +60,32 @@ function base(value: JsonSnapshotObject, configured: ReadonlySet<string>): boole
 function priorEntry(value: JsonSnapshot, configured: ReadonlySet<string>): SurfacePriorOwnedEntry | undefined {
     if (!object(value) || !base(value, configured) || typeof value.kind !== 'string' || typeof value.ownership !== 'string') return undefined
     if (value.kind === 'file') {
-        return exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'sha256'])
+        return exactKeys(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'sha256'])
             && value.ownership === 'whole-file' && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
             ? value as unknown as SurfacePriorOwnedEntry : undefined
     }
     if (value.kind !== 'shared-region' || value.ownership !== 'shared-region'
-        || !exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
+        || !exactKeys(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
         || typeof value.regionId !== 'string' || !object(value.region) || typeof value.region.sha256 !== 'string' || !SHA256.test(value.region.sha256)) return undefined
     if (value.region.format === 'markdown-delimited') {
-        return exact(value.region, ['format', 'begin', 'end', 'sha256']) && typeof value.region.begin === 'string' && typeof value.region.end === 'string'
+        return exactKeys(value.region, ['format', 'begin', 'end', 'sha256']) && typeof value.region.begin === 'string' && typeof value.region.end === 'string'
             ? value as unknown as SurfacePriorOwnedEntry : undefined
     }
     const keys = value.region.keys
-    return value.region.format === 'opencode-json-root-properties' && exact(value.region, ['format', 'keys', 'sha256'])
+    return value.region.format === 'opencode-json-root-properties' && exactKeys(value.region, ['format', 'keys', 'sha256'])
         && Array.isArray(keys) && keys.length > 0 && keys.every((key, index) => typeof key === 'string' && (index === 0 || keys[index - 1]! < key))
         ? value as unknown as SurfacePriorOwnedEntry : undefined
 }
 
 function observedEntry(value: JsonSnapshot): SurfaceObservedEntry | undefined {
     if (!object(value) || typeof value.path !== 'string' || !safePath(value.path) || typeof value.kind !== 'string') return undefined
-    if (value.kind === 'missing') return exact(value, ['path', 'kind']) ? value as unknown as SurfaceObservedEntry : undefined
-    if (value.kind === 'file') return exact(value, ['path', 'kind', 'bytes', 'sha256', 'identity']) && typeof value.bytes === 'string'
+    if (value.kind === 'missing') return exactKeys(value, ['path', 'kind']) ? value as unknown as SurfaceObservedEntry : undefined
+    if (value.kind === 'file') return exactKeys(value, ['path', 'kind', 'bytes', 'sha256', 'identity']) && typeof value.bytes === 'string'
         && typeof value.sha256 === 'string' && value.sha256 === digest(value.bytes) && typeof value.identity === 'string' && value.identity.length > 0
         ? value as unknown as SurfaceObservedEntry : undefined
-    if (value.kind === 'symlink') return exact(value, ['path', 'kind', 'target', 'identity']) && typeof value.target === 'string'
+    if (value.kind === 'symlink') return exactKeys(value, ['path', 'kind', 'target', 'identity']) && typeof value.target === 'string'
         && typeof value.identity === 'string' && value.identity.length > 0 ? value as unknown as SurfaceObservedEntry : undefined
-    return value.kind === 'other' && exact(value, ['path', 'kind', 'identity']) && typeof value.identity === 'string' && value.identity.length > 0
+    return value.kind === 'other' && exactKeys(value, ['path', 'kind', 'identity']) && typeof value.identity === 'string' && value.identity.length > 0
         ? value as unknown as SurfaceObservedEntry : undefined
 }
 
@@ -101,7 +96,7 @@ function priorMatchesObserved(prior: SurfacePriorOwnedEntry, observed: SurfaceOb
 
 export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
     const captured = snapshotGeneratedJson(input)
-    if (!object(captured) || !exact(captured, ['configuredHarnesses', 'desired', 'priorOwned', 'observed'])
+    if (!object(captured) || !exactKeys(captured, ['configuredHarnesses', 'desired', 'priorOwned', 'observed'])
         || !Array.isArray(captured.configuredHarnesses) || !Array.isArray(captured.desired)
         || !Array.isArray(captured.priorOwned) || captured.priorOwned.length > 256
         || !Array.isArray(captured.observed) || captured.observed.length > 257) return refuse('surface change input must be bounded exact data')

@@ -28,6 +28,7 @@ import {
     type SelectBootstrapStateRootInput,
     type StateResult,
 } from './state.js'
+import { refusalOutcome as refused } from '../refusal.js'
 
 const DRAFT_BYTE_LIMIT = 262_144
 const SHA256 = /^[a-f0-9]{64}$/
@@ -256,11 +257,6 @@ function questionNotices(diagnostics: readonly Diagnostic[]): Diagnostic[] {
 
 function diagnostic(code: string, message: string, target?: string): Diagnostic {
     return { severity: 'error', code, message, ...(target === undefined ? {} : { target }) }
-}
-
-function refused(code: string, message: string, target?: string): InitApplicationOutcome {
-    return { kind: 'refusal', status: 2, artifact: null, destination: null,
-        diagnostics: [diagnostic(code, message, target)], result: null }
 }
 
 export function unsupportedInitPlatformOutcome(platform: string): InitApplicationOutcome {

@@ -6,6 +6,7 @@ import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject, R
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
 import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
+import { exactKeys } from '../exact-keys.js'
 
 const GUIDE_BYTE_LIMIT = 65_536
 const GUIDE_COUNT_LIMIT = 256
@@ -139,11 +140,6 @@ export type ProjectionPlanResult =
 
 function isObject(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function exactKeys(value: JsonSnapshotObject, required: readonly string[], optional: readonly string[] = []): boolean {
-    const allowed = new Set([...required, ...optional])
-    return required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => allowed.has(key))
 }
 
 function capturedValue<T>(value: T): T | undefined {

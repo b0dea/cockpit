@@ -6,6 +6,7 @@ import { readBoundedInput, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js
 import type { Diagnostic } from '../diagnostics.js'
 import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from './registry.js'
 import { renderResolvedRegistryShell } from './render-shell.js'
+import { refusalOutcome as refusal } from '../refusal.js'
 
 const FORMAT_VERSION = '1'
 // The release workflow stamps the exact commit; every source build, including a tarball packed
@@ -64,17 +65,6 @@ export interface RefusedRegistryResolveOutcome extends OutcomeBase {
 }
 
 export type RegistryResolveOutcome = CompleteRegistryResolveOutcome | RefusedRegistryResolveOutcome
-
-function refusal(code: string, message: string, target?: string, fix?: string): RefusedRegistryResolveOutcome {
-    return {
-        kind: 'refusal',
-        artifact: null,
-        destination: null,
-        diagnostics: [{ severity: 'error', code, message, target, fix }],
-        result: null,
-        status: 2,
-    }
-}
 
 async function sourceRevision(injected?: string): Promise<string | Readonly<{ cause?: string }>> {
     if (injected !== undefined) return injected

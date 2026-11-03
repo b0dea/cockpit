@@ -4,6 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
 import { errorCause } from './contract.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
+import { exactKeys } from '../exact-keys.js'
 
 // A guard runs inside the agent's hook with an environment the agent controls, so the tools it
 // observes with are found on this fixed search path rather than the inherited PATH.
@@ -24,12 +25,6 @@ export interface ResolvedExecutable {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
-
-function exactKeys(value: object, expected: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const keys = [...expected].sort()
-    return actual.length === keys.length && actual.every((key, index) => key === keys[index])
-}
 
 export function resolvedExecutable(value: unknown): ResolvedExecutable | undefined {
     try {

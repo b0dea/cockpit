@@ -48,6 +48,7 @@ import {
 import type { ResolvedExecutable } from './executable.js'
 import { resolvedDockerExecutable, resolvedExecutable } from './executable.js'
 import { readState, type StateAddress, type StateRecord } from './state.js'
+import { exactKeys } from '../exact-keys.js'
 
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const COCKPIT_ID = /^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/
@@ -329,12 +330,6 @@ function diagnostic(code: EnvironmentCode, message: string, target: string, fix?
 
 function refuse(code: EnvironmentCode, message: string, target: string, fix?: string): ReclaimResult {
     return { kind: 'refusal', diagnostics: [diagnostic(code, message, target, fix)] }
-}
-
-function exactKeys(value: object, keys: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const expected = [...keys].sort()
-    return actual.length === expected.length && actual.every((key, index) => key === expected[index])
 }
 
 function lexical(left: string, right: string): number {

@@ -2,6 +2,7 @@ import { dirname, isAbsolute, normalize } from 'node:path'
 import { isProxy } from 'node:util/types'
 
 import { isEntrypointKind, type EntrypointKind } from '../entrypoint-kinds.js'
+import { exactKeys } from '../exact-keys.js'
 
 export interface Diagnostic<Code extends string = string> {
     severity: 'error' | 'warning' | 'info'
@@ -615,12 +616,6 @@ export type LifecyclePlan = Readonly<{
     }>[]
     diagnostics: readonly EnvironmentDiagnostic[]
 }>
-
-function exactKeys(value: object, names: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const expected = [...names].sort()
-    return actual.length === expected.length && actual.every((name, index) => name === expected[index])
-}
 
 function stringTuple(value: unknown): value is readonly [string, ...string[]] {
     return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string' && !item.includes('\0'))

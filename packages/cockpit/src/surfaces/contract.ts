@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
+import { exactKeys } from '../exact-keys.js'
 
 export { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 
@@ -68,12 +69,6 @@ export function safeSurfacePath(value: unknown): value is string {
     return typeof value === 'string' && value.length > 0 && value.length <= 4096 && !value.startsWith('/')
         && !/^[a-z]:[/\\]/i.test(value) && !/[\\\x00-\x1f\x7f]/.test(value)
         && value.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !reservedPathSegment(part))
-}
-
-function exactKeys(value: JsonSnapshotObject, expected: readonly string[]): boolean {
-    const keys = Object.keys(value).sort()
-    const sortedExpected = [...expected].sort()
-    return keys.length === sortedExpected.length && keys.every((key, index) => key === sortedExpected[index])
 }
 
 function isObject(value: JsonSnapshot | undefined): value is JsonSnapshotObject {

@@ -55,6 +55,7 @@ import type { StateNamespace } from './state.js'
 import type { LocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
 import { composeProcessEnvironment } from './compose-environment.js'
+import { exactOwnKeys } from '../exact-keys.js'
 
 const OWNER = 'runtime-planning'
 
@@ -258,17 +259,9 @@ export function observedVersionCore(value: string): string | undefined {
     return value.match(OBSERVED_VERSION)?.[1]
 }
 
-function exactKeys(value: object, keys: readonly string[]): boolean {
-    const actual = Reflect.ownKeys(Object.getOwnPropertyDescriptors(value))
-    if (actual.some((key) => typeof key !== 'string')) return false
-    actual.sort()
-    const expected = [...keys].sort()
-    return actual.length === expected.length && actual.every((key, index) => key === expected[index])
-}
-
 function captureOwnValues(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
     try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || !exactKeys(value, keys)) return undefined
+        if (value === null || typeof value !== 'object' || Array.isArray(value) || !exactOwnKeys(value, keys)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(value)
         const captured: Record<string, unknown> = {}
         for (const key of keys) {
@@ -288,9 +281,9 @@ function runtimeAdapterInput(value: unknown): RuntimeAdapterInput | undefined {
     const ownedKeys = [...baseKeys, 'stackId', 'coldStartLimitMillis', 'expectedMountSources']
     if (value === null || typeof value !== 'object' || Array.isArray(value)
         || !([baseKeys, [...baseKeys, 'activeProfiles'], ownedKeys, [...ownedKeys, 'activeProfiles']]
-            .some((keys) => exactKeys(value, keys)))) return undefined
+            .some((keys) => exactOwnKeys(value, keys)))) return undefined
     const input = value as Partial<RuntimeAdapterInput>
-    if (input.runtime === null || typeof input.runtime !== 'object' || !exactKeys(input.runtime, ['name', 'version', 'executableSha256'])
+    if (input.runtime === null || typeof input.runtime !== 'object' || !exactOwnKeys(input.runtime, ['name', 'version', 'executableSha256'])
         || Object.values(input.runtime).some((part) => typeof part !== 'string')
         || !isResolvedDockerExecutable(input.executable)
         || !Array.isArray(input.composeFiles) || !Array.isArray(input.ports)
@@ -311,7 +304,7 @@ function runtimeAdapterInput(value: unknown): RuntimeAdapterInput | undefined {
             || input.activeProfiles.length > 64 || new Set(input.activeProfiles).size !== input.activeProfiles.length
             || input.activeProfiles.some((profile) => typeof profile !== 'string' || !SERVICE_ID.test(profile)))
         || input.composeFiles.some((artifact) => artifact === null || typeof artifact !== 'object'
-            || !exactKeys(artifact, ['reference', 'canonicalPath', 'source', 'sha256'])
+            || !exactOwnKeys(artifact, ['reference', 'canonicalPath', 'source', 'sha256'])
             || Object.values(artifact).some((part) => typeof part !== 'string'))) return undefined
     return {
         ...input,
@@ -401,7 +394,7 @@ export function issueMachineFloorAuthority(input: {
     readonly checkout: SetupCheckoutProjection
 }): Readonly<{ authority: MachineFloorAuthority; checkout: ConsumedSetupCheckoutObservation }> | undefined {
     if (input === null || typeof input !== 'object' || Array.isArray(input)
-        || !exactKeys(input, ['configuration', 'checkout'])) return undefined
+        || !exactOwnKeys(input, ['configuration', 'checkout'])) return undefined
     const configurationDescriptor = Object.getOwnPropertyDescriptor(input, 'configuration')
     const checkoutDescriptor = Object.getOwnPropertyDescriptor(input, 'checkout')
     if (!configurationDescriptor || !('value' in configurationDescriptor)
@@ -677,7 +670,7 @@ export async function observeDockerRuntime(
     try {
         const captured = snapshotJson(rawInput)
         if (!captured || typeof captured !== 'object' || Array.isArray(captured)
-            || !exactKeys(captured, ['executable', 'cwd', 'env', 'timeoutMs'])) {
+            || !exactOwnKeys(captured, ['executable', 'cwd', 'env', 'timeoutMs'])) {
             return runtimeVersionUnavailable('Docker runtime version input is malformed')
         }
         const candidate = captured as unknown as DockerRuntimeObservationInput
@@ -767,7 +760,7 @@ export async function observeDockerRuntime(
 function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | undefined {
     try {
         if (value !== null && typeof value === 'object' && !Array.isArray(value)
-            && exactKeys(value, ['runtimePlan', 'diskExecutable', 'timeoutMs', 'authority'])) {
+            && exactOwnKeys(value, ['runtimePlan', 'diskExecutable', 'timeoutMs', 'authority'])) {
             const runtimeDescriptor = Object.getOwnPropertyDescriptor(value, 'runtimePlan')
             if (!runtimeDescriptor || !('value' in runtimeDescriptor)) return undefined
             const runtime = issuedRuntimePlans.get(runtimeDescriptor.value as object)
@@ -795,7 +788,7 @@ function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | und
         if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)
             || !([['runtimeExecutable', 'diskExecutable', 'cwd', 'env', 'timeoutMs'],
                 ['runtimeExecutable', 'diskExecutable', 'cwd', 'env', 'timeoutMs', 'authority']]
-                .some((keys) => exactKeys(value as object, keys)))) return undefined
+                .some((keys) => exactOwnKeys(value as object, keys)))) return undefined
         const candidate = snapshot as unknown as Extract<MachineFloorPlanInput, { runtimeExecutable: ResolvedExecutable }>
         const runtimeExecutable = resolvedDockerExecutable(candidate.runtimeExecutable)
         const diskExecutable = resolvedExecutable(candidate.diskExecutable)

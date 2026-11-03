@@ -20,6 +20,7 @@ import {
     type SurfaceTarget,
 } from './contract.js'
 import { GUARD_SURFACE_TARGETS, harnessFact, type GuardSurfaceTarget } from './harness-registry.js'
+import { exactKeys } from '../exact-keys.js'
 
 /** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
 export const SHIPPED_SETUP_SKILL = 'cockpit-setup' as const
@@ -142,12 +143,6 @@ const TARGET_PATH_PREFIX: Readonly<Record<SurfaceTarget, string>> = Object.freez
     SURFACE_TARGETS.map(target => [target, harnessFact(target).outputs.skills]),
 )) as Readonly<Record<SurfaceTarget, string>>
 
-function exact(value: JsonSnapshotObject, expected: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const wanted = [...expected].sort()
-    return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
-}
-
 function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -169,7 +164,7 @@ function refusal(code: string, message: string, target?: string): Extract<SkillC
 const PROCEDURE_ASSET = /^skills\/procedures\/[a-z0-9][a-z0-9-]*\.md$/
 
 function authenticatedAsset(value: JsonSnapshot | undefined, path: string | RegExp): value is JsonSnapshotObject & { path: string; bytes: string; sha256: string } {
-    return object(value) && exact(value, ['path', 'bytes', 'sha256']) && typeof value.path === 'string'
+    return object(value) && exactKeys(value, ['path', 'bytes', 'sha256']) && typeof value.path === 'string'
         && (typeof path === 'string' ? value.path === path : path.test(value.path))
         && typeof value.bytes === 'string' && Buffer.byteLength(value.bytes) <= 65_536
         && typeof value.sha256 === 'string' && createHash('sha256').update(value.bytes).digest('hex') === value.sha256
@@ -177,7 +172,7 @@ function authenticatedAsset(value: JsonSnapshot | undefined, path: string | RegE
 
 function captureInput(input: unknown): CapturedInput | undefined {
     const captured = snapshotJson(input)
-    if (!object(captured) || !exact(captured, ['sources', 'collection', 'procedures',
+    if (!object(captured) || !exactKeys(captured, ['sources', 'collection', 'procedures',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])]) || !Array.isArray(captured.sources)
         || !authenticatedAsset(captured.collection, 'skills/collection.json')
         || !Array.isArray(captured.procedures) || captured.procedures.length === 0 || captured.procedures.length > 16
@@ -189,9 +184,9 @@ function captureInput(input: unknown): CapturedInput | undefined {
         const json = parseDocument(captured.collection.bytes, { uniqueKeys: true })
         if (json.errors.length > 0 || json.warnings.length > 0) return undefined
     } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
-    if (!object(authority) || !exact(authority, ['skills', 'metric', 'caps'])
+    if (!object(authority) || !exactKeys(authority, ['skills', 'metric', 'caps'])
         || !Array.isArray(authority.skills) || !sameStrings(authority.skills, ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']) || authority.metric !== 'frontmatter_bytes'
-        || !object(authority.caps) || !exact(authority.caps, SURFACE_TARGETS)) return undefined
+        || !object(authority.caps) || !exactKeys(authority.caps, SURFACE_TARGETS)) return undefined
     const caps = authority.caps
     const shippedSkills = authority.skills
     if (SURFACE_TARGETS.some(target => !Number.isSafeInteger(caps[target]) || Number(caps[target]) < 1
@@ -208,7 +203,7 @@ function captureInput(input: unknown): CapturedInput | undefined {
 /** A procedure is read on demand and uncapped, and says something. */
 function pulledProcedure(bytes: string): boolean {
     const parsed = parseEntryPoint(bytes)
-    return !!parsed && exact(parsed.frontmatter, ['loading', 'budget']) && parsed.frontmatter.loading === 'pull'
+    return !!parsed && exactKeys(parsed.frontmatter, ['loading', 'budget']) && parsed.frontmatter.loading === 'pull'
         && parsed.frontmatter.budget === 'uncapped' && parsed.body.length > 0
 }
 
@@ -216,7 +211,7 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
     // Rendered output carries every target's copy of each procedure, so it outgrows the generic
     // JSON limit with one extra skill; bundleSurfaceFiles below enforces the real output cap.
     const captured = snapshotGeneratedJson(input)
-    if (!object(captured) || !exact(captured, ['sources', 'collection', 'procedures', 'generated', 'targets',
+    if (!object(captured) || !exactKeys(captured, ['sources', 'collection', 'procedures', 'generated', 'targets',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])])) return undefined
     const targets = Array.isArray(captured.targets) && captured.targets.length > 0
         && captured.targets.every(target => SURFACE_TARGETS.includes(target as SurfaceTarget))
@@ -226,13 +221,13 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
     const base = captureInput({ sources: captured.sources, collection: captured.collection, procedures: captured.procedures,
         ...(Object.hasOwn(captured, 'declaredExtensions') ? { declaredExtensions: captured.declaredExtensions } : {}) })
     const generated = captured.generated
-    if (!base || !object(generated) || !exact(generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', 'warnings'])
+    if (!base || !object(generated) || !exactKeys(generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', 'warnings'])
         || generated.kind !== 'complete' || generated.status !== 0 || !Array.isArray(generated.diagnostics) || generated.diagnostics.length !== 0
-        || !object(generated.mechanism) || !exact(generated.mechanism, ['package', 'version', 'role'])
+        || !object(generated.mechanism) || !exactKeys(generated.mechanism, ['package', 'version', 'role'])
         || generated.mechanism.package !== 'rulesync' || generated.mechanism.version !== '43.1.2' || generated.mechanism.role !== 'spelling'
         || !Array.isArray(generated.files) || !Array.isArray(generated.warnings)
         || !generated.warnings.every((warning): warning is SurfaceGenerationWarning => object(warning)
-            && exact(warning, ['severity', 'code', 'target', 'path', 'message']) && warning.severity === 'warning'
+            && exactKeys(warning, ['severity', 'code', 'target', 'path', 'message']) && warning.severity === 'warning'
             && warning.code === 'SURFACE_GENERATOR_TRUST_WARNING' && SURFACE_TARGETS.includes(warning.target as SurfaceTarget)
             && warning.path === '.claude/settings.json' && typeof warning.message === 'string' && warning.message.length > 0)
         || !bundleSurfaceFiles(generated.files as unknown as readonly RenderedSurfaceFile[])) return undefined
@@ -255,7 +250,7 @@ function parseEntryPoint(bytes: string): { frontmatter: JsonSnapshotObject; body
 }
 
 function targetEquivalences(value: JsonSnapshot | undefined): Readonly<Record<GuardSurfaceTarget, readonly string[]>> | undefined {
-    if (!object(value) || !exact(value, GUARD_SURFACE_TARGETS)) return undefined
+    if (!object(value) || !exactKeys(value, GUARD_SURFACE_TARGETS)) return undefined
     const claudecode = strings(value.claudecode)
     const codexcli = strings(value.codexcli)
     const opencode = strings(value.opencode)
@@ -272,14 +267,14 @@ function targetToolsMatch(frontmatter: JsonSnapshotObject, equivalences: Readonl
     const claude = frontmatter.claudecode
     const opencode = frontmatter.opencode
     const codex = frontmatter.codexcli
-    if (!object(claude) || !exact(claude, ['allowed-tools']) || !sameStrings(claude['allowed-tools'], equivalences.claudecode)
-        || !object(opencode) || !exact(opencode, ['allowed-tools']) || !sameStrings(opencode['allowed-tools'], equivalences.opencode)
-        || !object(codex) || !exact(codex, ['dependencies'])) return false
+    if (!object(claude) || !exactKeys(claude, ['allowed-tools']) || !sameStrings(claude['allowed-tools'], equivalences.claudecode)
+        || !object(opencode) || !exactKeys(opencode, ['allowed-tools']) || !sameStrings(opencode['allowed-tools'], equivalences.opencode)
+        || !object(codex) || !exactKeys(codex, ['dependencies'])) return false
     const dependencies = codex.dependencies
-    if (!object(dependencies) || !exact(dependencies, ['tools']) || !Array.isArray(dependencies.tools)
+    if (!object(dependencies) || !exactKeys(dependencies, ['tools']) || !Array.isArray(dependencies.tools)
         || dependencies.tools.length !== 1 || !object(dependencies.tools[0])) return false
     const executable = dependencies.tools[0]
-    return exact(executable, ['type', 'value', 'description']) && executable.type === 'executable'
+    return exactKeys(executable, ['type', 'value', 'description']) && executable.type === 'executable'
         && executable.value === 'cockpit' && typeof executable.description === 'string' && executable.description.length > 0
 }
 
@@ -287,11 +282,11 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
     const parsed = parseEntryPoint(source.bytes)
     if (!parsed) return refusal('SKILL_FRONTMATTER_INVALID', 'skill frontmatter is missing, malformed, aliased, duplicated, or unbounded', source.path)
     const { frontmatter, body } = parsed
-    if (!exact(frontmatter, ['name', 'description', 'targets', 'cockpit', 'claudecode', 'codexcli', 'opencode'])) {
+    if (!exactKeys(frontmatter, ['name', 'description', 'targets', 'cockpit', 'claudecode', 'codexcli', 'opencode'])) {
         return refusal('SKILL_FRONTMATTER_INVALID', 'skill frontmatter contains an unexpected or missing field', source.path)
     }
     const contract = frontmatter.cockpit
-    if (!object(contract) || !exact(contract, [
+    if (!object(contract) || !exactKeys(contract, [
         'commands', 'changes', 'entry-point-lines', 'non-goals', 'procedure', 'review', 'tool-equivalences', 'tools',
     ])) return refusal('SKILL_CONTRACT_INVALID', 'cockpit skill metadata is incomplete', source.path)
     if (typeof frontmatter.name !== 'string' || !NAME.test(frontmatter.name)
@@ -310,7 +305,7 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
     if (!tools || !declaredCommands || !changes || !nonGoals || !equivalences || typeof contract.procedure !== 'string'
         || !/^procedures\/[a-z0-9][a-z0-9-]*\.md$/.test(contract.procedure)
         || !Number.isSafeInteger(entryPointLines) || Number(entryPointLines) < 1 || Number(entryPointLines) > ENTRY_POINT_MAX_LINES
-        || !object(review) || !exact(review, ['mechanical', 'judgment'])
+        || !object(review) || !exactKeys(review, ['mechanical', 'judgment'])
         || typeof review.mechanical !== 'string' || review.mechanical.length === 0
         || review.judgment !== 'accepted' && review.judgment !== 'pending') {
         return refusal('SKILL_CONTRACT_INVALID', 'skill tools, effects, procedure, review, or line cap are invalid', source.path)

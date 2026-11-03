@@ -261,6 +261,17 @@ export function diagnosticInventoryFromSources(sources: ReadonlyMap<string, stri
                     if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) return initializer.parameters
                 }
             }
+            // A shared constructor imported from another module, such as refusalOutcome, states its fix the same way.
+            for (const statement of source.statements) {
+                if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+                const named = statement.importClause?.namedBindings
+                const element = named && ts.isNamedImports(named) ? named.elements.find(item => item.name.text === callee.text) : undefined
+                const target = element && resolveImport(path, statement.moduleSpecifier.text)
+                const declaration = target === undefined ? undefined : parse(target, sources.get(target)!).statements.find(
+                    (candidate): candidate is ts.FunctionDeclaration => ts.isFunctionDeclaration(candidate)
+                        && candidate.name?.text === (element!.propertyName ?? element!.name).text)
+                if (declaration) return declaration.parameters
+            }
             return undefined
         }
         const callFixes = (call: ts.CallExpression) => {

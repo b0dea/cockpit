@@ -18,6 +18,8 @@ import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPat
 import { reservedPathSegment } from '../surfaces/contract.js'
 import { isInspectedBootstrapOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import type { SurfaceChange } from '../surfaces/sync.js'
+import { exactKeys } from '../exact-keys.js'
+import { refusalOutcome as refuse } from '../refusal.js'
 
 export interface PublicationAdapters {
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
@@ -105,19 +107,6 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
     } catch {
         // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
-    }
-}
-
-function exactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
-    const keys = Object.keys(record).sort()
-    const wanted = [...expected].sort()
-    return keys.length === wanted.length && keys.every((key, index) => key === wanted[index])
-}
-
-function refuse(code: string, message: string, target?: string, fix?: string): PublicationRefusal {
-    return {
-        kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: [{ severity: 'error' as const, code, message, target, fix }],
     }
 }
 

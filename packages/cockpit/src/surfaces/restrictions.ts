@@ -5,6 +5,7 @@ import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../env
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
 import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
+import { exactKeys } from '../exact-keys.js'
 
 export const RESTRICTION_OUTPUT_LIMITS = Object.freeze({
     scalarBytes: 65_536,
@@ -162,12 +163,6 @@ const MEASURED = Object.freeze({
 
 function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function exactKeys(value: JsonSnapshotObject, expected: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const wanted = [...expected].sort()
-    return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
 }
 
 function frozen<T>(value: T): T | undefined {

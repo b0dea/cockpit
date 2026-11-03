@@ -123,6 +123,8 @@ import {
 import { TESTING_GUIDE_REGISTRY, createGateRegistry, renderTierGuide, type GateRegistry } from '../testing/gates.js'
 import { NATIVE_HOOK_COST_SCRIPT, projectNativeHooks, type NativeHookEntry, type NativeHookPolicy } from '../testing/hooks.js'
 import { observeGeneratedCheckoutIdentity, revalidateGeneratedCheckoutIdentity, type GeneratedCheckoutIdentity } from './setup-observation.js'
+import { exactKeys } from '../exact-keys.js'
+import { refusalOutcome as refuse } from '../refusal.js'
 
 const OWNER = 'generated-environment-application'
 
@@ -646,12 +648,6 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
     }
 }
 
-function exactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
-    const keys = Object.keys(record).sort()
-    const wanted = [...expected].sort()
-    return keys.length === wanted.length && keys.every((key, index) => key === wanted[index])
-}
-
 function guideLines(bytes: string): number {
     return bytes.trimEnd().split('\n').length
 }
@@ -708,13 +704,6 @@ function siblingGuideMissing(slug: string, guide: string, sourcePath: string): R
 function overrideChangedRefusal(finding: SurfaceUpgradeFinding): RefusalOutcome {
     return { kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
         diagnostics: [overrideChanged(finding, 'error')] }
-}
-
-function refuse(code: string, message: string, target?: string, fix?: string): RefusalOutcome {
-    return {
-        kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: [{ severity: 'error' as const, code, message, target, fix }],
-    }
 }
 
 function complete(

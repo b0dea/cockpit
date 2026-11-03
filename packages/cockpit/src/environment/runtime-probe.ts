@@ -16,6 +16,7 @@ import { readState, type StateRecord, type StateResult } from './state.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import { isVersionFloor, issueRuntimeMeasurementProbeAuthority, observeDockerRuntime, versionAtLeast } from './runtime.js'
 import { PROBE_OWNER_LABEL, isProbeOwner } from './runtime-probe-residue.js'
+import { exactOwnKeys } from '../exact-keys.js'
 
 export interface RuntimeProbeRequest {
     readonly executable: ResolvedExecutable
@@ -87,16 +88,6 @@ const CLEANUP_RESERVE_MS = 90_000
 // The candidate's data volume: its Compose key, which `resettable_volumes` names.
 const PROBE_VOLUME_KEY = 'probe_data'
 
-function exactKeys(value: object, expected: readonly string[]): boolean {
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    const actual = Reflect.ownKeys(descriptors)
-    if (actual.some((key) => typeof key !== 'string')) return false
-    if (actual.some((key) => !('value' in descriptors[key as string]!))) return false
-    actual.sort()
-    const keys = [...expected].sort()
-    return actual.length === keys.length && actual.every((key, index) => key === keys[index])
-}
-
 function validDate(value: string): boolean {
     const match = DATE.exec(value)
     if (match === null) return false
@@ -128,7 +119,7 @@ function unavailable(
 function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value)
-            || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'owner', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
+            || !exactOwnKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'owner', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
         const input = value as Partial<RuntimeProbeRequest>
         if (!isResolvedDockerExecutable(input.executable)
             || !isResolvedGitExecutable(input.gitExecutable)
@@ -142,11 +133,11 @@ function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
             || input.measuredOn !== new Date().toISOString().slice(0, 10)
             || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs! < 1 || input.timeoutMs! > MAX_TIMEOUT_MS
             || input.image === null || typeof input.image !== 'object' || Array.isArray(input.image)
-            || !exactKeys(input.image, ['reference', 'id']) || typeof input.image.reference !== 'string'
+            || !exactOwnKeys(input.image, ['reference', 'id']) || typeof input.image.reference !== 'string'
             || typeof input.image.id !== 'string' || !IMAGE_ID.test(input.image.id)
             || input.image.reference !== input.image.id
             || input.installedModule === null || typeof input.installedModule !== 'object' || Array.isArray(input.installedModule)
-            || !exactKeys(input.installedModule, ['canonicalPath', 'sha256'])
+            || !exactOwnKeys(input.installedModule, ['canonicalPath', 'sha256'])
             || typeof input.installedModule.canonicalPath !== 'string' || !isAbsolute(input.installedModule.canonicalPath)
             || normalize(input.installedModule.canonicalPath) !== input.installedModule.canonicalPath
             || typeof input.installedModule.sha256 !== 'string' || !SHA256.test(input.installedModule.sha256)) return undefined

@@ -17,6 +17,7 @@ import {
 } from './render.js'
 import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from './derive.js'
 import { productPackageManifest } from '../team-metadata.js'
+import { refusalOutcome as refusal } from '../refusal.js'
 
 /**
  * The directory holding the repositories, and optionally the direct children to observe. A cockpit
@@ -145,17 +146,6 @@ const SCHEMA_ISSUES_SHOWN = 10
 
 function issueSummary(error: { readonly issues: readonly { path: readonly PropertyKey[]; message: string }[] }): string {
     return schemaIssueSummary(error.issues, SCHEMA_ISSUES_SHOWN)
-}
-
-function refusal(code: string, message: string, target?: string, fix?: string): RefusedDocumentOutcome {
-    return {
-        kind: 'refusal',
-        artifact: null,
-        destination: null,
-        diagnostics: [{ severity: 'error', code, message, target, fix }],
-        result: null,
-        status: 2,
-    }
 }
 
 function estateRefusal(message: string, target = 'estate', fix?: string): EstateClassificationOutcome {

@@ -18,6 +18,7 @@ import {
 import { classifyResolvedRuntimeLiterals } from './runtime.js'
 import { isSensitiveField, redactSensitiveText } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
+import { exactKeys } from '../exact-keys.js'
 
 const SHA256 = /^[a-f0-9]{64}$/
 const STACK_ID = /^stack:[a-f0-9]{64}$/
@@ -56,12 +57,6 @@ function ownedObject<Value extends object>(value: unknown): Value | undefined {
     return snapshot !== undefined && snapshot !== null && typeof snapshot === 'object' && !Array.isArray(snapshot)
         ? snapshot as unknown as Value
         : undefined
-}
-
-function exactKeys(value: object, expected: readonly string[]): boolean {
-    const actual = Object.keys(value).sort()
-    const keys = [...expected].sort()
-    return actual.length === keys.length && actual.every((key, index) => key === keys[index])
 }
 
 function sanitize(value: JsonValue, key = ''): JsonValue {

@@ -18,6 +18,7 @@ import {
     type SurfaceDesiredEntry,
     type SurfaceDiagnostic,
 } from './ownership.js'
+import { exactKeys } from '../exact-keys.js'
 
 export type SurfaceInputEvidence =
     | Readonly<{ kind: 'guide'; root: string; path: string; sha256: string; identity: string }>
@@ -96,12 +97,6 @@ function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function exact(value: JsonSnapshotObject, required: readonly string[]): boolean {
-    const keys = Object.keys(value).sort()
-    const expected = [...required].sort()
-    return keys.length === expected.length && keys.every((key, index) => key === expected[index])
-}
-
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
 
 export function surfaceModelSha256(value: unknown): string | undefined {
@@ -120,12 +115,12 @@ function validFileFields(value: JsonSnapshot | undefined): value is JsonSnapshot
 }
 
 function validFile(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
-    return object(value) && exact(value, ['path', 'bytes', 'sha256']) && validFileFields(value)
+    return object(value) && exactKeys(value, ['path', 'bytes', 'sha256']) && validFileFields(value)
 }
 
 function validEvidence(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return object(value) && (value.kind === 'guide' || value.kind === 'mcp')
-        && exact(value, ['kind', 'root', 'path', 'sha256', 'identity'])
+        && exactKeys(value, ['kind', 'root', 'path', 'sha256', 'identity'])
         && typeof value.root === 'string' && isAbsolute(value.root) && typeof value.path === 'string' && value.path.length > 0
         && typeof value.identity === 'string' && value.identity.length > 0
         && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
@@ -216,7 +211,7 @@ function customReceipts(
     const contributions: Array<{ receipt: CustomSurfaceReceipt; file: CustomSurfaceReceipt['files'][number] }> = []
     const evidence: SurfaceInputEvidence[] = []
     for (const candidate of value) {
-        if (!object(candidate) || !exact(candidate, ['harness', 'feature', 'state', 'measuredOn', 'module', 'export', 'sourceSha256', 'resultSha256', 'files'])
+        if (!object(candidate) || !exactKeys(candidate, ['harness', 'feature', 'state', 'measuredOn', 'module', 'export', 'sourceSha256', 'resultSha256', 'files'])
             || typeof candidate.harness !== 'string' || typeof candidate.feature !== 'string'
             || candidate.state !== 'enforced' && candidate.state !== 'instructed' || typeof candidate.measuredOn !== 'string' || !DATE.test(candidate.measuredOn)
             || typeof candidate.module !== 'string' || typeof candidate.export !== 'string'
@@ -229,7 +224,7 @@ function customReceipts(
             || declaration.mechanism.module !== candidate.module || declaration.mechanism.export !== candidate.export) return undefined
         const files: CustomSurfaceReceipt['files'][number][] = []
         for (const file of candidate.files) {
-            if (!object(file) || !exact(file, ['path', 'bytes', 'sha256', 'scope']) || !validFileFields(file)
+            if (!object(file) || !exactKeys(file, ['path', 'bytes', 'sha256', 'scope']) || !validFileFields(file)
                 || file.scope !== 'always' && file.scope !== 'scoped') return undefined
             files.push(file as unknown as CustomSurfaceReceipt['files'][number])
         }
@@ -246,11 +241,11 @@ function customReceipts(
 }
 
 function nativeFragments(value: JsonSnapshot | undefined, expectedDigest: string, targets: ReadonlySet<string>): readonly NativeSurfaceFragment[] | undefined {
-    if (!object(value) || !exact(value, ['modelSha256', 'fragments']) || value.modelSha256 !== expectedDigest || !Array.isArray(value.fragments)) return undefined
+    if (!object(value) || !exactKeys(value, ['modelSha256', 'fragments']) || value.modelSha256 !== expectedDigest || !Array.isArray(value.fragments)) return undefined
     const result: NativeSurfaceFragment[] = []
     const seen = new Set<string>()
     for (const fragment of value.fragments) {
-        if (!object(fragment) || !exact(fragment, ['target', 'path', 'baseSha256', 'bytes', 'sha256'])
+        if (!object(fragment) || !exactKeys(fragment, ['target', 'path', 'baseSha256', 'bytes', 'sha256'])
             || typeof fragment.target !== 'string' || !BUILT_INS.has(fragment.target as SurfaceTarget) || !targets.has(fragment.target)
             || typeof fragment.baseSha256 !== 'string' || !SHA256.test(fragment.baseSha256)
             || !validFileFields(fragment) || seen.has(fragment.target)) return undefined
@@ -294,14 +289,14 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
 export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const captured = snapshotGeneratedJson(input)
     const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'skillReferences', 'browserRunner', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
-    if (!object(captured) || !exact(captured, required) || !Array.isArray(captured.configuredHarnesses)
+    if (!object(captured) || !exactKeys(captured, required) || !Array.isArray(captured.configuredHarnesses)
         || !Array.isArray(captured.customHarnesses) || !Array.isArray(captured.sourceEvidence)
         || !object(captured.merge) || captured.merge.kind !== 'complete' || !Array.isArray(captured.merge.surfaces)
         || !Array.isArray(captured.merge.overrides) || !Array.isArray(captured.merge.findings)
-        || !object(captured.generated) || !exact(captured.generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', ...(Object.hasOwn(captured.generated, 'warnings') ? ['warnings'] : [])])
+        || !object(captured.generated) || !exactKeys(captured.generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', ...(Object.hasOwn(captured.generated, 'warnings') ? ['warnings'] : [])])
         || captured.generated.kind !== 'complete' || captured.generated.status !== 0 || !Array.isArray(captured.generated.diagnostics)
         || captured.generated.diagnostics.length !== 0 || !object(captured.generated.mechanism)
-        || !exact(captured.generated.mechanism, ['package', 'version', 'role']) || captured.generated.mechanism.package !== 'rulesync'
+        || !exactKeys(captured.generated.mechanism, ['package', 'version', 'role']) || captured.generated.mechanism.package !== 'rulesync'
         || captured.generated.mechanism.version !== '43.1.2' || captured.generated.mechanism.role !== 'spelling'
         || !Array.isArray(captured.generated.files)
         || !object(captured.projection) || captured.projection.kind !== 'complete' || !Array.isArray(captured.projection.guides)
@@ -314,7 +309,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const generatedFiles = captured.generated.files
     let warningBytes = 0
     if (!Array.isArray(warnings) || warnings.length > 16 || warnings.some(warning => {
-        if (!object(warning) || !exact(warning, ['severity', 'code', 'target', 'path', 'message'])
+        if (!object(warning) || !exactKeys(warning, ['severity', 'code', 'target', 'path', 'message'])
             || warning.severity !== 'warning' || warning.code !== 'SURFACE_GENERATOR_TRUST_WARNING'
             || warning.target !== 'claudecode' || warning.path !== '.claude/settings.json'
             || typeof warning.message !== 'string' || warning.message.length === 0
@@ -339,7 +334,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const custom = customReceipts(parsedHarnesses.data, captured.customReceipts)
     if (!custom) return refuse('SURFACE_INPUT_INVALID', 'custom capability receipt is missing or does not match its authenticated declaration')
     const browser = captured.browser === null ? null : object(captured.browser)
-        && exact(captured.browser, ['rows', 'files', 'mcp', 'clients', 'graderBrowserAccess'])
+        && exactKeys(captured.browser, ['rows', 'files', 'mcp', 'clients', 'graderBrowserAccess'])
         && captured.browser.graderBrowserAccess === 'retained' && Array.isArray(captured.browser.rows)
         && Array.isArray(captured.browser.files) && Array.isArray(captured.browser.clients)
         && object(captured.browser.mcp) ? captured.browser : undefined
@@ -349,7 +344,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         return refuse('SURFACE_INPUT_INVALID', 'browser projection and authenticated reference must be paired bounded inputs')
     }
     const skillReferences = Array.isArray(captured.skillReferences) && captured.skillReferences.length <= 16
-        && captured.skillReferences.every(row => object(row) && exact(row, ['skill', 'path', 'bytes'])
+        && captured.skillReferences.every(row => object(row) && exactKeys(row, ['skill', 'path', 'bytes'])
             && typeof row.skill === 'string' && SKILL_NAME.test(row.skill) && typeof row.path === 'string' && SKILL_REFERENCE_PATH.test(row.path)
             && typeof row.bytes === 'string' && Buffer.byteLength(row.bytes) > 0 && Buffer.byteLength(row.bytes) <= 65_536)
         && new Set(captured.skillReferences.map(row => JSON.stringify([(row as JsonSnapshotObject).skill, (row as JsonSnapshotObject).path]))).size === captured.skillReferences.length
@@ -375,8 +370,8 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         }
     }
     const testing = captured.testing === null ? null : object(captured.testing)
-        && exact(captured.testing, ['tierGuide', 'nativeHooks']) && object(captured.testing.tierGuide)
-        && exact(captured.testing.tierGuide, ['kind', 'bytes', 'lines', 'costs'])
+        && exactKeys(captured.testing, ['tierGuide', 'nativeHooks']) && object(captured.testing.tierGuide)
+        && exactKeys(captured.testing.tierGuide, ['kind', 'bytes', 'lines', 'costs'])
         && captured.testing.tierGuide.kind === 'complete' && typeof captured.testing.tierGuide.bytes === 'string'
         && Buffer.byteLength(captured.testing.tierGuide.bytes) <= 65_536 && object(captured.testing.nativeHooks)
         ? captured.testing : undefined
@@ -387,7 +382,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     if (tierGuide && (typeof tierGuide.bytes !== 'string' || typeof tierGuide.lines !== 'number' || !Number.isSafeInteger(tierGuide.lines) || tierGuide.lines < 1
         || tierGuide.lines !== (tierGuide.bytes as string).trimEnd().split('\n').length
         || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== listedNative.size
-        || tierGuide.costs.some(cost => !object(cost) || !exact(cost, ['target', 'status', 'metric', 'value', 'conditionalValue', 'cap', 'measuredOn', 'provenance', 'scopeSemantics'])
+        || tierGuide.costs.some(cost => !object(cost) || !exactKeys(cost, ['target', 'status', 'metric', 'value', 'conditionalValue', 'cap', 'measuredOn', 'provenance', 'scopeSemantics'])
             || typeof cost.target !== 'string' || !listedNative.has(cost.target as SurfaceTarget) || cost.status !== 'within_cap'
             || cost.metric !== 'lines' || typeof cost.value !== 'number' || !Number.isSafeInteger(cost.value) || cost.value < 0
             || typeof cost.conditionalValue !== 'number' || !Number.isSafeInteger(cost.conditionalValue) || cost.conditionalValue < 0
@@ -463,7 +458,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         })
     }
     for (const candidate of captured.generated.files) {
-        if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
+        if (!object(candidate) || !exactKeys(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
             || !configuredSet.has(candidate.target) || !validFileFields(candidate)) return refuse('SURFACE_INPUT_INVALID', 'generated surface output is malformed')
         const contribution = { harnesses: [candidate.target], scope: 'always' as const, capability: 'instructed' as const, bytes: stripDevelopmentMarkers(candidate.bytes as string) }
         if (candidate.path !== 'CLAUDE.md') {
@@ -471,7 +466,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         }
     }
     if (browser && Array.isArray(browser.files)) for (const candidate of browser.files) {
-        if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
+        if (!object(candidate) || !exactKeys(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
             || !NATIVE_BUILT_INS.has(candidate.target as SurfaceTarget) || !configuredSet.has(candidate.target) || !validFileFields(candidate)) {
             return refuse('SURFACE_INPUT_INVALID', 'browser surface output is malformed')
         }
@@ -497,26 +492,26 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         }
         const hooks = nativeHooks
         if (hooks.kind === 'complete') {
-            if (!exact(hooks, ['kind', 'entries', 'cost', 'activation']) || !Array.isArray(hooks.entries) || hooks.entries.length !== 1) {
+            if (!exactKeys(hooks, ['kind', 'entries', 'cost', 'activation']) || !Array.isArray(hooks.entries) || hooks.entries.length !== 1) {
                 return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
             }
-            if (!object(hooks.cost) || !exact(hooks.cost, ['kind', 'scope', 'executionSha256', 'limitMs', 'measuredMs'])
+            if (!object(hooks.cost) || !exactKeys(hooks.cost, ['kind', 'scope', 'executionSha256', 'limitMs', 'measuredMs'])
                 || hooks.cost.kind !== 'within-budget' || hooks.cost.scope !== 'supplied-execution-environment'
                 || typeof hooks.cost.executionSha256 !== 'string' || !SHA256.test(hooks.cost.executionSha256)
                 || typeof hooks.cost.limitMs !== 'number' || !Number.isSafeInteger(hooks.cost.limitMs) || hooks.cost.limitMs < 1
                 || typeof hooks.cost.measuredMs !== 'number' || !Number.isSafeInteger(hooks.cost.measuredMs) || hooks.cost.measuredMs < 0 || hooks.cost.measuredMs > hooks.cost.limitMs
-                || !object(hooks.activation) || !exact(hooks.activation, ['kind', 'hooksPath', 'mode'])
+                || !object(hooks.activation) || !exactKeys(hooks.activation, ['kind', 'hooksPath', 'mode'])
                 || hooks.activation.kind !== 'explicit-native-install' || hooks.activation.hooksPath !== '.githooks'
                 || hooks.activation.mode !== 493) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
             const hook = hooks.entries[0]
-            if (!object(hook) || !exact(hook, ['path', 'kind', 'ownership', 'harnesses', 'writer', 'schemaVersion', 'scope', 'capability', 'bytes', 'sha256'])
+            if (!object(hook) || !exactKeys(hook, ['path', 'kind', 'ownership', 'harnesses', 'writer', 'schemaVersion', 'scope', 'capability', 'bytes', 'sha256'])
                 || hook.path !== '.githooks/pre-push' || hook.kind !== 'file' || hook.ownership !== 'whole-file'
                 || hook.writer !== 'cockpit' || hook.schemaVersion !== 1 || hook.scope !== 'scoped' || hook.capability !== 'instructed'
                 || !Array.isArray(hook.harnesses) || hook.harnesses.length === 0 || hook.harnesses.some(value => typeof value !== 'string' || !configuredSet.has(value))
                 || !validFileFields(hook)) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
             add(whole, hook.path, { harnesses: hook.harnesses as string[], scope: 'scoped', capability: 'instructed', bytes: hook.bytes as string })
         } else if ((hooks.kind !== 'not-installed' && hooks.kind !== 'ci-required' && hooks.kind !== 'refusal')
-            || !exact(hooks, ['kind', 'reason']) || typeof hooks.reason !== 'string' || hooks.reason.length === 0
+            || !exactKeys(hooks, ['kind', 'reason']) || typeof hooks.reason !== 'string' || hooks.reason.length === 0
             || Buffer.byteLength(hooks.reason) > 4_096) return refuse('SURFACE_INPUT_INVALID', 'native hook projection is malformed')
         else if (hooks.kind !== 'not-installed') return refuse('SURFACE_INPUT_INVALID', hooks.reason, '.githooks/pre-push')
     }

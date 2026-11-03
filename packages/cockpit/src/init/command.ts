@@ -8,6 +8,7 @@ import {
     type InitApplicationInput,
     type InitApplicationOutcome,
 } from '../environment/init-application.js'
+import { refusalOutcome as refusal } from '../refusal.js'
 
 export interface InitCommandInput {
     readonly root: string
@@ -121,11 +122,6 @@ function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: 
 function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenance>): AnswerProvenance {
     if (field === 'configuration.defaults') return 'operator-confirmed'
     return marks.get(field) ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
-}
-
-function refusal(code: string, message: string): InitApplicationOutcome {
-    return { kind: 'refusal', status: 2, artifact: null, destination: null,
-        diagnostics: [{ severity: 'error', code, message }], result: null }
 }
 
 /** Records every field the interview has asked or will ask, so a supplied field it never asks is reported. */

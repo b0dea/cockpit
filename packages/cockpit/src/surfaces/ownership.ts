@@ -8,6 +8,7 @@ import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, Refu
 import { publicationCockpitId } from '../environment/identity.js'
 import { safeSurfacePath as safePath } from './contract.js'
 import { SURFACE_TARGETS } from './harness-registry.js'
+import { exactKeys } from '../exact-keys.js'
 
 export type SurfaceOwnership = 'whole-file' | 'shared-region'
 export type SurfaceScope = 'always' | 'scoped'
@@ -121,12 +122,6 @@ function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function exact(value: JsonSnapshotObject, required: readonly string[]): boolean {
-    const keys = Object.keys(value).sort()
-    const expected = [...required].sort()
-    return keys.length === expected.length && keys.every((key, index) => key === expected[index])
-}
-
 function digest(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex') }
 
 function refusal(code: SurfaceDiagnostic['code'], message: string, target?: string, fix?: string): Extract<SurfaceOwnershipResult, { kind: 'refusal' }> {
@@ -149,28 +144,28 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
         || !sortedUniqueStrings(value.harnesses, configured) || value.writer !== 'cockpit' || value.schemaVersion !== 1
         || value.scope !== 'always' && value.scope !== 'scoped' || value.capability !== 'enforced' && value.capability !== 'instructed') return undefined
     if (value.kind === 'file') {
-        if (!exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'bytes', 'sha256'])
+        if (!exactKeys(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'bytes', 'sha256'])
             || value.ownership !== 'whole-file' || typeof value.bytes !== 'string' || Buffer.byteLength(value.bytes) > MAX_FILE_BYTES
             || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256) || digest(value.bytes) !== value.sha256
             || Object.hasOwn(MARKDOWN, value.path) || value.path === OPENCODE_PATH) return undefined
     } else if (value.kind === 'shared-region') {
-        if (!exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
+        if (!exactKeys(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
             || value.ownership !== 'shared-region' || typeof value.regionId !== 'string' || !object(value.region)) return undefined
         const markdown = MARKDOWN[value.path as keyof typeof MARKDOWN]
         if (markdown) {
-            if (value.regionId !== markdown.regionId || !exact(value.region, ['format', 'begin', 'end', 'bytes', 'sha256'])
+            if (value.regionId !== markdown.regionId || !exactKeys(value.region, ['format', 'begin', 'end', 'bytes', 'sha256'])
                 || value.region.format !== 'markdown-delimited' || value.region.begin !== markdown.begin || value.region.end !== markdown.end
                 || typeof value.region.bytes !== 'string' || !value.region.bytes.endsWith('\n') || Buffer.byteLength(value.region.bytes) > MAX_FILE_BYTES
                 || value.region.bytes.includes(markdown.begin) || value.region.bytes.includes(markdown.end)
                 || value.region.bytes.includes(OWNER_PREFIX) && markdownOwner(value.region.bytes) === undefined
                 || typeof value.region.sha256 !== 'string' || digest(value.region.bytes) !== value.region.sha256) return undefined
         } else if (value.path === OPENCODE_PATH) {
-            if (value.regionId !== OPENCODE_REGION && openCodeOwner(value.regionId) === undefined || !exact(value.region, ['format', 'members', 'sha256'])
+            if (value.regionId !== OPENCODE_REGION && openCodeOwner(value.regionId) === undefined || !exactKeys(value.region, ['format', 'members', 'sha256'])
                 || value.region.format !== 'opencode-json-root-properties' || !Array.isArray(value.region.members)
                 || value.region.members.length === 0 || value.region.members.length > OPENCODE_KEYS.size) return undefined
             let priorKey = ''
             for (const member of value.region.members) {
-                if (!object(member) || !exact(member, ['key', 'valueBytes']) || typeof member.key !== 'string'
+                if (!object(member) || !exactKeys(member, ['key', 'valueBytes']) || typeof member.key !== 'string'
                     || !OPENCODE_KEYS.has(member.key) || member.key <= priorKey || typeof member.valueBytes !== 'string'
                     || Buffer.byteLength(member.valueBytes) > MAX_FILE_BYTES || tryParseJson(member.valueBytes) === undefined) return undefined
                 priorKey = member.key
@@ -183,7 +178,7 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
 
 export function classifySurfaceOwnership(input: unknown): SurfaceOwnershipResult {
     const captured = snapshotGeneratedJson(input)
-    if (!object(captured) || !exact(captured, ['configuredHarnesses', 'entries']) || !sortedUniqueStrings(captured.configuredHarnesses)
+    if (!object(captured) || !exactKeys(captured, ['configuredHarnesses', 'entries']) || !sortedUniqueStrings(captured.configuredHarnesses)
         || captured.configuredHarnesses.length > SURFACE_TARGETS.length + 64
         || !Array.isArray(captured.entries) || captured.entries.length > MAX_ENTRIES) {
         return refusal('SURFACE_INPUT_INVALID', 'surface ownership input must be bounded canonical data')
@@ -598,12 +593,6 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
     }
 }
 
-function exactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
-    const keys = Object.keys(record).sort()
-    const wanted = [...expected].sort()
-    return keys.length === wanted.length && keys.every((key, index) => key === wanted[index])
-}
-
 // Renaming `cockpit.name` changes the publication identity the ledger and every owner marker carry.
 // The ledger sits at a fixed path under the configuration's own directory and names that file, so
 // one recorded under another well-formed name is this cockpit's before the rename: refusing it left
@@ -743,8 +732,8 @@ export function projectGeneratedPathFacts(
             return refusal('SURFACE_OWNERSHIP_INVALID', 'producer declaration has an unknown producer')
         }
         const unavailable = row.applicability === 'sibling-unavailable'
-        if (unavailable ? !exact(row, ['producer', 'applicability', 'path'])
-            : !exact(row, ['producer', 'applicability', 'entry']) || !['declared-before-sync', 'required-after-sync'].includes(String(row.applicability))) {
+        if (unavailable ? !exactKeys(row, ['producer', 'applicability', 'path'])
+            : !exactKeys(row, ['producer', 'applicability', 'entry']) || !['declared-before-sync', 'required-after-sync'].includes(String(row.applicability))) {
             return refusal('SURFACE_OWNERSHIP_INVALID', 'producer declaration has an invalid applicability or shape')
         }
         const path = unavailable ? row.path : object(row.entry) ? row.entry.path : undefined
