@@ -1680,8 +1680,13 @@ describe('reset planning', () => {
             const changed = await authenticatedDiscovery(root, snapshot([
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
             ]).resources)
-            expect(await planReset(resetInput(root, { confirmationDigest: preview.digest, discovery: changed })))
-                .toEqual(expect.objectContaining({ kind: 'refusal' }))
+            // Consent and fresh coordination evidence are supplied, so only the changed target can refuse.
+            expect(await planReset(resetInput(root, {
+                confirmationDigest: preview.digest, consent: preview.consent, discovery: changed,
+                coordinationAddress: await writeCoordination(root),
+            }))).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, message: 'reset consent does not match the fresh complete preview',
+            })] }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
