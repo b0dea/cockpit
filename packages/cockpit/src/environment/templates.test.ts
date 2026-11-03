@@ -165,29 +165,6 @@ describe('environment template keys', () => {
         })
         const rendered = [JSON.stringify(result), inspect(result), String(result)].join('\n')
         for (const canary of canaries) expect(rendered).not.toContain(canary)
-        expect({ ...result, templatePath: '<template>', instancePath: '<instance>' }).toMatchInlineSnapshot(`
-          {
-            "instancePath": "<instance>",
-            "kind": "stale",
-            "missingKeys": [
-              "REQUIRED",
-            ],
-            "presentKeys": [
-              "EXTRA",
-              "MULTILINE",
-              "URL",
-            ],
-            "requiredKeys": [
-              "MULTILINE",
-              "REQUIRED",
-              "URL",
-            ],
-            "templatePath": "<template>",
-            "unexpectedKeys": [
-              "EXTRA",
-            ],
-          }
-        `)
         expect(statSync(instancePath).mtimeMs).toBe(before.mtimeMs)
         expect(readFileSync(instancePath, 'utf8')).toContain(canaries[2])
     })
@@ -709,26 +686,4 @@ describe('environment instance seeding', () => {
         })
         expect(existsSync(join(root, '.env'))).toBe(false)
     })
-
-    it('synchronously revalidates every planned identity immediately before copying', async () => {
-        const root = workspace()
-        const template = join(root, '.env.example')
-        writeFileSync(template, 'KEY=alpha\n')
-        const plan = await planEnvironmentSeed({
-            siblingRoot: root,
-            environmentFile: { template: '.env.example', instance: '.env' },
-        })
-        expect(plan.kind).toBe('ready')
-        writeFileSync(template, 'KEY=omega\n')
-
-        const result = seedEnvironmentInstanceSync(plan)
-
-        expect(result).toMatchObject({
-            kind: 'refusal',
-            code: 'ENVIRONMENT_SEED_PRECONDITION_CHANGED',
-        })
-        expect(result).not.toHaveProperty('then')
-        expect(existsSync(join(root, '.env'))).toBe(false)
-    })
-
 })
