@@ -469,12 +469,12 @@ describe('external dependency boundary', () => {
         await expect(verifyExternalDependency(planned, { execute: executeProbe })).resolves.toMatchObject({ kind: 'unmeasured' })
         const secondDeclaration = vendor()
         const second = planExternalDependency({ declaration: secondDeclaration, fragments: externalDependencyTemplateFragments(secondDeclaration), runtime: harness(root), observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
-        if (second.kind !== 'complete') return
+        if (second.kind !== 'complete') throw new Error(JSON.stringify(second))
         await expect(verifyExternalDependency(second, { execute: async () => ({ kind: 'complete' } as never) })).resolves.toMatchObject({ kind: 'unmeasured', code: 'EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE' })
 
         const cachedSource = planExternalDependency({ declaration: secondDeclaration, fragments: externalDependencyTemplateFragments(secondDeclaration), runtime: harness(root), observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
         const cachedTarget = planExternalDependency({ declaration: secondDeclaration, fragments: externalDependencyTemplateFragments(secondDeclaration), runtime: harness(root), observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
-        if (cachedSource.kind !== 'complete' || cachedTarget.kind !== 'complete') return
+        if (cachedSource.kind !== 'complete' || cachedTarget.kind !== 'complete') throw new Error(JSON.stringify({ cachedSource, cachedTarget }))
         const cachedOutcomes = await Promise.all(cachedSource.steps.map(({ step }) => executeProbe(step)))
         await expect(verifyExternalDependency(cachedTarget, { execute: async () => cachedOutcomes.shift()! }))
             .resolves.toMatchObject({ kind: 'unmeasured', code: 'EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE' })

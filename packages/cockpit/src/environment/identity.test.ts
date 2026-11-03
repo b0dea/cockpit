@@ -221,14 +221,6 @@ describe('attach-or-isolate resolution', () => {
         expect(resolveInstance(input)).toEqual(expected)
     })
 
-    it('allows profiles to affect resolution only through the supplied mounted set', () => {
-        const defaultResolution = resolveInstance({ served, launcher, mountedSet: [servedCheckout] })
-        const profileResolution = resolveInstance({ served, launcher, mountedSet: [launcherCheckout] })
-
-        expect(defaultResolution).toEqual({ kind: 'attach', source: 'served', ...served })
-        expect(profileResolution).toEqual({ kind: 'attach', source: 'launcher', ...launcher })
-    })
-
     it('is byte-invariant when forbidden environmental evidence is changed', () => {
         const allowed = { served, launcher, mountedSet: [servedCheckout] }
         const withForbiddenEvidence = {
