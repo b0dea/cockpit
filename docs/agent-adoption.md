@@ -77,7 +77,8 @@ the first `init` runs from a temporary installation:
 
 Every `init` needs `--target <tool>` for your agent tool: `claudecode` (Claude Code), `codexcli`
 (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build); replace `<tool>`
-in the examples with yours. The first three get cockpit's guard hook. Other targets get
+in the examples with yours, or a comma-separated list of every tool the team uses, yours first.
+init records them as `[surfaces] tools`, and sync writes files for those tools only. The first three get cockpit's guard hook. Other targets get
 generated files and no guard, and generation alone does not establish guard or permission
 enforcement; for an instructions-only tool follow
 [Capability states](harness-surfaces.md#capability-states). The

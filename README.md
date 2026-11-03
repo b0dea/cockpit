@@ -60,7 +60,7 @@ flowchart LR
     work -- "work grade" --> grade["separate evaluator"]
 ```
 
-1. **Generate.** `cockpit sync` writes the Compose file and every agent tool's instructions, skills,
+1. **Generate.** `cockpit sync` writes the Compose file and each listed agent tool's instructions, skills,
    hooks and permissions from `cockpit.toml`. You commit the output.
 2. **Check.** `cockpit check` regenerates in memory and fails on any difference, locally or in CI.
 3. **Run.** `cockpit up` starts the stack on your live checkouts, `cockpit preflight` says whether
@@ -75,8 +75,11 @@ flowchart LR
 | Claude Code | `CLAUDE.md`, `.claude/` | fires |
 | Codex CLI | `AGENTS.md`, `.agents/skills/`, `.codex/` | fires once a person trusts the hook on that machine; `cockpit doctor` warns until then |
 | OpenCode | `opencode.jsonc`, `.opencode/` | fires |
-| Cursor | `.cursor/` | none; files are generated but not confirmed to load |
-| Grok Build | `AGENTS.md`, `.grok/` | none; files are generated but not confirmed to load |
+| Cursor | `.cursor/` | none; files are written only when listed, and not confirmed to load |
+| Grok Build | `AGENTS.md`, `.grok/` | none; files are written only when listed, and not confirmed to load |
+
+`[surfaces] tools` in `cockpit.toml` picks the tools; it defaults to the first three, and
+`cockpit tool add` / `tool remove` change it.
 
 Any other tool that reads `AGENTS.md` gets the same instructions, without skills, hooks or
 permissions. Writing a file is not proof that a tool obeys it: `cockpit selftest` runs probe

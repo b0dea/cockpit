@@ -140,7 +140,9 @@ This is the `init` interview every bootstrap goes through. The commands below us
 the temporary executable from the bootstrap step.
 
 Replace `<tool>` in these commands with your agent tool's target: `claudecode` (Claude Code),
-`codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build). The
+`codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build). For a
+team on several tools, list them comma-separated, yours first (`--target claudecode,opencode`);
+init records the list as `[surfaces] tools`, and sync writes files for those tools only. The
 [capability matrix](capability-matrix.md) says what each one enforces. Preview:
 
 ```sh

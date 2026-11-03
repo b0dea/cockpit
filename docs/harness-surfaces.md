@@ -98,11 +98,22 @@ its date and version in the [capability matrix](capability-matrix.md):
   `.claude/settings.json` keep them off secrets (see
   [Reading secrets and instances](safety-and-autonomy.md#reading-secrets-and-instances)).
 
-Cursor and Grok Build are `generated`. Cockpit writes rules, skills, subagents, hooks, MCP and
-permission files for them (`rulesyncFeatures` in
+Cursor and Grok Build are `generated`, and written only when `[surfaces] tools` lists them
+(`npx --no cockpit tool add cursor --config <your cockpit.toml>`). Cockpit then writes rules,
+skills, subagents, hooks, MCP and permission files for them (`rulesyncFeatures` in
 [the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts)), but nobody has
 verified that either tool loads those files. Cockpit installs no guard hook for them, so their
 guard-firing cells are `unavailable`.
+
+### Choose the tools
+
+`[surfaces] tools` lists the agent tools `sync` writes and `check` compares; it defaults to the
+tools whose guard is measured, `claudecode`, `codexcli` and `opencode`, and must name at least one
+of them. A tool the list leaves out gets no files, and doctor and check give no advice about it.
+`npx --no cockpit tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
+line (add `--dry-run` to preview). The next `sync` writes an added tool from the same sources as the
+others; the files of a removed tool are listed for removal and deleted only after a person approves
+the stale-removal digest with `sync --interactive`.
 
 ### Trust the Codex hook
 

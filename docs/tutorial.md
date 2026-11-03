@@ -102,7 +102,7 @@ on this machine ([Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook
 | Generated | What it is |
 |---|---|
 | AGENTS.md, CLAUDE.md | Shared root instructions in AGENTS.md; CLAUDE.md imports them with `@AGENTS.md`. Existing team text stays outside the regions cockpit writes. |
-| .claude/, .codex/, .opencode/, .cursor/, .grok/, opencode.jsonc, .agents/skills/ | Each harness's generated skills, subagents, hooks and supported permissions, in its own spelling |
+| .claude/, .codex/, .opencode/, opencode.jsonc, .agents/skills/ | Each listed harness's generated skills, subagents, hooks and supported permissions, in its own spelling (`.cursor/` and `.grok/` too once `[surfaces] tools` lists them) |
 | .cockpit/guards/bash-guard.sh | The shared guard script. cockpit installs its hook for Claude Code, Codex CLI and OpenCode only, not for Cursor or Grok Build |
 | compose.generated.yml | The Docker Compose project for the declared services, volumes and ports |
 | docs/cockpit/environment-decisions.md | A dated record of every environment decision, generated from the declarations |

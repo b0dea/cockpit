@@ -10,8 +10,8 @@ Everyday terms, in plain language.
 ### Agent harness
 
 The AI coding tool an agent runs in, such as Claude Code, Codex CLI or OpenCode. cockpit installs
-its guard hook for those; it also writes files for Cursor and Grok Build, but installs no
-guard there and nobody has confirmed those tools load them. The
+its guard hook for those; for Cursor and Grok Build, once `[surfaces] tools` lists them, it writes
+files but installs no guard, and nobody has confirmed those tools load them. The
 [capability matrix](capability-matrix.md) lists the target identifiers and what is confirmed for
 each feature; see also [Capability states](harness-surfaces.md#capability-states).
 

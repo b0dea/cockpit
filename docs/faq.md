@@ -31,10 +31,11 @@ source.
 
 ## Do I have to use every agent tool?
 
-No. `sync` renders surfaces for every built-in harness, so whichever tool you open in the checkout
-finds its configuration; `init --target` only picks which harness gets the cockpit-setup skill
-first. Custom harnesses can be declared under `[surfaces]`; see
-[Harness surfaces](harness-surfaces.md#capability-states).
+No. `[surfaces] tools` in `cockpit.toml` lists the tools `sync` writes and `check` compares, and
+one tool is a complete setup. It defaults to Claude Code, Codex CLI and OpenCode; `init --target`
+writes the tools you choose (`--target claudecode` or `--target claudecode,opencode`), and
+`cockpit tool add <tool>` or `tool remove <tool>` changes the list later. Custom harnesses can be
+declared under `[surfaces]`; see [Harness surfaces](harness-surfaces.md#capability-states).
 
 ## Are the guards actually enforced?
 
