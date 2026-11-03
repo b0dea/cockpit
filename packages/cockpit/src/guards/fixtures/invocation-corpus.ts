@@ -38,7 +38,7 @@ const definition = (...values: string[]) => expected(null, [], values.map((value
 const here = (body: string) => expected('cat', [], [{ role: 'redirect-target', value: 'END' }, { role: 'heredoc-body', value: body }])
 const redirect = (executable: string, argv: string[], target: string) => ({ ...expected(executable, argv, [{ role: 'redirect-target', value: target }]), redirects: [{ target, write: true, truncate: true }] })
 const defined = 'Unsupported executable or defined command invocation.'
-const dynamic = (word: string) => `Dynamic command construction is unsupported: ${JSON.stringify(word)} holds a variable, command substitution, glob or home-directory tilde whose expansion the guard cannot see. Write the command and its paths out literally.`
+const dynamic = (word: string) => `Dynamic command construction is unsupported: ${JSON.stringify(word)} holds a variable, command substitution, glob, home-directory tilde or zsh =command whose expansion the guard cannot see. Write the command and its paths out literally.`
 interface CapturePair { candidate: readonly ParsedInvocation[] | string; control: readonly ParsedInvocation[] }
 const captures: Record<typeof rows[number]['name'], CapturePair> = {
     'separate push': { candidate: [git('push', 'origin', 'feature'), git('push', 'origin', 'main')], control: [git('push', 'origin', 'feature'), printf('main')] },

@@ -271,19 +271,22 @@ function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | Gu
     return words.some((_, start) => rule.argv.every((word, index) => words[start + index] === word))
 }
 
-interface GitInvocation { verb: string; args: readonly string[]; cwd: string; uncertain: boolean }
+/** `directories` holds each `-C` operand as spelled, with the directory it resolves from. */
+interface GitInvocation { verb: string; args: readonly string[]; cwd: string; directories: readonly { path: string; cwd: string }[]; uncertain: boolean }
 function gitInvocation(invocation: ParsedInvocation): GitInvocation | undefined {
     if (invocation.executable === null || posix.basename(invocation.executable) !== 'git') return undefined
     const args = invocation.argv
     let cursor = 0
     let cwd = invocation.cwd
     let uncertain = false
+    const directories: { path: string; cwd: string }[] = []
     while (args[cursor]?.startsWith('-')) {
         const option = args[cursor++]
         if (option === '--') break
         if (option === '-C') {
             const directory = args[cursor++]
-            if (directory === undefined) return { verb: '', args: [], cwd, uncertain: true }
+            if (directory === undefined) return { verb: '', args: [], cwd, directories, uncertain: true }
+            directories.push({ path: directory, cwd })
             cwd = posix.resolve(cwd, directory)
         } else if (['-c', '--git-dir', '--work-tree', '--namespace', '--config-env'].includes(option)) {
             cursor++
@@ -292,9 +295,9 @@ function gitInvocation(invocation: ParsedInvocation): GitInvocation | undefined 
             continue
         } else if (/^--(?:git-dir|work-tree|namespace|config-env)=/.test(option)) {
             uncertain = true
-        } else return { verb: '', args: [], cwd, uncertain: true }
+        } else return { verb: '', args: [], cwd, directories, uncertain: true }
     }
-    return { verb: args[cursor++] ?? '', args: args.slice(cursor), cwd, uncertain }
+    return { verb: args[cursor++] ?? '', args: args.slice(cursor), cwd, directories, uncertain }
 }
 
 const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash'])
@@ -1028,7 +1031,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
         }
         if (!git) continue
-        inspectPath({ path: git.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        // Git changes directory as the system does, resolving `..` from where a link leads, so each
+        // directory is inspected as spelled rather than by the path `cwd` names.
+        for (const directory of git.directories) inspectPath({ ...directory, operation: 'cwd' })
         if (git.uncertain) holdAsk(invocation, ask('Git execution context is not an exact resolved profile.'))
         if (git.verb === 'push') {
             const decision = pushDecision(git.args, resolved.protectedBranches)

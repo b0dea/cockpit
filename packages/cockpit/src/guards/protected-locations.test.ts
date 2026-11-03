@@ -113,6 +113,16 @@ describe('guard protected locations', () => {
         mkdirSync(join(root, 'config/.jj'))
         expect(await unignored('.')).toBeUndefined()
         rmSync(join(root, 'config/.jj'), { recursive: true })
+        // Spellings Git and ripgrep read differently, in either ignore direction and at any depth Git reads.
+        for (const [file, pattern] of [['.gitignore', 'config/runtime.e[[:alpha:]]v'], ['.gitignore', 'config/runtime.e**'],
+            ['.gitignore', 'config/*\n!config/runtime.{env,x}'], ['.gitignore', 'config/*\n!config/runtime.env\t'], ['.gitignore', '\xff\nconfig/runtime.env'],
+            ['config/.gitignore', 'runtime.e[[:alpha:]]v']] as const) {
+            write('.gitignore', '.env\nnode_modules\n')
+            writeFileSync(join(root, file), Buffer.from(`${file === '.gitignore' ? '.env\nnode_modules\n' : ''}${pattern}\n`, 'latin1'))
+            expect(await unignored('.'), pattern).toBeUndefined()
+            expect(await unignored('config'), pattern).toBeUndefined()
+        }
+        rmSync(join(root, 'config/.gitignore'))
         write('.gitignore', '.env\nnode_modules\n')
         // So below such a directory ripgrep reads one Git ignores whole, whatever it holds.
         write('lib/node_modules/pkg/.env')

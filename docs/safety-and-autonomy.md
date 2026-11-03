@@ -186,13 +186,19 @@ cockpit commands in
   `--resolve-git-dir`, `--parseopt` and `--sq-quote`. `git branch` is read-only with no argument or
   with `--list`, `-a`, `-r`, `-v`, `-vv` or `--show-current` (and their long forms), never with a
   branch name.
-- `$?` is allowed as an argument only to a read-only command, where it cannot name a path.
+- `$?` is allowed as an argument only to a read-only command, where it cannot name a path, and
+  never as the directory of `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
   directory then judged as the command's working directory. A bare `cd name` is refused, because
   `CDPATH` can send it elsewhere the guard cannot see: write `cd ./name`, or use `git -C name` for
-  Git. After `;` or `||` the `cd` may have failed, so the next command is judged from both
-  directories. A `cd` in a pipeline is refused, and a list ending in `&` runs in a subshell, so
-  its `cd` moves no later command.
+  Git. A `..` after a directory name, as in `cd ./a/../b` or `env -C a/..`, is refused too: `env`
+  resolves it from wherever a link named `a` leads, and so does a shell set to follow links.
+  `pushd`, `popd` and zsh's `chdir` are refused, because only `cd` is followed. A `cd`
+  may fail, and one after `||` may not run at all, so each later command is judged from every
+  directory it may run in: `&&` and `||` group left to right, so in `pwd || cd ./dir && cat x` the
+  `cat` is judged from both directories. A newline after `&&`, `||` or `|` continues the list. A
+  `cd` in a pipeline is refused, and a list ending in `&` runs in a subshell, so its `cd` moves no
+  later command.
 - Git runs read-only only in a directory with its own `.git`, because Git otherwise treats a
   directory holding `HEAD`, `objects` and `refs` as a repository and honours its configuration.
   Git operands are inspected as files whose content may be printed.
@@ -285,7 +291,10 @@ These reads fall back to a prompt instead of being allowed:
   hidden files count, because a type such as `rg -t sh` reads a `.env`. Where Git's list cannot stand
   for ripgrep's (outside a repository, with an `.ignore` or `.rgignore` file in or above the tree,
   through a nested repository or submodule, below a `.git` or `.jj` entry, above which ripgrep stops
-  applying ignore files, when the search names an ignored path, or when Git does not answer), the
+  applying ignore files, when the search names an ignored path, when a `.gitignore` Git reads holds
+  a line the two glob engines may read differently, such as braces, a POSIX class like `[[:alpha:]]`,
+  a backslash escape, trailing whitespace, a `**` that is not a whole path component, or bytes that
+  are not UTF-8, or when Git does not answer), the
   search is walked like `grep -r`. Either way the guard sees only what exists before the call runs, so a
   recursive search is allowed only when every other command in the call is read-only too, and
   nothing in it can write an environment file first;
@@ -296,8 +305,8 @@ These reads fall back to a prompt instead of being allowed:
   and `git log -L<range>:<path>` is not read-only. A revision may name a blob, which prints whatever pathspec
   follows. Only the index is asked: a file committed once and since removed from it is still in
   history, and `git log -p` prints it. Run `git rm --cached` and rotate what it held;
-- a path that is a symlink, lies outside the configured roots, or is an undeclared `.env*` file. A
-  declared environment `template` is read like any other file.
+- a path that is a symlink or leaves one through `..`, lies outside the configured roots, or is an
+  undeclared `.env*` file. A declared environment `template` is read like any other file.
 
 The guard hook sees shell commands and edits only. Claude Code's own Read, Grep and Glob tools never
 reach it, so `sync` also writes Claude `Read` deny rules into `.claude/settings.json`: one for every

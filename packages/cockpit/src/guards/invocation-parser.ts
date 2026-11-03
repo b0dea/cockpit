@@ -21,7 +21,7 @@ export interface ParsedInvocation {
     /** `truncate` marks `>` and `>|`, which empty an existing file before anything is written. */
     readonly redirects: readonly { readonly target: string; readonly write: boolean; readonly truncate: boolean }[]
     /**
-     * An argument holds `$?`, the previous command's exit status. It expands to digits the guard
+     * An argument, assignment or wrapper option holds `$?`, the previous command's exit status. It expands to digits the guard
      * cannot see, so a word holding it is never proven to name a path.
      */
     readonly expandsStatus?: true
@@ -117,6 +117,8 @@ function lex(command: string): Token[] {
             index += operator.length
             continue
         }
+        // zsh, the default macOS shell, expands an unquoted word starting with `=` to a command's path.
+        const equals = command[index] === '='
         let value = ''
         let quote = ''
         let quoted = false
@@ -160,6 +162,7 @@ function lex(command: string): Token[] {
             index++
         }
         if (quote) refuse('Unterminated shell quote.')
+        if (equals && value.length > 1) dynamic = true
         if (++words > GUARD_INPUT_LIMITS.words || Buffer.byteLength(value) > GUARD_INPUT_LIMITS.wordBytes) refuse('Guard word limit exceeded.')
         tokens.push({ kind: 'word', value, quoted, dynamic, status })
         if (awaitingDocument !== undefined) {
@@ -175,7 +178,9 @@ function lex(command: string): Token[] {
 const separators = new Set([';', '\n', '&&', '||', '|', '&'])
 const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
 const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec'])
-const dynamicExecutables = new Set(['eval', 'source', '.', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'sudo', 'doas', 'xargs'])
+const dynamicExecutables = new Set(['eval', 'source', '.', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'sudo', 'doas', 'xargs', 'builtin'])
+// Builtins that move the shell as `cd` does, which only `cd` is judged as.
+const directoryChangers = new Set(['cd', 'pushd', 'popd', 'chdir'])
 const CD_REFUSAL = 'cd is judged only as `cd <dir> && <command>` (or `;`), alone in its command, with one literal directory that is absolute or starts '
     + 'with ./ or ../. A bare name such as `cd api` may resolve through CDPATH, which the guard cannot see: write `cd ./api`, or `git -C api` for Git.'
 // Writing to these discards or forwards output and reading /dev/null yields nothing, so they touch
@@ -214,7 +219,7 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
         return { executable: null, argv: [], cwd, wrapped: false, words: [...words, ...args.map(({ value }) => ({ role: 'definition' as const, value }))], redirects: redirectPaths }
     }
     const expanded = args.find((token) => token.dynamic)
-    if (expanded) refuse(`Dynamic command construction is unsupported: ${shown(expanded.value)} holds a variable, command substitution, glob or home-directory tilde whose expansion the guard cannot see. Write the command and its paths out literally.`)
+    if (expanded) refuse(`Dynamic command construction is unsupported: ${shown(expanded.value)} holds a variable, command substitution, glob, home-directory tilde or zsh =command whose expansion the guard cannot see. Write the command and its paths out literally.`)
     let cursor = 0
     const assignments = () => {
         while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[cursor]?.value ?? '')) {
@@ -231,10 +236,11 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
             const token = args[cursor++]
             if (!token) refuse(`Missing ${wrapper} operand.`)
             words.push({ role: 'wrapper-option-value', value: token.value })
-            return token.value
+            return token
         }
         while (args[cursor]?.value.startsWith('-')) {
-            const option = take()
+            const optionToken = take()
+            const option = optionToken.value
             if (option === '--') break
             const [flag, attached] = option.split(/=(.*)/s)
             const valueFlags = wrapper === 'timeout' ? ['-s', '--signal', '-k', '--kill-after']
@@ -246,21 +252,28 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
                 : wrapper === 'setsid' ? ['-f', '--fork', '-w', '--wait']
                 : wrapper === 'command' ? ['-p'] : wrapper === 'exec' ? ['-c', '-l'] : []
             if (valueFlags.includes(flag)) {
-                const value = attached === undefined ? take() : attached
+                const valueToken = attached === undefined ? take() : optionToken
+                const value = attached === undefined ? valueToken.value : attached
                 if (!value) refuse(`Empty ${wrapper} option value.`)
-                if (wrapper === 'env' && ['-C', '--chdir'].includes(flag)) cwd = path(posix.resolve(cwd, value))
+                if (wrapper === 'env' && ['-C', '--chdir'].includes(flag)) {
+                    // Every path the command names resolves from this directory, so it must be known.
+                    if (valueToken.status) refuse(`env ${flag} holding $? runs the command in a directory the guard cannot see. Write the directory out.`)
+                    // env changes directory as the system does, resolving `..` from where a link leads.
+                    if (climbsOutOfName(value)) refuse(`env ${flag} ${shown(value)} climbs out of a named directory with .., which resolves from wherever a link there leads. Write the directory without it.`)
+                    cwd = path(posix.resolve(cwd, value))
+                }
             } else if (!(attached === undefined && (plainFlags.includes(flag) || wrapper === 'nice' && /^-\d+$/.test(flag)))) {
                 refuse(`Unsupported ${wrapper} option.`)
             }
         }
-        if (wrapper === 'timeout' && !/^\d+(?:\.\d+)?[smhd]?$/.test(take())) refuse('Invalid timeout duration.')
+        if (wrapper === 'timeout' && !/^\d+(?:\.\d+)?[smhd]?$/.test(take().value)) refuse('Invalid timeout duration.')
         if (wrapper === 'env') assignments()
         if (cursor >= args.length) refuse(`Missing ${wrapper} executable.`)
     }
     const executable = args[cursor]?.value ?? null
     if (executable !== null) {
         if (!executable || args[cursor]!.status || definitions.has(executable)) refuse('Unsupported executable or defined command invocation.')
-        if (executable === 'cd') refuse(CD_REFUSAL)
+        if (directoryChangers.has(executable)) refuse(CD_REFUSAL)
         if (dynamicExecutables.has(posix.basename(executable))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
         if (reserved.has(executable)) refuse(`Shell control flow (${executable}) is not parsed by the guard. Run each command on its own.`)
         words.push({ role: 'executable', value: executable })
@@ -269,7 +282,16 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
     const operands = args.slice(cursor)
     const argv = operands.map(({ value }) => value)
     words.push(...argv.map((value) => ({ role: 'argument' as const, value })))
-    return { executable, argv, cwd, wrapped, words, redirects: redirectPaths, ...(operands.some((token) => token.status) ? { expandsStatus: true as const } : {}) }
+    return { executable, argv, cwd, wrapped, words, redirects: redirectPaths, ...(args.some((token) => token.status) ? { expandsStatus: true as const } : {}) }
+}
+
+/**
+ * Whether `..` follows a named component, as in `a/../b`. The system resolves such a `..` from where
+ * a link named `a` leads, which the spelling cannot show; only a leading `..` leaves a directory the
+ * guard has already inspected as the working directory.
+ */
+function climbsOutOfName(directory: string): boolean {
+    return directory.split('/').some((name, index, names) => name === '..' && names.slice(0, index).some((before) => !['', '.', '..'].includes(before)))
 }
 
 /** The directory a command that is exactly `cd <dir>` moves to, as written, or undefined for any other command. */
@@ -280,6 +302,9 @@ function changedDirectory(tokens: readonly Token[], definitions: ReadonlySet<str
     const target = operands.length === 1 && operands[0]!.kind === 'word' && !operands[0]!.dynamic && !operands[0]!.status ? operands[0]!.value : undefined
     // Both shells search CDPATH before the working directory for any other relative spelling.
     if (target === undefined || !/^(?:\/|\.\.?(?:\/|$))/.test(target)) refuse(CD_REFUSAL)
+    // Both shells resolve `cd` by spelling unless set to follow links (`set -P`, zsh's chase_links),
+    // which the guard cannot see, as it cannot see CDPATH.
+    if (climbsOutOfName(target)) refuse(`${CD_REFUSAL} A .. after a directory name is not: a shell set to follow links resolves it from wherever a link there leads.`)
     return target
 }
 
@@ -290,37 +315,50 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
     let current: Token[] = []
     let braces = 0
     let needsCommand = false
-    // Every directory the next command may run in. A `cd` moves the rest of its `&&` chain; after
-    // any other separator the `cd` may have failed and left the shell where it was, so later
-    // commands are judged from every directory they may run in.
-    let cwds = [cwd]
-    let fallback: string[] | undefined
-    let previous: string | undefined
+    // Every directory the shell may be in, each with whether the last command there may have
+    // succeeded or failed. `&&` and `||` have equal precedence and group left to right, so a command
+    // after one runs only where the status allows it; a command it skips, a `cd` included, leaves
+    // directory and status as they were for the rest of the list. Nothing here assumes a command,
+    // `cd` included, succeeds.
+    type State = { readonly directory: string; readonly ok: boolean }
+    let states: readonly State[] = [{ directory: cwd, ok: true }]
+    // The operator before the current command: `&&`, `||`, `|`, or undefined where it always runs.
+    let gate: string | undefined
+    // Where the previous command ran, which is where a pipeline's next stage runs.
+    let ran: readonly string[] = [cwd]
     // A list ending in `&` runs in a background subshell, so its cd moves nothing after it.
-    let list = { cwds, fallback }
+    let list = states
     const append = (item: ParsedInvocation) => {
         if (result.length === GUARD_INPUT_LIMITS.invocations) refuse('Guard invocation limit exceeded.')
         result.push(item)
     }
     const flush = (separator?: string) => {
         const target = current.length ? changedDirectory(current, definitions) : undefined
-        if (target !== undefined) {
-            // A pipeline or background job runs `cd` in a subshell in bash, and the last stage of a pipeline in the current shell in zsh.
-            if (previous === '|' || separator === '|' || separator === '&') refuse(`${CD_REFUSAL} A cd in a pipeline or background job is not.`)
-            const moved = [...new Set(cwds.map((directory) => path(posix.resolve(directory, target))))]
-            // The directory itself is inspected as each later command's working directory is.
-            for (const directory of moved) append({ executable: null, argv: [], cwd: directory, wrapped: false, words: [{ role: 'directory', value: target }], redirects: [] })
-            fallback = [...new Set([...fallback ?? cwds, ...moved])]
-            cwds = moved
-        } else if (current.length) for (const directory of cwds) append(invocation(current, directory, definitions))
+        // A pipeline or background job runs `cd` in a subshell in bash, and the last stage of a pipeline in the current shell in zsh.
+        if (target !== undefined && (gate === '|' || separator === '|' || separator === '&')) refuse(`${CD_REFUSAL} A cd in a pipeline or background job is not.`)
+        if (current.length && gate === '|') for (const directory of ran) append(invocation(current, directory, definitions))
+        else if (current.length) {
+            const runs = states.filter((state) => gate === undefined || state.ok === (gate === '&&'))
+            ran = [...new Set(runs.map((state) => state.directory))]
+            const next = states.filter((state) => !runs.includes(state))
+            if (target !== undefined) {
+                const moved = [...new Set(ran.map((directory) => path(posix.resolve(directory, target))))]
+                // The directory itself is inspected as each later command's working directory is.
+                for (const directory of moved) append({ executable: null, argv: [], cwd: directory, wrapped: false, words: [{ role: 'directory', value: target }], redirects: [] })
+                next.push(...ran.map((directory) => ({ directory, ok: false })), ...moved.map((directory) => ({ directory, ok: true })))
+            } else {
+                for (const directory of ran) append(invocation(current, directory, definitions))
+                next.push(...ran.flatMap((directory) => [{ directory, ok: true }, { directory, ok: false }]))
+            }
+            states = [...new Map(next.map((state) => [`${state.ok}\0${state.directory}`, state])).values()]
+        }
         current = []
-        if (separator === '&') ({ cwds, fallback } = list)
-        else if (separator !== undefined && !['&&', '||', '|'].includes(separator) && fallback) {
-            cwds = fallback
-            fallback = undefined
-        } else if (separator === '||' && fallback) cwds = fallback
-        if (separator !== undefined && !['&&', '||', '|'].includes(separator)) list = { cwds, fallback }
-        previous = separator
+        if (separator === '&') states = list
+        if (separator === '&&' || separator === '||' || separator === '|') gate = separator
+        else {
+            gate = undefined
+            list = states
+        }
     }
     for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i]
@@ -345,11 +383,13 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
             if (depth) refuse('Unterminated function definition.')
             i--
             definitions.add(name)
-            append({ executable: null, argv: [], cwd: cwds[0]!, wrapped: false, words: body, redirects: [] })
+            append({ executable: null, argv: [], cwd: states[0]!.directory, wrapped: false, words: body, redirects: [] })
             needsCommand = false
             continue
         }
         if (token.kind === 'op' && separators.has(token.value)) {
+            // A newline after `&&`, `||` or `|` continues the list, as a line continuation would.
+            if (token.value === '\n' && needsCommand) continue
             if (['&&', '||', '|', '&'].includes(token.value) && !current.length) refuse('Missing shell command before separator.')
             flush(token.value)
             if (token.value !== '\n') needsCommand = ['&&', '||', '|'].includes(token.value)
