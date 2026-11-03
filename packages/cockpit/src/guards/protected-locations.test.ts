@@ -99,8 +99,13 @@ describe('guard protected locations', () => {
         write('src/.ignore', '!.env\n')
         expect(await unignored('src')).toBeUndefined()
         rmSync(join(root, 'src/.ignore'))
-        write('node_modules/.rgignore', '!.env\n')
+        write('.gitignore', '.env\nnode_modules\n.rgignore\n')
+        write('src/.rgignore', '!.env\n')
         expect(await unignored('.')).toBeUndefined()
+        rmSync(join(root, 'src/.rgignore'))
+        // ripgrep never enters a directory Git ignores whole, so an ignore file there is never read.
+        write('node_modules/.rgignore', '!pkg\n!.env\n')
+        expect(await unignored('.')).toEqual([join(root, '.env.local'), instance, join(root, 'pkg/.secrets')])
         rmSync(join(root, 'node_modules/.rgignore'))
         // ripgrep stops applying the ignore files above a directory holding `.git` or `.jj`; Git does not.
         write('.gitignore', '.env\nnode_modules\nconfig/runtime.env\n')
@@ -109,9 +114,19 @@ describe('guard protected locations', () => {
         expect(await unignored('.')).toBeUndefined()
         rmSync(join(root, 'config/.jj'), { recursive: true })
         write('.gitignore', '.env\nnode_modules\n')
+        // So below such a directory ripgrep reads one Git ignores whole, whatever it holds.
+        write('lib/node_modules/pkg/.env')
+        mkdirSync(join(root, 'lib/.jj'))
+        expect(await unignored('.')).toBeUndefined()
+        rmSync(join(root, 'lib'), { recursive: true })
         execFileSync('git', ['init', '-q', join(root, 'vendor/nested')])
         expect(await unignored('.')).toBeUndefined()
         expect(await unignored('src')).toEqual([])
+        // A boundary inside a directory Git ignores whole is never reached.
+        rmSync(join(root, 'vendor'), { recursive: true })
+        mkdirSync(join(root, 'node_modules/nested/.jj'), { recursive: true })
+        write('node_modules/nested/.env.local')
+        expect(await unignored('.')).toEqual([join(root, '.env.local'), instance, join(root, 'pkg/.secrets')])
         expect(await guardUnignoredSensitivePaths(scratch(), [], git, executeProbe)).toBeUndefined()
         // Only the index is asked what the repository tracks.
         expect(await guardTrackedSensitivePaths(root, [instance], git, executeProbe)).toEqual([])

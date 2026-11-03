@@ -10,7 +10,7 @@ import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js
 
 export const mechanism = {
     id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts',
-    exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'GUARD_PROTECTED_LOCATION_LIMIT', 'GUARD_SECRET_FILE_LIMIT', 'foldGuardSpelling', 'guardIdentity'],
+    exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'GUARD_LOCATION_LIMITS', 'GUARD_SECRET_FILE_LIMIT', 'foldGuardSpelling', 'guardIdentity'],
 } as const
 
 export interface GuardInvocationProfile {
@@ -122,8 +122,21 @@ const GUARD_CONTROL_FILES = [
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
     '.cockpit/work-orders', '.cockpit/transactions', '.cockpit/actors'] as const
 const SECRETS_ROOT = 'env/.secrets'
-/** Bounds on the policy's installed-code and search path directories and on the secrets files it enumerates. */
-export const GUARD_PROTECTED_LOCATION_LIMIT = 256
+/**
+ * Bounds on the locations the policy and the path inspector carry, one per quantity, each set above
+ * what an honest checkout holds so that only an unwalkable tree or a broken install reaches it.
+ */
+export const GUARD_LOCATION_LIMITS = Object.freeze({
+    // The running cockpit and its dependency closure, a few dozen packages, under both spellings.
+    packageDirectories: 256,
+    // Command search path entries inside the allowed roots, under both spellings; a PATH holds tens.
+    searchPathDirectories: 256,
+    // Declared environment templates, one per environment file; the policy bounds instances alike.
+    templates: 256,
+    // Environment files and secrets directories one searched tree or repository index holds. Each is
+    // compared against every protected target, and a monorepo keeps one or more per package.
+    sensitivePaths: 1024,
+})
 export const GUARD_SECRET_FILE_LIMIT = 512
 /** Root-relative paths whose identity every policy carries beside each instance's. */
 export const GUARD_ROOT_PROTECTIONS: readonly { readonly path: string; readonly type: 'file' | 'directory' }[] = Object.freeze([
@@ -194,10 +207,10 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'templates', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'searchPathRelativeEntry', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
-        || !Array.isArray(p.instances) || !strings(p.templates) || p.templates.length > GUARD_PROTECTED_LOCATION_LIMIT || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
+        || !Array.isArray(p.instances) || !strings(p.templates) || p.templates.length > GUARD_LOCATION_LIMITS.templates || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
         || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.cockpitLaunchers) || !Array.isArray(p.projectCommands)
-        || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
-        || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
+        || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_LOCATION_LIMITS.packageDirectories
+        || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_LOCATION_LIMITS.searchPathDirectories
         || p.searchPathRelativeEntry !== null && (typeof p.searchPathRelativeEntry !== 'string' || p.searchPathRelativeEntry.startsWith('/')
             || /[\x00-\x1f\x7f]/.test(p.searchPathRelativeEntry) || Buffer.byteLength(p.searchPathRelativeEntry) > GUARD_INPUT_LIMITS.wordBytes)
         || p.secretFileIdentities !== null && (!Array.isArray(p.secretFileIdentities) || p.secretFileIdentities.length > GUARD_SECRET_FILE_LIMIT || !p.secretFileIdentities.every(identity))) return undefined
@@ -727,7 +740,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors', ...(listed ? [listed] : [])]) && evidence.status === 'resolved'
             && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity)
-            && (paths === null || Array.isArray(paths) && paths.length <= GUARD_PROTECTED_LOCATION_LIMIT
+            && (paths === null || Array.isArray(paths) && paths.length <= GUARD_LOCATION_LIMITS.sensitivePaths
                 && paths.every((path) => canonical(path) && within(path, lexical))) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
