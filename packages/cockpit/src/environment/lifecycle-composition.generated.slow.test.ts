@@ -396,8 +396,8 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(loaded.result.checkoutId).toBe(checkoutId({ checkoutPath: candidate.gitCheckout }))
         const application = await adapters.withAcquiredPorts(loaded.result,
             async ({ projection }) => adapters.prepareGeneratedEnvironment(loaded.result, projection))
+        if (!application) throw new Error('generated environment preparation returned no application')
         expect(generatedApplicationProjection(application)).toBe(application)
-        if (!application) return
         expect(application).toMatchObject({ profiles: ['application'], generation: expect.stringMatching(/^[a-f0-9]{64}$/) })
         const project = `cockpit-${application.generation.slice(0, 12)}`
         await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({
