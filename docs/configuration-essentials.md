@@ -83,35 +83,21 @@ free_disk_mb = 1024
 cold_start_seconds = 60
 ```
 
-## The stack: a Compose file or a generated one
+## The stack: `compose_files`
 
-Choose one. A product that already has a Compose file lists it as `compose_files = ["compose.yml"]`
-under `[environment]`, and Compose keeps owning the stack
-([Compose-first stacks](environment.md#compose-first-stacks)). Otherwise cockpit generates the
-Compose file from declared services ([Generated environment](environment.md#generated-environment)):
-each names its sibling, a pinned image or a build, its command, ports and a health probe. Full
-entries: [`[environment.generated]`](configuration-reference.md#environmentgenerated),
-[`[[environment.generated.services]]`](configuration-reference.md#environmentgeneratedservices) and
-the [`health` shape](configuration-reference.md#health-shape).
+A product that runs as a stack lists its Compose files under `[environment]`, and cockpit runs them
+as written ([Compose-first stacks](environment.md#compose-first-stacks)). A small app with no
+Compose file gets a starting one from `cockpit init --scaffold-compose`
+([Scaffold a Compose file](environment.md#scaffold-a-compose-file)). `resettable_volumes` names the
+Compose volumes `reset` may delete, and `seed` the command `up` runs to fill them
+([Demo data, test users and roles](environment.md#demo-data-test-users-and-roles)). Full entry:
+[`[environment]`](configuration-reference.md#environment).
 
 ```toml
-[environment.generated]
-compose_file = "compose.generated.yml"
-
-[[environment.generated.services]]
-id = "api"
-sibling = "api"
-build = { context = "." }
-command = ["node", "server.mjs"]
-ports = [{ name = "http", host_variable = "API_HOST_PORT", internal = 3000 }]
-
-[environment.generated.services.health]
-property = "GET /health returns 200"
-probe = { location = "in-stack", service = "api", cwd = ".", argv = ["node", "probe.mjs"], timeout_seconds = 10 }
-interval_seconds = 5
-timeout_seconds = 3
-retries = 4
-start_period_seconds = 20
+[environment]
+compose_files = ["compose.yml"]
+resettable_volumes = ["postgres-data"]
+seed = { argv = ["npm", "run", "db:seed"], timeout_seconds = 300 }
 ```
 
 ## `[[environment.install_policies]]`
@@ -176,9 +162,7 @@ reference also lists the [defaults](configuration-reference.md#defaults) and the
 
 | Area | Tables | Guide |
 |---|---|---|
-| Demo data | [`[environment.generated.data]`](configuration-reference.md#environmentgenerateddata) | [Data, vendors and decisions](environment.md#data-vendors-and-decisions) |
-| Vendors | [`[[environment.generated.vendors]]`](configuration-reference.md#environmentgeneratedvendors) | [Data, vendors and decisions](environment.md#data-vendors-and-decisions) |
-| Decisions | [`[environment.generated.decisions]`](configuration-reference.md#environmentgenerateddecisions) | [Where the decisions live](environment.md#where-the-decisions-live) |
+| Vendor stubs, TLS, restores | your Compose files | [Compose patterns](compose-patterns.md) |
 | Browser checks | [`[browser]`](configuration-reference.md#browser) | [Browser evidence](work-and-browser.md#browser-evidence) |
 | Work orders | [`[work]`](configuration-reference.md#work) | [Work and browser workflows](work-and-browser.md) |
 | Who decides | [`[autonomy]`](configuration-reference.md#autonomy) | [Who decides](safety-and-autonomy.md#who-decides) |

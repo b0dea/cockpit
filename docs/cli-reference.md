@@ -23,6 +23,10 @@ Does not read `cockpit.toml`.
 | `--accept-defaults` | string | unset |
 | `--reset-answer` | string | unset |
 | `--accept-reset` | string | unset |
+| `--scaffold-compose` | string | unset |
+| `--command` | string | unset |
+| `--port` | string | unset |
+| `--with` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -130,7 +134,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit sync
 
-Write the generated stack and agent files from cockpit.toml.
+Write the Compose ownership override and agent files from cockpit.toml.
 
 Reads `cockpit.toml` from `--config`.
 

@@ -89,7 +89,6 @@ One test covers the full `sync`/`check` path:
 npm test -- packages/cockpit/src/generated-environment/command.publication-core.slow.test.ts -t 'synchronizes one owned manifest idempotently and checks without mutation'
 ```
 
-It runs `sync`, then `check`, which changes nothing. A deliberately broken second case changes
-the persona source but keeps the old generated files; `check` then reports
-`GENERATED_ARTIFACT_DRIFT` for the persona output and leaves every file unchanged. That proves drift
-detection, and nothing about native runtime or vendor behaviour.
+It runs `sync`, then `check`, which changes nothing. A deliberately broken second case edits the
+generated guard by hand; `check` then refuses, names `.cockpit/guards/bash-guard.sh`, and leaves
+every file unchanged. That proves drift detection, and nothing about native runtime behaviour.

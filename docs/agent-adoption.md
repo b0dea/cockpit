@@ -154,8 +154,8 @@ decisions until its repositories exist.
    vendor_endpoint_hosts = []
    ```
 
-   `mount = "none"` is correct while the root has no runtime. If the generated stack later must
-   bind-mount it, change the row to `mount = "always"`, then run
+   `mount = "none"` is correct while the root has no runtime. If a Compose file later
+   bind-mounts it, change the row to `mount = "always"`, then run
    `cockpit sync --config cockpit.toml` and `cockpit check --config cockpit.toml`. The root
    `AGENTS.md` and `CLAUDE.md` are already native harness inputs, so sync does not project them
    into themselves; other declared guide paths still project normally.
@@ -363,8 +363,8 @@ with no `origin`. It needs an existing `cockpit.toml`: start from
 
 Done when `cockpit check --config cockpit.toml --json` exits 0 with no `COMPOSE_PORT_NOT_LEASED`.
 
-Keep the product's Compose file and let cockpit run it: answer `environment.generated` with the
-file instead of a generated stack. `init` proposes it under `inferred` only when exactly one
+Keep the product's Compose file and let cockpit run it: answer `environment.compose_files` with the
+file. `init` proposes it under `inferred` only when exactly one
 product Compose file sits inside the cockpit root. With Compose files in several repositories, or
 outside the root, it proposes none and names them under `interview.inferenceSkipped`.
 
@@ -393,8 +393,11 @@ first file's directory, and every listed file must stay inside the cockpit root.
 reach each checkout through its sibling variable (`build: ${SHOP_DIR}/api`,
 `"${SHOP_DIR}/api:/app"`) and publish ports from `[ports.bases]` variables. Write the services from
 the product's own files and tell the human which ones you copied. A Compose `include` of the
-product's file is refused: Compose would read it outside the files cockpit verifies and labels. The
-generated environment mode is the other choice.
+product's file is refused: Compose would read it outside the files cockpit verifies and labels. A
+small app with no Compose file at all can start from
+`cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>`
+([Scaffold a Compose file](environment.md#scaffold-a-compose-file)), which writes a
+`compose.yml` the product then owns.
 
 `init` then asks two more fields:
 

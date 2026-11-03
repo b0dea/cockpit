@@ -130,7 +130,9 @@ and [Inside a product repository](agent-adoption.md#inside-a-product-repository)
 answer. Then install cockpit in the new directory and remove the temporary installation as above.
 
 Compose files must sit inside the cockpit root, so a Compose file in the product repository is
-out of reach of a dedicated cockpit; declare a generated environment instead, or see
+out of reach of a dedicated cockpit. Write a `compose.yml` at the cockpit root that reaches the
+checkout through its sibling variable, scaffold one with `cockpit init --scaffold-compose`
+([Scaffold a Compose file](environment.md#scaffold-a-compose-file)), or see
 [Existing Compose file](agent-adoption.md#existing-compose-file) for the alternatives.
 
 ## Bootstrap a new product
@@ -244,8 +246,7 @@ vendor_endpoint_hosts = []
 | `ports.bases` | the host-published base port map; `{}` means none |
 | `environment.install_policies` | the dependency install protocols; `[]` for none |
 | `environment.test_data` | exactly the boolean keys `seeded_data` and `signed_in_users`; `false` states it is not needed, `true` keeps the product-owned work visible |
-| `environment.generated` | the generated environment to render |
-| `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
+| `environment.compose_files` | the Compose files that run the product, relative to the cockpit root |
 | `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |
 | `environment.posture` | exactly `addressing`, `authentication` and `posture_requirements`: how the product is reached locally and how sign-in works; asked only where a runtime is declared, and a posture that would fail `preflight` is refused ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `testing` | the product's `[testing]` stages and gates, asked only where a runtime is declared; `"none"` records that the product has no tests yet, so no work can be graded PASS and `doctor` warns (`TESTING_GATE_UNDECLARED`) |
@@ -273,16 +274,14 @@ verifying it (`INIT_VERIFICATION_INCOMPLETE`), edit the value in `cockpit.toml` 
 `cockpit.toml` are all gone because the root was deleted and recreated, `init` starts again from the
 preview and discards the recorded answers (`INIT_STATE_RESTARTED`).
 
-Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD`, `ENTRYPOINT` and
-`HEALTHCHECK`, a `package.json` `start`, `serve` or `dev` script, the `node` toolchain a Node
+Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, a `package.json` `start`, `serve` or `dev` script, the `node` toolchain a Node
 lockfile names, each repository's `origin` remote in `.git/config` (a URL carrying credentials is
 skipped, never shown), variable names (never values) in env templates such as `.env.example`, an
 existing Compose file, and the `services:` of GitHub workflows. A name that suggests a database or vendor endpoint, such as
 `DATABASE_URL`, becomes a `guards` question about its host. Test stages and gates are proposed from a repository's test entry point: a Bazel workspace, `nx.json`, a `turbo.json` test task, a Makefile `test` target, a `package.json` test script (run by the package manager its lockfile names), pytest configuration, `go.mod` or `Cargo.toml`; a tool that selects affected tests supplies the targeted gate. A repository with none is listed in `interview.inferenceSkipped` with what was looked for. Sources `init` could not use are listed
 in `interview.inferenceSkipped`. That includes Compose files outside the cockpit directory or in
 several repositories, because compose-first accepts only paths inside the cockpit and resolves them
-against the first file's directory: choose a generated environment, or write one `compose.yml` at
-the cockpit root that reaches each checkout through its sibling variable
+against the first file's directory: write one `compose.yml` at the cockpit root that reaches each checkout through its sibling variable
 ([Existing Compose file](agent-adoption.md#existing-compose-file)), and rerun `init`.
 
 A run that declares a runtime ends with `preflight`, which needs a completed first bring-up. If it
@@ -550,12 +549,12 @@ generated file. After either command, run `cockpit sync --config ./cockpit.toml 
 what changes.
 
 While a stack is up or asleep, both commands act at once only on a repository the stack does not
-use (`mount = "none"`, named by no generated service); for any other they refuse and ask for
+use (`mount = "none"`, named by none of its Compose files); for any other they refuse and ask for
 `./node_modules/.bin/cockpit down --config ./cockpit.toml` first. Hand edits follow the same rule:
 a change that never reaches a container (a `purpose`, guards, MCP, skills, surfaces, comments,
-the `[environment.machine]` floor and cold-start budget, a generated stack's reasons, provenance
-and health properties) needs only `sync`, and the next `up` resumes the same stack. A change to services, ports, mounts,
-images or anything else the containers receive makes `up` refuse with `LIFECYCLE_PROGRESS_INVALID`,
+the `[environment.machine]` floor and cold-start budget, the reset volumes and the seed command)
+needs only `sync`, and the next `up` resumes the same stack. A change to a Compose file, ports,
+mounts or anything else the containers receive makes `up` refuse with `LIFECYCLE_PROGRESS_INVALID`,
 because `up` never replaces a running stack in place; run the `down` it prints, then `up`.
 
 ## Rename a cockpit

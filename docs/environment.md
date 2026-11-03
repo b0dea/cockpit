@@ -30,19 +30,20 @@ input passed validation.
 
 | Declares | Mode | `sync` and `check` | Runtime commands |
 |---|---|---|---|
-| neither `compose_files` nor `generated` | surfaces only | write and drift-check the harness surfaces | refuse with `ENVIRONMENT_NOT_DECLARED` |
+| no `compose_files` | surfaces only | write and drift-check the harness surfaces | refuse with `ENVIRONMENT_NOT_DECLARED` |
 | `environment.compose_files` | compose first | the surfaces, plus `check` reads the Compose topology | run the declared Compose files |
-| `[environment.generated]` | generated | the surfaces and the generated stack | run the generated Compose file |
 
-If both are declared, `generated` wins. The runtime commands are `up`, `sleep`, `session`, `down`,
+The runtime commands are `up`, `sleep`, `session`, `down`,
 `reset`, `preflight`, `logs` and `runtime measure`. Every mode writes the harness
 [surfaces](concepts.md#surface) (instructions, skills, guards, permissions, evaluator and work
 orders) and checks them for [drift](concepts.md#drift). A cockpit that declares only
 `[environment.machine]` still gets the machine-capacity checks in `preflight`, so it is not refused
 as surfaces only. `doctor` reports an undeclared runtime as not declared, not as healthy, and its
-`declarations` result lists resource ceilings, data modes and vendor guards as not declared unless
-the stack is generated. [`examples/docs-only`](../examples/docs-only/README.md) and
-[`examples/compose-first`](../examples/compose-first/README.md) show the first two modes.
+`declarations` result says whether the runtime, the reset volumes and the seed command are
+declared. [`examples/docs-only`](../examples/docs-only/README.md) and
+[`examples/compose-first`](../examples/compose-first/README.md) show the two modes. Vendor stubs,
+TLS, seeding and restoring data are plain Compose; [Compose patterns](compose-patterns.md) shows
+each.
 
 ### Compose-first stacks
 
@@ -96,19 +97,38 @@ Mounts must match the declaration in both directions:
   row.
 - Each `environment.generated_host_paths` entry must reach a container: bound itself, through a
   directory inside it, or inside a bound directory such as a sibling mounted whole. Otherwise
-  `check` fails with `GENERATED_HOST_PATH_UNMOUNTED`. A generated stack is held to this too: an entry that no
-  generated service mounts and that is not a `[browser]` artifact root hands nothing to a container.
+  `check` fails with `GENERATED_HOST_PATH_UNMOUNTED`.
 - A container gets only what `cockpit.toml` declares. A bind outside every `mount = "always"`
   sibling and every `environment.generated_host_paths` entry, or one that leaves its sibling
   through a symbolic link, fails `check` with `COMPOSE_BIND_UNDECLARED`, and `up` refuses it.
 
+### Scaffold a Compose file
+
+A small app with no Compose file can get a starting one, once:
+
+```sh
+npx --no cockpit init . --scaffold-compose api --port 3000 --with postgres,redis
+```
+
+`--scaffold-compose` names the app directory relative to the cockpit root (`.` for the root
+itself) and `--port` the port the app listens on inside its container. The app builds from its
+Dockerfile; without one, a directory with a `package.json` runs on `node:22-alpine` and needs
+`--command "npm start"` or whatever starts it. `--with` adds a database or cache from a fixed list,
+`postgres` and `redis`, each on a pinned major version with a healthcheck, a named volume and its
+URL in the app's environment. The written `compose.yml` publishes the app on
+`127.0.0.1:${API_HOST_PORT:-3000}` and bind-mounts the app directory, and the command prints the
+`[ports.bases]` variable and `resettable_volumes` entries to declare. `check` then warns that the
+app service has no healthcheck and that the images are pinned by tag; add a healthcheck and pin
+each image by digest when you can. The file is yours from then
+on: cockpit runs it as written and never rewrites it, and the scaffold refuses with
+`INIT_SCAFFOLD_COMPOSE_EXISTS` when the cockpit root already holds any Compose file.
+
 ## Local URLs and port families
 
-Generated service ports bind to `127.0.0.1` by default, so starting a local stack does not expose
-it to the network. Set a port's `host_ip` to `::1` for IPv6 loopback, or to `0.0.0.0` or `::` only
-when you intend that wider exposure; cockpit keeps what you set. In compose-first mode, write the
-same explicit loopback binding in your own Compose file, as in `"127.0.0.1:${API_HOST_PORT}:3000"`;
-cockpit does not rewrite your published interfaces.
+Write each published port with an explicit loopback binding in your Compose file, as in
+`"127.0.0.1:${API_HOST_PORT}:3000"`, so starting a local stack does not expose it to the network;
+use `::1` for IPv6 loopback, or `0.0.0.0` only when you intend that wider exposure. cockpit does not
+rewrite your published interfaces.
 
 Stack *n* publishes each `[ports.bases]` value plus *n* × `ports.step`, for up to `ports.count`
 stacks (defaults: step 100, count 27). `up` leases a whole port family under one lock shared by
@@ -182,52 +202,20 @@ it up:
 4. Rerun `cockpit up --config cockpit.toml` and open the returned URL with certificate validation
    enabled.
 
+[Compose patterns](compose-patterns.md#serve-tls) shows a TLS service in front of the app.
+
 ## Sibling and template paths
 
 `sync` and `check` require each declared [sibling](concepts.md#sibling-repository) directory to
 exist inside the siblings root, both as written and after following filesystem links. An absolute
 sibling path is accepted only inside that root. Get missing checkouts onto disk, for example with
-`cockpit setup`, before generating their environment.
+`cockpit setup`, before running `sync`.
 
 `doctor` and `preflight` inspect every declared environment file in every sibling, and each check
 lists all its failing paths, so one healthy file cannot hide another file's missing instance or
 stale key names. Restore the named checkout or bring its instance keys in line with its template,
 then rerun `cockpit doctor --config cockpit.toml`. When no sibling declares an environment file,
 the instance-presence and key-freshness checks pass: there is nothing to seed or compare.
-
-For generated services, `build.context`, bind and environment-file mount sources, and
-`toolchain_pins.path` are relative to the declared sibling checkout; `.` means the checkout itself.
-A dedicated cockpit can build and mount a sibling that sits beside its own folder; the generated
-Compose file records that relative path. Declare the sibling under `cockpit.siblings_root`, then
-run `cockpit sync` and `cockpit check` before starting the stack. Reading inputs from a sibling
-does not let cockpit write outside the cockpit: browser-runner inputs, `generated_host_paths` and
-generated output destinations stay relative to the cockpit folder.
-
-Before Compose builds or starts a generated service, cockpit checks each declared bind source,
-environment-file mount, build context and Dockerfile, starting from the checkout it belongs to:
-
-- no part of the path may be a symbolic link;
-- bind sources must have their declared type, and build contexts must be directories;
-- Dockerfiles must be regular files inside the context; an omitted Dockerfile means `Dockerfile`
-  in that context.
-
-This stops a link or a wrong-type input from reaching Docker before readiness probes could explain
-the failure. It does not read environment-file values. Toolchain pins are checked in the sibling
-even when the service has no bind mount, but only diagnostics report them; they do not affect the
-build.
-
-Browser-runner inputs are checked after their generated files are written. Create the directory
-named by `browser.artifacts.runner` before the first `cockpit up`; for example, if the declaration
-uses `.browser/runner`, run `mkdir -p .browser/runner` from the cockpit checkout. cockpit refuses
-missing or linked inputs rather than let Docker create host directories; restore the reported input
-as an ordinary file or directory, then rerun `cockpit up --config cockpit.toml`. These checks look
-at the declared paths when cockpit checks them; they do not inspect a build context's contents
-recursively or lock the filesystem against later changes.
-
-Generated vendor templates must be inside the cockpit checkout. External sibling checkouts remain
-valid for mounted surfaces, but a vendor template outside the checkout is refused, and cockpit never
-substitutes a similarly named directory inside its own checkout. The
-[adoption guide](getting-started.md#adopt-in-layers) gives the order for generated templates.
 
 ## Lifecycle and ownership
 
@@ -314,15 +302,6 @@ still running is kept, and so is one whose start could not be read while its pro
 the `CLAIM_CO_TENANT` refusal names each such holder and its process ID, so you can end that
 command, for example with `kill <pid>`, and retry.
 
-A `restored` data mode reserves the stack for the command that runs the restore and records that
-command's process the same way. If the command dies mid-restore, the next `up`, `sleep`, `down` or
-`reset` sees that the process is gone and releases the reservation. While that process runs, or
-when cockpit cannot confirm it is gone, they refuse with `CLAIM_CO_TENANT` and name its process ID.
-Releasing it warns with `RESTORE_INTERRUPTED`, naming the process and when the restore began: the
-restore is not recorded as applied, and the product-data volume may hold part of it. Run `reset`,
-which only previews what it deletes until a person confirms it with `--interactive`, and then `up`
-to restore the data again.
-
 The wrapper passes its process ID and start identity to its command in `COCKPIT_SESSION_PROCESS`, so
 a hold that a `sleep` and then an `up` inside the session drop and re-add is still tied to the
 wrapper, and is released the same way once the wrapper is gone. `up` reads that process's start
@@ -346,8 +325,8 @@ from this checkout still holds keeps running, and the session says so with
 
 Each `sleep` and `down` stops containers with a stop grace: Docker sends SIGTERM and waits ten
 seconds before killing. A service whose PID 1 ignores SIGTERM, as `node` does unless the program
-handles it, pays the whole grace at every stop. Generated services already run under `init: true`;
-in your own Compose file, add `init: true` to such a service or handle SIGTERM in the program.
+handles it, pays the whole grace at every stop. Add `init: true` to such a service in your Compose
+file, or handle SIGTERM in the program.
 
 ### Remove the stack and its data
 
@@ -361,8 +340,8 @@ Volumes stay, because only `reset` deletes data.
 When one of the stack's own resources has to stay, such as a network another container is still
 attached to or an image tagged under a second name, `down` refuses with `DOWN_RESOURCES_KEPT` and
 names each resource and the reason, rather than reporting a stack removed that is still there. It
-clears startup progress only after confirming the removals, which lets the next `up` use a new
-generated identity. `down` also retires a stack that `sleep` or an ended `session` left stopped:
+clears startup progress only after confirming the removals, which lets the next `up` start
+afresh. `down` also retires a stack that `sleep` or an ended `session` left stopped:
 with no holder left, it claims the stack for this checkout without starting anything and removes
 it, so you do not have to run `up` first. While another session still holds the stack, `down`
 refuses with `CLAIM_CO_TENANT` and names that session's holder and process; end that
@@ -374,12 +353,10 @@ terminal outside CI; the approval stays with the process that showed the preview
 everything again before it acts. `down` and `reset` delete only from a local Docker daemon, which
 they fix once per run; see [Choose the Docker daemon](#choose-the-docker-daemon).
 
-Name each `environment.resettable_volumes` entry by its key in the Compose file: the
-`[[environment.generated.volumes]]` `id` in a generated stack, or the top-level `volumes:` key in a
-compose-first one. Docker's volume name carries a per-checkout project prefix, so it is not
-accepted. A name that no declared volume has fails configuration validation in a generated stack.
-In a compose-first stack, `sync`, `check` and every runtime command, `down` included, refuse it,
-and an `external` volume too, because cockpit cannot label it. A declared volume that does not exist yet is left out of the
+Name each `environment.resettable_volumes` entry by its top-level `volumes:` key in the Compose
+file. Docker's volume name carries a per-checkout project prefix, so it is not accepted. `sync`,
+`check` and every runtime command, `down` included, refuse a name that no declared volume has, and
+an `external` volume too, because cockpit cannot label it. A declared volume that does not exist yet is left out of the
 preview. A volume that an earlier `cockpit.toml` created is still this stack's data, and `reset`
 deletes it with the rest.
 
@@ -395,20 +372,16 @@ destroys the records cockpit needs to repair it safely.
 
 ### Change a running stack
 
-A stack's identity, carried in its ownership labels and saved progress, is a digest of the
-declarations that reach its containers, not of the bytes of `cockpit.toml`. Editing a sibling's
+A stack's identity, carried in its ownership labels and saved progress, is a digest of the Compose
+files and of the `cockpit.toml` declarations that reach its containers, not of the bytes of
+`cockpit.toml`. Editing a sibling's
 `purpose`, the guards, MCP, surfaces, comments or formatting leaves a running stack alone, and the
 next `up` resumes it. So do the fields the host checks rather than the containers receive:
 `[environment.machine]` (including `cold_start_seconds`), `addressing`, `authentication`,
-`posture_requirements`, `resettable_volumes` and `entrypoint_derivatives`. So does prose in a
-generated stack (every `reason`, `provenance`, health `property` and `measurement`, and a vendor's
-callback `alternative`), which the generated Compose file leaves out, and the order of the
-generated `services`, `volumes`, `vendors` and each service's `ports`, `mounts` and `dependencies`
-tables, which the renderer sorts. `sleep` and `reset` keep the previous generated identity so the
-stack can resume.
+`posture_requirements`, `resettable_volumes`, `seed` and `entrypoint_derivatives`.
 
-A change to services, ports, mounts, images or anything else the containers receive gives the
-stack a new identity, and `up` refuses with `LIFECYCLE_PROGRESS_INVALID` rather than replace the
+A change to a Compose file, or to ports, mounts or anything else in `cockpit.toml` the containers
+receive, gives the stack a new identity, and `up` refuses with `LIFECYCLE_PROGRESS_INVALID` rather than replace the
 running stack in place. To apply such a change, for example a `[ports.bases]` edit:
 
 1. Edit `cockpit.toml`. This can happen while the stack runs.
@@ -454,8 +427,7 @@ deletion.
 
 ## Compose project name
 
-Every command that runs Docker Compose passes `--project-name <cockpit.name>-<stack>`, in both
-compose-first and generated mode, where `<stack>` is the first 12 hex digits of the stack ID. The
+Every command that runs Docker Compose passes `--project-name <cockpit.name>-<stack>`, where `<stack>` is the first 12 hex digits of the stack ID. The
 stack ID comes from the cockpit's main checkout and the current checkout, so two cockpits that share
 a `cockpit.name`, or two checkouts of one cockpit, get separate projects on one Docker daemon
 instead of replacing each other's containers. It never depends on the bytes of `cockpit.toml`, so
@@ -463,9 +435,7 @@ editing the file keeps the same project.
 
 Containers, networks and named volumes carry that name: a cockpit named `shop-cockpit` runs
 containers such as `shop-cockpit-3f2b3aead733-api-1` and a volume
-`shop-cockpit-3f2b3aead733_dependencies`. The generated Compose file has no `name:` field, because
-it is committed and shared by every checkout; in compose-first mode your own file's `name:` is
-overridden. To look at the stack with Docker directly, find the project with `docker compose ls`
+`shop-cockpit-3f2b3aead733_postgres-data`. Your own file's `name:` is overridden. To look at the stack with Docker directly, find the project with `docker compose ls`
 and name it: `docker compose --project-name shop-cockpit-3f2b3aead733 ps`. Renaming `cockpit.name`
 addresses a different project and stack, so run `down` before renaming, as
 [Rename a cockpit](getting-started.md#rename-a-cockpit) describes.
@@ -536,13 +506,12 @@ match `.env.*`, explicitly allow `.env.schema` and confirm that Git tracks it be
 schema declares variable names, validation and how a provider resolves each value; review its
 resolver code and dependency lock as you would product code.
 
-For generated environments, `sync` writes cockpit's own `env/.secrets/.gitignore`, which ignores
-everything below it, before any secret material exists. Put encrypted resolver expressions or
-external-provider references in `env/.secrets/<cockpit-project>/<component>`. If an ignore file
-that cockpit did not write already exists there, reconcile it first. Existing secret directories
-must not be symbolic links and must have mode 0700. cockpit leaves files it did not create alone
-and does not create their values: create resolver files with mode 0600 through your own approved
-provisioning process.
+Put encrypted resolver expressions or external-provider references in
+`env/.secrets/<cockpit-project>/<component>`, which the generated guards keep agents from changing
+or staging. Ignore `env/.secrets/` in the cockpit's `.gitignore` before any secret material exists,
+create the directories with mode 0700 and no symbolic links, and create resolver files with mode
+0600 through your own approved provisioning process. cockpit does not create those files or their
+values.
 
 The shipped setup procedure explains how to adopt Varlock, optionally, through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
@@ -571,16 +540,7 @@ tested. Git ignore rules, filesystem permissions, encryption and output redactio
 secrets from malicious code running as the same user, and trusted product child processes receive
 plaintext variables. A stronger boundary needs a separately tested sandbox and provider policy.
 
-## Generated environment
-
-`[environment.generated]` is where a product declares its stack content: services, images,
-volumes, mounts, data operations, vendor modes, probes and generated destination paths. cockpit
-supplies the rendering and writing; the declaration supplies what differs between products. The
-outputs are the declared environment paths plus the configured harness surfaces; the repository's
-synthetic example shows a Compose file, a generated copy of a secrets template,
-<!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md`, and generated persona files.
-
-### Check and sync
+## Check and sync
 
 `check` works out what the generated files should contain now and compares that with every whole
 file and shared-file region listed in the ownership manifest (see
@@ -611,105 +571,60 @@ Capability states, overlay rules, MCP approval, sibling guide copies, the skill 
 `selftest` for the generated harness surfaces are in [Harness surfaces](harness-surfaces.md);
 see [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) before changing the installed version.
 
-### Services and dependencies
-
-Each generated service runs under `init: true`, so its command gets signals forwarded and exits
-promptly on stop. A pinned-image service with exactly one bind mount of its checkout
-(`source = "."`) runs from that mount's target, because the image knows nothing about the checkout
-and a relative command such as `node server.js` would otherwise run from `/`. A built service keeps
-the `WORKDIR` its Dockerfile declares. The generated file names no Compose project; see
-[Compose project name](#compose-project-name).
-
-Generated services can declare `resources.memory_mb`, `resources.cpus` and
-`resources.provenance`, applied as `mem_limit` and `cpus` on the generated Compose service. To
-limit the generated browser runner, use `browser.resources` with the same fields, together with
-`environment.generated` and a declared `browser.endpoint`. Minimum values are in the
-[configuration reference](configuration-reference.md). Choose ceilings from what the product
-actually needs and what the laptop can spare; cockpit does not invent limits. Environment decisions
-report the declared ceilings, or that none are declared. The machine floor stays a separate minimum
-capacity check.
-
-Before using a running generated stack, cockpit checks that it matches the stack ID, configuration
-and source digests, generation, Compose project and Compose files. For installed dependencies it
-also checks the sibling checkout and lockfile, the install policy, the physical volume and where it
-is mounted, the container image, architecture and ABI, the install record, the load-probe record
-and the stamp file. Each sibling has its own dependency cache identity, even when two lockfiles
-contain the same bytes. That identity includes the physical volume: a new generated volume gets a
-fresh install, a new load probe on the same mount, and its own stamp. If compatibility changes
-within the same volume, cockpit refuses rather than overwrite the stamp, because a stamp alone does
-not show that the current runtime can load the installed dependencies.
-`DEPENDENCY_RUNTIME_STALE`, `DEPENDENCY_RUNTIME_UNMOUNTED` and `DEPENDENCY_RUNTIME_INCOMPATIBLE`
-say which of these checks failed; `DEPENDENCY_RUNTIME_UNAVAILABLE` means cockpit could not get a
-current result.
-
-### Data, vendors and decisions
-
-A stack without `environment.generated.data` has no data step, and `up` completes the data stage
-without applying anything. Otherwise `up` applies the declared default mode;
-[Demo data, test users and roles](#demo-data-test-users-and-roles) covers how to declare it. cockpit
-records the exact IDs of the operations it applied, attempted and did not apply. An intention, an
-earlier success, or a current read-only probe that failed or could not be verified does not count
-as completion. In-stack data operations and their read-only probes use the identities and leased
-ports of the current stack, so Compose cannot pick a different stack or fall back to default ports.
-Host data operations run with an empty process environment. Run
-`./node_modules/.bin/cockpit up --config ./cockpit.toml` to apply the declared mode, then
-`./node_modules/.bin/cockpit doctor --config ./cockpit.toml` to run its current probes.
-
-Each vendor declaration selects a `posture` such as `stubbed`. It pins every endpoint variable to
-its supplier template and to its runtime service and local sink, and declares the probes that
-apply: route, loader, shadow, expiry, TLS, callback, stub and egress. A nonempty placeholder value
-stays inert. An egress flag is passed only to its guarded process and is never written into
-generated files. A generated host-port variable must also be safe to put in the host process
-environment: names that control a loader, interpreter, shell, module path or container runtime are
-refused even when their leased values are numbers.
-
-<!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md` is a generated file that cockpit owns whole. It lists every service, volume, data default and mode,
-restore policy, mount, port and vendor. A subject with a dated entry shows that decision; a subject
-without one is listed as **undecided**, with the source it inherits from, and `check` reports it as
-`GENERATED_DECISIONS_UNDECIDED`, an information diagnostic rather than a failure. Duplicate,
-future-dated, stale or sensitive entries stop the inspection. Covering every subject does not show
-that a business decision is right; that review stays `human_needed`.
-
-### Bring-up order
+## Bring-up order
 
 Bring-up starts from the lifecycle history: `setup` writes `started`, and so does the first `up` on
 a stack that has neither lifecycle data nor history, so you do not have to run `setup` first.
-Lifecycle data without history is refused as lost history. Bring-up then completes, in order, the
-generated-runtime check, dependencies, data and vendors, and only after that records `seeded`. A
-refusal keeps the exact applied, attempted and not-applied progress so the run can be replayed.
-Fix the named prerequisite or failed check; never edit lifecycle state to fake `started` or
-`seeded` history.
+Lifecycle data without history is refused as lost history. Bring-up then checks the runtime,
+starts the Compose stack, waits for every service to report healthy, records `seeded` in the
+lifecycle history, and only then runs `environment.seed` when it is due. A refusal keeps the
+progress so the next `up` resumes. Fix the named prerequisite or failed check; never edit
+lifecycle state to fake `started` or `seeded` history.
 
-### Result words
+## Result words
 
 Environment results use four words with exact meanings. `enforced` and `unavailable` mean what they
 mean for harness features (see [Capability states](harness-surfaces.md#capability-states)); for the
 environment:
 
-- **enforced**: cockpit refuses a declaration, file, ownership record, identity, mount, endpoint
-  pin or operation that does not match.
+- **enforced**: cockpit refuses a declaration, file, ownership record, identity, mount or
+  operation that does not match.
 - **measured**: a probe produced the stated result. Repository tests run mounted candidates next to
   unmounted and incompatible controls, but those synthetic controls say nothing about your local
   runtime.
 - **unavailable**: cockpit could not get or verify the required result, and it counts as not
-  passing. The native dependency probe stays unavailable until you supply a canonical generated
-  configuration, a checkout, and a pinned image known to be incompatible, as the broken control.
+  passing.
 - **human_needed**: product or vendor behavior a maintainer still has to review; no check has
   established it.
 
 ## Demo data, test users and roles
 
 This section is for whoever makes the local stack start with useful data and signed-in test users.
-cockpit runs the product's own seed, sweep and restore commands in a declared order and records
-what was applied. It never writes rows or creates identities itself: the product's writers already
-encode its invariants, and a second writer in cockpit would drift from them.
+cockpit runs the product's own seed command and records when it last succeeded. It never writes
+rows or creates identities itself: the product's writers already encode its invariants, and a
+second writer in cockpit would drift from them.
 
-**What to declare.** Under `[environment.generated.data]`, list the modes the stack supports, from
-`empty`, `seeded` and `restored`, and pick the `default_mode` that `cockpit up` applies. Each mode
-is an ordered list of operations. A `seeded` mode needs `fixtures`, which name a product-owned
-[persona](concepts.md#persona) source; cockpit renders that source into typed persona outputs (JSON
-or TypeScript) for tests. A `restored` mode needs `restore`.
-[`examples/synthetic/cockpit.toml`](../examples/synthetic/cockpit.toml) declares all three modes.
+**What to declare.** Name the Compose volumes that hold the data, and the command that fills them:
+
+```toml
+[environment]
+compose_files = ["compose.yml"]
+resettable_volumes = ["postgres-data"]
+seed = { argv = ["npm", "run", "db:seed"], timeout_seconds = 300 }
+```
+
+`up` runs the seed once every service is healthy, whenever no successful seed is recorded for the
+stack or one of the `resettable_volumes` was created after the last one: the first `up`, the `up`
+after `reset`, and the `up` after anything else removed the volume. The command runs on the host
+from the cockpit directory, with the leased `[ports.bases]` variables and each
+`COCKPIT_ENTRYPOINT_*` address added to the caller's environment, so it reaches the stack as a
+person's shell would. `up --json` reports `seed` as `ran` or `current`. A seed that exits nonzero,
+or runs longer than `timeout_seconds`, refuses with `DATA_SEED_FAILED`: the stack stays up, its data
+may be partly applied, and the next `up` runs the seed again, so write it to be rerun. When Docker
+cannot say when the volumes were created, `up` refuses with `DATA_SEED_UNAVAILABLE` rather than
+guess. `seed` requires `resettable_volumes`, because those volumes are what tells cockpit the data
+is gone. To seed or restore from inside the stack instead, see
+[Compose patterns](compose-patterns.md#seed-or-restore-data).
 
 Run the declared flow in this order. Replace the two `*-gate-id` placeholders with IDs from
 `[testing.gates]`; those gates call the product's own state-minting and authorization setup.
@@ -725,18 +640,17 @@ Run the declared flow in this order. Replace the two `*-gate-id` placeholders wi
 ./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
-The first `up` applies the default data mode. Reset previews exactly which data and auth files it
-will remove; only the interactive command applies that preview. The second `up` reseeds: a
-product-data volume created after the data mode was last applied, whether `reset`, a
-`docker volume prune` or a runtime reset removed the old one, holds none of that data, so `up`
-applies the default data mode again rather than only rerunning its read-only probes. The first
+The first `up` runs the seed. Reset previews exactly which volumes and host paths it will remove;
+only the interactive command applies that preview. The second `up` seeds again, because the
+volume `reset` recreated is newer than the last seed. The first
 product gate mints one signed-in state per persona, and the second proves both an allowed and a
 denied operation. Running only part of a gate is PARTIAL, never a pass of the whole gate.
 
 **Personas.** Give each test user a stable synthetic ID such as `auth-admin` or `auth-member`, its
 role and permissions, and one operation it must be allowed and one it must be denied. Stable IDs let
-a re-seed update the same rows instead of duplicating them. The allowed and denied pair is what
-proves the roles work, not only that a sign-in succeeded.
+a re-seed update the same rows instead of duplicating them. Keep these [personas](concepts.md#persona)
+in a product-owned fixture that both the seed and the tests read. The allowed and denied pair is
+what proves the roles work, not only that a sign-in succeeded.
 
 **Fixture hygiene.** These rules come from seeders that broke in real use:
 
@@ -824,15 +738,12 @@ Before the first bring-up (`STATE_UNSEEDED`), while the stack sleeps
 presence, the machine floor and the runtime measurement, and report the checks that need running
 services as not applicable; `preflight` never passes in those states. A check can pass, fail, be
 unavailable, or not apply to the declared setup, and an unavailable required check never becomes a
-pass because another check succeeded. Host capacity, dependency installation and runtime health
-need complete results from processes cockpit itself ran; when those results are missing, the
+pass because another check succeeded. Host capacity and runtime health need complete results from processes cockpit itself ran; when those results are missing, the
 result does not pass.
 
 `preflight` and `doctor` read current results without changing anything; `doctor` also previews
-generated surfaces to list overrides. They never run `sync`, install dependencies, seed or restore
-data, contact vendors to repair anything, or advance lifecycle progress. Only bring-up runs those
-steps, as [Bring-up order](#bring-up-order) describes. Generated, dependency, data and vendor
-checks each return their own results.
+generated surfaces to list overrides. They never run `sync`, seed data or advance lifecycle
+progress. Only bring-up runs those steps, as [Bring-up order](#bring-up-order) describes.
 
 `doctor` exits 0 with a report whenever it can read `cockpit.toml`, whatever the verdict, and exits
 2 when the configuration is missing or invalid. Its human output is one line per area followed by
@@ -854,8 +765,7 @@ What the checks compare:
   being current, but no harness-side cap on their always-loaded size applies to them. Whether each
   harness enforces the files is recorded in the [capability matrix](capability-matrix.md). Missing
   or edited generated files block health: run `cockpit sync --config cockpit.toml`, then retry.
-- **Grants and registries.** Directory grants and registry authentication are checked only when the
-  current declarations select grants or registry probes.
+- **Grants.** Directory grants are checked only when a sibling declares `mount = "always"`.
 - **Mounts and ports.** A runtime with no bind mounts passes as an exact empty mount comparison;
   declared binds must match the current mounts exactly. Health on a running stack rechecks the
   retained lease, current container identities, mounts and published listeners without reserving

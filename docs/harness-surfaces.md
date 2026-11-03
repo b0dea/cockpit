@@ -9,7 +9,7 @@ the contributor page `docs/contributing/testing.md`.
 ## Publish and verify
 
 [Surfaces](concepts.md#surface) are published by the same `sync` and checked by the same `check`
-as the rest of the generated environment; follow
+as the rest of the generated files; follow
 [Bring the product up](getting-started.md#bring-the-product-up). `check` reports
 [drift](concepts.md#drift) and never repairs output.
 
@@ -366,7 +366,7 @@ Measure a custom capability yourself and record it as its `state` and `measured_
      --probe-specifications ./.cockpit/local/probe-specifications.json
    ```
 
-   It first runs the read-only generated environment check and refuses a file that is missing,
+   It first runs the read-only generated-file check and refuses a file that is missing,
    malformed, stale, or does not match the current source and manifest. It then shows the file's
    canonical path, its SHA-256, the source and manifest digests it is tied to, and each exact
    invocation, version and help command. Compare the SHA-256 with `shasum -a 256 <file>` and type

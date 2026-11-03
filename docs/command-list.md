@@ -15,7 +15,7 @@ This generated index is for users choosing the command that owns their next oper
 
 ## Generate and verify
 
-- `cockpit sync`: Write the generated stack and agent files from cockpit.toml.
+- `cockpit sync`: Write the Compose ownership override and agent files from cockpit.toml.
 - `cockpit check`: Report generated files that no longer match cockpit.toml.
 - `cockpit selftest`: Test whether agent tools enforce the generated controls.
 

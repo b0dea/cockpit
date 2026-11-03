@@ -23,7 +23,7 @@ help, for example `cockpit sync --help`.
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `npx --no cockpit sync --config cockpit.toml`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
 | `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
-| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. When the message names a process restoring the stack's data, wait for it or stop it, then retry: the retry releases a restore whose process has ended. |
+| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `npx --no cockpit setup --config cockpit.toml`. |
@@ -32,9 +32,9 @@ help, for example `cockpit sync --help`.
 ## GENERATED_ARTIFACT_DRIFT
 
 **Cause.** An owned whole file, symlink target or shared region differs from what the environment
-and surface declarations and their sources now produce. Per the
-[generated environment contract](environment.md#generated-environment), `check` reports the
-mismatch without changing any owned file.
+and surface declarations and their sources now produce. As
+[Check and sync](environment.md#check-and-sync) describes, `check` reports the mismatch without
+changing any owned file.
 
 **Remedy.** Inspect the target named in the diagnostic, then run:
 
@@ -52,11 +52,6 @@ npx --no cockpit sync --config ./cockpit.toml
 Do not edit the ownership manifest or lifecycle state. If changed bytes belong to a formerly
 owned path, preserve them until the declaration and ownership transition are understood.
 
-Your product's services, paths, probes, data operations, and vendor values go in
-`[environment.generated]` in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. Cockpit
-writes its review record to
-<!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md`.
-
 ## Harness surface failures
 
 1. Read the target and message in the diagnostic.
@@ -68,9 +63,8 @@ writes its review record to
 Never edit the ownership manifest, a generated shared region or the selftest results to make a
 diagnostic disappear.
 
-`REGISTRY_INPUT_INVALID` or `REGISTRY_EFFECTIVE_CONFIG_INVALID` means the declared sibling row
-cannot produce one valid registry and configuration. Correct the named row and its derived
-service, mount, port, policy or MCP source, then retry the preview.
+`REGISTRY_INPUT_INVALID` means a declared sibling row cannot produce one valid registry. Correct
+the named row or its derived MCP source, then retry the preview.
 
 ### Merge, ownership, and generation
 
@@ -236,16 +230,16 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
+| `DATA_SEED_UNAVAILABLE` | make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml> |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
-| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
-| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files and run npx --no cockpit sync --config <your cockpit.toml> |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your Compose file (for a small app with none, npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port> writes a starting one), then run npx --no cockpit sync --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
-| `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
-| `GENERATED_DEPENDENCY_VOLUME_MISSING` | set toolchain = "none" on the sibling if its image already holds its dependencies; otherwise give the sibling exactly one generated service and mount one dependency volume in it: a [[environment.generated.volumes]] row whose id and install_policy are the volume of an install policy for the sibling's toolchain, with purpose = "dependencies", and a mounts row in that service with kind = "volume", that source, and the target where the toolchain reads its dependencies; then run npx --no cockpit sync --config <your cockpit.toml> |
-| `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
+| `GENERATED_ARTIFACT_MISSING` | run npx --no cockpit sync --config <your cockpit.toml> |
+| `GENERATED_DECLARATION_MISSING` | remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
 | `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
@@ -256,6 +250,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
+| `INIT_SCAFFOLD_COMPOSE_EXISTS` | run npx --no cockpit init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
 | `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
@@ -275,9 +270,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `PROJECTION_MOUNT_MISMATCH` | [see above](#sibling-projection-and-skills) |
 | `PROJECTION_RESULT_BOUNDS` | [see above](#sibling-projection-and-skills) |
 | `PROJECTION_ROOT_AMBIGUOUS` | [see above](#sibling-projection-and-skills) |
-| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [see above](#harness-surface-failures) |
 | `REGISTRY_INPUT_INVALID` | [see above](#harness-surface-failures) |
-| `RESTORE_INTERRUPTED` | run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again |
 | `RESTRICTION_ADAPTER_INVALID` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_EVENT_UNADAPTED` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |

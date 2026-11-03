@@ -6,8 +6,8 @@
 **One file that boots your multi-repository product on your laptop and gives every AI coding agent
 the same instructions, skills and guardrails.**
 
-You describe your product once in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`: its repositories, services, ports and seed
-data. cockpit runs that stack against the checkouts your agents are editing, writes the matching
+You describe your product once in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`: its repositories, ports, the Compose files
+that run it and the command that seeds its data. cockpit runs that stack against the checkouts your agents are editing, writes the matching
 configuration for Claude Code, Codex CLI and OpenCode, and fails a check whenever any of it drifts.
 It holds none of your product code.
 
@@ -19,9 +19,9 @@ It holds none of your product code.
 Edit a generated file by hand and `check` fails, naming the file and the fix:
 
 ```console
-$ echo "# tweak" >> compose.generated.yml
+$ echo "# edited by hand" >> compose.cockpit.yml
 $ npx --no cockpit check --config cockpit.toml
-ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]
+ERROR GENERATED_ARTIFACT_DRIFT [compose.cockpit.yml]
 What failed: owned generated artifact differs from canonical bytes
 Why it matters: generated files no longer match the canonical cockpit configuration
 Fix: npx --no cockpit sync --config /path/to/cockpit-demo/cockpit.toml
@@ -92,9 +92,9 @@ versions.
 
 You need Node.js, Git, and macOS or Linux. cockpit is not on npm yet, so build the package as in
 [Install from source](docs/getting-started.md#install-from-source). Then follow the
-[tutorial](docs/tutorial.md): it copies the synthetic example out of this repository, installs the
-package there, previews the files cockpit would write, applies them, and breaks a generated file
-to watch `check` catch it. The example needs no Docker and no credentials.
+[tutorial](docs/tutorial.md): it copies the compose-first example out of this repository, installs
+the package there, previews the files cockpit would write, applies them, and breaks a generated file
+to watch `check` catch it. It needs the Docker CLI and no credentials.
 
 To set cockpit up for your own product, start at [Getting started](docs/getting-started.md).
 
@@ -104,8 +104,8 @@ To set cockpit up for your own product, start at [Getting started](docs/getting-
 
 ## What you get
 
-- **One validated registry.** Repositories, services, images, volumes, ports, seed data and stubbed
-  vendors in one file, with sibling repositories cloned and linked by `cockpit setup`.
+- **One validated registry.** Repositories, ports, guards, MCP servers and the Compose files that run
+  the stack in one file, with sibling repositories cloned and linked by `cockpit setup`.
 - **Live checkouts, not copies.** The stack mounts the working trees your agents are editing.
 - **The same agent setup in every tool.** Rules, skills, subagents, hooks, MCP servers and
   permissions for Claude Code, Codex CLI and OpenCode, from one source.

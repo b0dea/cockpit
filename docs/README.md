@@ -6,7 +6,7 @@ contributor pages live separately under docs/contributing/.
 
 ## Learn
 
-- [Tutorial](tutorial.md): run the synthetic example end to end.
+- [Tutorial](tutorial.md): run the Compose-first example end to end.
 - [Getting started](getting-started.md): install cockpit, bring up your own product, or move an
   existing setup over one layer at a time.
 - [Agent adoption guide](agent-adoption.md): the situations and exact commands for an AI agent
@@ -17,7 +17,8 @@ contributor pages live separately under docs/contributing/.
 ## Guides
 
 - [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
-- [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
+- [Environment lifecycle](environment.md): setup, bring-up, health, logs, reset and seeding.
+- [Compose patterns](compose-patterns.md): vendor stubs, TLS and data restore in plain Compose.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
 - [Extending cockpit](extending.md): supported extension points, what an upgrade replaces and the build-beside pattern.
 - [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
@@ -43,10 +44,8 @@ generated diagnostic index.
 
 Each example is a cockpit you can copy and run; its README gives the exact commands.
 
-- [examples/synthetic](../examples/synthetic/README.md): two throwaway repositories, from
-  configuration to a drift check, with no Docker.
-- [examples/minimal](../examples/minimal/README.md): one service, one port and one health probe,
-  for a running stack.
+- [examples/minimal](../examples/minimal/README.md): one service, one port and one health check
+  in a plain `compose.yml`, for a running stack.
 - [examples/compose-first](../examples/compose-first/README.md): a cockpit that keeps its own
   `compose.yml`.
 - [examples/docs-only](../examples/docs-only/README.md): no environment, for a repository of
