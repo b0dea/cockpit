@@ -66,9 +66,9 @@ function exactKeys(value: object, expected: readonly string[]): boolean {
 
 function sanitize(value: JsonValue, key = ''): JsonValue {
     if (isSensitiveField(key)) return '[redacted]'
-    if (Array.isArray(value)) return Object.freeze(value.map((item) => sanitize(item)))
+    if (Array.isArray(value)) return value.map((item) => sanitize(item))
     if (value !== null && typeof value === 'object') {
-        return Object.freeze(Object.fromEntries(Object.entries(value).map(([name, child]) => [name, sanitize(child, name)])))
+        return Object.fromEntries(Object.entries(value).map(([name, child]) => [name, sanitize(child, name)]))
     }
     return typeof value === 'string' ? redactSensitiveText(value) : value
 }
@@ -83,11 +83,11 @@ function validInstant(value: string): boolean {
 function instantMs(value: string): number { return new Date(value).valueOf() }
 
 function diagnostic(message: string, target: string): EnvironmentDiagnostic {
-    return Object.freeze({ severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message, target })
+    return { severity: 'error', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message, target }
 }
 
 function refusal<T>(message: string, target: string): EnvironmentCommandOutcome<T> {
-    return Object.freeze({ kind: 'refusal', status: 2, diagnostics: Object.freeze([diagnostic(message, target)]), result: null })
+    return { kind: 'refusal', status: 2, diagnostics: [diagnostic(message, target)], result: null }
 }
 
 export interface EnvironmentSnapshotInput {
@@ -125,11 +125,11 @@ export function createEnvironmentSnapshot(input: EnvironmentSnapshotInput): Envi
         creationSource: owned.creationSource,
         intendedState,
     }))
-    return Object.freeze({
+    return {
         artifact: 'generated-environment-snapshot', schemaVersion: 1, stackId: owned.stackId,
         configSha256: owned.configSha256, createdAt: owned.createdAt,
         creationSource: owned.creationSource, intendedState, snapshotSha256,
-    })
+    }
 }
 
 export interface StabilityCapturePlanInput {
@@ -163,23 +163,23 @@ function stabilityCapturePlanInput(value: unknown): StabilityCapturePlanInput | 
 }
 
 function captureStep(input: StabilityCapturePlanInput, id: string, argv: readonly [string, ...string[]]): ExecutionStep {
-    return Object.freeze({
+    return {
         id,
-        argv: Object.freeze([...argv]) as unknown as readonly [string, ...string[]],
+        argv: [...argv] as unknown as readonly [string, ...string[]],
         argv0: input.runtimeExecutable.invocationPath,
         cwd: input.cwd,
-        env: Object.freeze({ ...input.env }),
+        env: { ...input.env },
         timeoutMs: input.timeoutMs,
         stdoutLimitBytes: input.outputLimitBytes,
         stderrLimitBytes: input.outputLimitBytes,
-        paths: Object.freeze([...input.contentPaths]),
-        ports: Object.freeze([]),
-        labels: Object.freeze({ stackId: input.stackId, configSha256: input.configSha256, containerId: input.containerId, batchId: input.batchId, runtimeName: input.runtime.name, runtimeVersion: input.runtime.version, executableSha256: input.runtimeExecutable.sha256, evidenceRole: id.startsWith(PROCESS_STEP_PREFIX) ? 'process-identity' : 'content-hash' }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: input.runtimeExecutable.canonicalPath, sha256: input.runtimeExecutable.sha256, maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true, executionMode: input.runtimeExecutable.executionMode })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
-    })
+        paths: [...input.contentPaths],
+        ports: [],
+        labels: { stackId: input.stackId, configSha256: input.configSha256, containerId: input.containerId, batchId: input.batchId, runtimeName: input.runtime.name, runtimeVersion: input.runtime.version, executableSha256: input.runtimeExecutable.sha256, evidenceRole: id.startsWith(PROCESS_STEP_PREFIX) ? 'process-identity' : 'content-hash' },
+        expected: [],
+        consumedFiles: [{ path: input.runtimeExecutable.canonicalPath, sha256: input.runtimeExecutable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: input.runtimeExecutable.executionMode }],
+        filesystemChecks: [],
+        compensation: [],
+    }
 }
 
 export function createStabilityCapturePlan(rawInput: StabilityCapturePlanInput): EnvironmentCommandOutcome<null> {
@@ -199,7 +199,7 @@ export function createStabilityCapturePlan(rawInput: StabilityCapturePlanInput):
         || classifyResolvedRuntimeLiterals([...Object.keys(input.env), ...Object.values(input.env)]) !== 'resolved') {
         return refusal('stability capture cannot accept decision-bearing runtime environment', input.containerId)
     }
-    const steps = Object.freeze([
+    const steps = [
         captureStep(input, `${PROCESS_STEP_PREFIX}${input.containerId}`, [
             input.runtimeExecutable.canonicalPath, 'exec', '--', input.containerId,
             '/bin/sh', '-eu', '-c', PROCESS_SCRIPT,
@@ -208,11 +208,11 @@ export function createStabilityCapturePlan(rawInput: StabilityCapturePlanInput):
             input.runtimeExecutable.canonicalPath, 'exec', '--', input.containerId,
             '/bin/sh', '-eu', '-c', CONTENT_SCRIPT, 'cockpit-content-hash', ...input.contentPaths,
         ]),
-    ])
+    ]
     const plan = snapshotExecutionPlan({ steps })
     return plan === undefined
         ? refusal('stability capture did not produce a valid execution plan', input.containerId)
-        : Object.freeze({ kind: 'preview', status: 0, diagnostics: Object.freeze([]), result: null, plan })
+        : { kind: 'preview', status: 0, diagnostics: [], result: null, plan }
 }
 
 const authenticatedCaptureBrand: unique symbol = Symbol('authenticated-stability-capture')
@@ -247,7 +247,7 @@ function ownedResults(value: unknown): readonly StabilityStepResult[] | undefine
             || first === undefined || !first.enumerable || !('value' in first)
             || second === undefined || !second.enumerable || !('value' in second)
             || length === undefined || length.enumerable || !('value' in length) || length.value !== 2) return undefined
-        return Object.freeze([first.value as StabilityStepResult, second.value as StabilityStepResult])
+        return [first.value as StabilityStepResult, second.value as StabilityStepResult]
     } catch {
         // A throwing accessor or proxy trap means the result pair is malformed.
         return undefined
@@ -337,14 +337,14 @@ export function authenticateStabilityCapture(input: {
         contentHash = new TextDecoder('utf-8', { fatal: true }).decode(second.stdout).trim().split(/\s+/)[0]
     } catch { /* Invalid UTF-8 is the only throw here and is what the message names. */ return unavailable('stability result encoding is invalid') }
     if (!/^\d+ \d+$/.test(processIdentity) || !SHA256.test(contentHash)) return unavailable('stability result shape is invalid')
-    const payload = Object.freeze({
+    const payload = {
         stackId: labels.stackId as StackId, configSha256: labels.configSha256,
         batchId: labels.batchId, containerId: labels.containerId,
-        runtime: Object.freeze({ name: labels.runtimeName, version: labels.runtimeVersion, executableSha256: labels.executableSha256 }), startedAt: first.receipt.startedAt, finishedAt: second.receipt.finishedAt,
-        command: Object.freeze({ stepIds: Object.freeze([steps[0].id, steps[1].id]) as readonly [string, string], timeoutMs: Math.max(...steps.map(({ timeoutMs }) => timeoutMs)), stdoutLimitBytes: steps.reduce((sum, step) => sum + step.stdoutLimitBytes, 0), stderrLimitBytes: steps.reduce((sum, step) => sum + step.stderrLimitBytes, 0) }),
-        observedBytes: Object.freeze({ stdout, stderr }), processIdentity, contentHash,
-    })
-    const capture = Object.freeze({ [authenticatedCaptureBrand]: true as const, ...payload })
+        runtime: { name: labels.runtimeName, version: labels.runtimeVersion, executableSha256: labels.executableSha256 }, startedAt: first.receipt.startedAt, finishedAt: second.receipt.finishedAt,
+        command: { stepIds: [steps[0].id, steps[1].id] as readonly [string, string], timeoutMs: Math.max(...steps.map(({ timeoutMs }) => timeoutMs)), stdoutLimitBytes: steps.reduce((sum, step) => sum + step.stdoutLimitBytes, 0), stderrLimitBytes: steps.reduce((sum, step) => sum + step.stderrLimitBytes, 0) },
+        observedBytes: { stdout, stderr }, processIdentity, contentHash,
+    }
+    const capture = { [authenticatedCaptureBrand]: true as const, ...payload }
     issuedCaptures.set(capture, payload)
     return capture
     } catch {
@@ -390,7 +390,7 @@ export interface UnavailableRuntimeEvidence {
 export type RuntimeEvidence = CapturedRuntimeEvidence | UnavailableRuntimeEvidence
 
 function unavailable(reason: string, code: UnavailableRuntimeEvidence['code'] = ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE): UnavailableRuntimeEvidence {
-    return Object.freeze({ state: 'unavailable', code, reason })
+    return { state: 'unavailable', code, reason }
 }
 
 export function captureRuntimeEvidence(input: RuntimeEvidenceInput): RuntimeEvidence {
@@ -421,16 +421,16 @@ export function captureRuntimeEvidence(input: RuntimeEvidenceInput): RuntimeEvid
         return unavailable('runtime evidence exceeded or omitted its declared execution limits')
     }
     const observedAt = capture.finishedAt
-    const command = Object.freeze({ ...capture.command, batchId: capture.batchId, containerId: capture.containerId, stepIds: Object.freeze([...capture.command.stepIds]) as unknown as readonly [string, string] })
-    const observedBytes = Object.freeze({ ...capture.observedBytes })
-    const runtime = Object.freeze({ ...capture.runtime })
-    const stability = Object.freeze({
+    const command = { ...capture.command, batchId: capture.batchId, containerId: capture.containerId, stepIds: [...capture.command.stepIds] as unknown as readonly [string, string] }
+    const observedBytes = { ...capture.observedBytes }
+    const runtime = { ...capture.runtime }
+    const stability = {
         processIdentitySha256: digest(capture.processIdentity),
         contentHash: capture.contentHash,
-    })
+    }
     const captureStartedAt = capture.startedAt
     const core = { stackId: capture.stackId, configSha256: capture.configSha256, runtime, observedAt, captureStartedAt, command, observedBytes, stability }
-    return Object.freeze({ state: 'available', artifact: 'captured-runtime-evidence', schemaVersion: 1, ...core, evidenceSha256: digest(stableValue(core as unknown as JsonValue)) })
+    return { state: 'available', artifact: 'captured-runtime-evidence', schemaVersion: 1, ...core, evidenceSha256: digest(stableValue(core as unknown as JsonValue)) }
 }
 
 export type EnvironmentComparison =
@@ -461,38 +461,38 @@ export function compareEnvironmentSnapshot(
     const before = ownedObject<RuntimeEvidence>(rawBefore)
     const after = ownedObject<RuntimeEvidence>(rawAfter)
     if (snapshot === undefined || before === undefined || after === undefined) {
-        return Object.freeze({ verdict: 'unavailable', diagnostics: Object.freeze([diagnostic('environment evidence is not readable', 'environment-evidence')]) })
+        return { verdict: 'unavailable', diagnostics: [diagnostic('environment evidence is not readable', 'environment-evidence')] }
     }
     if (!validSnapshot(snapshot)) {
-        return Object.freeze({ verdict: 'unavailable', diagnostics: Object.freeze([diagnostic('generated environment snapshot is invalid', 'environment-snapshot')]) })
+        return { verdict: 'unavailable', diagnostics: [diagnostic('generated environment snapshot is invalid', 'environment-snapshot')] }
     }
     if (!validRuntimeEvidence(before) || !validRuntimeEvidence(after)) {
-        return Object.freeze({ verdict: 'unavailable', diagnostics: Object.freeze([diagnostic('captured runtime evidence is invalid', snapshot.stackId)]) })
+        return { verdict: 'unavailable', diagnostics: [diagnostic('captured runtime evidence is invalid', snapshot.stackId)] }
     }
     if (before.state !== 'available' || after.state !== 'available') {
-        return Object.freeze({ verdict: 'unavailable', diagnostics: Object.freeze([diagnostic('required runtime evidence is unavailable', snapshot.stackId)]) })
+        return { verdict: 'unavailable', diagnostics: [diagnostic('required runtime evidence is unavailable', snapshot.stackId)] }
     }
     if (!isRuntimeEvidenceAuthentic(before) || !isRuntimeEvidenceAuthentic(after)) {
-        return Object.freeze({ verdict: 'unavailable', diagnostics: Object.freeze([diagnostic('captured runtime evidence is invalid', snapshot.stackId)]) })
+        return { verdict: 'unavailable', diagnostics: [diagnostic('captured runtime evidence is invalid', snapshot.stackId)] }
     }
     if (snapshot.stackId !== before.stackId || snapshot.stackId !== after.stackId
         || snapshot.configSha256 !== before.configSha256 || snapshot.configSha256 !== after.configSha256
         || !sameRuntime(before, after)) {
-        return Object.freeze({ verdict: 'stale', diagnostics: Object.freeze([diagnostic('evidence authorities changed during comparison', snapshot.stackId)]) })
+        return { verdict: 'stale', diagnostics: [diagnostic('evidence authorities changed during comparison', snapshot.stackId)] }
     }
     if (before.command.batchId === after.command.batchId || instantMs(before.observedAt) > instantMs(after.captureStartedAt)) {
-        return Object.freeze({ verdict: 'unavailable', diagnostics: Object.freeze([diagnostic('evidence batches are replayed or out of order', snapshot.stackId)]) })
+        return { verdict: 'unavailable', diagnostics: [diagnostic('evidence batches are replayed or out of order', snapshot.stackId)] }
     }
     const processIdentity = before.stability.processIdentitySha256 === after.stability.processIdentitySha256 ? 'unchanged' : 'moved'
     const contentHash = before.stability.contentHash === after.stability.contentHash ? 'unchanged' : 'moved'
     if (processIdentity === 'moved' || contentHash === 'moved') {
-        return Object.freeze({
+        return {
             verdict: 'void', processIdentity, contentHash,
-            diagnostics: Object.freeze([diagnostic('test subject changed while evidence was captured', snapshot.stackId)]),
-        })
+            diagnostics: [diagnostic('test subject changed while evidence was captured', snapshot.stackId)],
+        }
     }
-    const diagnostics = Object.freeze([]) as readonly []
-    return Object.freeze({ verdict: 'stable', processIdentity, contentHash, diagnostics })
+    const diagnostics = [] as readonly []
+    return { verdict: 'stable', processIdentity, contentHash, diagnostics }
 }
 
 function validSnapshot(value: unknown): value is EnvironmentSnapshot {

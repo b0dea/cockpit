@@ -389,11 +389,6 @@ describe('production read command composition', () => {
         }, vi.fn(async () => ({ kind: 'complete' })) as never)
 
         const observed = await adapters.environment.observe({ configPath: source.path })
-        expect(Object.isFrozen(observed)).toBe(true)
-        expect(Object.isFrozen(observed.snapshot)).toBe(true)
-        expect(Object.isFrozen(observed.snapshot.intendedState)).toBe(true)
-        expect(Object.isFrozen(observed.evidence)).toBe(true)
-        expect(Object.isFrozen(observed.evidence.command.stepIds)).toBe(true)
         expect(Object.keys(observed).sort()).toEqual(['evidence', 'snapshot'])
     })
 

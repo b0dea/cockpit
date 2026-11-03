@@ -41,7 +41,7 @@ type Operation = WorkApplicationRequest['operation']
 
 export function captureWorkApplicationRequest(value: unknown): WorkApplicationRequest | undefined {
     const parsed = Request.safeParse(value)
-    return parsed.success ? Object.freeze(parsed.data) : undefined
+    return parsed.success ? parsed.data : undefined
 }
 
 export interface WorkApplicationContinuation { readonly digest: string; readonly prompt: string; readonly decide: (answer: string) => Promise<WorkApplicationOutcome> }
@@ -53,10 +53,10 @@ export type WorkApplicationOutcome =
     // unmet criterion); the result is the evidence to act on.
     | Readonly<{ kind: 'unsatisfied'; operation: Operation; value: unknown; reason: string }>
 
-const refusal = (operation: Operation | 'invalid', reason: string): WorkApplicationOutcome => Object.freeze({ kind: 'refusal', operation, reason })
-const complete = (operation: Operation, value: unknown): WorkApplicationOutcome => Object.freeze({ kind: 'complete', operation, value })
+const refusal = (operation: Operation | 'invalid', reason: string): WorkApplicationOutcome => ({ kind: 'refusal', operation, reason })
+const complete = (operation: Operation, value: unknown): WorkApplicationOutcome => ({ kind: 'complete', operation, value })
 const unsatisfied = (operation: Operation, value: unknown, reason: string): WorkApplicationOutcome =>
-    Object.freeze({ kind: 'unsatisfied', operation, value, reason })
+    ({ kind: 'unsatisfied', operation, value, reason })
 const now = () => new Date().toISOString()
 // Agent-written text is shown to a person with its control and bidirectional-override characters
 // replaced, so it can neither drive their terminal nor read in an order other than the one recorded.
@@ -140,13 +140,13 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         if (decision === 'ci-only') return apply('ci')
         const digest = createHash('sha256').update(JSON.stringify({ gate, lines })).digest('hex')
         let used = false
-        return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest,
+        return { kind: 'human-needed', operation, continuation: { digest,
             prompt: [...lines.map(shown), `[work.gates] ${gate} = person. To ${verb} exactly this, type ${verb} ${digest}`].join('\n'),
             decide: async (answer: string) => {
                 if (used) return refusal(operation, `this prompt was already answered; rerun work ${operation.slice('work-'.length)}`)
                 used = true
                 return answer.trim() === `${verb} ${digest}` ? apply('person') : refusal(operation, `Nothing was recorded: the person did not type ${verb} ${digest}`)
-            } }) })
+            } } }
     }
     const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
         const row = await observe(orderId)
@@ -165,7 +165,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         // Checks share the product's state, so they run in the order the contract lists them.
         for (const criterion of order.criteria) if (criterion.check) results.push(await composition.runCheck(criterion.id, criterion.check))
         for (const gate of order.gates) results.push(await composition.runCheck(`gate:${gate}`, { gate }))
-        return Object.freeze(results)
+        return results
     }
 
     if (request.operation === 'work-status') {

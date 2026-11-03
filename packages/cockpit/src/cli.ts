@@ -557,7 +557,7 @@ async function sessionChildHolderProcess(
 }
 
 function concreteEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)))
+    return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined))
 }
 
 function teamMetadataOutcome(result: Extract<TeamMetadataResult, { kind: 'refusal' }>): GeneratedEnvironmentCommandOutcome
@@ -666,8 +666,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             // Without its start identity the hold is released only once the pid is gone: while the
             // pid runs it may since name another process, so the session runs with that weaker hold.
             const started = await observeProcessStart(process.pid, processHost(executeProbe))
-            const sessionEnvironment = Object.freeze({ ...env, COCKPIT_SESSION_ID: sessionId,
-                COCKPIT_SESSION_PROCESS: started.state === 'present' ? `${process.pid}@${started.start}` : undefined })
+            const sessionEnvironment = { ...env, COCKPIT_SESSION_ID: sessionId,
+                COCKPIT_SESSION_PROCESS: started.state === 'present' ? `${process.pid}@${started.start}` : undefined }
             const childEnv = concreteEnvironment(sessionEnvironment)
             const adapters = createLifecycleCommandAdapters({
                 configPath,
@@ -890,8 +890,8 @@ async function decodeComposeScaffold(root: string | undefined, extraRoots: reado
     let absoluteRoot: string
     try { absoluteRoot = await realpath(resolve(root)) }
     catch (error) { return usageOutcome('CLI_USAGE_INVALID', `init root must be an existing directory: ${errorCause(error)}`) }
-    return { scaffold: Object.freeze({ root: absoluteRoot, dir: String(values['scaffold-compose']), port,
-        ...(command?.length ? { command: Object.freeze(command) } : {}), with: Object.freeze(backing as ScaffoldBackingService[]) }) }
+    return { scaffold: { root: absoluteRoot, dir: String(values['scaffold-compose']), port,
+        ...(command?.length ? { command: command } : {}), with: backing as ScaffoldBackingService[] } }
 }
 
 async function runComposeScaffold(request: ComposeScaffoldRequest): Promise<CommandOutcome> {
@@ -1056,7 +1056,7 @@ async function decodeRequest(
             return usageOutcome('CLI_USAGE_INVALID', 'sync --adopt moves files and records them in cockpit.toml, so it cannot be a dry run or interactive; a refused adoption is rolled back', '--adopt')
         }
         return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}),
-            ...(values.adopt ? { adopt: Object.freeze([...values.adopt]) } : {}) } }
+            ...(values.adopt ? { adopt: [...values.adopt] } : {}) } }
     }
 
     if (handler === 'upgrade') {
@@ -1104,7 +1104,7 @@ async function decodeRequest(
                 env[key] = descriptor.value
             }
         } catch { return invalidEnvironment() } // A throwing accessor or proxy trap makes the environment invalid data.
-        return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env: Object.freeze(env) } }
+        return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env } }
     }
 
     if (handler === 'session') {

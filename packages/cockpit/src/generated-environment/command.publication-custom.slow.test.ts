@@ -245,8 +245,6 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 code: 'OVERRIDDEN_CORE_CHANGED', name: 'cockpit-setup', recordedSha256,
                 currentSha256: originalSha256, overlaySource: 'surfaces/bootstrap-override.json',
             }])
-            expect(Object.isFrozen(application?.activeSurfaceOverrides)).toBe(true)
-            expect(Object.isFrozen(application?.changedOverrideOriginals)).toBe(true)
             expect(generatedApplicationProjection({ ...synced.result.application })).toBeUndefined()
             await writeFile(fixture.configPath, pinnedConfig)
             const pinned = await syncGeneratedEnvironment({ configPath: fixture.configPath })
@@ -370,9 +368,6 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 sources: [{ path: 'rules/synthetic.md', bytes: 'Read the synthetic sibling guide before editing.\n' }],
             })
             expect(entries).toContainEqual(expect.objectContaining({ path: 'custom/rules.md', bytes: 'synthetic custom rules\n' }))
-            const immutable = (value: unknown): boolean => value === null || typeof value !== 'object'
-                || Object.isFrozen(value) && Object.values(value).every(immutable)
-            expect(immutable(projection)).toBe(true)
             const checked = await checkGeneratedEnvironment({ configPath: fixture.configPath })
             expect(checked.kind).toBe('complete')
             if (checked.kind !== 'complete') throw new Error('selftest projection check refused')

@@ -23,21 +23,21 @@ function safePath(path: string): boolean {
 }
 
 function resolveProjectedPath(path: string, exists: boolean, facts: readonly GeneratedPathFact[]): NamedPathResult {
-    if (!safePath(path)) return Object.freeze({ kind: 'refusal', path, reason: 'reference must name an exact repository-relative path' })
-    if (exists) return Object.freeze({ kind: 'resolved', path })
+    if (!safePath(path)) return { kind: 'refusal', path, reason: 'reference must name an exact repository-relative path' }
+    if (exists) return { kind: 'resolved', path }
     const fact = facts.find(fact => fact.path === path)
     const declaration = fact?.declaration
     if (declaration?.applicability === 'sibling-unavailable') {
-        return Object.freeze({ kind: 'unavailable', path, producer: declaration.producer })
+        return { kind: 'unavailable', path, producer: declaration.producer }
     }
     if (fact?.allowsMissing && declaration?.applicability === 'declared-before-sync') {
-        return Object.freeze({ kind: 'declared-before-sync', path, producer: declaration.producer })
+        return { kind: 'declared-before-sync', path, producer: declaration.producer }
     }
-    return Object.freeze({ kind: 'refusal', path, reason: 'missing reference has no applicable exact producer declaration' })
+    return { kind: 'refusal', path, reason: 'missing reference has no applicable exact producer declaration' }
 }
 
 export function resolveNamedPath(input: NamedPathInput): NamedPathResult {
     const projected = projectGeneratedPathFacts(input.manifest, input.authority, input.declarations)
-    if (projected.kind === 'refusal') return Object.freeze({ kind: 'refusal', path: input.path, reason: 'generated path authority was refused' })
+    if (projected.kind === 'refusal') return { kind: 'refusal', path: input.path, reason: 'generated path authority was refused' }
     return resolveProjectedPath(input.path, input.exists, projected.facts)
 }

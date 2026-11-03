@@ -165,8 +165,6 @@ describe('install policy resolution', () => {
         expect(result).toMatchObject({ kind: 'complete', bindings: [{ policy: { build: catalog[0]!.build, test: catalog[0]!.test } }] })
         if (result?.kind !== 'complete') throw new Error('declared project commands did not resolve')
         const resolved = result.bindings[0]!.policy
-        expect(Object.isFrozen(resolved.build)).toBe(true)
-        expect(Object.isFrozen(resolved.test)).toBe(true)
         catalog[0]!.build![1] = 'changed'
         expect(resolved.build).toEqual(['npm', 'run', 'build'])
         const absent = await resolveObserved(root, 0, { ...baseSibling, toolchain: 'node' }, [policy()])
@@ -204,8 +202,6 @@ describe('install policy resolution', () => {
             kind: 'complete',
             bindings: [{ source, siblingIndex: 1, diagnostics: { catalogIndex: 0 }, siblingSlug: 'worker', checkoutRoot: secondRoot }],
         })
-        expect(first && Object.isFrozen(first)).toBe(true)
-        expect(first?.kind === 'complete' && Object.isFrozen(first.bindings)).toBe(true)
     })
 
     it('distinguishes unavailable, missing and ambiguous policy evidence', async () => {

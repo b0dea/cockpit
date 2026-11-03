@@ -542,10 +542,6 @@ describe('guard policy construction', () => {
             ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path)), join(root, 'cockpit.toml')])
         expect(policy.protectedIdentities[1]).toEqual({ path: join(root, 'app/config/runtime.env'), identity: null,
             ancestors: ['app', 'app/config'].map(path => guardIdentity(lstatSync(join(root, path)))) })
-        expect(Object.isFrozen(result.result)).toBe(true)
-        expect(Object.isFrozen(policy)).toBe(true)
-        for (const values of [policy.allowedRoots, policy.instances, policy.protectedIdentities, policy.protectedBranches, policy.hostedDatabaseHosts, policy.vendorHosts,
-            policy.declaredAllows, policy.declaredDenies, ...policy.instances, ...policy.protectedIdentities, ...policy.declaredAllows, ...policy.declaredDenies]) expect(Object.isFrozen(values)).toBe(true)
         expect((await prepareGuardEvaluationPolicy(input)).kind).toBe('refusal')
     })
 
@@ -593,7 +589,6 @@ describe('guard policy construction', () => {
             if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
             const { policy } = result.result
             expect(policy.projectCommands.map(command => [command.executable, ...command.argv])).toEqual([tuple, tuple])
-            expect(Object.isFrozen(policy.projectCommands[0]?.argv)).toBe(true)
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))
             const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })

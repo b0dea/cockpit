@@ -124,10 +124,10 @@ export function readinessReport(state: ReadinessReport['state'], diagnostics: re
         if (entry.tools && !entry.tools.some(tool => tools.includes(tool))) continue
         const findings = diagnostics.filter(({ code }) => entry.codes.includes(code))
         if (findings.length > 0) {
-            gaps.push(Object.freeze({ id: entry.id, level: entry.level, needs: entry.needs,
-                findings: Object.freeze(findings.map(({ code, severity, target, message, fix }) => Object.freeze({
-                    code, severity, ...(target === undefined ? {} : { target }), message, fix: fix ?? entry.fix }))) }))
+            gaps.push({ id: entry.id, level: entry.level, needs: entry.needs,
+                findings: findings.map(({ code, severity, target, message, fix }) => ({
+                    code, severity, ...(target === undefined ? {} : { target }), message, fix: fix ?? entry.fix })) })
         } else if (state === 'undetermined' ? entry.appliesTo.length === BOTH.length : entry.appliesTo.includes(state)) noFinding.push(entry.id)
     }
-    return Object.freeze({ state, gaps: Object.freeze(gaps), noFinding: Object.freeze(noFinding) })
+    return { state, gaps, noFinding }
 }

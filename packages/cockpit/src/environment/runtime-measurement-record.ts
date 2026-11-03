@@ -44,25 +44,25 @@ export async function readLocalRuntimeMeasurements(stateRoot: string): Promise<L
     let bytes: Buffer
     try {
         const read = await readBoundedInput(path)
-        if (read.kind !== 'complete') return Object.freeze({ kind: 'unreadable', path, reason: 'the file is larger than cockpit reads' })
+        if (read.kind !== 'complete') return { kind: 'unreadable', path, reason: 'the file is larger than cockpit reads' }
         bytes = read.bytes
     } catch (error) {
-        if (hasErrorCode(error, 'ENOENT')) return Object.freeze({ kind: 'read', path, rows: Object.freeze([]) })
-        return Object.freeze({ kind: 'unreadable', path, reason: `the file could not be read (${errorCause(error)})` })
+        if (hasErrorCode(error, 'ENOENT')) return { kind: 'read', path, rows: [] }
+        return { kind: 'unreadable', path, reason: `the file could not be read (${errorCause(error)})` }
     }
     let value: unknown
     try {
         value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
     } catch { // Parser text would quote the file; the reason names the two ways it fails.
-        return Object.freeze({ kind: 'unreadable', path, reason: 'the file is not UTF-8 JSON' })
+        return { kind: 'unreadable', path, reason: 'the file is not UTF-8 JSON' }
     }
     const parsed = MeasurementFile.safeParse(value)
     if (!parsed.success) {
         const issue = parsed.error.issues[0]
-        return Object.freeze({ kind: 'unreadable', path,
-            reason: `the file is not a ${FORMAT} record (${issue ? `${issue.path.join('.') || 'record'}: ${issue.message}` : 'invalid'})` })
+        return { kind: 'unreadable', path,
+            reason: `the file is not a ${FORMAT} record (${issue ? `${issue.path.join('.') || 'record'}: ${issue.message}` : 'invalid'})` }
     }
-    return Object.freeze({ kind: 'read', path, rows: Object.freeze(parsed.data.measurements.map((row) => Object.freeze(row))) })
+    return { kind: 'read', path, rows: parsed.data.measurements.map((row) => row) }
 }
 
 export type RecordResult =
@@ -97,23 +97,23 @@ async function replaceFile(directory: string, name: string, bytes: string): Prom
 export async function recordLocalRuntimeMeasurement(stateRoot: string, row: RuntimeMeasurementRow): Promise<RecordResult> {
     const path = join(stateRoot, MEASUREMENTS_PATH)
     const checked = Row.safeParse(row)
-    if (!checked.success) return Object.freeze({ kind: 'refusal', path, reason: `the measurement row is malformed (${checked.error.issues[0]?.message ?? 'invalid'})` })
+    if (!checked.success) return { kind: 'refusal', path, reason: `the measurement row is malformed (${checked.error.issues[0]?.message ?? 'invalid'})` }
     try {
         const directory = join(stateRoot, 'machine')
         await mkdir(directory, { recursive: true, mode: 0o700 })
         const state = await plainDirectory(directory)
-        if (state !== 'present') return Object.freeze({ kind: 'refusal', path, reason: state })
+        if (state !== 'present') return { kind: 'refusal', path, reason: state }
         const current = await readLocalRuntimeMeasurements(stateRoot)
         const existing = current.kind === 'read' ? current.rows : []
         const replaced = existing.find((candidate) => candidate.runtime === row.runtime && candidate.daemon === row.daemon) ?? null
         const kept = existing.filter((candidate) => candidate !== replaced)
         if (kept.length >= ROW_LIMIT) {
-            return Object.freeze({ kind: 'refusal', path, reason: `the record already holds ${ROW_LIMIT} other runtimes; remove the ones this machine no longer runs` })
+            return { kind: 'refusal', path, reason: `the record already holds ${ROW_LIMIT} other runtimes; remove the ones this machine no longer runs` }
         }
         const record = { format: FORMAT, measurements: [...kept, checked.data] }
         await replaceFile(directory, 'runtime-measurements.json', `${JSON.stringify(record, null, 2)}\n`)
-        return Object.freeze({ kind: 'complete', path, replaced, discardedUnreadable: current.kind === 'unreadable' ? current.reason : null })
+        return { kind: 'complete', path, replaced, discardedUnreadable: current.kind === 'unreadable' ? current.reason : null }
     } catch (error) {
-        return Object.freeze({ kind: 'refusal', path, reason: `the record could not be written (${errorCause(error)})` })
+        return { kind: 'refusal', path, reason: `the record could not be written (${errorCause(error)})` }
     }
 }

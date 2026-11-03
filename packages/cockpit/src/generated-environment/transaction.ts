@@ -115,10 +115,10 @@ function exactKeys(record: Record<string, unknown>, expected: readonly string[])
 }
 
 function refuse(code: string, message: string, target?: string, fix?: string): PublicationRefusal {
-    return Object.freeze({
+    return {
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([{ severity: 'error' as const, code, message, target, fix }]),
-    })
+        diagnostics: [{ severity: 'error' as const, code, message, target, fix }],
+    }
 }
 
 function confined(root: string, path: string): string | undefined {
@@ -268,12 +268,12 @@ export async function nodeAuthority(): Promise<NodeAuthority | undefined> {
     try {
         const canonicalPath = await realpath(process.execPath)
         const digest = await digestFile(canonicalPath, MAX_EXECUTABLE_BYTES)
-        return digest ? Object.freeze({
+        return digest ? {
             canonicalPath,
             invocationPath: canonicalPath,
             sha256: digest,
             executionMode: 'verified-path' as const,
-        }) : undefined
+        } : undefined
     } catch {
         // an unavailable authority is refused by the caller.
         return undefined
@@ -295,7 +295,7 @@ async function publicationAnchor(root: string, parent: string): Promise<Publicat
     const anchored = async (missing: readonly string[]): Promise<PublicationAnchor | undefined> => {
         const status = await lstat(path)
         return status.isDirectory() && !status.isSymbolicLink()
-            ? Object.freeze({ path, identity: Object.freeze({ dev: status.dev, ino: status.ino }), chain: Object.freeze(chain), segments: Object.freeze(missing) })
+            ? { path, identity: { dev: status.dev, ino: status.ino }, chain, segments: missing }
             : undefined
     }
     for (const [index, segment] of segments.entries()) {
@@ -304,7 +304,7 @@ async function publicationAnchor(root: string, parent: string): Promise<Publicat
             const status = await lstat(candidate)
             if (!status.isDirectory() || status.isSymbolicLink()) return undefined
             path = candidate
-            chain.push(Object.freeze({ name: segment, dev: status.dev, ino: status.ino }))
+            chain.push({ name: segment, dev: status.dev, ino: status.ino })
         } catch (error) {
             if (!hasErrorCode(error, 'ENOENT')) return undefined
             return anchored(segments.slice(index))
@@ -318,7 +318,7 @@ async function nestedPublicationAuthority(
     groupExists: boolean,
     segments: readonly string[],
 ): Promise<Readonly<{ chain: readonly Readonly<DirectoryIdentity & { readonly name: string }>[]; segments: readonly string[] }> | undefined> {
-    if (!groupExists) return Object.freeze({ chain: Object.freeze([]), segments })
+    if (!groupExists) return { chain: [], segments }
     const chain: Array<Readonly<DirectoryIdentity & { readonly name: string }>> = []
     let current = groupPath
     for (const [index, name] of segments.entries()) {
@@ -327,13 +327,13 @@ async function nestedPublicationAuthority(
         try {
             const status = await lstat(current)
             if (!status.isDirectory() || status.isSymbolicLink()) return undefined
-            chain.push(Object.freeze({ name, dev: status.dev, ino: status.ino }))
+            chain.push({ name, dev: status.dev, ino: status.ino })
         } catch (error) {
             if (!hasErrorCode(error, 'ENOENT')) return undefined
-            return Object.freeze({ chain: Object.freeze(chain), segments: Object.freeze(segments.slice(index)) })
+            return { chain, segments: segments.slice(index) }
         }
     }
-    return Object.freeze({ chain: Object.freeze(chain), segments: Object.freeze([]) })
+    return { chain, segments: [] }
 }
 
 function helperStep(
@@ -353,28 +353,28 @@ function helperStep(
     // and a transaction that has started keeps its recovery inputs.
     let program: ReturnType<typeof libexecProgram>
     try { program = libexecProgram(HELPER_PROGRAM) } catch { /* an unauthenticated helper program is unavailable; the caller refuses or compensates. */ return undefined }
-    return Object.freeze({
+    return {
         id: `generated-filesystem-${(request as { action: string }).action}-${(request as { nonce: string }).nonce}`,
-        argv: Object.freeze([node.canonicalPath, '--', program.path, requestBytes, ...inputs.map(({ path }) => path)]) as readonly [string, ...string[]],
+        argv: [node.canonicalPath, '--', program.path, requestBytes, ...inputs.map(({ path }) => path)] as readonly [string, ...string[]],
         argv0: node.invocationPath,
         cwd,
-        env: Object.freeze({}),
+        env: {},
         timeoutMs: Math.min(HELPER_TIMEOUT_MS, remaining),
         spawnNotAfter: new Date(deadline).toISOString(),
         stdoutLimitBytes,
         stderrLimitBytes: 16_384,
-        paths: Object.freeze([cwd]),
-        ports: Object.freeze([]),
-        labels: Object.freeze({ action: (request as { action: string }).action, parent }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([
-            Object.freeze({ path: node.canonicalPath, sha256: node.sha256, maxBytes: MAX_EXECUTABLE_BYTES, argvIndexes: Object.freeze([0]), executable: true as const, executionMode: node.executionMode }),
-            Object.freeze({ path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: Object.freeze([2]), executable: false as const }),
-            ...inputs.map(({ path, sha256: digest }, index) => Object.freeze({ path, sha256: digest, maxBytes: MAX_GENERATED_BYTES, argvIndexes: Object.freeze([4 + index]), executable: false as const })),
-        ]),
-        filesystemChecks: Object.freeze([Object.freeze({ path: cwd, expected: 'directory' as const })]),
-        compensation: Object.freeze([]),
-    })
+        paths: [cwd],
+        ports: [],
+        labels: { action: (request as { action: string }).action, parent },
+        expected: [],
+        consumedFiles: [
+            { path: node.canonicalPath, sha256: node.sha256, maxBytes: MAX_EXECUTABLE_BYTES, argvIndexes: [0], executable: true as const, executionMode: node.executionMode },
+            { path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: [2], executable: false as const },
+            ...inputs.map(({ path, sha256: digest }, index) => ({ path, sha256: digest, maxBytes: MAX_GENERATED_BYTES, argvIndexes: [4 + index], executable: false as const })),
+        ],
+        filesystemChecks: [{ path: cwd, expected: 'directory' as const }],
+        compensation: [],
+    }
 }
 
 function helperRecord(value: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
@@ -385,7 +385,7 @@ function helperRecord(value: unknown, keys: readonly string[]): Record<string, u
 function directoryIdentity(value: unknown): DirectoryIdentity | undefined {
     const record = helperRecord(value, ['dev', 'ino'])
     return record && Number.isSafeInteger(record.dev) && Number.isSafeInteger(record.ino)
-        ? Object.freeze({ dev: record.dev as number, ino: record.ino as number }) : undefined
+        ? { dev: record.dev as number, ino: record.ino as number } : undefined
 }
 
 export type AnchoredRead = Readonly<{
@@ -411,54 +411,54 @@ export async function readAnchoredFile(
 ): Promise<AnchoredRead> {
     const target = confined(root, path)
     if (!target || constants.O_NOFOLLOW === undefined || !Number.isSafeInteger(maxBytes)
-        || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) return Object.freeze({ kind: 'invalid' })
+        || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) return { kind: 'invalid' }
     const parts = relative(root, target).split(sep)
-    if (parts.length < 1 || parts.some((part) => part === '' || part === '.' || part === '..')) return Object.freeze({ kind: 'invalid' })
+    if (parts.length < 1 || parts.some((part) => part === '' || part === '.' || part === '..')) return { kind: 'invalid' }
     let rootStatus: Awaited<ReturnType<typeof lstat>>
     try {
         rootStatus = await lstat(root)
-        if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return Object.freeze({ kind: 'invalid' })
+        if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return { kind: 'invalid' }
     } catch {
         // an unobservable root is an invalid anchored read the caller refuses.
-        return Object.freeze({ kind: 'invalid' })
+        return { kind: 'invalid' }
     }
     let directory: string
     try {
         directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-read-'))
     } catch {
         // an unobservable root is an invalid anchored read the caller refuses.
-        return Object.freeze({ kind: 'invalid' })
+        return { kind: 'invalid' }
     }
     try {
         const nonce = randomBytes(16).toString('hex')
         const output = join(directory, 'source')
-        const request = Object.freeze({
+        const request = {
             version: 1, nonce, action, maxBytes,
-            identity: Object.freeze({ dev: rootStatus.dev, ino: rootStatus.ino }),
-            segments: Object.freeze(parts.slice(0, -1)), name: parts.at(-1), output,
-        })
+            identity: { dev: rootStatus.dev, ino: rootStatus.ino },
+            segments: parts.slice(0, -1), name: parts.at(-1), output,
+        }
         const helperDeadline = Math.min(Date.now() + HELPER_TIMEOUT_MS, deadline ?? Number.MAX_SAFE_INTEGER)
         const rawReceipt = await runHelper(adapters, helperStep(node, root, '.', request, [], helperDeadline))
         const missing = helperRecord(rawReceipt, ['version', 'nonce', 'action', 'kind'])
         if (missing?.version === 1 && missing.nonce === nonce && missing.action === action && missing.kind === 'missing') {
-            return Object.freeze({ kind: 'missing' })
+            return { kind: 'missing' }
         }
         const receipt = helperRecord(rawReceipt, ['version', 'nonce', 'action', 'kind', 'identity', 'sha256'])
         if (!receipt || receipt.version !== 1 || receipt.nonce !== nonce || receipt.action !== action
             || receipt.kind !== 'complete' || typeof receipt.sha256 !== 'string' || !SHA256.test(receipt.sha256)) {
-            return Object.freeze({ kind: 'invalid' })
+            return { kind: 'invalid' }
         }
         const rawIdentity = helperRecord(receipt.identity, ['root', 'chain', 'file'])
         const readRoot = directoryIdentity(rawIdentity?.root)
         const file = directoryIdentity(rawIdentity?.file)
         const chain = Array.isArray(rawIdentity?.chain) ? rawIdentity.chain.map(directoryIdentity) : undefined
         if (!readRoot || readRoot.dev !== rootStatus.dev || readRoot.ino !== rootStatus.ino
-            || !file || !chain || chain.length !== parts.length - 1 || chain.some((entry) => !entry)) return Object.freeze({ kind: 'invalid' })
+            || !file || !chain || chain.length !== parts.length - 1 || chain.some((entry) => !entry)) return { kind: 'invalid' }
         const handle = await open(output, constants.O_RDONLY | constants.O_NOFOLLOW)
         let bytes: Buffer
         try {
             const before = await handle.stat()
-            if (!before.isFile() || before.size > maxBytes) return Object.freeze({ kind: 'invalid' })
+            if (!before.isFile() || before.size > maxBytes) return { kind: 'invalid' }
             const chunks: Buffer[] = []
             const chunk = Buffer.allocUnsafe(65_536)
             let total = 0
@@ -466,26 +466,26 @@ export async function readAnchoredFile(
                 const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null)
                 if (bytesRead === 0) break
                 total += bytesRead
-                if (total > maxBytes) return Object.freeze({ kind: 'invalid' })
+                if (total > maxBytes) return { kind: 'invalid' }
                 chunks.push(Buffer.from(chunk.subarray(0, bytesRead)))
             }
             const after = await handle.stat()
             if (total !== before.size || after.dev !== before.dev || after.ino !== before.ino
                 || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
-                return Object.freeze({ kind: 'invalid' })
+                return { kind: 'invalid' }
             }
             bytes = Buffer.concat(chunks, total)
         } finally {
             await handle.close()
         }
-        if (sha256(bytes) !== receipt.sha256) return Object.freeze({ kind: 'invalid' })
-        return Object.freeze({
+        if (sha256(bytes) !== receipt.sha256) return { kind: 'invalid' }
+        return {
             kind: 'complete' as const, bytes, sha256: receipt.sha256,
-            identity: Object.freeze({ root: readRoot, chain: Object.freeze(chain as DirectoryIdentity[]), file }),
-        })
+            identity: { root: readRoot, chain: chain as DirectoryIdentity[], file },
+        }
     } catch {
         // a failed anchored read is invalid; the caller refuses it.
-        return Object.freeze({ kind: 'invalid' })
+        return { kind: 'invalid' }
     } finally {
         await rm(directory, { recursive: true, force: true })
     }
@@ -499,38 +499,38 @@ export async function readAnchoredEntry(
     adapters: PublicationAdapters,
 ): Promise<AnchoredEntry> {
     const target = confined(root, path)
-    if (!target || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) return Object.freeze({ kind: 'invalid' })
+    if (!target || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) return { kind: 'invalid' }
     const parts = relative(root, target).split(sep)
     let rootStatus: Awaited<ReturnType<typeof lstat>>
-    try { rootStatus = await lstat(root) } catch { /* an unobservable root is an invalid anchored read the caller refuses. */ return Object.freeze({ kind: 'invalid' }) }
-    if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return Object.freeze({ kind: 'invalid' })
+    try { rootStatus = await lstat(root) } catch { /* an unobservable root is an invalid anchored read the caller refuses. */ return { kind: 'invalid' } }
+    if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return { kind: 'invalid' }
     let directory: string | undefined
     try {
         directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-entry-'))
         const nonce = randomBytes(16).toString('hex')
         const output = join(directory, 'source')
-        const request = Object.freeze({ version: 1, nonce, action: 'read-entry', maxBytes,
-            identity: { dev: rootStatus.dev, ino: rootStatus.ino }, segments: parts.slice(0, -1), name: parts.at(-1), output })
+        const request = { version: 1, nonce, action: 'read-entry', maxBytes,
+            identity: { dev: rootStatus.dev, ino: rootStatus.ino }, segments: parts.slice(0, -1), name: parts.at(-1), output }
         const value = await runHelper(adapters, helperStep(node, root, '.', request, [], Date.now() + HELPER_TIMEOUT_MS))
         const simple = ownRecord(value)
-        if (!simple || simple.version !== 1 || simple.nonce !== nonce || simple.action !== 'read-entry' || typeof simple.kind !== 'string') return Object.freeze({ kind: 'invalid' })
-        if ((simple.kind === 'missing' || simple.kind === 'other') && exactKeys(simple, ['version', 'nonce', 'action', 'kind'])) return Object.freeze({ kind: simple.kind })
+        if (!simple || simple.version !== 1 || simple.nonce !== nonce || simple.action !== 'read-entry' || typeof simple.kind !== 'string') return { kind: 'invalid' }
+        if ((simple.kind === 'missing' || simple.kind === 'other') && exactKeys(simple, ['version', 'nonce', 'action', 'kind'])) return { kind: simple.kind }
         if (simple.kind === 'symlink' && exactKeys(simple, ['version', 'nonce', 'action', 'kind', 'target', 'identity'])) {
             const identity = directoryIdentity(simple.identity)
-            return identity && typeof simple.target === 'string' ? Object.freeze({ kind: 'symlink', target: simple.target, identity }) : Object.freeze({ kind: 'invalid' })
+            return identity && typeof simple.target === 'string' ? { kind: 'symlink', target: simple.target, identity } : { kind: 'invalid' }
         }
         if (simple.kind !== 'file' || !exactKeys(simple, ['version', 'nonce', 'action', 'kind', 'identity', 'mode', 'sha256'])
-            || typeof simple.sha256 !== 'string' || !SHA256.test(simple.sha256) || !Number.isSafeInteger(simple.mode)) return Object.freeze({ kind: 'invalid' })
+            || typeof simple.sha256 !== 'string' || !SHA256.test(simple.sha256) || !Number.isSafeInteger(simple.mode)) return { kind: 'invalid' }
         const identityRow = ownRecord(simple.identity)
         const readRoot = directoryIdentity(identityRow?.root)
         const file = directoryIdentity(identityRow?.file)
         const chain = Array.isArray(identityRow?.chain) ? identityRow.chain.map(directoryIdentity) : undefined
-        if (!readRoot || !file || !chain || chain.some(row => !row)) return Object.freeze({ kind: 'invalid' })
+        if (!readRoot || !file || !chain || chain.some(row => !row)) return { kind: 'invalid' }
         const handle = await open(output, constants.O_RDONLY | constants.O_NOFOLLOW)
         let bytes: Buffer
         try {
             const before = await handle.stat()
-            if (!before.isFile() || before.size > maxBytes) return Object.freeze({ kind: 'invalid' })
+            if (!before.isFile() || before.size > maxBytes) return { kind: 'invalid' }
             const chunks: Buffer[] = []
             const chunk = Buffer.allocUnsafe(65_536)
             let total = 0
@@ -538,20 +538,20 @@ export async function readAnchoredEntry(
                 const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null)
                 if (bytesRead === 0) break
                 total += bytesRead
-                if (total > maxBytes) return Object.freeze({ kind: 'invalid' })
+                if (total > maxBytes) return { kind: 'invalid' }
                 chunks.push(Buffer.from(chunk.subarray(0, bytesRead)))
             }
             const after = await handle.stat()
             if (total !== before.size || after.dev !== before.dev || after.ino !== before.ino
                 || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
-                return Object.freeze({ kind: 'invalid' })
+                return { kind: 'invalid' }
             }
             bytes = Buffer.concat(chunks, total)
         } finally { await handle.close() }
-        if (sha256(bytes) !== simple.sha256) return Object.freeze({ kind: 'invalid' })
-        return Object.freeze({ kind: 'file', bytes, sha256: simple.sha256, mode: simple.mode as number,
-            identity: Object.freeze({ root: readRoot, chain: Object.freeze(chain as DirectoryIdentity[]), file }) })
-    } catch { /* a failed anchored read is invalid; the caller refuses it. */ return Object.freeze({ kind: 'invalid' }) } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
+        if (sha256(bytes) !== simple.sha256) return { kind: 'invalid' }
+        return { kind: 'file', bytes, sha256: simple.sha256, mode: simple.mode as number,
+            identity: { root: readRoot, chain: chain as DirectoryIdentity[], file } }
+    } catch { /* a failed anchored read is invalid; the caller refuses it. */ return { kind: 'invalid' } } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
 }
 
 export type AnchoredRelocation = Readonly<{ kind: 'complete'; sha256: string }>
@@ -586,32 +586,32 @@ async function relocateAnchoredFileWithDestinationPolicy(
     const destinationTarget = confined(root, destinationPath)
     if (!sourceTarget || !destinationTarget || sourceTarget === destinationTarget || !SHA256.test(expectedSha256)
         || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) {
-        return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
+        return { kind: 'refusal', recovery: 'unchanged' }
     }
     const sourceParts = relative(root, sourceTarget).split(sep)
     const destinationParts = relative(root, destinationTarget).split(sep)
     if (sourceParts.some(part => !safeAnchoredSegment(part)) || destinationParts.some(part => !destinationSegment(part))) {
-        return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
+        return { kind: 'refusal', recovery: 'unchanged' }
     }
     const source = await readAnchoredFile(root, sourcePath, maxBytes, node, adapters)
     const destination = await readAnchoredEntry(root, destinationPath, maxBytes, node, adapters)
     if (source.kind !== 'complete' || source.sha256 !== expectedSha256 || destination.kind !== 'missing') {
-        return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
+        return { kind: 'refusal', recovery: 'unchanged' }
     }
     const nonce = randomBytes(16).toString('hex')
-    const request = Object.freeze({
+    const request = {
         version: 1, nonce, action, identity: source.identity.root,
-        source: Object.freeze({
-            chain: Object.freeze(sourceParts.slice(0, -1).map((name, index) => Object.freeze({ name, ...source.identity.chain[index]! }))),
+        source: {
+            chain: sourceParts.slice(0, -1).map((name, index) => ({ name, ...source.identity.chain[index]! })),
             name: sourceParts.at(-1), file: source.identity.file, sha256: source.sha256, maxBytes,
-        }),
-        destination: Object.freeze({ segments: Object.freeze(destinationParts.slice(0, -1)), name: destinationParts.at(-1) }),
-    })
+        },
+        destination: { segments: destinationParts.slice(0, -1), name: destinationParts.at(-1) },
+    }
     const receipt = await runHelper(adapters, helperStep(node, root, 'adoption', request, [], Date.now() + HELPER_TIMEOUT_MS))
     const complete = helperRecord(receipt, ['version', 'nonce', 'action', 'kind', 'sha256'])
     if (complete?.version === 1 && complete.nonce === nonce && complete.action === action
         && complete.kind === 'complete' && complete.sha256 === expectedSha256) {
-        return Object.freeze({ kind: 'complete', sha256: expectedSha256 })
+        return { kind: 'complete', sha256: expectedSha256 }
     }
     const refusal = ownRecord(receipt)
     const safeFailure = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512
@@ -625,17 +625,17 @@ async function relocateAnchoredFileWithDestinationPolicy(
         && refusal.recoveryFailures.length > 0 && refusal.recoveryFailures.every(safeFailure)
         && refusal.retained.every(path => typeof path === 'string' && confined(root, path) !== undefined)
     const retainedPaths = recoveryFailed
-        ? Object.freeze(refusal.retained as string[]) : undefined
-    const possibleCaptures = Object.freeze([
+        ? (refusal.retained as string[]) : undefined
+    const possibleCaptures = [
         [...sourceParts.slice(0, -1), `.cockpit-adopt-source-${nonce}`].join('/'),
         [...destinationParts.slice(0, -1), `.cockpit-adopt-destination-${nonce}`].join('/'),
-    ])
-    return Object.freeze({
+    ]
+    return {
         kind: 'refusal', recovery: recovered ? 'unchanged' : 'indeterminate',
         ...((recovered || recoveryFailed) ? { failure: refusal.failure as string } : { failure: 'filesystem-helper-receipt-unavailable' }),
-        ...(recoveryFailed ? { recoveryFailures: Object.freeze(refusal.recoveryFailures as string[]) } : {}),
+        ...(recoveryFailed ? { recoveryFailures: refusal.recoveryFailures as string[] } : {}),
         ...(!recovered ? { retainedPaths: retainedPaths ?? possibleCaptures } : {}),
-    })
+    }
 }
 
 /** Confirm or restore the original side of an anchored relocation without following either path. */
@@ -651,13 +651,13 @@ export async function restoreAnchoredFile(
     const original = await readAnchoredFile(root, originalPath, maxBytes, node, adapters)
     const relocated = await readAnchoredFile(root, relocatedPath, maxBytes, node, adapters)
     if (original.kind === 'complete' && original.sha256 === expectedSha256 && relocated.kind === 'missing') {
-        return Object.freeze({ kind: 'complete', sha256: expectedSha256 })
+        return { kind: 'complete', sha256: expectedSha256 }
     }
     if (original.kind === 'missing' && relocated.kind === 'complete' && relocated.sha256 === expectedSha256) {
         return relocateAnchoredFileWithDestinationPolicy(root, relocatedPath, originalPath, maxBytes, expectedSha256,
             node, adapters, 'restore-file', safeAnchoredSegment)
     }
-    return Object.freeze({ kind: 'refusal', recovery: 'indeterminate' })
+    return { kind: 'refusal', recovery: 'indeterminate' }
 }
 
 interface AnchoredBatchReadRequest {
@@ -716,7 +716,7 @@ async function readAnchoredBatch(
         if (!target || !Number.isSafeInteger(request.maxBytes) || request.maxBytes < 1 || request.maxBytes > MAX_GENERATED_BYTES) return undefined
         const parts = relative(root, target).split(sep)
         return parts.length > 0 && parts.every(part => part !== '' && part !== '.' && part !== '..')
-            ? Object.freeze({ ...request, target, parts: Object.freeze(parts) }) : undefined
+            ? { ...request, target, parts } : undefined
     })
     if (resolved.some(request => request === undefined)
         || new Set(resolved.map(request => request?.target)).size !== resolved.length) return undefined
@@ -725,8 +725,8 @@ async function readAnchoredBatch(
         const result = single.action === 'read-entry'
             ? await readAnchoredEntry(root, single.path, single.maxBytes, node, adapters)
             : await readAnchoredFile(root, single.path, single.maxBytes, node, adapters, single.action, deadline)
-        return result.kind === 'invalid' ? Object.freeze({ kind: 'invalid', index: 0 })
-            : Object.freeze({ kind: 'complete', results: Object.freeze([result]) })
+        return result.kind === 'invalid' ? { kind: 'invalid', index: 0 }
+            : { kind: 'complete', results: [result] }
     }
     let rootStatus: Awaited<ReturnType<typeof lstat>>
     try {
@@ -740,7 +740,7 @@ async function readAnchoredBatch(
     try {
         directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-read-batch-'))
         const nonce = randomBytes(16).toString('hex')
-        const entries = resolved.map((request, index) => Object.freeze({
+        const entries = resolved.map((request, index) => ({
             nonce: randomBytes(16).toString('hex'),
             action: request!.action,
             maxBytes: request!.maxBytes,
@@ -750,20 +750,20 @@ async function readAnchoredBatch(
         }))
         if (new Set(entries.map(entry => entry.nonce)).size !== entries.length) return undefined
         const receiptOutput = join(directory, 'receipt')
-        const request = Object.freeze({
+        const request = {
             version: 1, nonce, action: 'read-batch',
-            identity: Object.freeze({ dev: rootStatus.dev, ino: rootStatus.ino }),
-            entries: Object.freeze(entries),
+            identity: { dev: rootStatus.dev, ino: rootStatus.ino },
+            entries,
             receiptOutput,
-        })
-        if (helperFrameBytes(request) > MAX_HELPER_FRAME_BYTES) return Object.freeze({ kind: 'split' })
+        }
+        if (helperFrameBytes(request) > MAX_HELPER_FRAME_BYTES) return { kind: 'split' }
         const helperDeadline = Math.min(Date.now() + HELPER_TIMEOUT_MS, deadline ?? Number.MAX_SAFE_INTEGER)
         const raw = await runHelper(adapters, helperStep(node, root, '.', request, [], helperDeadline))
         const refusal = helperRecord(raw, ['version', 'nonce', 'action', 'kind', 'failedNonce'])
         if (refusal?.version === 1 && refusal.nonce === nonce && refusal.action === 'read-batch' && refusal.kind === 'refusal'
             && typeof refusal.failedNonce === 'string') {
             const index = entries.findIndex(entry => entry.nonce === refusal.failedNonce)
-            return index >= 0 ? Object.freeze({ kind: 'invalid', index }) : undefined
+            return index >= 0 ? { kind: 'invalid', index } : undefined
         }
         const summary = helperRecord(raw, ['version', 'nonce', 'action', 'kind', 'receiptBytes', 'receiptSha256'])
         if (!summary || summary.version !== 1 || summary.nonce !== nonce || summary.action !== 'read-batch'
@@ -788,19 +788,19 @@ async function readAnchoredBatch(
             const boundKeys = ['nonce', 'action', 'segments', 'name', 'maxBytes', 'kind']
             if (row.kind === 'missing') {
                 if (expected.action === 'read-persona' || !exactKeys(row, boundKeys)) return undefined
-                results.push(Object.freeze({ kind: 'missing' }))
+                results.push({ kind: 'missing' })
                 continue
             }
             if (row.kind === 'other') {
                 if (expected.action !== 'read-entry' || !exactKeys(row, boundKeys)) return undefined
-                results.push(Object.freeze({ kind: 'other' }))
+                results.push({ kind: 'other' })
                 continue
             }
             if (row.kind === 'symlink') {
                 if (expected.action !== 'read-entry' || !exactKeys(row, [...boundKeys, 'target', 'identity']) || typeof row.target !== 'string') return undefined
                 const identity = directoryIdentity(row.identity)
                 if (!identity) return undefined
-                results.push(Object.freeze({ kind: 'symlink', target: row.target, identity }))
+                results.push({ kind: 'symlink', target: row.target, identity })
                 continue
             }
             const expectedKind = expected.action === 'read-entry' ? 'file' : 'complete'
@@ -816,13 +816,13 @@ async function readAnchoredBatch(
             if (!readRoot || readRoot.dev !== rootStatus.dev || readRoot.ino !== rootStatus.ino || !file || !chain
                 || chain.length !== parts.length - 1 || chain.some(entry => !entry)) return undefined
             const bytes = await readPrivateOutput(expected.output, expected.maxBytes)
-            if (!bytes || sha256(bytes) !== row.sha256) return Object.freeze({ kind: 'invalid', index })
-            const identity = Object.freeze({ root: readRoot, chain: Object.freeze(chain as DirectoryIdentity[]), file })
+            if (!bytes || sha256(bytes) !== row.sha256) return { kind: 'invalid', index }
+            const identity = { root: readRoot, chain: chain as DirectoryIdentity[], file }
             results.push(expected.action === 'read-entry'
-                ? Object.freeze({ kind: 'file', bytes, sha256: row.sha256, mode: row.mode as number, identity })
-                : Object.freeze({ kind: 'complete', bytes, sha256: row.sha256, identity }))
+                ? { kind: 'file', bytes, sha256: row.sha256, mode: row.mode as number, identity }
+                : { kind: 'complete', bytes, sha256: row.sha256, identity })
         }
-        return Object.freeze({ kind: 'complete', results: Object.freeze(results) })
+        return { kind: 'complete', results }
     } catch {
         // an unavailable authority is refused by the caller.
         return undefined
@@ -861,11 +861,11 @@ export async function readAnchoredBatches(
             batch = await readAnchoredBatch(root, requests.slice(offset, end), node, adapters, deadline)
         }
         if (!batch) return undefined
-        if (batch.kind === 'invalid') return Object.freeze({ kind: 'invalid', index: offset + batch.index })
+        if (batch.kind === 'invalid') return { kind: 'invalid', index: offset + batch.index }
         results.push(...batch.results)
         offset = end
     }
-    return Object.freeze({ kind: 'complete', results: Object.freeze(results) })
+    return { kind: 'complete', results }
 }
 
 export async function readPersonaSource(
@@ -877,7 +877,7 @@ export async function readPersonaSource(
 ): Promise<{ bytes: Buffer; sha256: string; identity: PersonaSourceIdentity } | undefined> {
     const read = await readAnchoredFile(root, path, MAX_GENERATED_BYTES, node, adapters, 'read-persona', deadline)
     return read.kind === 'complete'
-        ? Object.freeze({ bytes: read.bytes, sha256: read.sha256, identity: read.identity })
+        ? { bytes: read.bytes, sha256: read.sha256, identity: read.identity }
         : undefined
 }
 
@@ -916,9 +916,9 @@ function helperChain(value: unknown): readonly HelperChainEntry[] | undefined {
         const row = helperRecord(item, ['name', 'dev', 'ino', 'created'])
         if (!row || !safePublicationSegment(row.name) || !Number.isSafeInteger(row.dev)
             || !Number.isSafeInteger(row.ino) || typeof row.created !== 'boolean') return undefined
-        chain.push(Object.freeze({ name: row.name, dev: row.dev as number, ino: row.ino as number, created: row.created }))
+        chain.push({ name: row.name, dev: row.dev as number, ino: row.ino as number, created: row.created })
     }
-    return Object.freeze(chain)
+    return chain
 }
 
 // Directories a prepare batch created, keyed by their path from the transaction root. The first row
@@ -934,7 +934,7 @@ function createdRowsValid(prefix: readonly string[], rows: readonly HelperChainE
             if (row.created || row.dev !== prior.dev || row.ino !== prior.ino) return false
         } else {
             if (!row.created) return false
-            created.set(key, Object.freeze({ dev: row.dev, ino: row.ino }))
+            created.set(key, { dev: row.dev, ino: row.ino })
         }
     }
     return true
@@ -999,20 +999,20 @@ function parsePreparedGroup(
             || entry.backup !== (entry.priorKind === 'file' ? expectedBackup : null)
             || entry.name !== basename(mutation.path) || entry.operation !== mutation.operation
             || entry.sha256 !== (mutation.sha256 ?? null) || entry.target !== (mutation.target ?? null)) return undefined
-        entries.push(Object.freeze({ ...entry, chain: entryChain, priorIdentity }) as unknown as HelperFileEntry)
+        entries.push({ ...entry, chain: entryChain, priorIdentity } as unknown as HelperFileEntry)
     }
     const parent = row.group.parent === '.' ? [] : row.group.parent.split('/')
     if (new Set(entries.map(entry => [...entry.chain.map(directory => directory.name), entry.name].join('/'))).size !== entries.length
         || !preparedEntryChainsValid(entries, requests, parent, created)) return undefined
-    return Object.freeze({
+    return {
         parent: row.group.parent,
         path: row.path,
         start: row.anchor.identity,
         identity,
         chain,
-        entries: Object.freeze(entries),
+        entries,
         logicalWeight: row.group.logicalWeight,
-    })
+    }
 }
 
 // A refusal still lists the groups prepared before it, so the caller can roll those back.
@@ -1035,7 +1035,7 @@ function parsePrepareBatchReceipt(
         if (!group) return undefined
         groups.push(group)
     }
-    return Object.freeze({ complete, groups: Object.freeze(groups) })
+    return { complete, groups }
 }
 
 function parseRollbackReceipt(value: unknown, nonce: string): boolean {
@@ -1083,23 +1083,23 @@ async function publicationBatchRequest(
             current = resolve(current, name)
             const status = await lstat(current)
             if (!status.isDirectory() || status.isSymbolicLink()) return undefined
-            chain.push(Object.freeze({ name, dev: status.dev, ino: status.ino }))
+            chain.push({ name, dev: status.dev, ino: status.ino })
         }
         const final = chain.at(-1) ?? rootIdentity
         if (final.dev !== group.identity.dev || final.ino !== group.identity.ino) return undefined
-        const row = Object.freeze({
+        const row = {
             nonce: randomBytes(16).toString('hex'),
             parent: group.parent,
             identity: group.identity,
-            chain: Object.freeze(chain),
+            chain,
             entries: group.entries,
-        })
-        const candidate = Object.freeze({ version: 1 as const, nonce, action, identity: rootIdentity, groups: Object.freeze([...rows, row]) })
+        }
+        const candidate = { version: 1 as const, nonce, action, identity: rootIdentity, groups: [...rows, row] }
         if (helperFrameBytes(candidate) > MAX_HELPER_FRAME_BYTES) break
         rows.push(row)
     }
     return rows.length > 0
-        ? Object.freeze({ version: 1, nonce, action, identity: rootIdentity, groups: Object.freeze(rows) })
+        ? { version: 1, nonce, action, identity: rootIdentity, groups: rows }
         : undefined
 }
 
@@ -1199,9 +1199,9 @@ interface PublicationGroup {
 }
 
 export function expectedState(entry: AnchoredEntry): ExpectedEntryState | undefined {
-    if (entry.kind === 'missing') return Object.freeze({ kind: 'missing' })
-    if (entry.kind === 'file') return Object.freeze({ kind: 'file', sha256: entry.sha256, identity: entry.identity.file })
-    if (entry.kind === 'symlink') return Object.freeze({ kind: 'symlink', target: entry.target, identity: entry.identity })
+    if (entry.kind === 'missing') return { kind: 'missing' }
+    if (entry.kind === 'file') return { kind: 'file', sha256: entry.sha256, identity: entry.identity.file }
+    if (entry.kind === 'symlink') return { kind: 'symlink', target: entry.target, identity: entry.identity }
     return undefined
 }
 
@@ -1215,9 +1215,9 @@ async function stageInputs(files: readonly OwnedBytes[]): Promise<{ directory: s
             const path = join(directory, String(index))
             const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
             try { await handle.writeFile(file.bytes); await handle.sync() } finally { await handle.close() }
-            inputs.push(Object.freeze({ path, sha256: file.sha256 }))
+            inputs.push({ path, sha256: file.sha256 })
         }
-        return Object.freeze({ directory, inputs: Object.freeze(inputs) })
+        return { directory, inputs }
     } catch {
         // staging failed; the caller refuses and no inputs are retained.
         if (directory) await rm(directory, { recursive: true, force: true })
@@ -1254,7 +1254,7 @@ function publicationEntrySegments(parent: string, path: string): readonly string
     if (group.some((segment, index) => segment !== leafParent[index])) return undefined
     const segments = leafParent.slice(group.length)
     return segments.every(segment => segment.length > 0 && segment !== '.' && segment !== '..'
-        && !segment.includes('/') && !segment.includes('\\') && !segment.includes('\0')) ? Object.freeze(segments) : undefined
+        && !segment.includes('/') && !segment.includes('\\') && !segment.includes('\0')) ? segments : undefined
 }
 
 function groupFrameBounded(parent: string, entries: readonly PublicationMutation[]): boolean {
@@ -1309,11 +1309,11 @@ function groupMutations(mutations: readonly PublicationMutation[]): readonly Pub
             const candidate = [...chunk, row]
             if (!groupFrameBounded(parent, candidate)) {
                 if (chunk.length === 0 || !groupFrameBounded(parent, [row])) return undefined
-                logical.push(Object.freeze({ parent, phase, mutations: Object.freeze(chunk) }))
+                logical.push({ parent, phase, mutations: chunk })
                 chunk = [row]
             } else chunk = candidate
         }
-        if (chunk.length > 0) logical.push(Object.freeze({ parent, phase, mutations: Object.freeze(chunk) }))
+        if (chunk.length > 0) logical.push({ parent, phase, mutations: chunk })
     }
     const clusters = new Map<string, typeof logical>()
     for (const group of logical) {
@@ -1333,15 +1333,15 @@ function groupMutations(mutations: readonly PublicationMutation[]): readonly Pub
         const key = anchor ? `${group.phase}\0${anchor}` : undefined
         const cluster = key ? clusters.get(key) : undefined
         if (!key || !cluster || compacted.has(key)) {
-            if (!key || !cluster) result.push(Object.freeze({ ...group, logicalWeight: 1 }))
+            if (!key || !cluster) result.push({ ...group, logicalWeight: 1 })
             continue
         }
         compacted.add(key)
         const parents = new Set(cluster.map(row => row.parent))
         const entries = cluster.flatMap(row => row.mutations).sort((left, right) => compareCodeUnits(left.path, right.path))
         if (parents.size > 1 && groupFrameBounded(anchor!, entries)) {
-            result.push(Object.freeze({ parent: anchor!, phase: group.phase, mutations: Object.freeze(entries), logicalWeight: 1 }))
-        } else for (const row of cluster) result.push(Object.freeze({ ...row, logicalWeight: 1 }))
+            result.push({ parent: anchor!, phase: group.phase, mutations: entries, logicalWeight: 1 })
+        } else for (const row of cluster) result.push({ ...row, logicalWeight: 1 })
     }
     result.sort((left, right) => phaseOrder[left.phase] - phaseOrder[right.phase] || compareCodeUnits(left.parent, right.parent))
     const merged: typeof result = []
@@ -1350,10 +1350,10 @@ function groupMutations(mutations: readonly PublicationMutation[]): readonly Pub
         const mutations = prior && prior.phase === group.phase && prior.parent === group.parent
             ? [...prior.mutations, ...group.mutations].sort((left, right) => compareCodeUnits(left.path, right.path)) : undefined
         if (prior && mutations && groupFrameBounded(group.parent, mutations)) {
-            merged[merged.length - 1] = Object.freeze({ ...prior, mutations: Object.freeze(mutations), logicalWeight: prior.logicalWeight + group.logicalWeight })
+            merged[merged.length - 1] = { ...prior, mutations, logicalWeight: prior.logicalWeight + group.logicalWeight }
         } else merged.push(group)
     }
-    return Object.freeze(merged.map(({ phase: _phase, ...group }) => Object.freeze(group)))
+    return merged.map(({ phase: _phase, ...group }) => group)
 }
 
 async function prepareBatch(
@@ -1381,24 +1381,24 @@ async function prepareBatch(
                 input = groupInputs.length
                 groupInputs.push(staged[files.findIndex(file => file.path === mutation.path)]!)
             }
-            entries.push(Object.freeze({ chain: nested.chain, segments: nested.segments,
+            entries.push({ chain: nested.chain, segments: nested.segments,
                 name: basename(mutation.path), operation: mutation.operation, expected: mutation.expected,
-                sha256: mutation.sha256 ?? null, target: mutation.target ?? null, input }))
+                sha256: mutation.sha256 ?? null, target: mutation.target ?? null, input })
         }
-        const request = Object.freeze({ nonce: randomBytes(16).toString('hex'), parent: group.parent, anchor: anchor.chain,
-            identity: anchor.identity, segments: anchor.segments, entries: Object.freeze(entries) })
-        const candidate = Object.freeze({ version: 1 as const, nonce, action: 'prepare-batch' as const, identity: rootIdentity,
-            groups: Object.freeze([...rows.map(row => row.request), request]) })
+        const request = { nonce: randomBytes(16).toString('hex'), parent: group.parent, anchor: anchor.chain,
+            identity: anchor.identity, segments: anchor.segments, entries }
+        const candidate = { version: 1 as const, nonce, action: 'prepare-batch' as const, identity: rootIdentity,
+            groups: [...rows.map(row => row.request), request] }
         if (helperFrameBytes(candidate) > MAX_HELPER_FRAME_BYTES) break
-        rows.push(Object.freeze({ group, anchor, path, request }))
+        rows.push({ group, anchor, path, request })
         inputs = groupInputs
     }
-    return rows.length > 0 ? Object.freeze({
-        request: Object.freeze({ version: 1 as const, nonce, action: 'prepare-batch' as const, identity: rootIdentity,
-            groups: Object.freeze(rows.map(row => row.request)) }),
-        rows: Object.freeze(rows),
-        inputs: Object.freeze(inputs),
-    }) : undefined
+    return rows.length > 0 ? {
+        request: { version: 1 as const, nonce, action: 'prepare-batch' as const, identity: rootIdentity,
+            groups: rows.map(row => row.request) },
+        rows,
+        inputs,
+    } : undefined
 }
 
 async function compensate(
@@ -1411,7 +1411,7 @@ async function compensate(
     let remainingWeight = rollback.reduce((count, group) => count + group.logicalWeight, 0)
     for (const [index, group] of rollback.entries()) {
         const nonce = randomBytes(16).toString('hex')
-        const request = Object.freeze({ version: 1, nonce, action: 'rollback', identity: group.identity, start: group.start, chain: group.chain, entries: group.entries })
+        const request = { version: 1, nonce, action: 'rollback', identity: group.identity, start: group.start, chain: group.chain, entries: group.entries }
         remainingWeight -= group.logicalWeight
         const deadline = transactionDeadline - remainingWeight * PUBLICATION_HELPER_SLOT_MS
         const receipt = await runHelper(adapters, helperStep(node, group.path, group.parent, request, [], deadline))
@@ -1429,28 +1429,28 @@ function staleRemovalRequest(
         const current = mutation.expected
         if (current.kind !== 'file' && current.kind !== 'symlink' || !current.identity
             || mutation.operation !== 'write-file' && mutation.operation !== 'remove-file' && mutation.operation !== 'remove-symlink') return undefined
-        entries.push(Object.freeze({
+        entries.push({
             path: mutation.path,
             operation: mutation.operation,
-            current: Object.freeze({
+            current: {
                 kind: current.kind,
                 ...(current.sha256 ? { sha256: current.sha256 } : {}),
                 ...(current.target ? { target: current.target } : {}),
                 dev: current.identity.dev,
                 ino: current.identity.ino,
-            }),
+            },
             ...(mutation.sha256 ? { resultSha256: mutation.sha256 } : {}),
-        }))
+        })
     }
     if (entries.length === 0) return undefined
-    const payload = Object.freeze({
+    const payload = {
         format: 'cockpit-stale-removal-request/v1' as const,
         cockpitId: prepared.cockpitId,
         generation: prepared.generation,
         sourceSha256: prepared.sourceSha256,
-        entries: Object.freeze(entries.sort((left, right) => compareCodeUnits(left.path, right.path))),
-    })
-    return Object.freeze({ ...payload, digest: sha256(JSON.stringify(payload)) })
+        entries: entries.sort((left, right) => compareCodeUnits(left.path, right.path)),
+    }
+    return { ...payload, digest: sha256(JSON.stringify(payload)) }
 }
 
 async function staleRemovalApproved(
@@ -1589,11 +1589,11 @@ async function admitBootstrapPlan(
     }
     const { node } = serializable
     const inspected = supplied.inspected as InspectedBootstrapOutputs
-    const desired: readonly SurfaceDesiredEntry[] = Object.freeze(inspected.files.map(file => Object.freeze({
+    const desired: readonly SurfaceDesiredEntry[] = inspected.files.map(file => ({
         kind: 'file' as const, path: file.path, harnesses: [inspected.target] as [typeof inspected.target], scope: 'always' as const,
         capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,
         ownership: 'whole-file' as const, bytes: file.bytes, sha256: file.sha256,
-    })))
+    }))
     const mutations = [...serializable.mutations]
     if (mutations.length > desired.length || new Set(mutations.map(row => row.path)).size !== mutations.length
         || mutations.some(row => !exactPath(serializable.root, row.path) || row.phase !== 'desired' || row.operation !== 'write-file'
@@ -1659,23 +1659,23 @@ async function admitBootstrapPlan(
             : current.kind === 'missing' ? !mutation : current.kind !== 'file' || current.sha256 !== entry.sha256 || mutation !== undefined) {
             return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap plan must write each missing output and preserve each exact output', entry.path)
         }
-        checks.push(Object.freeze({ path: entry.path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1,
-            ...(current.kind === 'file' ? { identity: current.identity } : {}) }))
+        checks.push({ path: entry.path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1,
+            ...(current.kind === 'file' ? { identity: current.identity } : {}) })
     }
-    checks.push(Object.freeze({ path: OWNERSHIP_PATH, expected: Object.freeze({ kind: 'missing' as const }), maxBytes: 1 }))
-    if (prior) checks.push(Object.freeze({ path: BOOTSTRAP_CONFIGURATION_PATH,
-        expected: Object.freeze({ kind: 'missing' as const }), maxBytes: 1 }))
+    checks.push({ path: OWNERSHIP_PATH, expected: { kind: 'missing' as const }, maxBytes: 1 })
+    if (prior) checks.push({ path: BOOTSTRAP_CONFIGURATION_PATH,
+        expected: { kind: 'missing' as const }, maxBytes: 1 })
     const groups = groupMutations(mutations)
     const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0
     if (!groups || count > desired.length || count * PUBLICATION_HELPER_CALLS_PER_GROUP * PUBLICATION_HELPER_SLOT_MS > TRANSACTION_TIMEOUT_MS) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap publication exceeds the bounded helper schedule', 'generated-environment')
     }
-    const ordered = Object.freeze(groups.flatMap(group => group.mutations))
-    const changes = Object.freeze(ordered.map(row => Object.freeze({ operation: 'write' as const, path: row.path })))
-    const plan = Object.freeze({ changes })
+    const ordered = groups.flatMap(group => group.mutations)
+    const changes = ordered.map(row => ({ operation: 'write' as const, path: row.path }))
+    const plan = { changes }
     issuedPlans.set(plan, Object.freeze({ root: serializable.root, rootIdentity: serializable.rootIdentity, node,
         mutations: ordered, groups, changes, checks: Object.freeze(checks) }))
-    return Object.freeze({ kind: 'complete', plan })
+    return { kind: 'complete', plan }
 }
 
 async function planCurrent(record: PublicationRecord, adapters: PublicationAdapters, deadline?: number, published = false): Promise<boolean> {
@@ -1820,23 +1820,23 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
                 if (rendered.kind !== 'complete' || rendered.bytes !== mutation.bytes || action.postimage !== mutation.bytes) return refuse('GENERATED_PUBLICATION_FAILED', 'shared write would change foreign bytes', path)
             }
         }
-        checks.push(Object.freeze({ path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1, ...(current.kind === 'file' ? { identity: current.identity } : {}) }))
+        checks.push({ path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1, ...(current.kind === 'file' ? { identity: current.identity } : {}) })
     }
-    checks.push(Object.freeze({ path: OWNERSHIP_PATH, expected: ledgerState, maxBytes: ledger.kind === 'file' ? Math.max(1, ledger.bytes.byteLength) : 1, ...(ledger.kind === 'file' ? { identity: ledger.identity } : {}) }))
-    if (ledger.kind !== 'file' || ledger.sha256 !== sha256(captured.nextLedgerBytes)) mutations.push(Object.freeze({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
-        bytes: captured.nextLedgerBytes, sha256: sha256(captured.nextLedgerBytes), expected: ledgerState }))
+    checks.push({ path: OWNERSHIP_PATH, expected: ledgerState, maxBytes: ledger.kind === 'file' ? Math.max(1, ledger.bytes.byteLength) : 1, ...(ledger.kind === 'file' ? { identity: ledger.identity } : {}) })
+    if (ledger.kind !== 'file' || ledger.sha256 !== sha256(captured.nextLedgerBytes)) mutations.push({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
+        bytes: captured.nextLedgerBytes, sha256: sha256(captured.nextLedgerBytes), expected: ledgerState })
     const groups = groupMutations(mutations)
     const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0
     if (!groups || count > MAX_OWNED_FILES + 1 || count * PUBLICATION_HELPER_CALLS_PER_GROUP * PUBLICATION_HELPER_SLOT_MS > TRANSACTION_TIMEOUT_MS) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'generated publication exceeds the bounded helper schedule', 'generated-environment')
     }
-    const ordered = Object.freeze(groups.flatMap(group => group.mutations))
+    const ordered = groups.flatMap(group => group.mutations)
     const staleRemoval = staleRemovalRequest({ cockpitId: authority.cockpitId, generation: captured.generation, sourceSha256: captured.sourceSha256 }, ordered)
     if (ordered.some(row => row.phase === 'stale') && !staleRemoval) return refuse('GENERATED_STALE_APPROVAL_INVALID', 'stale operations cannot be bound to exact current identities', 'generated-environment')
-    const changes = Object.freeze(ordered.map(row => Object.freeze({ operation: row.operation.startsWith('remove-') ? 'remove' as const : 'write' as const, path: row.path })))
-    const plan = Object.freeze({ changes, ...(staleRemoval ? { staleRemoval } : {}) })
+    const changes = ordered.map(row => ({ operation: row.operation.startsWith('remove-') ? 'remove' as const : 'write' as const, path: row.path }))
+    const plan = { changes, ...(staleRemoval ? { staleRemoval } : {}) }
     issuedPlans.set(plan, Object.freeze({ root: authority.root, rootIdentity: captured.rootIdentity, node, mutations: ordered, groups, changes, checks: Object.freeze(checks), ...(staleRemoval ? { staleRemoval } : {}) }))
-    return Object.freeze({ kind: 'complete', plan })
+    return { kind: 'complete', plan }
 }
 
 const publicationApprovals = new WeakMap<PublicationPlan, Promise<boolean>>()
@@ -1851,16 +1851,16 @@ function publicationApproved(plan: PublicationPlan, record: PublicationRecord, a
 }
 
 function approvalRefusal(record: PublicationRecord): PublicationRefusal {
-    return Object.freeze({
+    return {
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([{
+        diagnostics: [{
             severity: 'error' as const,
             code: 'GENERATED_STALE_APPROVAL_REQUIRED',
             message: `stale generated ownership requires independent approval bound to the exact current entries (stale-removal digest ${record.staleRemoval!.digest})`,
             target: record.staleRemoval!.entries[0]!.path,
             fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended',
-        }]),
-    })
+        }],
+    }
 }
 
 /** Admit approval before another owner writes, retaining the exact plan's one-use publication. */
@@ -1887,7 +1887,7 @@ async function runPlan(plan: PublicationPlan, adapters: PublicationRunAdapters):
         const current = await adapters.revalidate(undefined, 'preview')
         if (current !== true) return typeof current === 'object' ? current : refuse('GENERATED_SOURCE_CHANGED', 'publication preview inputs changed', 'generated-environment')
         if (!await planCurrent(record, adapters)) return refuse('GENERATED_SOURCE_CHANGED', 'publication preview identities changed', 'generated-environment')
-        return Object.freeze({ kind: 'complete', changes: record.changes, committedPaths: Object.freeze([]), ...(record.staleRemoval ? { staleRemoval: record.staleRemoval } : {}) })
+        return { kind: 'complete', changes: record.changes, committedPaths: [], ...(record.staleRemoval ? { staleRemoval: record.staleRemoval } : {}) }
     }
     consumedPlans.add(plan)
     if (!await publicationApproved(plan, record, adapters)) return approvalRefusal(record)
@@ -1899,8 +1899,8 @@ async function applyPrepared(
     adapters: PublicationRunAdapters,
 ): Promise<PublicationOutcome> {
     const { mutations: publicationMutations, groups } = prepared
-    const publicationFiles: readonly OwnedBytes[] = Object.freeze(publicationMutations.filter(row => row.operation === 'write-file')
-        .map(row => Object.freeze({ path: row.path, bytes: row.bytes!, sha256: row.sha256! })))
+    const publicationFiles: readonly OwnedBytes[] = publicationMutations.filter(row => row.operation === 'write-file')
+        .map(row => ({ path: row.path, bytes: row.bytes!, sha256: row.sha256! }))
     const logicalGroupCount = groups.reduce((count, group) => count + group.logicalWeight, 0)
     const transactionDeadline = Date.now() + TRANSACTION_TIMEOUT_MS
     const forwardCutoff = transactionDeadline - logicalGroupCount * PUBLICATION_HELPER_SLOT_MS
@@ -1927,7 +1927,7 @@ async function applyPrepared(
             || !await transactionRootCurrent() || Date.now() >= forwardCutoff) {
             return refuse('GENERATED_SOURCE_CHANGED', 'generated inputs or target identities changed during unchanged publication', 'generated-environment')
         }
-        return Object.freeze({ kind: 'complete', changes: prepared.changes, committedPaths: Object.freeze([]) })
+        return { kind: 'complete', changes: prepared.changes, committedPaths: [] }
     }
     const staged = await stageInputs(publicationFiles)
     if (!node || !staged) return refuse('GENERATED_PUBLICATION_FAILED', 'generated publication authority could not be prepared', 'generated-environment')
@@ -2004,7 +2004,7 @@ async function applyPrepared(
                 `${applied.at(-1)?.parent ?? 'generated-environment'}; inputs=${staged.directory}`,
             )
         }
-        return Object.freeze({ kind: 'complete', changes: prepared.changes, committedPaths: Object.freeze(prepared.changes.map(row => row.path)) })
+        return { kind: 'complete', changes: prepared.changes, committedPaths: prepared.changes.map(row => row.path) }
     } catch (error) {
         if (!await compensate(applied, node, adapters, transactionDeadline)) {
             retainInputs = true

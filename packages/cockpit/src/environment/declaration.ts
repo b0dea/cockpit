@@ -18,25 +18,25 @@ export function declaresNothingToRun(environment: Pick<CockpitConfig['environmen
 
 /** The one refusal every runtime command gives a cockpit that declares no environment. */
 export function runtimeNotDeclared(target: string): EnvironmentDiagnostic {
-    return Object.freeze({
+    return {
         severity: 'error' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'ENVIRONMENT_NOT_DECLARED' satisfies typeof ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED,
         message: 'this cockpit declares no runtime environment, so there is nothing to start, stop, observe or measure; sync and check publish and verify the harness surfaces only',
         target,
         fix: 'declare environment.compose_files = ["compose.yml"] to run your Compose file (for a small app with none, npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port> writes a starting one), then run npx --no cockpit sync --config <your cockpit.toml>',
-    })
+    }
 }
 
 /** A service named on the command line that the stack does not declare: a wrong name, not a runtime failure. */
 export function serviceNotDeclared(service: string, declared: readonly string[]): EnvironmentDiagnostic {
-    return Object.freeze({
+    return {
         severity: 'error' as const,
         code: 'SERVICE_NOT_DECLARED' satisfies typeof ENVIRONMENT_CODES.SERVICE_NOT_DECLARED,
         message: `this stack declares no service ${service}; it declares ${declared.length === 0 ? 'no services' : declared.join(', ')}`,
         target: service,
         fix: 'rerun with --service set to one of the declared services',
-    })
+    }
 }
 
 /** Carries a declaration refusal through owners whose only failure channel is a thrown error. */

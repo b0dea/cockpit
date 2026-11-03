@@ -211,17 +211,17 @@ function issueLeaseResult(
     record: StateRecord,
     replaced?: CoordinationRecord,
 ): LeasePortFamilyResult {
-    const snapshot = Object.freeze({
+    const snapshot = {
         ...result,
-        lease: Object.freeze({ ...result.lease, ports: Object.freeze({ ...result.lease.ports }) }),
-    })
-    const address = Object.freeze({ ...namespace.paths.coordination(result.lease.stackId) })
+        lease: { ...result.lease, ports: { ...result.lease.ports } },
+    }
+    const address = { ...namespace.paths.coordination(result.lease.stackId) }
     const compensation = result.change === 'acquired' && replaced
-        ? Object.freeze({
+        ? {
               address,
               recordBody: JSON.stringify(record),
               replaced,
-          })
+          }
         : undefined
     issuedLeaseResults.set(snapshot, {
         result: snapshot,
@@ -274,17 +274,17 @@ function issuePortLeaseProjection(input: {
     readonly entrypoints: readonly DerivedEntrypoint[]
     readonly address: ReturnType<StateNamespace['paths']['coordination']>
 }): PortLeaseProjection {
-    const projection = Object.freeze({
-        lease: Object.freeze({ ...input.lease, ports: Object.freeze({ ...input.lease.ports }) }),
-        ownership: Object.freeze({
+    const projection = {
+        lease: { ...input.lease, ports: { ...input.lease.ports } },
+        ownership: {
             change: input.change,
             holderId: input.holderId,
             recordRevision: input.recordRevision,
             holderCount: input.holderIds.length,
-            holderIds: Object.freeze([...input.holderIds]),
-        }),
-        entrypoints: Object.freeze(input.entrypoints.map((entrypoint) => Object.freeze({ ...entrypoint }))),
-    })
+            holderIds: [...input.holderIds],
+        },
+        entrypoints: input.entrypoints.map((entrypoint) => ({ ...entrypoint })),
+    }
     issuedLeaseProjections.set(projection, Object.freeze({ available: true, address: input.address }))
     return projection
 }
@@ -392,12 +392,12 @@ export async function observeRetainedPortFamily(supplied: {
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, 'retained port family intersects another active state-root reservation', stackId,
             'stop and release the conflicting stack through its owning cockpit before retrying')
     }
-    const result = Object.freeze({
+    const result = {
         kind: 'complete' as const,
         holderId,
         recordRevision: stored.value.revision,
-        lease: Object.freeze({ stackId, offset: value.lease.offset, ports: Object.freeze({ ...value.lease.ports }) }),
-    })
+        lease: { stackId, offset: value.lease.offset, ports: { ...value.lease.ports } },
+    }
     issuedRetainedPortFamilies.set(result, Object.freeze({
         address: Object.freeze({ ...address }),
         recordFingerprint: JSON.stringify(stored.value),
@@ -417,12 +417,12 @@ export async function inspectRecordedPortDeclaration(input: {
 }): Promise<Readonly<{ kind: 'complete'; changed: boolean }> | PortRefusal> {
     const address = input.namespace.paths.coordination(input.stackId)
     const stored = await readState(address)
-    if (stored.kind === 'missing') return Object.freeze({ kind: 'complete', changed: false })
+    if (stored.kind === 'missing') return { kind: 'complete', changed: false }
     if (stored.kind !== 'complete') return stateRefusal(stored)
     const value = decodeCoordinationRecord(stored.value, input.stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', address.path)
     const lease = value.lease
-    return Object.freeze({ kind: 'complete', changed: lease !== null && !lease.released && !sameDeclaration(lease.declaration, input.config) })
+    return { kind: 'complete', changed: lease !== null && !lease.released && !sameDeclaration(lease.declaration, input.config) }
 }
 
 export async function projectRetainedPortFamilyResult(input: {
@@ -539,11 +539,11 @@ export async function inspectPortLeaseTransfer(input: {
         previousHolderId = descriptors.previousHolderId!.value as HolderId
         const candidate = descriptors.projection!.value as PortLeaseProjection
         projection = candidate && typeof candidate === 'object' && candidate.lease && candidate.ownership
-            ? Object.freeze({
+            ? {
                   ...candidate,
-                  lease: Object.freeze({ ...candidate.lease, ports: Object.freeze({ ...candidate.lease.ports }) }),
-                  ownership: Object.freeze({ ...candidate.ownership, holderIds: Object.freeze([...candidate.ownership.holderIds]) }),
-              })
+                  lease: { ...candidate.lease, ports: { ...candidate.lease.ports } },
+                  ownership: { ...candidate.ownership, holderIds: [...candidate.ownership.holderIds] },
+              }
             : undefined
     } catch {
         // A throwing accessor or proxy trap makes the input malformed; refused here.
@@ -578,7 +578,7 @@ export async function inspectPortLeaseTransfer(input: {
         || !sameValues(current.lease.ports, projection.lease.ports)) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'lifecycle progress belongs to an active or replaced holder', stackId)
     }
-    return Object.freeze({ kind: 'complete' })
+    return { kind: 'complete' }
 }
 
 function diagnostic(
@@ -662,7 +662,7 @@ function snapshotPortConfig(value: unknown): PortFamilyConfig | string {
             if (byteBudget > SERIALIZED_RECORD_BYTE_LIMIT) return 'port family bases exceed the state record byte budget'
             bases[key] = base as number
         }
-        const snapshot = Object.freeze({ step: step as number, count: count as number, bases: Object.freeze(bases) })
+        const snapshot = { step: step as number, count: count as number, bases }
         return validateConfig(snapshot) ?? snapshot
     } catch {
         // A throwing accessor or proxy trap makes the config malformed; the reason says so.
@@ -773,7 +773,7 @@ function snapshotListenerEvidence(
                     byteBudget += 8
                 }
                 byteBudget += Buffer.byteLength(observedAt, 'utf8') + Buffer.byteLength(producer, 'utf8')
-                observation = { state, value: Object.freeze(occupied), observedAt, producer }
+                observation = { state, value: occupied, observedAt, producer }
             } else if (state === 'unavailable') {
                 if (!hasExactKeys(rawObservation, ['state', 'reason', 'producer'])) return undefined
                 const reason = (rawObservation as { reason?: unknown }).reason
@@ -795,13 +795,13 @@ function snapshotListenerEvidence(
                 observation = { state, code: code as typeof REFUSAL_CODES[number], reason, producer }
             } else return undefined
             if (byteBudget > SERIALIZED_RECORD_BYTE_LIMIT) return undefined
-            snapshots.push(Object.freeze({ ports: Object.freeze(ports), observation: Object.freeze(observation) }))
+            snapshots.push({ ports, observation })
         }
     } catch {
         // A throwing accessor or proxy trap makes the evidence malformed, which the caller refuses.
         return undefined
     }
-    return Object.freeze(snapshots)
+    return snapshots
 }
 
 interface ListenerEvidenceResult {
@@ -837,30 +837,30 @@ export async function observePortListeners(input: {
 }): Promise<PortListenerObservation> {
     try {
         if (!input || typeof input !== 'object' || Array.isArray(input)) {
-            return Object.freeze({ kind: 'unavailable', reason: 'listener observation input is malformed' })
+            return { kind: 'unavailable', reason: 'listener observation input is malformed' }
         }
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 2
             || !('value' in (descriptors.bindings ?? {})) || !('value' in (descriptors.timeoutMs ?? {}))) {
-            return Object.freeze({ kind: 'unavailable', reason: 'listener observation input is malformed' })
+            return { kind: 'unavailable', reason: 'listener observation input is malformed' }
         }
         const bindings = descriptors.bindings!.value
         const timeoutMs = descriptors.timeoutMs!.value as unknown
         if (!Array.isArray(bindings) || bindings.length === 0 || bindings.length > STRUCTURED_INPUT_ENTRY_LIMIT
             || !Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 30_000) {
-            return Object.freeze({ kind: 'unavailable', reason: 'listener observation input is outside its declared bounds' })
+            return { kind: 'unavailable', reason: 'listener observation input is outside its declared bounds' }
         }
         const rows: { hostIp: PortListenerHost; probeHost: '127.0.0.1' | '::1'; port: number; expected: 'listening' | 'free' }[] = []
         const identities = new Set<string>()
         for (const binding of bindings) {
             if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
-                return Object.freeze({ kind: 'unavailable', reason: 'listener binding is malformed' })
+                return { kind: 'unavailable', reason: 'listener binding is malformed' }
             }
             const captured = Object.getOwnPropertyDescriptors(binding)
             if (Reflect.ownKeys(captured).length !== 3
                 || !('value' in (captured.hostIp ?? {})) || !('value' in (captured.port ?? {}))
                 || !('value' in (captured.expected ?? {}))) {
-                return Object.freeze({ kind: 'unavailable', reason: 'listener binding is malformed' })
+                return { kind: 'unavailable', reason: 'listener binding is malformed' }
             }
             const hostIp = captured.hostIp!.value
             const port = captured.port!.value
@@ -868,35 +868,35 @@ export async function observePortListeners(input: {
             if (!['127.0.0.1', '::1', '0.0.0.0', '::'].includes(hostIp)
                 || !Number.isSafeInteger(port) || port < 1 || port > 65_535
                 || expected !== 'listening' && expected !== 'free') {
-                return Object.freeze({ kind: 'unavailable', reason: 'listener binding is outside its declared bounds' })
+                return { kind: 'unavailable', reason: 'listener binding is outside its declared bounds' }
             }
             const probeHost = hostIp === '::1' || hostIp === '::' ? '::1' as const : '127.0.0.1' as const
             const identity = `${probeHost}\0${port}`
             if (identities.has(identity)) {
-                return Object.freeze({ kind: 'unavailable', reason: 'listener observation contains a duplicate address' })
+                return { kind: 'unavailable', reason: 'listener observation contains a duplicate address' }
             }
             identities.add(identity)
             rows.push({ hostIp: hostIp as PortListenerHost, probeHost, port, expected })
         }
-        const probed = await Promise.all(rows.map(async (row) => Object.freeze({
+        const probed = await Promise.all(rows.map(async (row) => ({
             hostIp: row.hostIp,
             probeHost: row.probeHost,
             port: row.port,
             listening: await probeLoopbackPort(row.port, timeoutMs as number, row.probeHost),
         })))
         if (probed.some(({ listening }) => listening === undefined)) {
-            return Object.freeze({ kind: 'unavailable', reason: 'bounded host listener probe did not produce current evidence' })
+            return { kind: 'unavailable', reason: 'bounded host listener probe did not produce current evidence' }
         }
-        return Object.freeze({
+        return {
             kind: 'complete',
-            rows: Object.freeze(probed.map((row) => Object.freeze({ ...row, listening: row.listening as boolean }))),
+            rows: probed.map((row) => ({ ...row, listening: row.listening as boolean })),
             observedAt: new Date().toISOString(),
-        })
+        }
     } catch (error) {
-        return Object.freeze({
+        return {
             kind: 'unavailable',
             reason: `listener observation failed: ${errorCause(error)}`,
-        })
+        }
     }
 }
 
@@ -1053,14 +1053,14 @@ export async function leasePortFamily(supplied: {
         const config = snapshotPortConfig(supplied.config)
         const now = supplied.now
         const listenerTimeoutMs = supplied.listenerTimeoutMs
-        const holderProcess = supplied.holderProcess === undefined ? undefined : Object.freeze({
+        const holderProcess = supplied.holderProcess === undefined ? undefined : {
             ...(supplied.holderProcess.pid === undefined ? {} : { pid: supplied.holderProcess.pid }),
             ...(supplied.holderProcess.processStart === undefined ? {} : { processStart: supplied.holderProcess.processStart }),
-        })
+        }
         if (typeof config === 'string') {
             return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, config, String(stackId ?? ''))
         }
-        const snapshot = Object.freeze({
+        const snapshot = {
             namespace,
             stackId,
             holderId,
@@ -1069,7 +1069,7 @@ export async function leasePortFamily(supplied: {
             now,
             listenerTimeoutMs,
             ...(holderProcess === undefined ? {} : { holderProcess }),
-        })
+        }
         const suppliedEvidence = supplied.listenerEvidence
         const listenerEvidence = snapshotListenerEvidence(suppliedEvidence, config)
         if (!listenerEvidence) {
@@ -1079,7 +1079,7 @@ export async function leasePortFamily(supplied: {
                 String(snapshot.stackId ?? ''),
             )
         }
-        input = Object.freeze({ ...snapshot, listenerEvidence })
+        input = { ...snapshot, listenerEvidence }
     } catch {
         // A throwing accessor or proxy trap makes the input invalid; refused here.
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'port lease input is invalid', '')
@@ -1198,11 +1198,11 @@ export async function leasePortFamily(supplied: {
                 observation: 'resolved-listener-evidence-accepted',
             }
             if (currentLease && !currentLease.released && added.change === 'unchanged') {
-                return abortStateTransaction(Object.freeze({
+                return abortStateTransaction({
                     leaseResult: complete,
-                    holderIds: Object.freeze(added.value.holders.map(({ holderId }) => holderId).sort()),
+                    holderIds: added.value.holders.map(({ holderId }) => holderId).sort(),
                     record: current!,
-                }))
+                })
             }
             replaced = currentValue
             return coordinationStateRecord(input.namespace, input.stackId, current, input.now, { ...added.value, lease: value })
@@ -1334,12 +1334,12 @@ export async function compensateAcquiredPortHolder(input: {
     if (!value) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published coordination record is malformed', leaseResult.lease.stackId)
     }
-    return Object.freeze({
+    return {
         kind: 'complete',
         change: 'compensated',
         recordRevision: transaction.value.revision,
-        remainingHolderIds: Object.freeze(value.holders.map(({ holderId }) => holderId)),
-    })
+        remainingHolderIds: value.holders.map(({ holderId }) => holderId),
+    }
 }
 
 export type AcquirePortProjectionResult =
@@ -1365,14 +1365,14 @@ export async function acquirePortProjection(input: Parameters<typeof leasePortFa
     }
     const entrypoints = deriveEntrypoints({ lease: leaseResult.lease, declarations })
     if (entrypoints.kind !== 'complete') {
-        return Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([...entrypoints.diagnostics, ...await giveBack()]) })
+        return { kind: 'refusal' as const, diagnostics: [...entrypoints.diagnostics, ...await giveBack()] }
     }
     const projection = projectPortLeaseResult({ leaseResult, entrypointResult: entrypoints })
     if (!projection) {
         const residue = await giveBack()
-        return residue.length > 0 ? Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze(residue) }) : Object.freeze({ kind: 'unavailable' as const })
+        return residue.length > 0 ? { kind: 'refusal' as const, diagnostics: residue } : { kind: 'unavailable' as const }
     }
-    return Object.freeze({ kind: 'complete' as const, leaseResult, projection })
+    return { kind: 'complete' as const, leaseResult, projection }
 }
 
 export async function releasePortFamily(input: {
@@ -1388,13 +1388,13 @@ export async function releasePortFamily(input: {
         if (!namespaceProperty || !('value' in namespaceProperty)) throw new RefusalError('invalid namespace property')
         const namespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
         if (!namespace) throw new RefusalError('invalid namespace')
-        request = Object.freeze({
+        request = {
             namespace,
             stackId: input.stackId,
             requesterId: input.requesterId,
             holderId: input.holderId,
             now: input.now,
-        })
+        }
     } catch {
         // A throwing accessor or proxy trap makes the input unreadable; refused here.
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'port lease release input could not be read safely', 'port lease release input')
@@ -1434,19 +1434,19 @@ function snapshotDerivativeInput(value: unknown): {
     try {
         const parsed = DerivativeInputSchema.safeParse(value)
         if (!parsed.success) return undefined
-        const lease = parsed.data.lease === null ? null : Object.freeze({
+        const lease = parsed.data.lease === null ? null : {
             stackId: parsed.data.lease.stackId as StackId,
             offset: parsed.data.lease.offset,
-            ports: Object.freeze(parsed.data.lease.ports),
-        })
-        const declarations = Object.freeze(parsed.data.declarations.map((entry) => Object.freeze({
+            ports: parsed.data.lease.ports,
+        }
+        const declarations = parsed.data.declarations.map((entry) => ({
             ...entry,
             kind: entry.kind as EntrypointKind,
-        })))
+        }))
         const declaredValues = parsed.data.declaredValues === undefined
             ? undefined
-            : Object.freeze(parsed.data.declaredValues)
-        return Object.freeze({ lease, declarations, ...(declaredValues ? { declaredValues } : {}) })
+            : parsed.data.declaredValues
+        return { lease, declarations, ...(declaredValues ? { declaredValues } : {}) }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -1499,11 +1499,11 @@ export function deriveEntrypoints(input: {
                 : diagnostic('info', ENVIRONMENT_CODES.PORT_EXTERNAL_REGISTRATION_GAP, 'external registration cannot be updated by cockpit', declaration.name, `update the external registration to ${value}`))
         }
     }
-    const result = Object.freeze({
+    const result = {
         kind: 'complete' as const,
-        values: Object.freeze(values.map((entrypoint) => Object.freeze({ ...entrypoint }))),
-        diagnostics: Object.freeze(diagnostics.map((item) => Object.freeze({ ...item }))),
-    })
+        values: values.map((entrypoint) => ({ ...entrypoint })),
+        diagnostics: diagnostics.map((item) => ({ ...item })),
+    }
     issuedEntrypointResults.set(result, { stackId: snapshot.lease.stackId, ports: Object.freeze({ ...snapshot.lease.ports }) })
     return result
 }

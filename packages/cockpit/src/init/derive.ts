@@ -310,7 +310,7 @@ function composeFacts(
         skipped.push({ source: bases.get(name)!.sources.join(', '), reason: `publishes \${${name}} with different defaults, so its base port cannot be read; declare ${name} under [ports.bases]` })
         bases.delete(name)
     }
-    return Object.freeze({ binds: Object.freeze(binds), bases })
+    return { binds, bases }
 }
 
 async function detectTestEntry(
@@ -656,5 +656,5 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             reason: 'a Compose file already exists, so cockpit can run it as written' } })
     else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
         reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"]` })
-    return Object.freeze({ facts: Object.freeze(facts), skipped: Object.freeze(skipped) })
+    return { facts, skipped }
 }

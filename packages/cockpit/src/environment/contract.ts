@@ -63,7 +63,7 @@ function snapshotJsonValue(value: unknown, state: JsonTraversal, depth: number):
                 if (item === undefined) return undefined
                 result.push(item)
             }
-            return Object.freeze(result)
+            return result
         }
         const prototype = Object.getPrototypeOf(value)
         if (prototype !== Object.prototype && prototype !== null) return undefined
@@ -81,7 +81,7 @@ function snapshotJsonValue(value: unknown, state: JsonTraversal, depth: number):
             if (item === undefined) return undefined
             Object.defineProperty(result, key, { enumerable: true, value: item })
         }
-        return Object.freeze(result)
+        return result
     } catch { // A throwing accessor or proxy trap makes the value unsnapshottable; the caller refuses it.
         return undefined
     } finally {

@@ -116,11 +116,11 @@ export function parseBrowserNetworkExposure(
     }
     if (exposure === '<loopback>') {
         if (reason !== undefined) throw new RefusalError('browser network exposure reason is only valid for a wider decision')
-        return Object.freeze({ value: exposure })
+        return { value: exposure }
     }
     if (typeof reason !== 'string' || reason !== reason.trim() || reason.length === 0 || Buffer.byteLength(reason) > 512
         || /[\x00-\x1f\x7f]/.test(reason)) throw new RefusalError('wider browser network exposure requires a bounded explicit reason')
-    return Object.freeze({ value: exposure, reason })
+    return { value: exposure, reason }
 }
 
 export const EntrypointDerivative = z

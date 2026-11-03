@@ -61,12 +61,11 @@ function refusal(
     message: string,
     target: string,
 ): OperatorCommandOutcome {
-    return Object.freeze({
-        kind: 'refusal' as const,
+    return {
         status: 2 as const,
         result: null,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target })]),
-    })
+        diagnostics: [{ severity: 'error' as const, code, message, target }],
+    }
 }
 
 const isPolicy = (value: OperatorPolicy | OperatorCommandOutcome): value is OperatorPolicy => 'current' in value
@@ -74,8 +73,8 @@ const isPolicy = (value: OperatorPolicy | OperatorCommandOutcome): value is Oper
 /** The production policy adapter: cockpit.toml's policy now, the recorded one, and how to record the current one. */
 export async function loadOperatorPolicy(configPath: string): Promise<OperatorPolicy | OperatorCommandOutcome> {
     const loaded = await loadAutonomyPolicy(configPath)
-    if ('refusal' in loaded) return Object.freeze({ status: 2, result: null, diagnostics: Object.freeze([loaded.refusal]) })
-    return Object.freeze({ current: loaded.current, ...loaded.recorded ? { recorded: loaded.recorded } : {}, record: () => writeRecordedPolicy(loaded.root, loaded.current) })
+    if ('refusal' in loaded) return { status: 2, result: null, diagnostics: [loaded.refusal] }
+    return { current: loaded.current, ...loaded.recorded ? { recorded: loaded.recorded } : {}, record: () => writeRecordedPolicy(loaded.root, loaded.current) }
 }
 
 /** Why `decider` does not let this run pass the decision, as the refusal a command returns, or undefined when it does. */
@@ -84,24 +83,24 @@ function autonomyRefusal(field: string, decider: Decider, admission: OperatorAdm
     if (decision === 'proceed') return undefined
     // Each code is a literal so the diagnostic inventory reads its fix beside it.
     return decision === 'person'
-        ? Object.freeze({ status: 2, result: null, diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, target: field,
+        ? { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: field,
             code: 'AUTONOMY_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.AUTONOMY_PERSON_REQUIRED,
             message: `[autonomy] ${field} = "person" in cockpit.toml: this run cannot take the decision without a person`,
-            fix: 'a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync' })]) })
-        : Object.freeze({ status: 2, result: null, diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, target: field,
+            fix: 'a person runs the same command with --interactive in a terminal outside CI, or a person changes the field in cockpit.toml and accepts the change at sync' }] }
+        : { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: field,
             code: 'AUTONOMY_CI_ONLY' as const satisfies typeof ENVIRONMENT_CODES.AUTONOMY_CI_ONLY,
             message: `[autonomy] ${field} = "ci" in cockpit.toml: this decision is taken only in CI, behind the reviewers of its protected environment`,
-            fix: 'push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync' })]) })
+            fix: 'push the change and let the CI job run the command, or have a person change the field in cockpit.toml and accept the change at sync' }] }
 }
 
 // A weakening the last sync did not accept is not in force: the command it would let through
 // refuses, as sync does, until a person accepts it there or the change is reverted.
 function weakeningRefusal(weakened: readonly PolicyWeakening[], unchanged: string, result: unknown = null): OperatorCommandOutcome {
     const shown = weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`).join('; ')
-    return Object.freeze({ status: 2, result, diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, target: 'autonomy',
+    return { status: 2, result, diagnostics: [{ severity: 'error' as const, target: 'autonomy',
         code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
         message: `cockpit.toml weakens the policy the last sync recorded (${shown}); ${unchanged}`,
-        fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' })]) })
+        fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' }] }
 }
 
 export async function runResetOperatorApplication(
@@ -189,7 +188,7 @@ export async function runSyncOperatorApplication(
     const weakened = policy.recorded ? policyWeakening(policy.recorded, policy.current) : []
     if (weakened.length) {
         const digest = weakeningDigest(policy.recorded!, policy.current)
-        if (!admission.interactive) return weakeningRefusal(weakened, 'nothing was written', Object.freeze({ weakened, digest }))
+        if (!admission.interactive) return weakeningRefusal(weakened, 'nothing was written', { weakened, digest })
         if (await adapters.confirmPolicyWeakening({ weakened, digest }) !== digest) {
             return refusal('POLICY_WEAKENING_UNCONFIRMED', 'the typed digest did not match the policy weakening shown; nothing was written', 'autonomy')
         }

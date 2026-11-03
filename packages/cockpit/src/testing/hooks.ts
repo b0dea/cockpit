@@ -37,7 +37,7 @@ export const NATIVE_HOOK_COST_SCRIPT = `{
 } | /bin/sh "$1"`
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
-const refusal = (reason: string): HookRefusal => Object.freeze({ kind: 'refusal', reason })
+const refusal = (reason: string): HookRefusal => ({ kind: 'refusal', reason })
 
 function policyLimit(policy: NativeHookPolicy): number | HookRefusal {
     const reference = resolveNamedPath(policy)
@@ -77,8 +77,8 @@ export async function checkNativeHookBudget(entry: NativeHookEntry, measurement:
         return refusal(`native hook cost execution failed: ${outcome?.kind === 'refusal' ? outcome.code : 'missing authenticated successful receipt'}`)
     }
     return measuredMs > limitMs
-        ? Object.freeze({ kind: 'ci-required', reason: `native hook cost ${measuredMs}ms exceeds native-hook-ms=${limitMs}; move this check to CI` })
-        : Object.freeze({ kind: 'within-budget', scope: 'supplied-execution-environment', executionSha256, limitMs, measuredMs })
+        ? { kind: 'ci-required', reason: `native hook cost ${measuredMs}ms exceeds native-hook-ms=${limitMs}; move this check to CI` }
+        : { kind: 'within-budget', scope: 'supplied-execution-environment', executionSha256, limitMs, measuredMs }
 }
 
 function nativeScript(cockpitId: string, limitMs: number): string {
@@ -130,7 +130,7 @@ exit 0
 }
 
 export async function projectNativeHooks(input: NativeHookInput): Promise<NativeHookProjection> {
-    if (input.install === 'inspect') return Object.freeze({ kind: 'not-installed', reason: 'native hooks require explicit installation' })
+    if (input.install === 'inspect') return { kind: 'not-installed', reason: 'native hooks require explicit installation' }
     if (input.install !== 'explicit-native' || !/^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/.test(input.cockpitId)
         || input.budget.policy.authority.cockpitId !== input.cockpitId) {
         return refusal('native hook requires explicit installation, cockpit identity and a named positive budget')
@@ -140,8 +140,8 @@ export async function projectNativeHooks(input: NativeHookInput): Promise<Native
     const bytes = nativeScript(input.cockpitId, limit)
     const harnesses = [...new Set(input.harnesses)].sort()
     if (!harnesses.length) return refusal('native hook requires configured harness ownership')
-    const entry: NativeHookEntry = Object.freeze({ path: '.githooks/pre-push', kind: 'file', ownership: 'whole-file',
-        harnesses: harnesses as [string, ...string[]], writer: 'cockpit', schemaVersion: 1, scope: 'scoped', capability: 'instructed', bytes, sha256: digest(bytes) })
+    const entry: NativeHookEntry = { path: '.githooks/pre-push', kind: 'file', ownership: 'whole-file',
+        harnesses: harnesses as [string, ...string[]], writer: 'cockpit', schemaVersion: 1, scope: 'scoped', capability: 'instructed', bytes, sha256: digest(bytes) }
     if (typeof input.budget.prepareMeasurement !== 'function') return refusal('native hook requires a bounded measurement plan callback')
     let measurement: NativeHookMeasurement
     try { measurement = await input.budget.prepareMeasurement(entry) }
@@ -150,6 +150,6 @@ export async function projectNativeHooks(input: NativeHookInput): Promise<Native
     if (cost.kind !== 'within-budget') return cost
     const owned = bindSurfaceOwnershipIdentity([entry], input.cockpitId)
     if (owned.kind === 'refusal') return refusal(owned.diagnostic.message)
-    return Object.freeze({ kind: 'complete', entries: Object.freeze([entry]), cost,
-        activation: Object.freeze({ kind: 'explicit-native-install', hooksPath: '.githooks', mode: 0o755 }) })
+    return { kind: 'complete', entries: [entry], cost,
+        activation: { kind: 'explicit-native-install', hooksPath: '.githooks', mode: 0o755 } }
 }

@@ -200,9 +200,9 @@ async function findExecutable(directories: readonly string[], name: string): Pro
         let bytes: number
         try { bytes = lstatSync(resolved.value.canonicalPath).size }
         catch (error) { reason = `Executable ${name} is unavailable: ${errorCause(error)}`; continue }
-        return Object.freeze({ state: 'available', value: Object.freeze({ path: resolved.value.canonicalPath, sha256: resolved.value.sha256, bytes }) })
+        return { state: 'available', value: { path: resolved.value.canonicalPath, sha256: resolved.value.sha256, bytes } }
     }
-    return Object.freeze({ state: 'unavailable', reason })
+    return { state: 'unavailable', reason }
 }
 
 const missingMessage = (tool: EvaluatorTool, reason: string) => {
@@ -218,18 +218,18 @@ export async function findEvaluators(tools: readonly EvaluatorTool[], directorie
     for (const tool of tools) {
         const located = await findExecutable(directories, EVALUATOR_COMMANDS[tool])
         if (located.state === 'available') found.push(tool)
-        else missing.push(Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE, message: missingMessage(tool, located.reason) }))
+        else missing.push({ tool, code: ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE, message: missingMessage(tool, located.reason) })
     }
-    return Object.freeze({ found: Object.freeze(found), missing: Object.freeze(missing) })
+    return { found, missing }
 }
 
 /** No listed evaluator can run here; one literal fix so the diagnostic inventory captures it. */
 export function evaluatorUnavailable(message: string) {
-    return Object.freeze({
+    return {
         code: 'EVALUATOR_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
         message,
         fix: 'install and sign in to an agent tool work.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have, then run npx --no cockpit doctor --config <your cockpit.toml>',
-    })
+    }
 }
 
 type StepOutcome = Readonly<{ kind: 'complete'; stdout: string; stderr: string }>
@@ -237,13 +237,13 @@ type StepOutcome = Readonly<{ kind: 'complete'; stdout: string; stderr: string }
 
 async function runStep(executable: Executable, args: readonly string[], options: Readonly<{ cwd: string; env: Readonly<Record<string, string>>; timeoutMs: number
     stdoutLimitBytes: number; labels: Readonly<Record<string, string>>; consumed?: readonly ConsumedFile[]; paths?: readonly string[] }>): Promise<StepOutcome> {
-    const argv = Object.freeze([executable.path, ...args]) as readonly [string, ...string[]]
-    const step: ExecutionStep = Object.freeze({ id: `evaluator-${randomUUID()}`, argv, argv0: executable.path, cwd: options.cwd, env: Object.freeze({ ...options.env }),
+    const argv = [executable.path, ...args] as readonly [string, ...string[]]
+    const step: ExecutionStep = { id: `evaluator-${randomUUID()}`, argv, argv0: executable.path, cwd: options.cwd, env: { ...options.env },
         timeoutMs: options.timeoutMs, spawnNotAfter: new Date(Date.now() + options.timeoutMs).toISOString(), stdoutLimitBytes: options.stdoutLimitBytes, stderrLimitBytes: STDERR_LIMIT_BYTES,
-        paths: Object.freeze([...options.paths ?? []]), ports: Object.freeze([]), labels: Object.freeze({ ...options.labels }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: executable.path, sha256: executable.sha256, maxBytes: executable.bytes, argvIndexes: Object.freeze([0]), executable: true, executionMode: 'verified-path' as const }),
-            ...options.consumed ?? []]),
-        filesystemChecks: Object.freeze([Object.freeze({ path: options.cwd, expected: 'directory' as const })]), compensation: Object.freeze([]) })
+        paths: [...options.paths ?? []], ports: [], labels: { ...options.labels }, expected: [],
+        consumedFiles: [{ path: executable.path, sha256: executable.sha256, maxBytes: executable.bytes, argvIndexes: [0], executable: true, executionMode: 'verified-path' as const },
+            ...options.consumed ?? []],
+        filesystemChecks: [{ path: options.cwd, expected: 'directory' as const }], compensation: [] }
     const outcome = authenticatedExecutionOutcome(await executeProbe(step), step)
     if (!outcome) return { kind: 'failed', code: 'UNAUTHENTICATED', stdout: '', stderr: '' }
     const decode = (bytes: Buffer) => new TextDecoder('utf-8').decode(bytes)
@@ -282,12 +282,12 @@ export async function locateEvaluators(tools: readonly EvaluatorTool[], director
     const located: { tool: EvaluatorTool; executable: Executable }[] = []; const skipped: EvaluationAttempt[] = []
     for (const tool of tools) {
         const found = await findExecutable(directories, EVALUATOR_COMMANDS[tool])
-        if (found.state !== 'available') { skipped.push(Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE, message: missingMessage(tool, found.reason) })); continue }
+        if (found.state !== 'available') { skipped.push({ tool, code: ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE, message: missingMessage(tool, found.reason) }); continue }
         const problem = await probe(tool, found.value, directories)
-        if (problem) skipped.push(Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE, message: problem }))
-        else located.push(Object.freeze({ tool, executable: found.value }))
+        if (problem) skipped.push({ tool, code: ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE, message: problem })
+        else located.push({ tool, executable: found.value })
     }
-    return Object.freeze({ located: Object.freeze(located), skipped: Object.freeze(skipped) })
+    return { located, skipped }
 }
 
 type AttemptResult = Readonly<{ kind: 'answer'; value: Record<string, unknown>; sessionId: string }>
@@ -317,14 +317,14 @@ async function attempt(tool: EvaluatorTool, executable: Executable, request: Eva
         // Agent tools load instruction files and project configuration from their working root, and in
         // the repository those are files the graded agent can write. The private run directory holds
         // only the request and schema, so the repository is named in the request instead.
-        const run: Invocation = Object.freeze({ runRoot, repository: request.repository, schemaPath, schema, responsePath, prompt })
+        const run: Invocation = { runRoot, repository: request.repository, schemaPath, schema, responsePath, prompt }
         const args = spec.argv(run)
         const env: Record<string, string> = { ...spec.fixedEnvironment, PATH: request.executableDirectories.join(delimiter) }
         for (const name of spec.environment) { const value = request.environment[name]; if (value) env[name] = value }
         const schemaIndex = args.indexOf(schemaPath)
         const outcome = await runStep(executable, args, { cwd: runRoot, env, timeoutMs: request.timeoutMs, stdoutLimitBytes: STDOUT_LIMIT_BYTES, paths: [responsePath],
             labels: { owner: 'independent-evaluator', role: request.role, tool, requestDigest },
-            consumed: schemaIndex === -1 ? [] : [Object.freeze({ path: schemaPath, sha256: digest(schema), maxBytes: ANSWER_LIMIT_BYTES, argvIndexes: Object.freeze([schemaIndex + 1]), executable: false })] })
+            consumed: schemaIndex === -1 ? [] : [{ path: schemaPath, sha256: digest(schema), maxBytes: ANSWER_LIMIT_BYTES, argvIndexes: [schemaIndex + 1], executable: false }] })
         if (outcome.kind === 'failed') {
             const reported = spec.cause(outcome.stdout, outcome.stderr)
             if (outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
@@ -361,17 +361,17 @@ export async function evaluate(request: EvaluationRequest): Promise<EvaluationRe
     const attempts: EvaluationAttempt[] = [...request.chain.skipped]
     for (const { tool, executable } of request.chain.located) {
         const result = await attempt(tool, executable, request)
-        if (result.kind === 'answer') return Object.freeze({ kind: 'answer', value: Object.freeze(result.value), sessionId: result.sessionId, tool, fallbacks: Object.freeze(attempts) })
+        if (result.kind === 'answer') return { kind: 'answer', value: result.value, sessionId: result.sessionId, tool, fallbacks: attempts }
         if (result.kind === 'invalid') {
-            return Object.freeze({ kind: 'refusal', attempts: Object.freeze([...attempts, Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: result.message })]),
+            return { kind: 'refusal', attempts: [...attempts, { tool, code: ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: result.message }],
                 code: 'EVALUATOR_ANSWER_INVALID' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: result.message,
-                fix: 'rerun the command; if the answer is refused again, list another evaluator first in work.evaluators' })
+                fix: 'rerun the command; if the answer is refused again, list another evaluator first in work.evaluators' }
         }
-        attempts.push(Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED, message: result.message }))
+        attempts.push({ tool, code: ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED, message: result.message })
     }
     const message = attempts.map(row => row.message).join('; then ') || 'work.evaluators lists no evaluator'
-    if (attempts.every(row => row.code === ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE)) return Object.freeze({ kind: 'refusal', attempts: Object.freeze(attempts), ...evaluatorUnavailable(message) })
-    return Object.freeze({ kind: 'refusal', attempts: Object.freeze(attempts), message,
+    if (attempts.every(row => row.code === ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE)) return { kind: 'refusal', attempts, ...evaluatorUnavailable(message) }
+    return { kind: 'refusal', attempts, message,
         code: 'EVALUATOR_RUN_FAILED' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED,
-        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, or raise work.evaluator_timeout_seconds, then rerun the command' })
+        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, or raise work.evaluator_timeout_seconds, then rerun the command' }
 }

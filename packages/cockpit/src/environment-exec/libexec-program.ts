@@ -31,7 +31,7 @@ export function libexecProgram(name: string): LibexecProgram {
         }
         const named = lstatSync(path)
         if (length !== opened.size || named.dev !== opened.dev || named.ino !== opened.ino) throw new RefusalError('changed while it was read')
-        return Object.freeze({ path, sha256: createHash('sha256').update(bytes.subarray(0, length)).digest('hex'), maxBytes: PROGRAM_MAX_BYTES })
+        return { path, sha256: createHash('sha256').update(bytes.subarray(0, length)).digest('hex'), maxBytes: PROGRAM_MAX_BYTES }
     } catch (error) {
         throw new RefusalError(`cockpit's bundled program ${path} cannot be authenticated (${errorCause(error)}); `
             + 'cockpit runs only bundled programs whose bytes it hashed — fix: reinstall @b00dea/cockpit', { cause: error })

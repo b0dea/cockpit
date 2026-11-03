@@ -55,17 +55,17 @@ const json = (value: unknown) => JSON.stringify(value)
 /** The compose.yml text for the declared app, with the [ports.bases] variable and volumes it introduces. */
 export function renderComposeScaffold(input: ComposeScaffoldInput): ComposeScaffold {
     const dir = input.dir === '.' ? '.' : normalize(input.dir)
-    if (isAbsolute(dir) || dir.split('/').includes('..') || dir.includes('\\') || /[\x00-\x1f\x7f$]/.test(dir)) return Object.freeze({
+    if (isAbsolute(dir) || dir.split('/').includes('..') || dir.includes('\\') || /[\x00-\x1f\x7f$]/.test(dir)) return {
         kind: 'refusal', message: `the app directory ${json(input.dir)} is not a plain path inside the cockpit root`,
-        fix: 'pass --scaffold-compose the app directory relative to the cockpit root, or . for the root itself' })
-    if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65_535) return Object.freeze({
-        kind: 'refusal', message: `--port ${input.port} is not a TCP port`, fix: 'pass --port the port the app listens on inside its container' })
-    if (!input.dockerfile && !input.packageJson) return Object.freeze({
+        fix: 'pass --scaffold-compose the app directory relative to the cockpit root, or . for the root itself' }
+    if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65_535) return {
+        kind: 'refusal', message: `--port ${input.port} is not a TCP port`, fix: 'pass --port the port the app listens on inside its container' }
+    if (!input.dockerfile && !input.packageJson) return {
         kind: 'refusal', message: `${dir === '.' ? 'the cockpit root' : dir} has neither a Dockerfile nor a package.json, so no image is known to run it`,
-        fix: 'add a Dockerfile to the app directory, then rerun the scaffold' })
-    if (!input.dockerfile && !input.command?.length) return Object.freeze({
+        fix: 'add a Dockerfile to the app directory, then rerun the scaffold' }
+    if (!input.dockerfile && !input.command?.length) return {
         kind: 'refusal', message: `${dir === '.' ? 'the cockpit root' : dir} has no Dockerfile, so the scaffold needs the command that starts the app`,
-        fix: 'pass --command with the start command, such as --command "npm start", or add a Dockerfile to the app directory' })
+        fix: 'pass --command with the start command, such as --command "npm start", or add a Dockerfile to the app directory' }
     const service = (dir === '.' ? 'app' : basename(dir)).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'app'
     const portVariable = `${service.toUpperCase().replaceAll('-', '_')}_HOST_PORT`
     const siblingVariable = deriveSiblingVariable(service)
@@ -107,8 +107,8 @@ export function renderComposeScaffold(input: ComposeScaffoldInput): ComposeScaff
         ...backing.length > 0 ? ['volumes:', ...backing.map(name => `  ${name}-data: {}`)] : [],
         '',
     ]
-    return Object.freeze({ kind: 'complete', service, portVariable, volumes: Object.freeze(backing.map(name => `${name}-data`)),
-        bytes: lines.join('\n') })
+    return { kind: 'complete', service, portVariable, volumes: backing.map(name => `${name}-data`),
+        bytes: lines.join('\n') }
 }
 
 export type ComposeScaffoldWrite = Readonly<{ kind: 'written'; path: string }> | Readonly<{ kind: 'exists'; path: string }>
@@ -119,7 +119,7 @@ export async function writeComposeScaffold(root: string, bytes: string): Promise
         const path = join(root, name)
         try {
             await lstat(path)
-            return Object.freeze({ kind: 'exists', path })
+            return { kind: 'exists', path }
         } catch (error) {
             if (!hasErrorCode(error, 'ENOENT')) throw error
         }
@@ -128,5 +128,5 @@ export async function writeComposeScaffold(root: string, bytes: string): Promise
     // `wx` fails if the file appeared since the check, so a concurrent write is never replaced.
     const handle = await open(path, 'wx', 0o644)
     try { await handle.writeFile(bytes) } finally { await handle.close() }
-    return Object.freeze({ kind: 'written', path })
+    return { kind: 'written', path }
 }

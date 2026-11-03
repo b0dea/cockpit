@@ -12,7 +12,7 @@ import type { GuardDecision } from './evaluator.js'
 import type { GuardFileContent, ParsedInvocation } from './invocation-parser.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from './read-only.js'
 
-const denial = (reason: string): GuardDecision => Object.freeze({ decision: 'deny', reason })
+const denial = (reason: string): GuardDecision => ({ decision: 'deny', reason })
 const PINNED = '[work], [work.gates] and [autonomy] (and [mcp] while [autonomy] mcp_approve is not agent)'
 
 /** Applies one `*** Update File` section of a patch to `text`, or undefined when a hunk does not match exactly once. */

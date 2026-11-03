@@ -54,13 +54,13 @@ async function query(factory: () => ReleaseMetadataTransport, now: number): Prom
                 || !('name' in value) || value.name !== installedPackageMetadata.name || !('version' in value)
                 || typeof value.version !== 'string' || value.version.length > 256
                 || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value.version)) throw new RefusalError('release metadata schema or package identity is invalid')
-            return Object.freeze({ kind: 'known' as const, package: installedPackageMetadata.name,
+            return { kind: 'known' as const, package: installedPackageMetadata.name,
                 installedVersion: installedPackageMetadata.version, latestVersion: value.version,
-                currency: value.version === installedPackageMetadata.version ? 'same-version' as const : 'different-version' as const, observedAt, expiresAt })
+                currency: value.version === installedPackageMetadata.version ? 'same-version' as const : 'different-version' as const, observedAt, expiresAt }
         })()])
         return result
     } catch (error) {
-        return Object.freeze({ kind: 'unknown', reason: errorCause(error), observedAt, expiresAt })
+        return { kind: 'unknown', reason: errorCause(error), observedAt, expiresAt }
     } finally {
         if (timer) clearTimeout(timer)
         controller.abort()
@@ -69,9 +69,9 @@ async function query(factory: () => ReleaseMetadataTransport, now: number): Prom
 
 export function discoverReleaseFreshness(input: ReleaseDiscoveryInput): Promise<ReleaseFreshness> {
     // Admissions precede even cache access: an opted-out caller must not reuse online evidence.
-    if (input.env.CI) return Promise.resolve(Object.freeze({ kind: 'unknown', reason: 'release discovery disabled by CI' }))
-    if (input.env.NO_UPDATE_NOTIFIER) return Promise.resolve(Object.freeze({ kind: 'unknown', reason: 'release discovery disabled by NO_UPDATE_NOTIFIER' }))
-    if (input.verb !== 'doctor') return Promise.resolve(Object.freeze({ kind: 'unknown', reason: 'release discovery is doctor-only' }))
+    if (input.env.CI) return Promise.resolve({ kind: 'unknown', reason: 'release discovery disabled by CI' })
+    if (input.env.NO_UPDATE_NOTIFIER) return Promise.resolve({ kind: 'unknown', reason: 'release discovery disabled by NO_UPDATE_NOTIFIER' })
+    if (input.verb !== 'doctor') return Promise.resolve({ kind: 'unknown', reason: 'release discovery is doctor-only' })
     const factory = input.createTransport ?? createTransport
     const now = (input.now ?? Date.now)()
     const existing = cache.get(factory)

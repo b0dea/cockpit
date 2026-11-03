@@ -234,8 +234,8 @@ export async function observeEnvSchemas(
     const resolved = needsBinary ? await resolveExecutable('varlock', input.env) : undefined
     const executable = resolved?.state === 'available' ? resolved.value : undefined
     const shared = {
-        env: Object.freeze(Object.fromEntries(Object.entries(input.env)
-            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))),
+        env: Object.fromEntries(Object.entries(input.env)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
         timeoutMs: input.timeoutMs,
         stackId: input.stackId,
     }
@@ -257,20 +257,20 @@ export async function observeEnvSchemas(
     const unavailable = statuses.flatMap(([sibling, status]) => status.state === 'unavailable' ? [[sibling, status] as const] : [])
     const remedy = 'run `varlock load` in each named sibling directory and fix the reported keys'
     if (invalid.length > 0) {
-        return Object.freeze([issueObservation({
+        return [issueObservation({
             ...common,
             observed: { state: 'failed', reason: bounded(`env schema is invalid in ${invalid.map(([sibling, status]) => invalidSummary(sibling, status)).join('; ')}`), observedAt },
             expectation: { kind: 'equal', value: true },
             remedy,
-        })])
+        })]
     }
     if (unavailable.length > 0) {
-        return Object.freeze([issueObservation({
+        return [issueObservation({
             ...common,
             observed: { state: 'unavailable', reason: bounded(`env schema could not be checked: ${unavailable.map(([sibling, status]) => `${sibling.slug} (${sibling.dir}): ${status.cause}`).join('; ')}`), observedAt },
             expectation: { kind: 'equal', value: true },
             remedy,
-        })])
+        })]
     }
     // An absent varlock binary is advisory because varlock is optional; applicationDiagnostics
     // turns it into a warning instead of a failing row.
@@ -280,12 +280,12 @@ export async function observeEnvSchemas(
             : { sibling: sibling.slug, state: 'tool-missing' })
         .sort((a, b) => a.sibling < b.sibling ? -1 : 1)
     const measured: JsonSnapshot = entries
-    return Object.freeze([issueObservation({
+    return [issueObservation({
         ...common,
         observed: { state: 'available', value: measured, observedAt },
         expectation: { kind: 'equal', value: measured },
         remedy: `install Varlock (${VARLOCK_INSTALL_URL}) to validate the env schema`,
-    })])
+    })]
 }
 
 /** Siblings whose schema was skipped because varlock is not installed, from a passing row. */

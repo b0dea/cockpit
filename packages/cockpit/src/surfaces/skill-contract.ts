@@ -158,12 +158,12 @@ function strings(value: JsonSnapshot | undefined): readonly string[] | undefined
 }
 
 function refusal(code: string, message: string, target?: string): Extract<SkillContractResult, { kind: 'refusal' }> {
-    return Object.freeze({
+    return {
         kind: 'refusal' as const,
         status: 2 as const,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, ...(target ? { target } : {}) })]),
-        files: Object.freeze([]) as readonly [],
-    })
+        diagnostics: [{ severity: 'error' as const, code, message, ...(target ? { target } : {}) }],
+        files: [] as readonly [],
+    }
 }
 
 const PROCEDURE_ASSET = /^skills\/procedures\/[a-z0-9][a-z0-9-]*\.md$/
@@ -202,7 +202,7 @@ function captureInput(input: unknown): CapturedInput | undefined {
             || shippedSkills.includes(name) || index > 0 && String(declaredExtensions[index - 1]) >= name)) return undefined
     if (!surfaceSourcesMatchFeature(captured.sources, 'skills')) return undefined
     if (!captured.procedures.every(procedure => pulledProcedure((procedure as JsonSnapshotObject).bytes as string))) return undefined
-    return Object.freeze({ ...captured, declaredExtensions, authority }) as unknown as CapturedInput
+    return { ...captured, declaredExtensions, authority } as unknown as CapturedInput
 }
 
 /** A procedure is read on demand and uncapped, and says something. */
@@ -236,7 +236,7 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
             && warning.code === 'SURFACE_GENERATOR_TRUST_WARNING' && SURFACE_TARGETS.includes(warning.target as SurfaceTarget)
             && warning.path === '.claude/settings.json' && typeof warning.message === 'string' && warning.message.length > 0)
         || !bundleSurfaceFiles(generated.files as unknown as readonly RenderedSurfaceFile[])) return undefined
-    return Object.freeze({ ...base, generated, targets }) as unknown as CapturedRenderedInput
+    return { ...base, generated, targets } as unknown as CapturedRenderedInput
 }
 
 function parseEntryPoint(bytes: string): { frontmatter: JsonSnapshotObject; body: string; rawFrontmatter: string } | undefined {
@@ -260,7 +260,7 @@ function targetEquivalences(value: JsonSnapshot | undefined): Readonly<Record<Gu
     const codexcli = strings(value.codexcli)
     const opencode = strings(value.opencode)
     if (!claudecode || !codexcli || !opencode) return undefined
-    return Object.freeze({ claudecode, codexcli, opencode })
+    return { claudecode, codexcli, opencode }
 }
 
 function sameStrings(value: JsonSnapshot | undefined, expected: readonly string[]): boolean {
@@ -337,7 +337,7 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
             return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', `skill entry point omits the ${target} tool equivalence`, source.path)
         }
     }
-    return Object.freeze({ name: frontmatter.name, procedure: contract.procedure, cap: Number(entryPointLines) })
+    return { name: frontmatter.name, procedure: contract.procedure, cap: Number(entryPointLines) }
 }
 
 function expectedOutputs(skills: readonly SkillDeclaration[], sources: readonly SurfaceSourceFile[]): Record<SurfaceTarget, readonly string[]> {
@@ -353,11 +353,11 @@ function expectedOutputs(skills: readonly SkillDeclaration[], sources: readonly 
 }
 
 function generatedDiagnostic(kind: 'refusal' | 'unavailable', status: 2 | 3, item: SurfaceGenerationDiagnostic): SkillContractResult {
-    const diagnostics = Object.freeze([Object.freeze({ severity: 'error' as const, code: item.code,
-        message: item.message, ...(item.target ? { target: item.target } : {}) })])
+    const diagnostics = [{ severity: 'error' as const, code: item.code,
+        message: item.message, ...(item.target ? { target: item.target } : {}) }]
     return kind === 'refusal' && status === 2
-        ? Object.freeze({ kind, status, diagnostics, files: Object.freeze([]) as readonly [] })
-        : Object.freeze({ kind: 'unavailable' as const, status: 3 as const, diagnostics, files: Object.freeze([]) as readonly [] })
+        ? { kind, status, diagnostics, files: [] as readonly [] }
+        : { kind: 'unavailable' as const, status: 3 as const, diagnostics, files: [] as readonly [] }
 }
 
 function renderedFrontmatterBytes(file: RenderedSurfaceFile): number | undefined {
@@ -424,31 +424,31 @@ function inspectRendered(
         }
         const cap = captured.authority.caps[target]
         const status = value > cap ? 'exceeded' as const : 'within_cap' as const
-        costs.push(Object.freeze({ target, metric: 'frontmatter_bytes' as const, value, cap, status }))
+        costs.push({ target, metric: 'frontmatter_bytes' as const, value, cap, status })
         if (status === 'exceeded') return refusal('SKILL_STANDING_COST_EXCEEDED', `rendered ${target} installed skill set exceeds its standing-cost cap`, target)
     }
-    const collection: AdmittedSkillCollection = Object.freeze({
-        source: Object.freeze({ path: captured.collection.path, sha256: captured.collection.sha256 }),
-        skills: Object.freeze([...captured.authority.skills]), metric: captured.authority.metric,
-        caps: Object.freeze({ ...captured.authority.caps }),
-        procedures: Object.freeze(captured.procedures.map(procedure => Object.freeze({ path: procedure.path, sha256: procedure.sha256,
-            loading: 'pull' as const, budget: 'uncapped' as const }))),
-        entrypoints: Object.freeze(declarations.map(skill => Object.freeze({ path: `skills/${skill.name}/SKILL.md`,
+    const collection: AdmittedSkillCollection = {
+        source: { path: captured.collection.path, sha256: captured.collection.sha256 },
+        skills: [...captured.authority.skills], metric: captured.authority.metric,
+        caps: { ...captured.authority.caps },
+        procedures: captured.procedures.map(procedure => ({ path: procedure.path, sha256: procedure.sha256,
+            loading: 'pull' as const, budget: 'uncapped' as const })),
+        entrypoints: declarations.map(skill => ({ path: `skills/${skill.name}/SKILL.md`,
             cap: skill.cap, metric: 'lines' as const, displacement: captured.declaredExtensions.includes(skill.name)
-                ? `skills/${skill.name}/${skill.procedure}` : `skills/${skill.procedure}` }))),
-    })
+                ? `skills/${skill.name}/${skill.procedure}` : `skills/${skill.procedure}` })),
+    }
     admittedCollections.add(collection)
-    const result = Object.freeze({
+    const result = {
         kind: 'complete' as const,
         status: 0 as const,
-        diagnostics: Object.freeze([]) as readonly [],
-        skills: Object.freeze(declarations.map(skill => skill.name).sort()),
-        costs: Object.freeze(costs),
+        diagnostics: [] as readonly [],
+        skills: declarations.map(skill => skill.name).sort(),
+        costs,
         collection,
         files,
-    })
+    }
     inspectedSkillResults.set(result, Object.freeze(Object.fromEntries(targets.map(target => [
-        target, Object.freeze([...expected[target]].sort()),
+        target, [...expected[target]].sort(),
     ]))) as Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>)
     return result
 }
@@ -490,7 +490,7 @@ export function extendInspectedSkillStandingCosts(
     }
     const costs = result.costs.map(cost => {
         const value = cost.value + additions.get(cost.target)!
-        return Object.freeze({ ...cost, value, status: value > cost.cap ? 'exceeded' as const : 'within_cap' as const })
+        return { ...cost, value, status: value > cost.cap ? 'exceeded' as const : 'within_cap' as const }
     })
     const exceeded = costs.find(cost => cost.status === 'exceeded')
     if (exceeded) return refusal('SKILL_STANDING_COST_EXCEEDED', `rendered ${exceeded.target} installed skill set exceeds its standing-cost cap`, exceeded.target)
@@ -501,12 +501,12 @@ export function extendInspectedSkillStandingCosts(
             const rightKey = `${right.target}\0${right.path}`
             return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
         })
-    return Object.freeze({
-        kind: 'complete', status: 0, diagnostics: Object.freeze([]) as readonly [],
-        skills: Object.freeze([...result.skills, ...additionalSkills].sort()),
-        costs: Object.freeze(costs),
+    return {
+        kind: 'complete', status: 0, diagnostics: [] as readonly [],
+        skills: [...result.skills, ...additionalSkills].sort(),
+        costs,
         inventorySha256: createHash('sha256').update(JSON.stringify(inventory)).digest('hex'),
-    })
+    }
 }
 
 export function projectInspectedSkillOutputs(
@@ -531,9 +531,9 @@ export function projectInspectedSkillOutputs(
     // they must be exactly what the full render publishes there: without its development markers.
     const published = files.map(file => {
         const bytes = stripDevelopmentMarkers(file.bytes)
-        return bytes === file.bytes ? file : Object.freeze({ ...file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') })
+        return bytes === file.bytes ? file : { ...file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
     })
-    const projection = Object.freeze({ kind: 'complete' as const, target, skill, files: Object.freeze(published) })
+    const projection = { kind: 'complete' as const, target, skill, files: published }
     inspectedBootstrapOutputs.add(projection)
     return projection
 }

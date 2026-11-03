@@ -159,13 +159,13 @@ function refusal(code: string, message: string, target?: string, fix?: string): 
 }
 
 function estateRefusal(message: string, target = 'estate', fix?: string): EstateClassificationOutcome {
-    return Object.freeze({ kind: 'refusal', status: 2, result: null, diagnostics: Object.freeze([Object.freeze({
+    return { kind: 'refusal', status: 2, result: null, diagnostics: [{
         severity: 'error' as const,
         code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID',
         message,
         target,
         ...(fix === undefined ? {} : { fix }),
-    })]) })
+    }] }
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -283,7 +283,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
         }
         const sha256 = sourceDigest(manifest, bytes)
         if (sha256 === undefined) continue
-        sources.push(Object.freeze({ path: manifest, sha256 }))
+        sources.push({ path: manifest, sha256 })
         if (manifest === 'Dockerfile') {
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
@@ -346,7 +346,7 @@ function observationInput(input: EstateObservationInput): ObservationScope | und
     if (keys !== 'repositories,root' || !Array.isArray(input.repositories) || input.repositories.length < 1
         || input.repositories.length > 64 || input.repositories.some(name => typeof name !== 'string' || !SAFE_NAME.test(name))
         || new Set(input.repositories).size !== input.repositories.length) return undefined
-    return { root: input.root, repositories: Object.freeze([...input.repositories].sort()) }
+    return { root: input.root, repositories: [...input.repositories].sort() }
 }
 
 export async function observePublicEstate(input: EstateObservationInput): Promise<unknown> {
@@ -361,19 +361,19 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
         if (!SAFE_NAME.test(slug)) throw new RefusalError(`the repository directory name ${JSON.stringify(slug)} is not a valid sibling slug`)
         const { runnable, reasons, sources } = await observeRepositorySources(root, '.')
         const source = sources[0]
-        if (source) repositories.push(Object.freeze({ slug, path: '.', evidencePath: source.path, runnable,
+        if (source) repositories.push({ slug, path: '.', evidencePath: source.path, runnable,
             ...(runnable === 'confirmed' ? {} : { why: boundedReasons(reasons) }), source,
-            ...(sources.length > 1 ? { sources: Object.freeze(sources) } : {}) }))
+            ...(sources.length > 1 ? { sources } : {}) })
     }
     for (const entry of entries) {
         const { runnable, reasons, sources } = await observeRepositorySources(resolve(root, entry.name), entry.name)
         const source = sources[0]
         if (!source) continue
-        repositories.push(Object.freeze({ slug: entry.name, path: entry.name, evidencePath: source.path, runnable,
+        repositories.push({ slug: entry.name, path: entry.name, evidencePath: source.path, runnable,
             ...(runnable === 'confirmed' ? {} : { why: boundedReasons(reasons) }), source,
-            ...(sources.length > 1 ? { sources: Object.freeze(sources) } : {}) }))
+            ...(sources.length > 1 ? { sources } : {}) })
     }
-    return Object.freeze({ root, observedAt: new Date().toISOString(), repositories: Object.freeze(repositories) })
+    return { root, observedAt: new Date().toISOString(), repositories }
 }
 
 /**
@@ -467,14 +467,14 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
                 || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256))
             || new Set(sources.map(value => value.path)).size !== sources.length
             || sources[0].path !== source.path || sources[0].sha256 !== source.sha256)) return undefined
-        rows.push(Object.freeze({ slug: row.slug, path: row.path, evidencePath: row.evidencePath, runnable,
+        rows.push({ slug: row.slug, path: row.path, evidencePath: row.evidencePath, runnable,
             ...(runnable === 'confirmed' ? {} : { why: row.why as string }),
-            source: Object.freeze({ path: source.path, sha256: source.sha256 }),
-            ...(sources === undefined ? {} : { sources: Object.freeze(sources.map(value => Object.freeze({ path: value.path as string, sha256: value.sha256 as string }))) }) }))
+            source: { path: source.path, sha256: source.sha256 },
+            ...(sources === undefined ? {} : { sources: sources.map(value => ({ path: value.path as string, sha256: value.sha256 as string })) }) })
     }
     if (new Set(rows.map(row => row.slug)).size !== rows.length
         || new Set(rows.map(row => row.path)).size !== rows.length) return undefined
-    return Object.freeze(rows)
+    return rows
 }
 
 async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], scope: ObservationScope): Promise<boolean | Readonly<{ cause: string }>> {
@@ -556,8 +556,8 @@ export async function classifyEstateObservation(
             : `estate root is linked, missing or non-canonical, or does not hold ${only.join(', ')} as a plain directory`) + `: ${errorCause(error)}`, captured.root)
     }
     let observed: unknown
-    try { observed = await adapters.observe(Object.freeze({ root, ...(only === undefined ? {} : { repositories: only }),
-        ...(captured.rootIsRepository ? { rootIsRepository: true as const } : {}) })) }
+    try { observed = await adapters.observe({ root, ...(only === undefined ? {} : { repositories: only }),
+        ...(captured.rootIsRepository ? { rootIsRepository: true as const } : {}) }) }
     catch (error) {
         return error instanceof EstateSourceObservationError
             ? estateRefusal(error.message, error.target, error.fix)
@@ -586,12 +586,12 @@ export async function classifyEstateObservation(
         ? 'no-runnable-product' : !multi ? 'one-sibling'
             : unknown.length > 0 ? 'incomplete-multi-repository' : 'ready-multi-repository'
     const gaps = classification === 'no-runnable-product'
-        ? [Object.freeze(rows.length === 0
+        ? [rows.length === 0
             ? { field: 'runnable-product', source: '.', why: 'no directory under the root carries a supported language manifest, Dockerfile or Compose file' }
             : { field: 'runnable-product', source: rows.map(row => `${row.slug}/${row.source.path}`).join(', '),
-                why: rows.map(row => row.why).filter(Boolean).join('; ') })]
-        : unknown.map(row => Object.freeze({ field: `${row.slug}.runnable`, source: `${row.slug}/${row.source.path}`, why: row.why! }))
-    const result: EstateClassificationResult = Object.freeze({
+                why: rows.map(row => row.why).filter(Boolean).join('; ') }]
+        : unknown.map(row => ({ field: `${row.slug}.runnable`, source: `${row.slug}/${row.source.path}`, why: row.why! }))
+    const result: EstateClassificationResult = {
         classification,
         sourceObservationSha256: sourceObservationSha256(root, rows),
         notice: classification === 'one-sibling'
@@ -601,12 +601,12 @@ export async function classifyEstateObservation(
                 : classification === 'incomplete-multi-repository'
                     ? 'the estate observation is incomplete and must be resumed from its named gaps'
                     : 'the observed multi-repository estate is ready for harness discovery',
-        gaps: Object.freeze(gaps),
-        runnable: Object.freeze(rows.map(row => Object.freeze({
+        gaps,
+        runnable: rows.map(row => ({
             slug: row.slug, path: row.path, disposition: row.runnable,
-        }))),
-    })
-    return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result })
+        })),
+    }
+    return { kind: 'complete', status: 0, diagnostics: [], result }
 }
 
 function buildAttributions(
@@ -747,13 +747,13 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
             || typeof answer.sha256 !== 'string' || !SHA256.test(answer.sha256)
             || createHash('sha256').update(answer.bytes).digest('hex') !== answer.sha256
             || !isAnswerProvenance(answer.provenance)) return undefined
-        answers.push(Object.freeze({ questionId: answer.questionId, bytes: answer.bytes,
-            sha256: answer.sha256, provenance: answer.provenance as AnswerProvenance }))
+        answers.push({ questionId: answer.questionId, bytes: answer.bytes,
+            sha256: answer.sha256, provenance: answer.provenance as AnswerProvenance })
     }
-    return Object.freeze({ sourceObservationSha256: record.sourceObservationSha256,
+    return { sourceObservationSha256: record.sourceObservationSha256,
         ...(record.classification === undefined ? {} : { classification: record.classification as EstateClassification }),
-        ...(record.tools === undefined ? {} : { tools: Object.freeze([...record.tools as string[]]) }),
-        answers: Object.freeze(answers) })
+        ...(record.tools === undefined ? {} : { tools: [...record.tools as string[]] }),
+        answers }
 }
 
 const QUESTION_WHY = {
@@ -795,7 +795,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
     gaps: EstateClassificationResult['gaps']
 }>): readonly Readonly<{ field: DocumentConfigurationField; why: string }>[] {
     const surfacesOnly = input.classification === 'no-runnable-product'
-    return Object.freeze([
+    return [
         { field: 'cockpit.name' as const, why: cockpitName(input.root) ? QUESTION_WHY.nameProposed : QUESTION_WHY.name },
         { field: 'sibling' as const, why: QUESTION_WHY.siblingEstate },
         ...(!surfacesOnly && input.gaps.length > 0 ? [{ field: 'estate.runnable' as const, why: runnableWhy(input.gaps) }] : []),
@@ -811,7 +811,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
         // Asked even with nothing to run: the guard governs the agent's commands, not the runtime.
         { field: 'guards' as const, why: QUESTION_WHY.guards },
         { field: 'configuration.defaults' as const, why: QUESTION_WHY.defaults },
-    ])
+    ]
 }
 
 function configurationQuestion(
@@ -821,9 +821,9 @@ function configurationQuestion(
     expectedSha256?: string,
 ): DocumentConfigurationQuestion {
     const digest = createHash('sha256').update(JSON.stringify({ ...context, field, expectedSha256: expectedSha256 ?? null })).digest('hex')
-    return Object.freeze({ id: `question:${digest}`, field,
+    return { id: `question:${digest}`, field,
         source: `configuration:${context.sourceObservationSha256}`,
-        why, ...(expectedSha256 === undefined ? {} : { expectedSha256 }) })
+        why, ...(expectedSha256 === undefined ? {} : { expectedSha256 }) }
 }
 
 function readConfigurationAnswer(
@@ -961,9 +961,9 @@ async function completeConfigurationDocument(
         'resolve every named repository runnable gap before scaffolding a cockpit configuration',
     )
 
-    const context: ConfigurationContext = Object.freeze({ root, registrySha256,
+    const context: ConfigurationContext = { root, registrySha256,
         sourceObservationSha256: configuration.sourceObservationSha256,
-        classification: configuration.classification ?? null })
+        classification: configuration.classification ?? null }
     const defaults = configurationDefaults()
     const defaultSource: DefaultSource = registrySha256 !== null ? 'registry' : 'estate'
     const siblingsRoot: GreenfieldSiblingsRoot = registrySha256 !== null ? undefined
@@ -975,7 +975,7 @@ async function completeConfigurationDocument(
     // Every answer a person did not state is listed in cockpit.toml, so it never reads as theirs.
     const unconfirmed: UnconfirmedAnswer[] = []
     const record = (field: UnconfirmableAnswer, provenance: AnswerProvenance) => {
-        if (provenance !== 'operator-confirmed') unconfirmed.push(Object.freeze({ field, provenance }))
+        if (provenance !== 'operator-confirmed') unconfirmed.push({ field, provenance })
     }
 
     // Always asked, with the directory name as the proposal: the name scopes Compose projects, state
@@ -1076,7 +1076,7 @@ async function completeConfigurationDocument(
                 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', 'each runnable gap requires one schema-shaped disposition', question.field)
             const row = resolution as Record<string, unknown>
             if (row.runnable === false && Object.keys(row).join(',') === 'runnable') {
-                runnableResolutions.set(slug, Object.freeze({ runnable: false }))
+                runnableResolutions.set(slug, { runnable: false })
                 continue
             }
             if (row.runnable !== true || Object.keys(row).sort().join(',') !== 'command,runnable,service'
@@ -1084,8 +1084,8 @@ async function completeConfigurationDocument(
                 || !Array.isArray(row.command) || row.command.length < 1 || row.command.length > 32
                 || row.command.some(part => typeof part !== 'string' || part.length < 1 || part.length > 4096)) return refusal(
                 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', 'runnable dispositions require an exact service identity and command argv', question.field)
-            runnableResolutions.set(slug, Object.freeze({ runnable: true, service: row.service,
-                command: Object.freeze([...row.command] as string[]) }))
+            runnableResolutions.set(slug, { runnable: true, service: row.service,
+                command: [...row.command] as string[] })
         }
         if (configuration.classification === 'one-sibling'
             && [...runnableResolutions.values()].every(row => !row.runnable)) return refusal(
@@ -1139,8 +1139,8 @@ async function completeConfigurationDocument(
                 'the local test-data answer must be exactly { seeded_data: boolean, signed_in_users: boolean }',
                 testDataQuestion.field,
             )
-            testData = Object.freeze({ seeded_data: (value as { seeded_data: boolean }).seeded_data,
-                signed_in_users: (value as { signed_in_users: boolean }).signed_in_users, provenance: testDataRead.provenance })
+            testData = { seeded_data: (value as { seeded_data: boolean }).seeded_data,
+                signed_in_users: (value as { signed_in_users: boolean }).signed_in_users, provenance: testDataRead.provenance }
             record('environment.test_data', testDataRead.provenance)
             answerIndex += 1
         }
@@ -1297,7 +1297,7 @@ async function completeConfigurationDocument(
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
         fix: 'once a product runs, declare environment.compose_files and run npx --no cockpit sync --config <your cockpit.toml>' })
     return { kind: 'complete', artifact, destination, diagnostics,
-        result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed: Object.freeze(unconfirmed) }) },
+        result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed }) },
         status: 0, question: null }
 }
 

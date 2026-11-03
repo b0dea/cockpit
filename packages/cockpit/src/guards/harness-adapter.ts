@@ -58,7 +58,7 @@ export function adaptGuardDecision(harness: unknown, input: unknown): NativeGuar
             hookEventName: 'PreToolUse', permissionDecision: verdict, permissionDecisionReason: selected.reason,
         } }) + '\n'
     }
-    return Object.freeze({ target: native, capability: 'instructed', decision: verdict, exitCode, stdout, stderr })
+    return { target: native, capability: 'instructed', decision: verdict, exitCode, stdout, stderr }
 }
 
 /** Only measured field-name normalization; shell and patch grammar belong to the parser. */
@@ -80,19 +80,19 @@ export function planGuardTransport(input: unknown): GuardTransportPlan | GuardTr
     const value = snapshotJson(input)
     if (!record(value) || !keys(value, ['target', 'handler', 'cwd', 'stdin']) || !target(value.target)
         || !absolute(value.handler) || !absolute(value.cwd) || !text(value.stdin, GUARD_INPUT_LIMITS.inputBytes)) {
-        return Object.freeze({ kind: 'refusal', code: 'GUARD_TRANSPORT_INVALID', message: 'Guard transport requires a resolved handler, canonical cwd and bounded stdin.' })
+        return { kind: 'refusal', code: 'GUARD_TRANSPORT_INVALID', message: 'Guard transport requires a resolved handler, canonical cwd and bounded stdin.' }
     }
     // The handler is a second Node process started per tool call. Five seconds was exceeded by Node
     // start-up alone on a loaded developer machine, which failed closed and blocked every tool call;
     // twenty stays well inside the harnesses' own hook timeouts.
-    const plan: GuardTransportPlan = Object.freeze({ kind: 'complete', target: value.target, executable: value.handler, cwd: value.cwd,
-        argv: Object.freeze([...GUARD_HANDLER_ARGV, '--harness', value.target] as const), stdin: value.stdin, timeoutMs: 20000, stdoutBytes: 65536, stderrBytes: 65536 })
+    const plan: GuardTransportPlan = { kind: 'complete', target: value.target, executable: value.handler, cwd: value.cwd,
+        argv: [...GUARD_HANDLER_ARGV, '--harness', value.target] as const, stdin: value.stdin, timeoutMs: 20000, stdoutBytes: 65536, stderrBytes: 65536 }
     plans.add(plan)
     return plan
 }
 
 export function completeGuardTransport(plan: unknown, response: unknown): NativeGuardOutput {
-    const fail = (reason: string): NativeGuardOutput => Object.freeze({ target: null, capability: 'instructed', decision: 'unavailable', exitCode: 2, stdout: '', stderr: `cockpit guard: ${reason}\n` })
+    const fail = (reason: string): NativeGuardOutput => ({ target: null, capability: 'instructed', decision: 'unavailable', exitCode: 2, stdout: '', stderr: `cockpit guard: ${reason}\n` })
     if (typeof plan !== 'object' || plan === null || !plans.has(plan)) return fail('Guard transport plan was not issued by the adapter.')
     const issued = plan as GuardTransportPlan
     const value = snapshotJson(response)

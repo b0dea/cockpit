@@ -104,7 +104,7 @@ function trustFor(states: Record<string, unknown>, source: string, hooks: readon
 }
 
 function warning(message: string): EnvironmentDiagnostic {
-    return Object.freeze({
+    return {
         severity: 'warning' as const,
         // Code and fix are literals, so the diagnostic inventory captures the fix beside the code and
         // the troubleshooting index repeats it. The message names the hook's path, and the printed
@@ -113,7 +113,7 @@ function warning(message: string): EnvironmentDiagnostic {
         message,
         target: HOOKS_PATH,
         fix: 'if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>',
-    })
+    }
 }
 
 /**
@@ -124,20 +124,20 @@ function warning(message: string): EnvironmentDiagnostic {
 export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise<readonly EnvironmentDiagnostic[]> {
     const root = resolve(input.root)
     const hooksPath = join(root, HOOKS_PATH)
-    const unverified = (reason: string) => Object.freeze([warning(
-        `cockpit could not verify whether Codex trusts the guard hook in ${hooksPath} (${reason}); Codex skips a project hook until a person trusts it, and then runs tool calls without the guard`)])
+    const unverified = (reason: string) => [warning(
+        `cockpit could not verify whether Codex trusts the guard hook in ${hooksPath} (${reason}); Codex skips a project hook until a person trusts it, and then runs tool calls without the guard`)]
     let hooksBytes: string | 'missing'
     try { hooksBytes = await bounded(hooksPath) } catch (error) { return unverified(`reading it failed: ${errorCause(error)}`) }
-    if (hooksBytes === 'missing') return Object.freeze([])
+    if (hooksBytes === 'missing') return []
     const hooks = codexHooks(hooksBytes)
     if (typeof hooks === 'string') return unverified(hooks)
-    if (hooks.length === 0) return Object.freeze([])
+    if (hooks.length === 0) return []
     const home = input.env.CODEX_HOME || (input.env.HOME ? join(input.env.HOME, '.codex') : undefined)
     if (!home) return unverified('neither CODEX_HOME nor HOME is set, so Codex\'s configuration cannot be found')
     // Every cockpit publishes the Codex hook, so a person who never runs Codex here saw this warning on
     // every check. Codex creates its home on first run; without one no Codex session can skip the hook.
     try { await stat(home) } catch (error) {
-        if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
+        if (hasErrorCode(error, 'ENOENT')) return []
         return unverified(`reading ${home} failed: ${errorCause(error)}`)
     }
     const codexConfig = join(home, 'config.toml')
@@ -161,10 +161,10 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     let canonical = root
     try { canonical = await realpath(root) } catch (error) { return unverified(`resolving ${root} failed: ${errorCause(error)}`) }
     const results = [...new Set([hooksPath, join(canonical, HOOKS_PATH)])].map(source => trustFor(states, source, hooks))
-    if (results.includes('trusted')) return Object.freeze([])
+    if (results.includes('trusted')) return []
     const consequence = 'a Codex session started there skips it and runs tool calls without the guard'
     const message = results.includes('disabled') ? `the guard hook in ${hooksPath} is disabled in ${codexConfig}, so ${consequence}`
         : results.includes('modified') ? `Codex trusted an earlier version of the guard hook in ${hooksPath}; until a person trusts the current one, ${consequence}`
             : `Codex has not trusted the guard hook in ${hooksPath} on this machine, so ${consequence}`
-    return Object.freeze([warning(message)])
+    return [warning(message)]
 }

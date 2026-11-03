@@ -20,5 +20,5 @@ export function proposeGeneratedEnvironmentRepair(currentness: RepairInput): Rea
         const admitted = admitDiagnosticFix(diagnostic, currentness.fixContext)
         return admitted ? [admitted] : []
     }) : []
-    return Object.freeze({ changes: currentness.changes, fixes: Object.freeze(fixes), refusal: currentness.repairRefusal ?? null })
+    return { changes: currentness.changes, fixes, refusal: currentness.repairRefusal ?? null }
 }

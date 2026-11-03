@@ -63,12 +63,12 @@ export function createGateRegistry(input: GateDeclarations): GateRegistry {
         || input.gates.some(gate => !NAME.test(gate.id) || !['targeted', 'full'].includes(gate.tier) || !text(gate.changes)
             || !Array.isArray(gate.stages) || !gate.stages.length || new Set(gate.stages).size !== gate.stages.length
             || gate.stages.some((id: string) => !stageIds.has(id)))) throw new RefusalError('gate registry contains invalid or duplicate declarations')
-    const registry: GateRegistry = Object.freeze({ kind: 'bound', tiers,
-        stages: Object.freeze(input.stages.map(stage => Object.freeze({ ...stage, command: Object.freeze([...stage.command]) as readonly [string, ...string[]],
-            ...(stage.select === undefined ? {} : { select: Object.freeze(Object.fromEntries(Object.entries(stage.select)
-                .map(([kind, argv]) => [kind, Object.freeze([...argv as readonly string[]])]))) }) }))),
-        gates: Object.freeze(input.gates.map(gate => Object.freeze({ ...gate, stages: Object.freeze([...gate.stages]) }))),
-    })
+    const registry: GateRegistry = { kind: 'bound', tiers,
+        stages: input.stages.map(stage => ({ ...stage, command: [...stage.command] as [string, ...string[]],
+            ...(stage.select === undefined ? {} : { select: Object.fromEntries(Object.entries(stage.select)
+                .map(([kind, argv]) => [kind, [...argv as readonly string[]]])) }) })),
+        gates: input.gates.map(gate => ({ ...gate, stages: [...gate.stages] })),
+    }
     issuedRegistries.add(registry)
     return registry
 }
@@ -101,7 +101,7 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     const gate = registry.gates.find(gate => gate.id === request.gate)
     const requested = request.stages ?? gate?.stages ?? []
     if (!gate || !requested.length || requested.some(id => !gate.stages.includes(id))) throw new RefusalError('gate selection is empty or unknown')
-    const select = request.select === undefined ? null : Object.freeze({ ...request.select })
+    const select = request.select === undefined ? null : { ...request.select }
     if (select && (!(SELECTOR_KINDS as readonly string[]).includes(select.kind) || !text(select.value))) throw new RefusalError('gate selection has an invalid selector')
     const selected = gate.stages.filter(id => requested.includes(id))
     const observations: StageObservation[] = []
@@ -139,11 +139,11 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
             // Running the whole stage would report a selection that never happened.
             result = { kind: 'unavailable', reason: `stage ${id} declares no ${select.kind} selection; add testing.stages[].select.${select.kind} with the tool's own arguments` }
         } else {
-            const command = Object.freeze([...stage.command, ...(selection ?? []).map(value => value.replaceAll(SELECTOR_VALUE, select!.value))]) as readonly [string, ...string[]]
-            try { result = await deps.runProductTool(Object.freeze({ gate: gate.id, stage: id, command, timeoutSeconds: stage.timeoutSeconds, select })) }
+            const command = [...stage.command, ...(selection ?? []).map(value => value.replaceAll(SELECTOR_VALUE, select!.value))] as [string, ...string[]]
+            try { result = await deps.runProductTool({ gate: gate.id, stage: id, command, timeoutSeconds: stage.timeoutSeconds, select }) }
             catch (error) { result = { kind: 'unavailable', reason: `product tooling could not run: ${errorCause(error)}` } }
         }
-        observations.push(Object.freeze({ ...result, id }))
+        observations.push({ ...result, id })
     }
     try {
         const after = await deps.subject()
@@ -165,7 +165,7 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     }
     const result = classifyRun({ declared: gate.stages, selected, observations,
         scope: request.staged ? 'staged' : select ? 'subset' : 'full', stability })
-    return Object.freeze({ ...result, observations: Object.freeze(observations), reasons: Object.freeze([...result.reasons, ...stabilityReasons]) })
+    return { ...result, observations, reasons: [...result.reasons, ...stabilityReasons] }
 }
 
 // Without a declared gate there is nothing for test-run to run, and a tier table would send agents
@@ -198,11 +198,11 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
     const checked = planSiblingProjection({ ...projection, standingSources: [...projection.standingSources.filter(source => source.path !== guidePath),
         ...GUARD_SURFACE_TARGETS.filter(target => projection.targets?.includes(target) ?? true).map(target => ({ target,
             path: guidePath, content: bytes, scope: 'always' as const }))] })
-    if (checked.kind === 'refusal') return Object.freeze({ kind: 'refusal', reason: checked.diagnostic.message })
+    if (checked.kind === 'refusal') return { kind: 'refusal', reason: checked.diagnostic.message }
     const exceeded = checked.costs.find(cost => cost.status === 'exceeded')
-    if (exceeded?.status === 'exceeded') return Object.freeze({ kind: 'refusal',
+    if (exceeded?.status === 'exceeded') return { kind: 'refusal',
         reason: `the instructions ${exceeded.target} loads at start are ${exceeded.value} lines, over cockpit.guide_cap ${exceeded.cap}`,
-        exceeded: Object.freeze({ target: exceeded.target, value: exceeded.value, cap: exceeded.cap }) })
-    if (checked.costs.some(cost => cost.status !== 'within_cap')) return Object.freeze({ kind: 'refusal', reason: 'combined instruction cost is not characterized for every harness' })
-    return Object.freeze({ kind: 'complete', bytes, lines, costs: checked.costs })
+        exceeded: { target: exceeded.target, value: exceeded.value, cap: exceeded.cap } }
+    if (checked.costs.some(cost => cost.status !== 'within_cap')) return { kind: 'refusal', reason: 'combined instruction cost is not characterized for every harness' }
+    return { kind: 'complete', bytes, lines, costs: checked.costs }
 }

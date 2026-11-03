@@ -50,21 +50,21 @@ export async function inspectProjectReadiness(
 ): Promise<readonly EnvironmentDiagnostic[]> {
     // A cockpit.toml that does not load is the finding; its own refusal says what to fix first.
     const loaded = preloaded ?? (input.configPath === undefined ? undefined : await loadCockpitConfig(input.configPath))
-    if (loaded && loaded.kind !== 'complete') return Object.freeze([])
+    if (loaded && loaded.kind !== 'complete') return []
     const findings: EnvironmentDiagnostic[] = input.configPath === undefined ? [] : [...await inspectTeamReadiness(input.configPath)]
     const tools: readonly string[] = loaded?.kind === 'complete' ? loaded.result.config.surfaces.tools : input.tools ?? DEFAULT_SURFACE_TOOLS
     const refusers = ['codexcli', 'opencode'].filter(tool => tools.includes(tool)).map(tool => tool === 'codexcli' ? 'Codex' : 'OpenCode')
     // The guard reads the PATH its hook inherits from the harness, which is started from a shell like
     // this one; while that PATH holds a relative entry it asks before every command.
     const relativeEntry = guardSearchPathRelativeEntry(input.env.PATH ?? '')
-    if (input.configPath !== undefined && relativeEntry !== null) findings.push(Object.freeze({
+    if (input.configPath !== undefined && relativeEntry !== null) findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'GUARD_SEARCH_PATH_RELATIVE' satisfies typeof ENVIRONMENT_CODES.GUARD_SEARCH_PATH_RELATIVE,
         message: `PATH holds the relative entry ${JSON.stringify(relativeEntry)}${relativeEntry === '' ? ' (an empty entry is the working directory)' : ''}; an agent harness started with this PATH gets a guard that asks before every command, because a file the agent wrote could run in place of the command${refusers.length > 0 ? `, and ${refusers.join(' and ')} refuse${refusers.length === 1 ? 's' : ''} what it asks about` : ''}`,
         target: 'PATH',
         fix: 'remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness',
-    }))
+    })
     let repositories = input.repositories ?? []
     if (loaded?.kind === 'complete') {
         const siblingRoot = resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root)
@@ -78,14 +78,14 @@ export async function inspectProjectReadiness(
     const git = await resolveGitExecutable(input.env)
     if (git.state !== 'available') {
         // Without Git, the root and secret checks did not run; their absence from the report is no finding.
-        findings.push(Object.freeze({
+        findings.push({
             severity: 'warning' as const,
             code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `the readiness checks that ask Git (the cockpit root's working tree, committed secret files) did not run: ${git.reason}`,
             target: 'git',
             fix: 'install Git and put it on PATH, then rerun this command',
-        }))
-        return Object.freeze(findings)
+        })
+        return findings
     }
     // A greenfield root init writes into in place stays outside Git until someone runs git init, and
     // setup refuses it only later; init reached environment-verified without saying so.
@@ -107,23 +107,23 @@ export async function inspectProjectReadiness(
             throw new RefusalError(`the cockpit root Git probe did not run (${outcome.code})`)
         }
         const refused = outcome.kind === 'refusal' ? gitRepositoryRefusal(outcome.stderr) : undefined
-        if (refused?.kind === 'not-a-repository') findings.push(Object.freeze({
+        if (refused?.kind === 'not-a-repository') findings.push({
             severity: 'warning' as const,
             code: ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
             message: `${input.root} is not inside a Git working tree, so setup will refuse to run there and no teammate can clone this cockpit`,
             target: input.root,
             fix: `run git -C ${input.root} init, then commit the cockpit files once a person has reviewed them`,
-        }))
-        if (refused?.kind === 'refused') findings.push(Object.freeze({
+        })
+        if (refused?.kind === 'refused') findings.push({
             severity: 'warning' as const,
             code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `whether ${input.root} is inside a Git working tree could not be checked: ${refused.reason}`,
             target: input.root,
             fix: refused.fix,
-        }))
+        })
     }
     findings.push(...await inspectTrackedSecretFiles({ executable: git.value, repositories: present, timeoutMs: input.timeoutMs }, execute))
-    return Object.freeze(findings)
+    return findings
 }
 
 /**
@@ -140,5 +140,5 @@ export async function inspectInitReadiness(
     const state: ReadinessReport['state'] = loaded?.kind === 'complete'
         ? declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' : 'runtime'
         : classification === undefined ? 'undetermined' : classification === 'no-runnable-product' ? 'surfaces-only' : 'runtime'
-    return Object.freeze({ state, findings })
+    return { state, findings }
 }

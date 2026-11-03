@@ -62,13 +62,13 @@ export function gitEnvironment(ambient: Readonly<Record<string, string | undefin
         const value = ambient[name]
         if (value !== undefined) approved[name] = value
     }
-    return Object.freeze({
+    return {
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_CONFIG_NOSYSTEM: '1',
         GIT_CONFIG_SYSTEM: '/dev/null',
         GIT_TERMINAL_PROMPT: '0',
         ...approved,
-    })
+    }
 }
 
 // Git stores a cloned local path as an absolute path, so a relative declaration is resolved against

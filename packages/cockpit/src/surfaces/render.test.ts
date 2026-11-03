@@ -105,8 +105,6 @@ describe('surface rendering', () => {
         const result = render([warning])
         expect(result).toMatchObject({ kind: 'complete', warnings: [warning] })
         if (result.kind !== 'complete') return
-        expect(Object.isFrozen(result.warnings)).toBe(true)
-        expect(Object.isFrozen(result.warnings[0])).toBe(true)
         const original = warning.message
         warning.message = 'changed'
         expect(result.warnings[0]?.message).toBe(original)

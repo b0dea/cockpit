@@ -80,7 +80,7 @@ export function admitDiagnosticFix(diagnostic: Diagnostic, context?: FixContext)
     const path = context.resolvedConfigPath
     if (!bindablePath(path) || !safeTarget(diagnostic.target)
         || !context.generatedTargets.includes(diagnostic.target)) return undefined
-    const argv = Object.freeze(['npx', '--no', 'cockpit', 'sync', '--config', path] as const)
+    const argv = ['npx', '--no', 'cockpit', 'sync', '--config', path] as const
     const command = formatShellCommand(argv)
-    return Object.freeze({ argv, command })
+    return { argv, command }
 }

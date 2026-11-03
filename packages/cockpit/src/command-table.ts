@@ -165,17 +165,17 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
 function value(role: OrdinaryValueRole, required = false): OrdinaryOption {
-    return Object.freeze({ kind: 'value', role, repetition: 'singleton', ...(required ? { required: true as const } : {}) })
+    return { kind: 'value', role, repetition: 'singleton', ...(required ? { required: true as const } : {}) }
 }
 const configured = Object.freeze({ config: value('resolved-config', true), json: flag })
 function ordinary(command: HandlerIdentifier, options: Readonly<Record<string, OrdinaryOption>> = configured,
     extra: Partial<Extract<OrdinaryCommandMetadata, { availability: 'available' }>> = {}): OrdinaryCommandMetadata {
-    return Object.freeze({ availability: 'available', executableRole: 'installed-cockpit', command,
-        positional: Object.freeze({ min: 0, max: 0, roles: Object.freeze([] as const) }), options: Object.freeze(options),
+    return { availability: 'available', executableRole: 'installed-cockpit', command,
+        positional: { min: 0, max: 0, roles: [] as const }, options,
         cwdRole: 'canonical-root', configuration: 'resolved',
-        forbidden: Object.freeze({ presence: Object.freeze([]) }), ...extra })
+        forbidden: { presence: [] }, ...extra }
 }
-function unavailable(reason: string): OrdinaryCommandMetadata { return Object.freeze({ availability: 'unavailable', reason }) }
+function unavailable(reason: string): OrdinaryCommandMetadata { return { availability: 'unavailable', reason } }
 
 const workOptions = { config: { type: 'string' }, json: { type: 'boolean', default: false } } as const
 const workOrderOption = { 'work-order': { type: 'string' } } as const
@@ -655,6 +655,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         // A dry run writes nothing, so no grant gates it.
         || grammar.requires !== undefined && !options.has('dry-run') && !source.grants.includes(grammar.requires)
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
-    return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]),
-        ...(reads.length ? { reads: Object.freeze(reads) } : {}) })
+    return { executable: source.executable, cwd: source.canonicalRoot, argv: [...args],
+        ...(reads.length ? { reads } : {}) }
 }

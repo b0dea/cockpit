@@ -110,7 +110,7 @@ export function surfaceModelSha256(value: unknown): string | undefined {
 }
 
 function refuse(code: SurfaceDiagnostic['code'], message: string, target?: string): SurfaceRenderResult {
-    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message, ...(target === undefined ? {} : { target }) }) })
+    return { kind: 'refusal', diagnostic: { code, message, ...(target === undefined ? {} : { target }) } }
 }
 
 function validFileFields(value: JsonSnapshot | undefined): value is JsonSnapshotObject {

@@ -212,15 +212,15 @@ function anchoredReadPath(root: string, relativePath: string, allowAbsent = fals
                     || trackContents && (opened.mtimeNs !== named.mtimeNs || opened.ctimeNs !== named.ctimeNs)) {
                     throw new RefusalError('contained file ancestor changed while anchoring')
                 }
-                anchors.push(Object.freeze({ path, descriptor, trackContents, dev: opened.dev, ino: opened.ino,
-                    mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs }))
+                anchors.push({ path, descriptor, trackContents, dev: opened.dev, ino: opened.ino,
+                    mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs })
             } catch (error) {
                 closeSync(descriptor)
                 throw error
             }
         }
         if (!readAnchorsCurrent(anchors)) throw new RefusalError('contained file ancestor changed before leaf admission')
-        return Object.freeze({ target, anchors: Object.freeze(anchors) })
+        return { target, anchors }
     } catch (error) {
         for (const anchor of anchors.reverse()) closeSync(anchor.descriptor)
         throw error
@@ -320,11 +320,11 @@ async function executable(directories: readonly string[], name: string): Promise
         let bytes: number
         try { bytes = lstatSync(resolved.value.canonicalPath).size }
         catch (error) { unavailableReason = `Executable ${name} is unavailable: ${errorCause(error)}`; continue }
-        return Object.freeze({ state: 'available' as const, value: Object.freeze({
+        return { state: 'available' as const, value: {
             path: resolved.value.canonicalPath, sha256: resolved.value.sha256, bytes,
-        }) })
+        } }
     }
-    return Object.freeze({ state: 'unavailable', reason: unavailableReason })
+    return { state: 'unavailable', reason: unavailableReason }
 }
 
 // Every caller sees the same outcome classes: a process that ran reports its exit status, a timeout says
@@ -349,19 +349,19 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const resolution = await (isAbsolute(argv[0]) ? executable([dirname(argv[0])], basename(argv[0])) : executable(directories, argv[0]))
     if (resolution.state !== 'available') return { kind: 'unavailable', reason: resolution.reason }
     const resolved = resolution.value
-    const consumedFile: ConsumedFile = Object.freeze({ path: resolved.path, sha256: resolved.sha256, maxBytes: resolved.bytes,
-        argvIndexes: Object.freeze([0]), executable: true, executionMode: 'verified-path' })
-    const filesystemCheck: FilesystemCheck = Object.freeze({ path: root, expected: 'directory' })
-    const stepArgv: readonly [string, ...string[]] = Object.freeze([resolved.path, ...argv.slice(1)])
-    const step: ExecutionStep = Object.freeze({ id: `work-${randomUUID()}`, argv: stepArgv, argv0: resolved.path,
+    const consumedFile: ConsumedFile = { path: resolved.path, sha256: resolved.sha256, maxBytes: resolved.bytes,
+        argvIndexes: [0], executable: true, executionMode: 'verified-path' }
+    const filesystemCheck: FilesystemCheck = { path: root, expected: 'directory' }
+    const stepArgv: readonly [string, ...string[]] = [resolved.path, ...argv.slice(1)]
+    const step: ExecutionStep = { id: `work-${randomUUID()}`, argv: stepArgv, argv0: resolved.path,
         // macOS's /usr/bin/git looks up a temporary directory when TMPDIR is unset, and inside Codex's
         // workspace-write sandbox that lookup fails and git warns on stderr, which fails a probe that
         // requires silence; a probe therefore names the temporary directory Node already resolved.
-        cwd: root, env: Object.freeze({ ...(mode.kind === 'declared' ? mode.env : { TMPDIR: tmpdir() }), PATH: directories.join(delimiter) }), timeoutMs,
+        cwd: root, env: { ...(mode.kind === 'declared' ? mode.env : { TMPDIR: tmpdir() }), PATH: directories.join(delimiter) }, timeoutMs,
         spawnNotAfter: new Date(Date.now() + timeoutMs).toISOString(), stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
         ...(mode.kind === 'declared' ? { outputOverflow: 'retain-tail' as const } : {}),
-        paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ owner: 'work-application' }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([consumedFile]), filesystemChecks: Object.freeze([filesystemCheck]), compensation: Object.freeze([]) })
+        paths: [], ports: [], labels: { owner: 'work-application' }, expected: [],
+        consumedFiles: [consumedFile], filesystemChecks: [filesystemCheck], compensation: [] }
     const result = authenticatedExecutionOutcome(await executeProbe(step), step)
     if (!result) return { kind: 'error', reason: `the outcome of ${argv[0]} could not be authenticated as the issued step` }
     if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
@@ -382,8 +382,8 @@ async function executeBounded(root: string, argv: readonly string[], directories
         stderr = decode(result.stderr)
     }
     catch (error) { return { kind: 'error', reason: `${argv[0]} returned invalid UTF-8: ${errorCause(error)}` } }
-    return Object.freeze({ kind: 'executed', exitCode: result.execution.exitCode, stdout, stderr, truncated,
-        observedBytes: result.execution.stdoutObservedBytes + result.execution.stderrObservedBytes })
+    return { kind: 'executed', exitCode: result.execution.exitCode, stdout, stderr, truncated,
+        observedBytes: result.execution.stdoutObservedBytes + result.execution.stderrObservedBytes }
 }
 
 
@@ -544,7 +544,7 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
             if (included.some(path => admittedPaths.has(path))) throw new RefusalError('repository subject contains duplicate paths')
             for (const path of included) admittedPaths.add(path)
             if (admittedPaths.size > MAX_REPOSITORY_PATHS) throw new RefusalError('repository subject exceeds its path bound')
-            const change = Object.freeze({ kind, metadata, paths: Object.freeze(included) })
+            const change = { kind, metadata, paths: included }
             changes.push(change)
             normalizedRecords.push(record)
             if (pairedRecord !== undefined) normalizedRecords.push(pairedRecord)
@@ -558,13 +558,13 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
             throw new RefusalError(`repository revision is unavailable for ${repository.identity} at ${repository.root}`)
         }
         changes.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
-        return Object.freeze({ revision, changes: Object.freeze(changes), normalizedRecords: Object.freeze(normalizedRecords) })
+        return { revision, changes, normalizedRecords }
     }
     const observedStatus = parseStatus(status.stdout)
     const aggregate = { bytes: 0 }
-    const changes = observedStatus.changes.map(change => Object.freeze({ ...change,
-        paths: Object.freeze(change.paths.map(path => Object.freeze({ path,
-            sha256: repositoryPathDigest(repository.root, repository.identity, path, aggregate, sensitivePaths, forbiddenTargets) }))),
+    const changes = observedStatus.changes.map(change => ({ ...change,
+        paths: change.paths.map(path => ({ path,
+            sha256: repositoryPathDigest(repository.root, repository.identity, path, aggregate, sensitivePaths, forbiddenTargets) })),
     }))
     const confirmed = await executeBounded(repository.root, ['git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], directories)
     const confirmedPrefix = await executeBounded(repository.root, ['git', 'rev-parse', '--show-prefix'], directories)
@@ -583,8 +583,8 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
             throw new RefusalError(`repository subject ${repository.identity} changed during hashing`)
         }
     }
-    return Object.freeze({ path: repository.identity, revision: observedStatus.revision,
-        worktreeDigest: digest(JSON.stringify({ revision: observedStatus.revision, changes })) })
+    return { path: repository.identity, revision: observedStatus.revision,
+        worktreeDigest: digest(JSON.stringify({ revision: observedStatus.revision, changes })) }
 }
 
 export function isWorkApplicationComposition(value: unknown): value is WorkApplicationComposition {
@@ -608,7 +608,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     // A sibling checked out at the cockpit root is that same repository, under the cockpit's key.
     const repositories = [{ key: '.', identity: config.cockpitName, root }, ...config.siblings.flatMap(row => resolve(siblingsRoot, row.dir) === root ? []
         : [{ key: row.slug, identity: `siblings/${row.slug}`, root: resolve(siblingsRoot, row.dir) }])]
-        .map(repository => Object.freeze({ ...repository, sensitivePaths: repositoryEnvironmentInstancePaths(repository.root, siblingsRoot, config.siblings) }))
+        .map(repository => ({ ...repository, sensitivePaths: repositoryEnvironmentInstancePaths(repository.root, siblingsRoot, config.siblings) }))
     const keyOf = (key: string) => config.siblings.some(row => row.slug === key && resolve(siblingsRoot, row.dir) === root) ? '.' : key
     const qualified = (key: string, path: string) => key === '.' ? path : `${key}:${path}`
     const located = (reference: string) => {
@@ -647,9 +647,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     const browser = async (kind: BrowserCommandKind, headed: boolean, role?: string): Promise<BrowserCommandInput> => {
         if (!config.browser) throw new RefusalError('browser application projection is unavailable')
         const authority = await resolveBrowser()
-        return Object.freeze({ runtime: authority.runtime, client: authority.client, policy: authority.policy, kind,
+        return { runtime: authority.runtime, client: authority.client, policy: authority.policy, kind,
             ...(authority.state ? { state: authority.state } : {}), ...(headed ? { headed: true, ...(authority.debugger ? { debugger: authority.debugger } : {}) } : {}),
-            ...(role ? { role } : {}) })
+            ...(role ? { role } : {}) }
     }
     const gate = async (request: WorkApplicationGateRequest) => {
         if (!authorities.testing || !config.testing) throw new RefusalError('testing gate projection is unavailable')
@@ -657,18 +657,18 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         const selected = stages ?? declared?.stages ?? []
         const needsStack = selected.some(id => authorities.testing!.registry.stages.find(stage => stage.id === id)?.requiresStack)
         const runtime = needsStack ? await authorities.testing.runtime?.() : undefined
-        const stack = needsStack ? runtime?.stack ?? Object.freeze({ state: 'unavailable' as const, reason: 'authenticated runtime observation is unavailable' }) : undefined
+        const stack = needsStack ? runtime?.stack ?? { state: 'unavailable' as const, reason: 'authenticated runtime observation is unavailable' } : undefined
         const dependencies: GateDependencies = runtime?.evidence
-            ? Object.freeze({ ...authorities.testing.dependencies, runtime: runtime.evidence })
+            ? { ...authorities.testing.dependencies, runtime: runtime.evidence }
             : authorities.testing.dependencies
-        return Object.freeze({ registry: authorities.testing.registry, request: Object.freeze({ gate: request.gate, ...(stages ? { stages } : {}),
-            ...(request.select ? { select: request.select } : {}), staged: request.mode === 'staged', ...(stack ? { stack } : {}) }), dependencies })
+        return { registry: authorities.testing.registry, request: { gate: request.gate, ...(stages ? { stages } : {}),
+            ...(request.select ? { select: request.select } : {}), staged: request.mode === 'staged', ...(stack ? { stack } : {}) }, dependencies }
     }
     const orderIds = async () => {
         let names: string[]
         try { names = readdirSync(contained(root, 'workorders', true)) }
         catch (error) { if (hasErrorCode(error, 'ENOENT')) return []; throw error }
-        return Object.freeze(names.filter(name => name.endsWith('.md') && WORK_ORDER_ID.test(name.slice(0, -3))).map(name => name.slice(0, -3)).sort())
+        return names.filter(name => name.endsWith('.md') && WORK_ORDER_ID.test(name.slice(0, -3))).map(name => name.slice(0, -3)).sort()
     }
     const readOrder = async (id: string): Promise<ParsedFile<WorkOrder>> => {
         let bytes: Buffer
@@ -695,11 +695,11 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             return { criterion, kind: 'gate', passed: false, outcome: `gate ${check.gate} did not run`, output: outputTail(errorCause(error)) }
         }
     }
-    const heads = async () => Object.freeze(Object.fromEntries(await Promise.all(repositories.map(async repository => {
+    const heads = async () => Object.fromEntries(await Promise.all(repositories.map(async repository => {
         const head = (await git(repository, ['rev-parse', '--verify', 'HEAD'])).trim()
         if (!/^[a-f0-9]{40,64}$/.test(head)) throw new RefusalError(`${repository.identity} at ${repository.root} has no commit yet; commit once there`)
         return [repository.key, head] as const
-    }))))
+    })))
     // What changed since the base: committed, staged, unstaged and untracked files, each with its diff
     // or new content. A credential-shaped or declared-instance path is listed but its content is withheld.
     const changes = async (base: Readonly<Record<string, string>>): Promise<readonly ChangedFile[]> => {
@@ -736,10 +736,10 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
                 }
                 const bounded = Buffer.byteLength(diff) > Math.min(MAX_DIFF_BYTES, budget) ? `${Buffer.from(diff).subarray(0, Math.min(MAX_DIFF_BYTES, budget)).toString('utf8')}\n(diff cut at its bound)` : diff
                 budget = Math.max(0, budget - Buffer.byteLength(bounded))
-                files.push(Object.freeze({ path: qualified(repository.key, path), status, diff: bounded }))
+                files.push({ path: qualified(repository.key, path), status, diff: bounded })
             }
         }
-        return Object.freeze(files)
+        return files
     }
     const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {
         let evaluator: EvaluatorAuthority
@@ -758,14 +758,14 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if ('problem' in read) return { refusal: { code: ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: read.problem, fix: 'rerun the command; if the answer is refused again, list another evaluator first in work.evaluators' } }
         return { criteria: read.criteria, evaluator: { tool: result.tool, fallbacks: result.fallbacks } }
     }
-    const composition: WorkApplicationComposition = Object.freeze({
-        policy: config.policy, caps: Object.freeze({ wip: config.wipCap, attempts: config.attemptCap }), env: authorities.env,
+    const composition: WorkApplicationComposition = {
+        policy: config.policy, caps: { wip: config.wipCap, attempts: config.attemptCap }, env: authorities.env,
         store: createWorkStore(root), recordedPolicy: () => readRecordedPolicy(root), orderIds, readOrder,
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
-        sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.freeze(Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
-            .map(source => [source, digest(readSource(source))]))),
+        sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
+            .map(source => [source, digest(readSource(source))])),
         heads, runCheck, changes, evaluate: gradeIndependently, browser, gate,
-    })
+    }
     issuedCompositions.add(composition)
     return composition
 }
@@ -793,21 +793,21 @@ function captureConfiguredInput(value: unknown): Readonly<{ configPath: string; 
         if (Reflect.ownKeys(environmentDescriptors).some(key => typeof key !== 'string')
             || Object.values(environmentDescriptors).some(row => !('value' in row)
                 || row.value !== undefined && typeof row.value !== 'string')) return undefined
-        return Object.freeze({ configPath, env: Object.freeze(Object.fromEntries(Object.entries(environmentDescriptors).map(([key, row]) => [key, row.value]))) })
+        return { configPath, env: Object.fromEntries(Object.entries(environmentDescriptors).map(([key, row]) => [key, row.value])) }
     } catch { return undefined } // A throwing accessor or proxy trap on caller-supplied input is malformed input the caller refuses.
 }
 
 function declaredCommandEnvironment(environment: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(INHERITED_TOOL_ENVIRONMENT.flatMap(name => {
+    return Object.fromEntries(INHERITED_TOOL_ENVIRONMENT.flatMap(name => {
         const value = environment[name]
         return typeof value === 'string' && value.length > 0 && !value.includes('\0') && Buffer.byteLength(value) <= 4_096 ? [[name, value]] : []
-    })))
+    }))
 }
 
 function productGateDependencies(root: string, source: SourceProvenance,
     repositories: readonly Readonly<{ identity: string; root: string; sensitivePaths: ReadonlySet<string>; forbiddenTargets: ReadonlySet<string> }>[],
     stageEnvironment: Readonly<Record<string, string>>, executableDirectories?: readonly string[]): GateDependencies {
-    return Object.freeze({
+    return {
         subject: async () => {
             if (!exactSource(source)) throw new RefusalError('configuration source changed during product gate')
             const observed = []
@@ -820,11 +820,11 @@ function productGateDependencies(root: string, source: SourceProvenance,
         runProductTool: async (invocation: ProductGateInvocation) => {
             const observed = await executeBounded(root, invocation.command, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
                 invocation.timeoutSeconds * 1_000, { kind: 'declared', env: stageEnvironment, timeoutField: 'testing.stages[].timeout_seconds' })
-            if (observed.kind !== 'executed') return Object.freeze({ kind: 'unavailable' as const, reason: observed.reason })
-            return Object.freeze({ kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
-                assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const })
+            if (observed.kind !== 'executed') return { kind: 'unavailable' as const, reason: observed.reason }
+            return { kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
+                assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const }
         },
-    })
+    }
 }
 
 function executableDirectoriesFromEnvironment(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
@@ -843,7 +843,7 @@ function executableDirectoriesFromEnvironment(environment: Readonly<Record<strin
         }
     }
     if (!directories.length) throw new RefusalError('canonical executable search directories are unavailable')
-    return Object.freeze(directories)
+    return directories
 }
 
 export async function createConfiguredWorkApplicationComposition(input: Readonly<{
@@ -851,23 +851,23 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
     env: Readonly<Record<string, string | undefined>>
 }>): Promise<ConfiguredWorkApplicationCompositionResult> {
     const captured = captureConfiguredInput(input)
-    if (!captured) return Object.freeze({ kind: 'refusal', reason: 'Configured work application requires a closed canonical config path and environment' })
+    if (!captured) return { kind: 'refusal', reason: 'Configured work application requires a closed canonical config path and environment' }
     try {
         const projection = await prepareWorkApplicationAuthorities({ configPath: captured.configPath })
         if (projection.kind !== 'work-application-authorities') {
-            return Object.freeze({ kind: 'refusal', reason: projection.diagnostics.map(row => `${row.code}: ${row.message}`).join('; ') })
+            return { kind: 'refusal', reason: projection.diagnostics.map(row => `${row.code}: ${row.message}`).join('; ') }
         }
         const authority = consumeWorkApplicationAuthorities(projection)
         if (!authority || !exactSource(authority.workEnvironment.source)) {
-            return Object.freeze({ kind: 'refusal', reason: 'Current generated work application authority is unavailable' })
+            return { kind: 'refusal', reason: 'Current generated work application authority is unavailable' }
         }
         const config: WorkEnvironmentApplicationConfig = authority.workEnvironment
         if (config.source.path !== captured.configPath || config.cockpitRoot !== dirname(captured.configPath)) {
-            return Object.freeze({ kind: 'refusal', reason: 'Generated work application authority does not match the selected configuration' })
+            return { kind: 'refusal', reason: 'Generated work application authority does not match the selected configuration' }
         }
         const executableDirectories = executableDirectoriesFromEnvironment(captured.env)
         const declaredEnvironment = declaredCommandEnvironment(captured.env)
-        const resolveEvaluator = async (): Promise<EvaluatorAuthority> => Object.freeze({ path: authority.evaluator.path, bytes: authority.evaluator.bytes,
+        const resolveEvaluator = async (): Promise<EvaluatorAuthority> => ({ path: authority.evaluator.path, bytes: authority.evaluator.bytes,
             sha256: authority.evaluator.sha256, restriction: authority.evaluator.restriction, executableDirectories,
             chain: await locateEvaluators(config.evaluators, executableDirectories), environment: captured.env })
         const resolveBrowser = async (): Promise<BrowserAuthority> => {
@@ -932,14 +932,14 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
                 if (prior !== undefined && prior !== url.href) throw new RefusalError('browser application routes are missing or ambiguous')
                 routeNames.set(row.name, url.href)
                 const policyUrl = `${url.origin}${url.pathname}${url.search}`
-                if (!routesByUrl.has(policyUrl)) routesByUrl.set(policyUrl, Object.freeze({ name: row.name, path: `${url.pathname}${url.search}` }))
+                if (!routesByUrl.has(policyUrl)) routesByUrl.set(policyUrl, { name: row.name, path: `${url.pathname}${url.search}` })
             }
             const routes = [...routesByUrl.values()]
             if (!routes.length) throw new RefusalError('browser application routes are missing or ambiguous')
             const skillBytes = browserAuthority.skillTemplate.bytes
             if (digest(skillBytes) !== browserAuthority.skillTemplate.sha256) throw new RefusalError('browser skill template authority is malformed')
             const harnessRows = config.browser.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
-                ? [Object.freeze({ target: row.target, version: row.version })] : [])
+                ? [{ target: row.target, version: row.version }] : [])
             const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: config.cockpitRoot,
                 harnesses: harnessRows, mcp, approved: true,
                 testPackage: observeBrowserProjectPackage({ runtime, cockpitDirectory: config.cockpitRoot,
@@ -952,22 +952,22 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
                     + `(declared: ${declared}; measured: ${Object.entries(measured).map(([target, version]) => `${target} ${version}`).join(', ')}); `
                     + `set a browser.harnesses row to a measured target and version in ${captured.configPath}, then run ${cockpitCommand('sync', { config: captured.configPath })}`)
             }
-            return Object.freeze({ runtime, client,
+            return { runtime, client,
                 policy: issueBrowserRoutePolicy(runtime, { origin: originUrl.origin, routes }),
-                ...(runtime.authentication.posture === 'real' ? { state: Object.freeze({
+                ...(runtime.authentication.posture === 'real' ? { state: {
                     namespace: browserAuthority.namespace, stackId: loaded.result.stackId, ownerId: record.value.holderId,
-                }) } : {}), ...(browserAuthority.runner?.debugger ? { debugger: browserAuthority.runner.debugger } : {}) })
+                } } : {}), ...(browserAuthority.runner?.debugger ? { debugger: browserAuthority.runner.debugger } : {}) }
         }
         const configuredSiblingsRoot = resolve(config.cockpitRoot, config.siblingsRoot)
         const gateBrowserAuthenticationTargets = new Set((config.browser?.authentication.states ?? []).map(row => resolve(config.cockpitRoot, row.path)))
-        const gateRepositories = Object.freeze([
-            Object.freeze({ identity: config.cockpitName, root: config.cockpitRoot,
+        const gateRepositories = [
+            { identity: config.cockpitName, root: config.cockpitRoot,
                 sensitivePaths: repositoryEnvironmentInstancePaths(config.cockpitRoot, configuredSiblingsRoot, config.siblings),
-                forbiddenTargets: gateBrowserAuthenticationTargets }),
-            ...config.siblings.map(row => Object.freeze({ identity: `siblings/${row.slug}`, root: resolve(configuredSiblingsRoot, row.dir),
+                forbiddenTargets: gateBrowserAuthenticationTargets },
+            ...config.siblings.map(row => ({ identity: `siblings/${row.slug}`, root: resolve(configuredSiblingsRoot, row.dir),
                 sensitivePaths: repositoryEnvironmentInstancePaths(resolve(configuredSiblingsRoot, row.dir), configuredSiblingsRoot, config.siblings),
                 forbiddenTargets: gateBrowserAuthenticationTargets })),
-        ])
+        ]
         const reads = createReadCommandAdapters({ configPath: captured.configPath, env: captured.env,
             sessionId: 'cockpit-work-gate-read-only', timeoutMs: 30_000 }, executeProbe)
         const gateRuntime = async (): Promise<Readonly<{
@@ -976,26 +976,26 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
         }>> => {
             try {
                 const initial = await reads.environment.observe({ configPath: captured.configPath })
-                return Object.freeze({ stack: Object.freeze({ state: 'available' as const }), evidence: Object.freeze({
+                return { stack: { state: 'available' as const }, evidence: {
                     snapshot: initial.snapshot,
                     capture: async () => (await reads.environment.observe({ configPath: captured.configPath })).evidence,
-                }) })
+                } }
             } catch (error) {
-                return Object.freeze({ stack: Object.freeze({ state: 'unavailable' as const,
-                    reason: `authenticated runtime observation failed: ${errorCause(error)}` }) })
+                return { stack: { state: 'unavailable' as const,
+                    reason: `authenticated runtime observation failed: ${errorCause(error)}` } }
             }
         }
         const composition = createWorkApplicationComposition(config, {
             env: captured.env, executableDirectories, declaredEnvironment,
             resolveEvaluator,
             ...(config.browser ? { resolveBrowser } : {}),
-            testing: Object.freeze({ registry: authority.testing.registry,
+            testing: { registry: authority.testing.registry,
                 dependencies: productGateDependencies(config.cockpitRoot, config.source, gateRepositories,
-                    declaredEnvironment, executableDirectories), runtime: gateRuntime }),
+                    declaredEnvironment, executableDirectories), runtime: gateRuntime },
         })
-        return Object.freeze({ kind: 'complete', composition })
+        return { kind: 'complete', composition }
     } catch (error) {
-        return Object.freeze({ kind: 'refusal', reason: `Configured work application is unavailable: ${errorCause(error)}` })
+        return { kind: 'refusal', reason: `Configured work application is unavailable: ${errorCause(error)}` }
     }
 }
 

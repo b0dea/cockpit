@@ -285,7 +285,7 @@ async function guardServiceIds(
     }>,
 ): Promise<readonly string[] | string> {
     const runtime = declaredRuntime(config.environment)
-    if (runtime === 'none') return Object.freeze([])
+    if (runtime === 'none') return []
     const docker = observe.resolveDocker ? await observe.resolveDocker() : undefined
     if (docker?.state !== 'available') return docker?.reason ?? 'no Docker executable resolver is bound'
     const topology = await observeComposeTopology({ root, references: config.environment.compose_files,
@@ -728,8 +728,8 @@ export async function prepareGuardEvaluationPolicy(
                     identities.set(cursor, status)
                     chain.push(guardIdentity(status))
                 }
-                protectedIdentities.set(path, Object.freeze({ path, identity: exists ? chain.at(-1)! : null,
-                    ancestors: Object.freeze(exists ? chain.slice(0, -1) : chain) }))
+                protectedIdentities.set(path, { path, identity: exists ? chain.at(-1)! : null,
+                    ancestors: exists ? chain.slice(0, -1) : chain })
             }
             const directory = (path: string) => {
                 const before = lstatSync(path)
@@ -753,7 +753,7 @@ export async function prepareGuardEvaluationPolicy(
                     const path = resolve(root, file.path)
                     if (!confinedPath(root, path) || path === root) throw new RefusalError('guard policy instance escapes its sibling root')
                     protect(root, path, 'file', 'instance')
-                    instances.push(Object.freeze({ name: `${sibling.slug}-${createHash('sha256').update(file.path).digest('hex').slice(0, 12)}`, path }))
+                    instances.push({ name: `${sibling.slug}-${createHash('sha256').update(file.path).digest('hex').slice(0, 12)}`, path })
                 }
                 for (const file of sibling.environment_files ?? []) {
                     const path = resolve(root, file.template)
@@ -778,26 +778,26 @@ export async function prepareGuardEvaluationPolicy(
                     throw new RefusalError('guard policy root or instance identity changed during construction')
                 }
             }
-            const policy = Object.freeze({ canonicalRoot, configPath,
-                allowedRoots: Object.freeze([...allowedRoots]), instances: Object.freeze(instances), templates: Object.freeze(templates),
-                protectedIdentities: Object.freeze([...protectedIdentities.values()]),
-                protectedBranches: Object.freeze([...config.guards.protected_branches]),
-                hostedDatabaseHosts: Object.freeze([...config.guards.hosted_db_hosts]),
-                vendorHosts: Object.freeze([...config.guards.vendor_endpoint_hosts]),
-                declaredAllows: Object.freeze(config.guards.allow.map(rule => Object.freeze({ ...rule,
-                    ...(rule.cwd === undefined ? {} : { cwd: resolve(canonicalRoot, rule.cwd) }), argv: Object.freeze([...rule.argv]) }))),
-                declaredDenies: Object.freeze(config.guards.deny.map(rule => Object.freeze({
+            const policy = { canonicalRoot, configPath,
+                allowedRoots: [...allowedRoots], instances, templates,
+                protectedIdentities: [...protectedIdentities.values()],
+                protectedBranches: [...config.guards.protected_branches],
+                hostedDatabaseHosts: [...config.guards.hosted_db_hosts],
+                vendorHosts: [...config.guards.vendor_endpoint_hosts],
+                declaredAllows: config.guards.allow.map(rule => ({ ...rule,
+                    ...(rule.cwd === undefined ? {} : { cwd: resolve(canonicalRoot, rule.cwd) }), argv: [...rule.argv] })),
+                declaredDenies: config.guards.deny.map(rule => ({
                     match: 'prefix' in rule ? 'prefix' as const : 'contains' as const,
-                    argv: Object.freeze([...('prefix' in rule ? rule.prefix : rule.contains)]), reason: rule.reason,
+                    argv: [...('prefix' in rule ? rule.prefix : rule.contains)], reason: rule.reason,
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
-                }))),
+                })),
                 ripgrepConfigActive: false,
-                executionDirectories: Object.freeze(executionDirectories), searchDirectories: Object.freeze([]), searchPathRelativeEntry: null,
-                secretFileIdentities: secretFiles.identities && Object.freeze([...secretFiles.identities]), protectedFilesLinked,
-                cockpitInvocations: Object.freeze([]), cockpitLaunchers: Object.freeze([]), projectCommands: Object.freeze([]),
-            })
+                executionDirectories, searchDirectories: [], searchPathRelativeEntry: null,
+                secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
+                cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],
+            }
             return { kind: 'complete' as const, status: 0 as const, diagnostics: [],
-                result: Object.freeze({ policy }) }
+                result: { policy } }
         })
         if (!result || result.kind !== 'complete' || !siblingsRoot) {
             return result ?? guardPolicyRefusal('guard policy checkout authority is copied, changed, expired or already consumed')
@@ -822,7 +822,7 @@ export async function prepareGuardEvaluationPolicy(
                 const argv = resolution.bindings[0]!.policy[kind]
                 if (!argv) continue
                 if (renderGuardProjectCommand(argv).kind !== 'complete') return guardPolicyRefusal(`guard ${kind} command exceeds its rendering bound`)
-                projectCommands.push(Object.freeze({ executable: argv[0]!, checkoutRoot, kind, argv: Object.freeze(argv.slice(1)) }))
+                projectCommands.push({ executable: argv[0]!, checkoutRoot, kind, argv: argv.slice(1) })
             }
         }
         if (projectCommands.length > GUARD_INPUT_LIMITS.invocations) return guardPolicyRefusal('guard candidates exceed the invocation bound')
@@ -836,8 +836,8 @@ export async function prepareGuardEvaluationPolicy(
                 return guardPolicyRefusal('guard root or instance identity changed during command construction')
             }
         }
-        const policy: GuardEvaluationPolicy = Object.freeze({ ...boundaries, projectCommands: Object.freeze(projectCommands) })
-        return { kind: 'complete', status: 0, diagnostics: [], result: Object.freeze({ policy }) }
+        const policy: GuardEvaluationPolicy = { ...boundaries, projectCommands }
+        return { kind: 'complete', status: 0, diagnostics: [], result: { policy } }
     } catch (error) {
         return guardPolicyRefusal(`guard policy construction failed: ${errorCause(error)}`)
     }
@@ -1038,7 +1038,7 @@ const lifecycleRunNotices = new WeakMap<object, EnvironmentDiagnostic[]>()
 
 export function noticeLifecycleRun(context: LifecycleRunContext, diagnostic: EnvironmentDiagnostic): void {
     const notices = lifecycleRunNotices.get(context) ?? []
-    notices.push(Object.freeze({ ...diagnostic }))
+    notices.push({ ...diagnostic })
     lifecycleRunNotices.set(context, notices)
 }
 
@@ -1048,7 +1048,7 @@ function withLifecycleRunNotices<Result extends { readonly diagnostics: readonly
 ): Result {
     const notices = lifecycleRunNotices.get(context)
     lifecycleRunNotices.delete(context)
-    return notices ? Object.freeze({ ...result, diagnostics: Object.freeze([...result.diagnostics, ...notices]) }) : result
+    return notices ? { ...result, diagnostics: [...result.diagnostics, ...notices] } : result
 }
 const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: SourceProvenance; siblingsRoot: string }>>()
 const issuedDestructiveRuns = new WeakSet<object>()
@@ -1061,10 +1061,10 @@ type EffectiveConfigurationResult =
 
 function consumeEffectiveConfiguration(configuration: LoadedConfigProjection): EffectiveConfigurationResult {
     const loaded = consumeLoadedConfigProjection(configuration)
-    if (!loaded) return Object.freeze({ kind: 'unavailable' })
+    if (!loaded) return { kind: 'unavailable' }
     const derived = deriveRegistry(loaded.config)
     return derived.kind === 'complete'
-        ? Object.freeze({ kind: 'complete', source: loaded.source, runtimeSha256: loaded.runtimeSha256, config: derived.result.config as CockpitConfig })
+        ? { kind: 'complete', source: loaded.source, runtimeSha256: loaded.runtimeSha256, config: derived.result.config as CockpitConfig }
         : derived
 }
 
@@ -1088,10 +1088,10 @@ export function issueDestructiveRunContext(input: DestructiveRunContextInput): E
             || selected.checkoutId !== lifecycle.checkoutId || lifecycle.configPath !== resolve(lifecycle.configPath)) {
             return lifecycleContextRefusal()
         }
-        const context = Object.freeze({ ...lifecycle, namespace, instance })
+        const context = { ...lifecycle, namespace, instance }
         issuedDestructiveRuns.add(context)
         if (claim) provisionalClaims.set(context, claim)
-        return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })
+        return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch (error) {
         return lifecycleContextRefusal(`destructive run authority could not be read: ${errorCause(error)}`)
     }
@@ -1131,22 +1131,22 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
             || namespace.paths.lifecycle(expectedStackId).cockpitId !== checkout.cockpitId) {
             return lifecycleContextRefusal()
         }
-        const context = Object.freeze({
+        const context = {
             configPath: resolve(requestedConfigPath),
-            source: Object.freeze({ ...loaded.source }),
+            source: { ...loaded.source },
             runtimeSha256: loaded.runtimeSha256,
             namespace,
             cockpitId: checkout.cockpitId,
             checkoutId: checkout.checkoutId,
             stackId: expectedStackId,
             holderId: expectedHolderId,
-            ports: Object.freeze({
+            ports: {
                 step: loaded.config.ports.step,
                 count: loaded.config.ports.count,
-                bases: Object.freeze({ ...loaded.config.ports.bases }),
-            }),
-            entrypointDerivatives: Object.freeze(loaded.config.environment.entrypoint_derivatives.map((value) => Object.freeze({ ...value }))),
-        })
+                bases: { ...loaded.config.ports.bases },
+            },
+            entrypointDerivatives: loaded.config.environment.entrypoint_derivatives.map((value) => ({ ...value })),
+        }
         issuedLifecycleRuns.add(context)
         lifecycleConfigurationSources.set(context, Object.freeze({ source: context.source,
             siblingsRoot: resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root) }))
@@ -1281,12 +1281,12 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             return contextRefusal(checkout.source.path)
         }
         const config = loaded.config
-        const context = Object.freeze({
-            source: Object.freeze({
+        const context = {
+            source: {
                 path: checkout.source.path,
                 byteLength: checkout.source.byteLength,
                 sha256: checkout.source.sha256,
-            }),
+            },
             mainCheckoutPath: checkout.mainCheckoutPath,
             siblingsRoot: expectedSiblingsRoot,
             siblings: config.sibling,
@@ -1298,7 +1298,7 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             holderId: expectedHolderId,
             writeInstructionPointers: input.writeInstructionPointers === true,
             writeInstructionFiles: input.writeInstructionFiles === true,
-        })
+        }
         issuedSetupRuns.add(context)
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch (error) {
@@ -1373,7 +1373,7 @@ function exactEnvironment(input: unknown): Readonly<Record<string, string>> | un
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
         || Object.entries(snapshot).some(([name, value]) => name.length === 0 || name.includes('\0')
             || name.includes('=') || typeof value !== 'string' || value.includes('\0'))) return undefined
-    return Object.freeze({ ...snapshot } as Readonly<Record<string, string>>)
+    return { ...snapshot } as Readonly<Record<string, string>>
 }
 
 export function setupEnvironment(
@@ -1386,10 +1386,10 @@ export function setupEnvironment(
             : input
         const git = gitEnvironment(source)
         const xdgStateHome = source.XDG_STATE_HOME
-        projected = Object.freeze({
+        projected = {
             ...git,
             ...(xdgStateHome === undefined ? {} : { XDG_STATE_HOME: xdgStateHome }),
-        })
+        }
     } catch {
         // Only reading a caller-supplied environment can throw; the caller refuses it as invalid data.
         return undefined
@@ -1426,7 +1426,7 @@ function exactSeedReport(
     const report = snapshot as Record<string, unknown>
     if (Object.keys(report).sort().join('\0') !== ['destination', 'kind', 'siblingRoot'].join('\0')
         || report.kind !== kind || report.siblingRoot !== siblingRoot || report.destination !== destination) return undefined
-    return Object.freeze({ kind, siblingRoot, destination })
+    return { kind, siblingRoot, destination }
 }
 
 function exactSetupResult(
@@ -1476,13 +1476,13 @@ function exactSetupResult(
             action === 'clone' && observed === 'absent'
             || action === 'wire-remote' && observed === 'repository'
         )) return undefined
-    return Object.freeze({
+    return {
         sibling: sibling.slug,
         target: result.target as string,
         observed: observed as SetupResult['observed'],
         action: action as SetupResult['action'],
         changed: result.changed,
-    })
+    }
 }
 
 function exactInstructionPointerResult(
@@ -1498,13 +1498,13 @@ function exactInstructionPointerResult(
         if (Object.keys(result).sort().join('\0') !== ['kind', 'path', 'reason'].join('\0')
             || result.path !== path || typeof result.reason !== 'string' || result.reason.length === 0
             || Buffer.byteLength(result.reason) > 4_096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(result.reason)) return undefined
-        return Object.freeze({ kind: 'refusal', path, reason: result.reason })
+        return { kind: 'refusal', path, reason: result.reason }
     }
     const target = relative(siblingRoot, resolve(cockpitRoot, 'AGENTS.md')).split(sep).join('/')
     if (Object.keys(result).sort().join('\0') !== ['kind', 'path', 'target'].join('\0')
         || !['offered', 'written', 'unchanged'].includes(result.kind as string)
         || result.path !== path || result.target !== target) return undefined
-    return Object.freeze({ kind: result.kind as 'offered' | 'written' | 'unchanged', path, target })
+    return { kind: result.kind as 'offered' | 'written' | 'unchanged', path, target }
 }
 
 function exactInstructionFilesResult(value: unknown, siblingRoot: string): SiblingInstructionFilesResult | undefined {
@@ -1513,15 +1513,15 @@ function exactInstructionFilesResult(value: unknown, siblingRoot: string): Sibli
     const result = snapshot as Record<string, unknown>
     const keys = Object.keys(result).sort().join('\0')
     if (result.root !== siblingRoot) return undefined
-    if (result.kind === 'none' && keys === ['kind', 'root'].join('\0')) return Object.freeze({ kind: 'none', root: siblingRoot })
+    if (result.kind === 'none' && keys === ['kind', 'root'].join('\0')) return { kind: 'none', root: siblingRoot }
     if (result.kind === 'refusal') {
         if (keys !== ['kind', 'reason', 'root'].join('\0') || typeof result.reason !== 'string' || result.reason.length === 0
             || Buffer.byteLength(result.reason) > 4_096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(result.reason)) return undefined
-        return Object.freeze({ kind: 'refusal', root: siblingRoot, reason: result.reason })
+        return { kind: 'refusal', root: siblingRoot, reason: result.reason }
     }
     if (keys !== ['change', 'kind', 'root'].join('\0') || (result.kind !== 'offered' && result.kind !== 'written')
         || (result.change !== 'claude-import' && result.change !== 'move-to-agents')) return undefined
-    return Object.freeze({ kind: result.kind, root: siblingRoot, change: result.change })
+    return { kind: result.kind, root: siblingRoot, change: result.change }
 }
 
 type ReadyEnvironmentSeedPlan = Extract<EnvironmentSeedPlan, { kind: 'ready' }>
@@ -1536,14 +1536,14 @@ function exactSeedIdentity(value: unknown): EnvironmentSeedIdentity | undefined 
     }
     const identity = snapshot as Record<string, unknown>
     if (Object.values(identity).some((field) => typeof field !== 'string' || !/^\d+$/.test(field))) return undefined
-    return Object.freeze({
+    return {
         dev: identity.dev as string,
         ino: identity.ino as string,
         mode: identity.mode as string,
         size: identity.size as string,
         mtimeNs: identity.mtimeNs as string,
         ctimeNs: identity.ctimeNs as string,
-    })
+    }
 }
 
 function exactSeedPlan(
@@ -1559,7 +1559,7 @@ function exactSeedPlan(
     if (plan.kind === 'unchanged') {
         return Object.keys(plan).sort().join('\0') === ['destination', 'kind', 'siblingRoot'].join('\0')
             && plan.siblingRoot === siblingRoot && plan.destination === destination
-            ? Object.freeze({ kind: 'unchanged', siblingRoot, destination })
+            ? { kind: 'unchanged', siblingRoot, destination }
             : undefined
     }
     if (plan.kind === 'refusal') {
@@ -1570,7 +1570,7 @@ function exactSeedPlan(
         return Object.keys(plan).sort().join('\0') === ['code', 'kind', 'path'].join('\0')
             && typeof plan.path === 'string'
             && authenticRefusal
-            ? Object.freeze({ kind: 'refusal', code: plan.code, path: plan.path }) as Extract<EnvironmentSeedPlan, { kind: 'refusal' }>
+            ? { kind: 'refusal', code: plan.code, path: plan.path } as Extract<EnvironmentSeedPlan, { kind: 'refusal' }>
             : undefined
     }
     if (plan.kind !== 'ready'
@@ -1584,10 +1584,10 @@ function exactSeedPlan(
     const sourceIdentity = exactSeedIdentity(plan.sourceIdentity)
     const destinationParentIdentity = exactSeedIdentity(plan.destinationParentIdentity)
     return rootIdentity && sourceIdentity && destinationParentIdentity
-        ? Object.freeze({
+        ? {
               kind: 'ready', siblingRoot, canonicalRoot: siblingRoot, source, destination,
               rootIdentity, sourceIdentity, destinationParentIdentity,
-          })
+          }
         : undefined
 }
 
@@ -1612,7 +1612,7 @@ function exactSeedOutcome(
         && Object.keys(result).sort().join('\0') === ['code', 'kind', 'path'].join('\0')
         && typeof result.path === 'string'
         && authenticRefusal
-        ? Object.freeze({ kind: 'refusal', code: result.code, path: result.path }) as EnvironmentSeedRefusal
+        ? { kind: 'refusal', code: result.code, path: result.path } as EnvironmentSeedRefusal
         : undefined
 }
 
@@ -1736,11 +1736,11 @@ function exactIgnoreRefusal(
             && refusal.path === (refusal.code === ENVIRONMENT_CODES.INSTANCE_NOT_IGNORED
                 ? environmentFile.instance
                 : environmentFile.template)) {
-            return Object.freeze({
+            return {
                 kind: 'refusal',
                 code: refusal.code as EnvironmentIgnoreRefusal['code'],
                 path: refusal.path,
-            })
+            }
         }
     }
     return undefined
@@ -1786,15 +1786,15 @@ function exactPolicyBindings(
         || candidate.siblingIndex !== siblingIndex || candidate.siblingSlug !== sibling.slug
         || candidate.checkoutRoot !== checkoutRoot || candidate.checkoutId !== checkoutId
         || JSON.stringify(snapshotJson(candidate.policy)) !== JSON.stringify(snapshotJson(policy))) return undefined
-    return Object.freeze([Object.freeze({
+    return [{
         source: context.source,
         siblingIndex,
-        diagnostics: Object.freeze({ catalogIndex: catalogIndex as number }),
+        diagnostics: { catalogIndex: catalogIndex as number },
         siblingSlug: sibling.slug,
         checkoutRoot,
         checkoutId,
         policy: snapshotJson(policy) as unknown as ResolvedInstallPolicyBinding['policy'],
-    })])
+    }]
 }
 
 export async function runSetup(
@@ -2585,12 +2585,12 @@ async function reportFailedService(
     const stopped = stop ? (await adapters.execute(stop)).kind === 'complete' : undefined
     const next = `fix the error in the log excerpt, then run \`${lifecycleSuggestion(context, 'up')}\` to resume, or \`${lifecycleSuggestion(context, 'down')}\` to remove the stack`
     const fix = stopped ? `cockpit stopped the failed container and kept it with its logs; ${next}` : next
-    return Object.freeze([
+    return [
         ...logs.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED ? { ...diagnostic, fix } : diagnostic),
         ...(stopped === false ? [ownerDiagnostic(ENVIRONMENT_CODES.EXECUTION_COMPENSATION_STEP_FAILED,
             `the failed service ${service} could not be stopped, so it may keep restarting; run \`${lifecycleSuggestion(context, 'down')}\` to remove it`,
             service)] : []),
-    ])
+    ]
 }
 
 async function collectFailureLogs(
@@ -2629,11 +2629,11 @@ async function collectFailureLogs(
 }
 
 function progressValueForPlan(value: LifecycleRecordValue): LifecycleProgress {
-    return Object.freeze({
+    return {
         workBasisSha256: value.workBasisSha256,
         operationGeneration: value.operationGeneration,
         completedServices: value.completedServices,
-    })
+    }
 }
 
 type UpRoundResult =
@@ -2666,7 +2666,7 @@ function orderedRuntimeServices(topology: RuntimeTopologyEvidence): RuntimeTopol
     if (order.length === 0 || order.length !== services.length || new Set(order).size !== order.length) return undefined
     const byId = new Map(services.map((service) => [service.id, service] as const))
     if (byId.size !== services.length || order.some((serviceId) => !byId.has(serviceId))) return undefined
-    return Object.freeze(order.map((serviceId) => byId.get(serviceId)!))
+    return order.map((serviceId) => byId.get(serviceId)!)
 }
 
 async function executeUpRound(
@@ -2848,11 +2848,11 @@ async function executeUpRound(
         }
         let published = stored
         const startedEvidence: RuntimeServiceEvidence[] = []
-        const plannedValue: LifecycleRecordValue = Object.freeze({
+        const plannedValue: LifecycleRecordValue = {
             holderId: context.holderId,
             ...planned.plan.progress,
             runtimeInputs: runtime.inputs,
-        })
+        }
         if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
             // The first lifecycle data starts its durable history, as `setup` does (an existing
             // `started` is unchanged), so lifecycle data without history keeps meaning that history
@@ -2922,13 +2922,13 @@ async function executeUpRound(
             }
             completedEvidence.push(admitted.evidence)
             startedEvidence.push(admitted.evidence)
-            const nextValue: LifecycleRecordValue = Object.freeze({
+            const nextValue: LifecycleRecordValue = {
                 ...plannedValue,
-                completedServices: Object.freeze([
+                completedServices: [
                     ...published!.value.completedServices,
-                    Object.freeze({ service: admitted.evidence.service, containerId: admitted.evidence.containerId }),
-                ]),
-            })
+                    { service: admitted.evidence.service, containerId: admitted.evidence.containerId },
+                ],
+            }
             const publication = await publishLifecycleRecord(context, published!.record, nextValue)
             if ('status' in publication) return { kind: 'complete' as const, result: publication }
             if (publication.kind === 'indeterminate') return { kind: 'complete' as const, result: lifecycleRefusal(
@@ -2968,11 +2968,11 @@ async function executeUpRound(
                 fix: 'make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml>',
             }] } }
         }
-        const coldStart = Object.freeze({
+        const coldStart = {
             measuredMillis: coldStartObservation.observed.value,
             limitMillis: coldStartObservation.expectation.value,
             headroomMillis: coldStartObservation.expectation.value - coldStartObservation.observed.value,
-        })
+        }
         return { kind: 'complete' as const, result: {
             kind: 'complete', status: 0, diagnostics: planned.plan.diagnostics,
             result: {
@@ -3026,13 +3026,13 @@ function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]): Envi
     const directory = dirname(skipped[0]!.path)
     const reasons = [...new Set(skipped.map(({ reason }) => reason))].join('; ')
     const count = skipped.length === 1 ? '1 state folder of another cockpit' : `${skipped.length} state folders of other cockpits`
-    return Object.freeze({
+    return {
         severity: 'warning',
         code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
         message: `${count} under ${directory} cannot be read by this cockpit version (${reasons}), so their claims and port leases were ignored`,
         target: directory,
         fix: `ask the person who owns this machine whether any cockpit still uses them; if none does, stop any stack they started (docker compose ls lists them), then delete them: rm -rf ${skipped.map(({ path }) => shellQuote(path)).join(' ')}`,
-    })
+    }
 }
 
 export async function runUp(
@@ -3041,7 +3041,7 @@ export async function runUp(
 ): Promise<UpCommandResult> {
     const configPath = exactCommandConfigPath(input)
     if (!configPath) return lifecycleContextRefusal()
-    const loaded = await adapters.load(Object.freeze({ configPath }))
+    const loaded = await adapters.load({ configPath })
     if (loaded.kind === 'refusal') return loaded
     if (loaded.kind === 'preview') return lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
@@ -3151,35 +3151,35 @@ function sessionChildEnvironment(
     env: Readonly<Record<string, string>>,
     up: Extract<UpCommandResult, { kind: 'complete' }>['result'],
 ): Readonly<Record<string, string>> {
-    return Object.freeze({
+    return {
         ...env,
         ...Object.fromEntries(Object.entries(up.ports).map(([name, port]) => [name, String(port)])),
         ...Object.fromEntries(up.entrypoints.map(({ name, value }) =>
             [`COCKPIT_ENTRYPOINT_${name.toUpperCase().replaceAll('-', '_')}`, value])),
-    })
+    }
 }
 
 // A session over a stack an earlier up still holds ends with the containers running, which read as a
 // failed release when nothing said why. Literals, so the diagnostic inventory captures the fix.
 function sessionStackRetained(stackId: string) {
-    return Object.freeze({
+    return {
         severity: 'info' as const,
         code: 'SESSION_STACK_RETAINED' as const satisfies typeof ENVIRONMENT_CODES.SESSION_STACK_RETAINED,
         message: 'the session released its hold, and the stack keeps running because another holder, such as an earlier up from this checkout, still holds it',
         target: stackId,
         fix: 'run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
-    })
+    }
 }
 
 export async function runSession(
     input: SessionCommandInput,
     adapters: SessionCommandAdapters,
 ): Promise<SessionCommandResult> {
-    if (adapters.signal?.aborted) return Object.freeze({
+    if (adapters.signal?.aborted) return {
         kind: 'refusal' as const, status: 130 as const, result: null,
-        diagnostics: Object.freeze([{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_ABORTED,
-            message: 'the supervised session was cancelled before environment bring-up', target: input.argv[0] }]),
-    })
+        diagnostics: [{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_ABORTED,
+            message: 'the supervised session was cancelled before environment bring-up', target: input.argv[0] }],
+    }
     // A relative command path such as `./node_modules/.bin/tool` names a file under the directory the
     // session runs in, so it resolves there; one that climbs out of it is refused rather than guessed.
     const argv0 = input.argv[0]
@@ -3208,7 +3208,7 @@ export async function runSession(
 
     const child = await adapters.executeForeground({
         executable: executable.value,
-        argv: Object.freeze(input.argv.slice(1)),
+        argv: input.argv.slice(1),
         cwd: input.cwd,
         env: sessionChildEnvironment(input.env, up.result),
     }, { ...(adapters.signal ? { signal: adapters.signal } : {}) })
@@ -3243,21 +3243,21 @@ export async function runSession(
     if (sleep.kind !== 'complete' || child.kind === 'refusal') return {
         kind: 'refusal', status: sleep.kind === 'complete' && child.kind === 'refusal'
             && child.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? 130 : 2, result: null,
-        diagnostics: Object.freeze([
+        diagnostics: [
             ...(childDiagnostic ? [childDiagnostic] : []),
             ...sleep.diagnostics,
-        ]),
+        ],
     }
     const retained = sleep.result.change === 'retained' ? [sessionStackRetained(sleep.result.stackId)] : []
-    return Object.freeze({
+    return {
         kind: 'complete' as const,
         status: childStatus,
         diagnostics: uniqueDiagnostics([...up.diagnostics, ...sleep.diagnostics, ...retained]),
-        result: Object.freeze({
-            child: Object.freeze({ exitCode: child.exitCode, signal: child.signal }),
+        result: {
+            child: { exitCode: child.exitCode, signal: child.signal },
             sleep: sleep.result,
-        }),
-    })
+        },
+    }
 }
 
 export async function runSleep(
@@ -3266,7 +3266,7 @@ export async function runSleep(
 ): Promise<SleepCommandResult> {
     const configPath = exactCommandConfigPath(input)
     if (!configPath) return lifecycleContextRefusal()
-    const loaded = await adapters.load(Object.freeze({ configPath }))
+    const loaded = await adapters.load({ configPath })
     if (loaded.kind === 'refusal') return loaded
     if (loaded.kind === 'preview') return lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
@@ -3390,7 +3390,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             )
             return {
                 kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
-                result: Object.freeze({ stackId: context.stackId, change: 'retained' as const }),
+                result: { stackId: context.stackId, change: 'retained' as const },
             }
         }
         if (!issuance.drainRequest) return lifecycleRefusal(
@@ -3450,7 +3450,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
         if (finalized) return finalized
         return {
             kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
-            result: Object.freeze({ stackId: context.stackId, change: 'stopped' as const }),
+            result: { stackId: context.stackId, change: 'stopped' as const },
         }
     }, ports, forwardedRefusal, 'teardown')
     return result ?? lifecycleRefusal(
@@ -3471,13 +3471,13 @@ async function unheldStack(context: LifecycleRunContext): Promise<SleepCommandRe
     const reserved = coordination.lease !== null && !coordination.lease.released
     return {
         kind: 'complete', status: 0,
-        diagnostics: [Object.freeze({
+        diagnostics: [{
             severity: 'warning' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: context.stackId,
             message: reserved
                 ? `no session holds this stack, so nothing is running and sleep has nothing to stop; its port family stays reserved for the next up until \`${lifecycleSuggestion(context, 'down')}\` releases it`
                 : 'the stack is already asleep: no session holds it and its services are stopped, so sleep has nothing to do',
-        })],
-        result: Object.freeze({ stackId: context.stackId, change: 'unchanged' as const }),
+        }],
+        result: { stackId: context.stackId, change: 'unchanged' as const },
     }
 }
 
@@ -3509,15 +3509,15 @@ async function invalidateCompletedLifecycle(
         && stored.value.operationGeneration === operationGeneration) return undefined
     // Sleep retains containers, so its replay still guards resume. Only a reconciled down
     // retires that identity, before the final drain publication can release its claim.
-    const value: LifecycleRecordValue = Object.freeze({
+    const value: LifecycleRecordValue = {
         holderId: context.holderId,
         workBasisSha256,
         operationGeneration,
-        completedServices: Object.freeze([]),
+        completedServices: [],
         ...(purpose === 'down' ? { teardownComplete: true as const } : {
             ...(stored.value.runtimeInputs ? { runtimeInputs: stored.value.runtimeInputs } : {}),
         }),
-    })
+    }
     const publication = await publishLifecycleRecord(context, stored.record, value)
     if ('status' in publication) return {
         kind: 'refusal', status: 2, result: null, diagnostics: publication.diagnostics,
@@ -3601,7 +3601,7 @@ type DestructivePlan = Extract<TeardownPlanResult | ResetPlanResult, { kind: 'co
 function destructiveRefusal(
     diagnostics: readonly EnvironmentDiagnostic[],
 ): Extract<DownCommandResult, { kind: 'refusal' }> {
-    return Object.freeze({ kind: 'refusal', status: 2, result: null, diagnostics })
+    return { kind: 'refusal', status: 2, result: null, diagnostics }
 }
 
 function destructiveRepairRequired(context: DestructiveRunContext): Extract<DownCommandResult, { kind: 'refusal' }> {
@@ -3634,7 +3634,7 @@ async function loadDestructiveContext(
 ): Promise<EnvironmentCommandOutcome<DestructiveRunContext>> {
     const configPath = exactCommandConfigPath(input)
     if (!configPath) return lifecycleContextRefusal()
-    const loaded = await adapters.load(Object.freeze({ configPath }))
+    const loaded = await adapters.load({ configPath })
     if (loaded.kind !== 'complete') return loaded.kind === 'refusal' ? loaded : lifecycleContextRefusal()
     if (loaded.result.configPath !== configPath || !issuedDestructiveRuns.delete(loaded.result)) {
         return lifecycleRefusal(
@@ -3729,7 +3729,7 @@ async function executeRuntimeDrain(
         const failure = admitRuntimeStopFailure({ plan: stop, outcome })
         if (failure.kind !== 'complete') return destructiveRepairRequired(context)
         const authority = consumeRuntimeStopFailure(failure.authority)
-        return authority ? Object.freeze({ authority, fence }) : destructiveRepairRequired(context)
+        return authority ? { authority, fence } : destructiveRepairRequired(context)
     }
     const observationPlan = createRuntimeStopObservationPlan({ plan: stop, outcome })
     if (observationPlan.kind !== 'planned') return destructiveRepairRequired(context)
@@ -3743,7 +3743,7 @@ async function executeRuntimeDrain(
         const invalidated = await invalidateCompletedLifecycle(context, reservation.operationBasis, reservation.generation, 'down')
         if (invalidated) return invalidated
     }
-    return Object.freeze({ authority, fence })
+    return { authority, fence }
 }
 
 // Teardown removes only what it can prove is this stack's and unused, so a finished drain can
@@ -3759,11 +3759,11 @@ function downKeptRefusal(
         context.stackId)
     if (kept.length === 0) return undefined
     const listed = kept.slice(0, 8).map(({ kind, id, name, reason }) => `${kind} ${name} (${id}): ${reason}`).join('; ')
-    return destructiveRefusal(Object.freeze([Object.freeze({
+    return destructiveRefusal([{
         severity: 'error' as const, code: ENVIRONMENT_CODES.DOWN_RESOURCES_KEPT, target: context.stackId,
         message: `down removed what it could, but kept ${kept.length} of this stack's own resources: ${listed}${kept.length > 8 ? `; and ${kept.length - 8} more` : ''}`,
         fix: `release each kept resource as its reason says (remove the image's other tag, stop the container still attached to the network), then run \`${lifecycleSuggestion(context, 'down')}\``,
-    })]))
+    }])
 }
 
 async function executeDestructivePlan(
@@ -3846,10 +3846,10 @@ async function executeDestructivePlan(
             const fence = execution.step.executionFence
             if (!fence) return destructiveRepairRequired(context)
             const published = await publishDestructiveOutcome(context, authority, fence)
-            return published ?? destructiveRefusal(Object.freeze([Object.freeze({
+            return published ?? destructiveRefusal([{
                 severity: 'error', code: outcome.code,
                 message: 'destructive action did not start', target: context.stackId,
-            })]))
+            }])
         }
         const postAction = await observeDestructiveReclaim(context, adapters)
         if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
@@ -3871,7 +3871,7 @@ async function executeDestructivePlan(
         const published = await publishDestructiveOutcome(context, authority, fence)
         if (published) return published
         if (reconciled.continuation === null) {
-            plan = Object.freeze({ ...plan, actionAuthority: null, continuation: null, remaining: 0 })
+            plan = { ...plan, actionAuthority: null, continuation: null, remaining: 0 }
             break
         }
         // The discovery that reconciled this removal plans the next; only the coordination record
@@ -3889,14 +3889,14 @@ async function executeDestructivePlan(
         plan = next
     }
     return purpose === 'down'
-        ? downKeptRefusal(context, observed) ?? Object.freeze({
+        ? downKeptRefusal(context, observed) ?? {
             kind: 'complete' as const, status: 0 as const, diagnostics: lifecyclePlan.plan.diagnostics,
-            result: Object.freeze({ stackId: context.stackId, change: 'removed' as const }),
-        })
-        : Object.freeze({
+            result: { stackId: context.stackId, change: 'removed' as const },
+        }
+        : {
             kind: 'complete' as const, status: 0 as const, diagnostics: lifecyclePlan.plan.diagnostics,
-            result: Object.freeze({ stackId: context.stackId, change: 'reset' as const }),
-        })
+            result: { stackId: context.stackId, change: 'reset' as const },
+        }
 }
 
 function destructivePlanningBasis(request: DrainReservationRequest | undefined): Readonly<{
@@ -3906,11 +3906,11 @@ function destructivePlanningBasis(request: DrainReservationRequest | undefined):
 }> {
     const runtimeStop = request?.actions.find(({ stage }) => stage === 'runtime-stop')
     const reclaim = request?.actions.find(({ stage }) => stage === 'reclaim')
-    return Object.freeze({
+    return {
         generation: request?.generation ?? randomBytes(32).toString('hex'),
         runtimeStopValidForMs: runtimeStop?.validForMs ?? 60_000,
         reclaimValidForMs: reclaim?.validForMs ?? 60_000,
-    })
+    }
 }
 
 function matchesPersistedDrainRequest(
@@ -4032,14 +4032,14 @@ async function resetPreview(
 }
 
 function publicResetPreview(context: DestructiveRunContext, preview: ResetPreview): Extract<ResetCommandResult, { kind: 'preview' }> {
-    return Object.freeze({
-        kind: 'preview', status: 0, diagnostics: Object.freeze([]),
-        result: Object.freeze({
+    return {
+        kind: 'preview', status: 0, diagnostics: [],
+        result: {
             stackId: context.stackId, planDigest: preview.digest,
-            targets: Object.freeze(preview.targets.map((target) => Object.freeze({ ...target }))),
+            targets: preview.targets.map((target) => ({ ...target })),
             noop: preview.noop,
-        }),
-    })
+        },
+    }
 }
 
 export async function runReset(
@@ -4062,22 +4062,22 @@ export async function beginOperatorReset(
     const context = loaded.result
     const preview = await resetPreview(context, adapters)
     if ('status' in preview) return withLifecycleRunNotices(context, await settleProvisionalClaim(context, preview))
-    const token = Object.freeze({})
+    const token = {}
     privateResetSessions.set(token, Object.freeze({ context, adapters, preview }))
-    const session = Object.freeze({
+    const session = {
         preview: withLifecycleRunNotices(context, publicResetPreview(context, preview)),
         decide: (decision: 'approve' | 'decline') => continueOperatorReset(token, decision),
-    })
+    }
     return session
 }
 
 async function continueOperatorReset(token: object, decision: 'approve' | 'decline'): Promise<OperatorResetResult> {
     const session = privateResetSessions.get(token)
     privateResetSessions.delete(token)
-    const unapproved = destructiveRefusal(Object.freeze([Object.freeze({
+    const unapproved = destructiveRefusal([{
         severity: 'error', code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
         message: decision === 'decline' ? 'reset was declined' : 'reset operator session is unavailable', target: 'reset',
-    })]))
+    }])
     if (!session) return unapproved
     return settleProvisionalClaim(session.context, decision === 'approve' ? await approveOperatorReset(session) : unapproved)
 }
@@ -4106,10 +4106,10 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
                 stackId: session.context.stackId, holderId: session.context.holderId, purpose: 'reset' })
             if (finalInspection.kind !== 'none') return finalInspection.kind === 'refusal'
                 ? destructiveRefusal(finalInspection.diagnostics) : destructiveRepairRequired(session.context)
-            return Object.freeze({
-                kind: 'complete', status: 0, diagnostics: Object.freeze([]),
-                result: Object.freeze({ stackId: session.context.stackId, change: 'unchanged' }),
-            })
+            return {
+                kind: 'complete', status: 0, diagnostics: [],
+                result: { stackId: session.context.stackId, change: 'unchanged' },
+            }
         }
         const recoveryPlan = recovered ? await planReset({ ...observation.reset,
             confirmationDigest: persistedRequest!.planDigest,
@@ -4143,8 +4143,8 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
             recovered?.kind === 'complete' ? recovered : undefined,
             persistedRequest,
         ) as OperatorResetResult
-        return applied.kind === 'complete' ? Object.freeze({ ...applied, result: Object.freeze({ ...applied.result,
-            targets: publicResetPreview(session.context, session.preview).result.targets }) }) : applied
+        return applied.kind === 'complete' ? { ...applied, result: { ...applied.result,
+            targets: publicResetPreview(session.context, session.preview).result.targets } } : applied
     } finally {
         if (recovered?.kind === 'complete') discardDrainReservationAuthority(recovered.authority)
     }
@@ -4322,19 +4322,19 @@ type LoadedDoctorConfig = Awaited<ReturnType<typeof loadCockpitConfig>>
 // instead of letting it read as a passed check.
 async function doctorDeclarations(loading: Promise<LoadedDoctorConfig>): Promise<readonly DoctorDeclaration[]> {
     const loaded = await loading
-    if (loaded.kind !== 'complete') return Object.freeze([])
+    if (loaded.kind !== 'complete') return []
     const environment = loaded.result.config.environment
     const runtime = declaredRuntime(environment) === 'compose'
     const absent = runtime ? 'not declared in cockpit.toml' : 'no runtime environment is declared'
     const row = (subject: DoctorDeclaration['subject'], declared: boolean, source: string, reason: string): DoctorDeclaration =>
-        Object.freeze({ subject, state: declared ? 'declared' as const : 'not-declared' as const, source, reason: declared ? reason : absent })
-    return Object.freeze([
+        ({ subject, state: declared ? 'declared' as const : 'not-declared' as const, source, reason: declared ? reason : absent })
+    return [
         row('runtime', runtime, 'environment.compose_files', runtime ? 'cockpit runs the declared Compose files'
             : 'environment.compose_files is not declared; runtime commands refuse'),
         row('reset-volumes', environment.resettable_volumes.length > 0, 'environment.resettable_volumes',
             'reset may delete and recreate these volumes'),
         row('seed', environment.seed !== undefined, 'environment.seed', 'up runs the seed when a resettable volume is new'),
-    ])
+    ]
 }
 
 // The guard denies agent commands that reach these hosts. Two empty lists deny nothing, and that
@@ -4343,57 +4343,57 @@ async function doctorDeclarations(loading: Promise<LoadedDoctorConfig>): Promise
 // written as empty lists, as init records an explicit "none", is a decision and is not warned about.
 async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    if (loaded.kind !== 'complete') return Object.freeze([])
+    if (loaded.kind !== 'complete') return []
     const { environment, guards } = loaded.result.config
     if (declaredRuntime(environment) === 'none' || loaded.result.guardHostsStated
         || guards.hosted_db_hosts.length > 0 || guards.vendor_endpoint_hosts.length > 0) {
-        return Object.freeze([])
+        return []
     }
-    return Object.freeze([Object.freeze({
+    return [{
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'GUARD_HOSTS_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.GUARD_HOSTS_UNDECLARED,
         message: 'guards.hosted_db_hosts and guards.vendor_endpoint_hosts are both empty, so the guard denies no agent command by host even though this cockpit declares a runtime',
         target: 'guards',
         fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
-    })])
+    }]
 }
 
 // A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;
 // a docs-only cockpit has no product to test and stays quiet.
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(evaluatorTools(loaded.result.config)) : Object.freeze([])
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(evaluatorTools(loaded.result.config)) : []
 }
 
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete' || loaded.result.config.testing || declaredRuntime(loaded.result.config.environment) === 'none') {
-        return Object.freeze([])
+        return []
     }
-    return Object.freeze([Object.freeze({
+    return [{
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'TESTING_GATE_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.TESTING_GATE_UNDECLARED,
         message: 'cockpit.toml declares no [testing] gate, so test-run has nothing to run and no work in this product can be graded PASS',
         target: 'testing',
         fix: 'declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
-    })])
+    }]
 }
 
 // init records answers no person stated under `unconfirmed`. They look exactly like stated values
 // in the file, so doctor keeps naming them until a person confirms each and deletes its entry.
 async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    if (loaded.kind !== 'complete' || !loaded.result.config.unconfirmed) return Object.freeze([])
-    return Object.freeze([Object.freeze({
+    if (loaded.kind !== 'complete' || !loaded.result.config.unconfirmed) return []
+    return [{
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'DECLARATION_UNCONFIRMED' satisfies typeof ENVIRONMENT_CODES.DECLARATION_UNCONFIRMED,
         message: `${loaded.result.config.unconfirmed.join(', ')} in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product`,
         target: 'unconfirmed',
         fix: 'confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml>',
-    })])
+    }]
 }
 
 export type DoctorCommandResult = Readonly<{
@@ -4487,7 +4487,7 @@ function applicationDiagnostic(
     target: string,
     fix?: string,
 ): EnvironmentDiagnostic {
-    return Object.freeze({ severity: 'error', code, message, target, ...(fix === undefined ? {} : { fix }) })
+    return { severity: 'error', code, message, target, ...(fix === undefined ? {} : { fix }) }
 }
 
 function comparisonVerdict(result: ComparisonRemoteResult): PreflightEvaluation['verdict'] {
@@ -4523,7 +4523,7 @@ function exactHealthProducers(value: unknown): HealthObservationProducers | unde
             if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function') return undefined
             producers[name] = descriptor.value as () => Promise<readonly EnvironmentObservation[]>
         }
-        return Object.freeze(producers) as HealthObservationProducers
+        return producers as HealthObservationProducers
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -4556,7 +4556,7 @@ function exactDataObject(value: unknown, keys: readonly string[]): Readonly<Reco
             if (!descriptor || !('value' in descriptor)) return undefined
             captured[key] = descriptor.value
         }
-        return Object.freeze(captured)
+        return captured
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -4630,7 +4630,7 @@ function issueHealthObservationSource(
         // rows that need no running stack are, and the reason none runs travels with them.
         const stage = stopped === null || stageMatches(rawPreflight as PreflightContext, 'steady') ? 'steady' as const : 'bootstrap' as const
         const runtimeDeclared = !declaresNothingToRun(loaded.config.environment)
-        const expectedPreflight = Object.freeze({ stackId: stack, source: loaded.source.path, revision: loaded.source.sha256, stage })
+        const expectedPreflight = { stackId: stack, source: loaded.source.path, revision: loaded.source.sha256, stage }
         const preflight = boundPreflightContext(rawPreflight, expectedPreflight)
         if (!preflight) return undefined
         const siblingsRoot = resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root)
@@ -4641,7 +4641,7 @@ function issueHealthObservationSource(
             }
             const checkoutRoot = resolve(siblingsRoot, sibling.dir)
             if (!confinedPath(siblingsRoot, checkoutRoot)) throw new RefusalError('sibling checkout escapes its configured root')
-            return Object.freeze({
+            return {
                 executable,
                 checkoutRoot,
                 env,
@@ -4652,20 +4652,20 @@ function issueHealthObservationSource(
                 sibling: sibling.slug,
                 acquire: sibling.acquire,
                 ...(declared === undefined ? {} : { declaredRemote: declared.remote }),
-            })
+            }
         })
-        const prepared = Object.freeze({
+        const prepared = {
             configPath: loaded.source.path,
             preflight,
-            comparisons: Object.freeze(comparisons),
+            comparisons,
             producers,
             refreshPreflight: refreshPreflight as (previous: PreflightContext) => Promise<PreflightContext | undefined>,
             expectedPreflight,
-            stopped: stopped === null ? null : Object.freeze({ ...stopped }),
+            stopped: stopped === null ? null : { ...stopped },
             notices: notices as () => readonly EnvironmentDiagnostic[],
             unobservable: stopped === null ? new Map<string, string>() : stoppedStackApplicability({ runtimeDeclared }),
-        })
-        const source = Object.freeze({ kind: 'health-observation-source' as const })
+        }
+        const source = { kind: 'health-observation-source' as const }
         issuedHealthObservationSources.set(source, prepared)
         return source
     } catch (error) {
@@ -4699,18 +4699,18 @@ async function executeObservationStep(
     step: ExecutionStep,
 ): Promise<Readonly<{ kind: 'complete'; outcome: ExecuteProbeOutcome }> | Readonly<{ kind: 'unavailable'; cause: string }>> {
     try {
-        return Object.freeze({ kind: 'complete', outcome: await adapters.execute(step, {}) })
+        return { kind: 'complete', outcome: await adapters.execute(step, {}) }
     } catch (error) {
-        return Object.freeze({ kind: 'unavailable', cause: errorCause(error) })
+        return { kind: 'unavailable', cause: errorCause(error) }
     }
 }
 
 function comparisonProbeUnavailable(input: ComparisonRemoteInput, probe: string, cause?: string): ComparisonRemoteResult {
-    return Object.freeze({
+    return {
         kind: 'unavailable',
         code: ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH,
         reason: `${probe} execution is unavailable for sibling ${input.sibling}${cause === undefined ? '' : `: ${cause}`}`,
-    })
+    }
 }
 
 async function observeComparisonRemote(
@@ -4746,10 +4746,10 @@ async function evaluateApplicationHealth(
     adapters: ObservationCommandAdapters,
 ): Promise<HealthEvaluation> {
     const produced = await Promise.allSettled(healthProducerNames.map((name) => input.producers[name]()))
-    const producerFailures = Object.freeze(healthProducerNames.filter((_, index) => produced[index]?.status === 'rejected'))
+    const producerFailures = healthProducerNames.filter((_, index) => produced[index]?.status === 'rejected')
     const observations = produced.map((result) => result.status === 'fulfilled'
         ? result.value
-        : Object.freeze([]) as readonly EnvironmentObservation[])
+        : [] as readonly EnvironmentObservation[])
     // Reject unauthenticated observations before comparison probes cross the process boundary.
     const initial = boundPreflightContext(await input.refreshPreflight(input.preflight), input.expectedPreflight)
     if (!initial || initial.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
@@ -4759,25 +4759,25 @@ async function evaluateApplicationHealth(
     const comparisons: ComparisonRemoteEvaluation[] = []
     for (const comparisonInput of input.comparisons) {
         const result = await observeComparisonRemote(comparisonInput, adapters)
-        comparisons.push(Object.freeze({ sibling: comparisonInput.sibling, result }))
+        comparisons.push({ sibling: comparisonInput.sibling, result })
     }
     const refreshed = boundPreflightContext(await input.refreshPreflight(initial), input.expectedPreflight)
     if (!refreshed || refreshed.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
         throw new RefusalError('health preflight authority could not preserve its observation window')
     }
     const preflight = aggregateObservations(observations, refreshed, input.unobservable)
-    const frozenComparisons = Object.freeze(comparisons)
+    const frozenComparisons = comparisons
     const observedVerdict = combinedVerdict(preflight.verdict, frozenComparisons)
     // Rows a running stack would answer were not observed, so passing the rest never passes health.
     const incomplete = producerFailures.length > 0 || input.stopped !== null
-    return Object.freeze({
+    return {
         preflight,
         comparisons: frozenComparisons,
         producerFailures,
         verdict: incomplete && observedVerdict === 'pass' ? 'unavailable' : observedVerdict,
         stopped: input.stopped,
-        notices: Object.freeze([...input.notices()]),
-    })
+        notices: [...input.notices()],
+    }
 }
 
 function healthDiagnostics(health: HealthEvaluation): readonly EnvironmentDiagnostic[] {
@@ -4801,15 +4801,15 @@ function healthDiagnostics(health: HealthEvaluation): readonly EnvironmentDiagno
     ))
     // Varlock is optional for cockpit, so a sibling that adopted it but cannot be checked here warns
     // instead of failing the row.
-    const advisories = health.preflight.checks.flatMap((check) => envSchemaToolMissing(check).map((sibling): EnvironmentDiagnostic => Object.freeze({
+    const advisories = health.preflight.checks.flatMap((check) => envSchemaToolMissing(check).map((sibling): EnvironmentDiagnostic => ({
         severity: 'warning',
         code: ENVIRONMENT_CODES.ENV_SCHEMA_TOOL_MISSING,
         message: `sibling ${sibling} has an .env.schema but varlock is not installed, so its env schema was not checked`,
         target: sibling,
         fix: `install Varlock (${VARLOCK_INSTALL_URL}) and put it on PATH`,
     })))
-    return Object.freeze([...health.stopped === null ? [] : [health.stopped], ...health.notices,
-        ...checks, ...advisories, ...producerFailures, ...comparisons])
+    return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
+        ...checks, ...advisories, ...producerFailures, ...comparisons]
 }
 
 const unavailableSurfaceOverrideInspection = Object.freeze({
@@ -4854,16 +4854,16 @@ async function inspectDoctorSurfaceOverrides(
             && typeof record.code === 'string' && record.code.length > 0
             && typeof record.reason === 'string' && record.reason.length > 0
         if (!complete && !unavailableOrRefusal) {
-            return Object.freeze({
+            return {
                 kind: 'refusal',
                 code: 'SURFACE_OVERRIDE_INSPECTION_INVALID',
                 reason: 'surface override inspection returned invalid evidence',
-            })
+            }
         }
         return captured as unknown as DoctorSurfaceOverrideInspection
     } catch (error) {
-        return Object.freeze({ ...unavailableSurfaceOverrideInspection,
-            reason: `${unavailableSurfaceOverrideInspection.reason}: ${errorCause(error)}` })
+        return { ...unavailableSurfaceOverrideInspection,
+            reason: `${unavailableSurfaceOverrideInspection.reason}: ${errorCause(error)}` }
     }
 }
 
@@ -4875,27 +4875,27 @@ function unavailableDoctor(
     declarations: readonly DoctorDeclaration[],
     forwarded?: readonly EnvironmentDiagnostic[],
 ): DoctorCommandResult {
-    return Object.freeze({
+    return {
         kind: 'complete', status: 0,
-        diagnostics: forwarded ?? Object.freeze([applicationDiagnostic(code, message, 'preflight')]),
-        result: Object.freeze({
-            verdict: 'unavailable', checks: Object.freeze([]), comparisons: Object.freeze([]), surfaceOverrides, freshness, declarations,
-        }),
-    })
+        diagnostics: forwarded ?? [applicationDiagnostic(code, message, 'preflight')],
+        result: {
+            verdict: 'unavailable', checks: [], comparisons: [], surfaceOverrides, freshness, declarations,
+        },
+    }
 }
 
 function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {
-    return Object.freeze({
+    return {
         kind: 'blocked', status: 2,
-        diagnostics: forwarded ?? Object.freeze([applicationDiagnostic(
+        diagnostics: forwarded ?? [applicationDiagnostic(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
             message,
             'preflight',
-        )]),
-        result: Object.freeze({
-            verdict: 'unavailable', revision: '', checks: Object.freeze([]), comparisons: Object.freeze([]),
-        }),
-    })
+        )],
+        result: {
+            verdict: 'unavailable', revision: '', checks: [], comparisons: [],
+        },
+    }
 }
 
 export async function runPreflight(
@@ -4915,20 +4915,20 @@ export async function runPreflight(
         // outranks the lost observation window that refusal caused.
         return unavailablePreflight(`preflight requires authentic observation and lifecycle evidence: ${errorCause(error)}`, refused)
     }
-    const result = Object.freeze({
+    const result = {
         verdict: health.verdict,
         revision: health.preflight.revision,
         checks: health.preflight.checks,
         comparisons: health.comparisons,
-    })
+    }
     // A stopped stack never passes the gate, whatever the rows observable without it say.
     const passed = health.verdict === 'pass' && health.stopped === null
-    return Object.freeze({
+    return {
         kind: passed ? 'complete' : 'blocked',
         status: passed ? 0 : 2,
         diagnostics: healthDiagnostics(health),
         result,
-    }) as PreflightCommandResult
+    } as PreflightCommandResult
 }
 
 export async function runDoctor(
@@ -4940,33 +4940,33 @@ export async function runDoctor(
     const hookTrustFindings = async (): Promise<readonly EnvironmentDiagnostic[]> => {
         const loaded = await config
         return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
-            ? adapters.inspectHookTrust?.() ?? Object.freeze([]) : Object.freeze([])
+            ? adapters.inspectHookTrust?.() ?? [] : []
     }
     const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
-        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? Object.freeze([])])
+        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? []])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'
         // An inventory that cannot be read, such as one another command holds locked, is no clean one.
-        ? stateInventory.diagnostics.map((diagnostic) => Object.freeze({ ...diagnostic, severity: 'warning' as const,
+        ? stateInventory.diagnostics.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const,
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
     const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState]
     const reported = warnings.length === 0 ? outcome
-        : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
+        : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero
     // exit would let `doctor && ...` proceed past a missing or unparseable cockpit.toml.
     const loaded = await config
     if (loaded.kind === 'complete') {
         const state = declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' as const : 'runtime' as const
-        return Object.freeze({ ...reported, result: Object.freeze({ ...reported.result,
-            readiness: readinessReport(state, reported.diagnostics, loaded.result.config.surfaces.tools) }) })
+        return { ...reported, result: { ...reported.result,
+            readiness: readinessReport(state, reported.diagnostics, loaded.result.config.surfaces.tools) } }
     }
     const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
-    return Object.freeze({
+    return {
         ...reported, kind: 'refusal', status: 2,
-        diagnostics: Object.freeze([...loaded.diagnostics.filter(({ code, target }) => !forwarded.has(`${code}\0${target}`)), ...reported.diagnostics]),
-    })
+        diagnostics: [...loaded.diagnostics.filter(({ code, target }) => !forwarded.has(`${code}\0${target}`)), ...reported.diagnostics],
+    }
 }
 
 async function doctorHealth(
@@ -4978,9 +4978,9 @@ async function doctorHealth(
     const declarations = doctorDeclarations(config)
     const freshness = Promise.all([
         prepareGeneratedEnvironmentCurrentness(input),
-        adapters.discoverReleaseFreshness?.() ?? Promise.resolve(Object.freeze({ kind: 'unknown' as const, reason: 'release discovery is not bound' })),
-    ]).then(([currentness, release]): DoctorFreshness => Object.freeze({
-        local: Object.freeze({ kind: currentness.outcome.kind, status: currentness.outcome.status, diagnostics: currentness.outcome.diagnostics }),
+        adapters.discoverReleaseFreshness?.() ?? Promise.resolve({ kind: 'unknown' as const, reason: 'release discovery is not bound' }),
+    ]).then(([currentness, release]): DoctorFreshness => ({
+        local: { kind: currentness.outcome.kind, status: currentness.outcome.status, diagnostics: currentness.outcome.diagnostics },
         changes: currentness.changes, storedProducer: currentness.storedProducer,
         installedProducer: currentness.currentProducer, release, repair: proposeGeneratedEnvironmentRepair(currentness),
     }))
@@ -5022,30 +5022,30 @@ async function doctorHealth(
             refused,
         )
     }
-    return Object.freeze({
+    return {
         kind: 'complete', status: 0, diagnostics: healthDiagnostics(health),
-        result: Object.freeze({
+        result: {
             verdict: health.verdict,
             checks: doctor.checks,
             comparisons: health.comparisons,
             surfaceOverrides: await surfaceOverrides,
             freshness: await freshness,
             declarations: await declarations,
-        }),
-    })
+        },
+    }
 }
 
 function logsRefusal(code: EnvironmentDiagnostic['code'], message: string): Extract<LogsCommandResult, { kind: 'refusal' }> {
-    return Object.freeze({
+    return {
         kind: 'refusal', status: 2, result: null,
-        diagnostics: Object.freeze([applicationDiagnostic(code, message, 'logs')]),
-    })
+        diagnostics: [applicationDiagnostic(code, message, 'logs')],
+    }
 }
 
 function ownDataValues(
     value: unknown,
     required: readonly string[],
-    optional: readonly string[] = Object.freeze([]),
+    optional: readonly string[] = [],
 ): Readonly<Record<string, unknown>> | undefined {
     try {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -5062,7 +5062,7 @@ function ownDataValues(
             if (!descriptor || !('value' in descriptor)) return undefined
             captured[key] = descriptor.value
         }
-        return Object.freeze(captured)
+        return captured
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -5099,20 +5099,20 @@ function validPublicLogOptions(service: string, since: string, tail: number): bo
 }
 
 function logsCancelled(json: boolean): Extract<LogsCommandResult, { kind: 'cancelled' }> {
-    return Object.freeze({
-        kind: 'cancelled', status: 130, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: Object.freeze([]), truncated: false }),
-    })
+    return {
+        kind: 'cancelled', status: 130, diagnostics: [],
+        result: { json, records: [], truncated: false },
+    }
 }
 
 function logsTruncated(service: string, shown: number, step: ExecutionStep): readonly EnvironmentDiagnostic[] {
-    return Object.freeze([Object.freeze({
+    return [{
         severity: 'warning' as const,
         code: 'LOGS_TRUNCATED' as const satisfies typeof ENVIRONMENT_CODES.LOGS_TRUNCATED,
         message: `the logs of service ${service} exceeded the output limit of ${step.stdoutLimitBytes} bytes of stdout and ${step.stderrLimitBytes} of stderr, so only the newest ${shown} record${shown === 1 ? '' : 's'} are shown and older records in the requested range are not`,
         target: 'logs',
         fix: 'lower --tail to the number of recent records you need, or read the older records from the container runtime directly',
-    })])
+    }]
 }
 
 export async function runLogs(
@@ -5151,11 +5151,11 @@ export async function runLogs(
     if (signal?.aborted) return logsCancelled(json)
     let observation: LogObservation
     try {
-        observation = await observe(Object.freeze({ configPath, service }))
+        observation = await observe({ configPath, service })
     } catch (error) {
         if (signal?.aborted) return logsCancelled(json)
-        if (error instanceof DeclarationRefusalError) return Object.freeze({ kind: 'refusal', status: 2, result: null,
-            diagnostics: Object.freeze([error.diagnostic]) })
+        if (error instanceof DeclarationRefusalError) return { kind: 'refusal', status: 2, result: null,
+            diagnostics: [error.diagnostic] }
         return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation is unavailable for service ${service}: ${errorCause(error)}`)
     }
     if (signal?.aborted) return logsCancelled(json)
@@ -5164,7 +5164,7 @@ export async function runLogs(
     if (!request || request.service !== service) {
         return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation does not match service ${service}`)
     }
-    const resolvedRequest = Object.freeze({ ...request, since, tail, follow }) as unknown as LogRequest
+    const resolvedRequest = { ...request, since, tail, follow } as unknown as LogRequest
     const plan = planLogs(
         resolvedRequest,
         observed?.ownComposeAuthority as Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }> | undefined,
@@ -5180,9 +5180,9 @@ export async function runLogs(
         return logsRefusal(collected.code, `the logs of service ${service} are unavailable: ${collected.reason}`)
     }
     const diagnostics = collected.truncated
-        ? logsTruncated(service, collected.records.length, plan.step) : Object.freeze([])
-    const result = Object.freeze({ json, records: collected.records, truncated: collected.truncated })
-    if (collected.kind === 'cancelled') return Object.freeze({ kind: 'cancelled', status: 130, diagnostics, result })
-    return Object.freeze({ kind: 'complete', status: 0, diagnostics, result })
+        ? logsTruncated(service, collected.records.length, plan.step) : []
+    const result = { json, records: collected.records, truncated: collected.truncated }
+    if (collected.kind === 'cancelled') return { kind: 'cancelled', status: 130, diagnostics, result }
+    return { kind: 'complete', status: 0, diagnostics, result }
 }
 

@@ -4,5 +4,5 @@
 export function composeProcessEnvironment(
     env: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
-    return Object.freeze({ ...env, COMPOSE_DISABLE_ENV_FILE: '1' })
+    return { ...env, COMPOSE_DISABLE_ENV_FILE: '1' }
 }

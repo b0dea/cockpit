@@ -37,7 +37,7 @@ export function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): reado
     const parsed = tryParseJson(bytes)
     const skills = parsed !== null && typeof parsed === 'object' ? (parsed as { skills?: unknown }).skills : undefined
     return Array.isArray(skills) && skills.every(name => typeof name === 'string')
-        ? Object.freeze([...skills]) as readonly string[]
+        ? [...skills] as readonly string[]
         : undefined
 }
 
@@ -51,12 +51,12 @@ export function shippedSkillSources(
         const procedure = (CORE_SKILL_PROCEDURES as Readonly<Record<string, string>>)[name]
         const entry = assets.get(`skills/${name}.skill.md`)?.bytes
         const bytes = procedure === undefined ? undefined : assets.get(`skills/${procedure}`)?.bytes
-        return entry === undefined || bytes === undefined ? undefined : Object.freeze({ name, sources: Object.freeze([
-            Object.freeze({ path: `skills/${name}/SKILL.md`, bytes: entry }),
-            Object.freeze({ path: `skills/${name}/${procedure}`, bytes }),
-        ]) })
+        return entry === undefined || bytes === undefined ? undefined : { name, sources: [
+            { path: `skills/${name}/SKILL.md`, bytes: entry },
+            { path: `skills/${name}/${procedure}`, bytes },
+        ] }
     })
-    return rows.every(row => row !== undefined) ? Object.freeze(rows) : undefined
+    return rows.every(row => row !== undefined) ? rows : undefined
 }
 
 export function coreSurfaceDeclarations(
@@ -71,5 +71,5 @@ export function coreSurfaceDeclarations(
     }, ...skills.map(({ name, sources }) => ({
         name, feature: 'skills' as const, source: `skills/${name}.skill.md`, sources: sources.map(source => ({ ...source })),
     }))]
-    return Object.freeze(declarations)
+    return declarations
 }

@@ -36,7 +36,7 @@ function boundedDenseArray(value: unknown): readonly unknown[] | undefined {
             if (!descriptor || !('value' in descriptor)) return undefined
             items.push(descriptor.value)
         }
-        return Object.freeze(items)
+        return items
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
@@ -173,20 +173,20 @@ async function issueObservationPostures(
         if (sibling.mount === 'host') postures.add('host')
         else postures.add('mounted')
     }
-    const authority = Object.freeze({
+    const authority = {
         stackId: configuration.stackId,
         evaluatedAt,
         validThrough: new Date(Math.min(issuedAt + POSTURE_AUTHORITY_LIFETIME_MS, windowExpiresAt)).toISOString(),
         revision: loaded.result.source.sha256,
         source: loaded.result.source.path,
-        postures: Object.freeze([...postures].sort(compareCodeUnits)),
-        environmentPostures: Object.freeze({
+        postures: [...postures].sort(compareCodeUnits),
+        environmentPostures: {
             addressing: loaded.result.config.environment.addressing ?? null,
             authentication: loaded.result.config.environment.authentication ?? null,
-        }),
-        postureRequirements: Object.freeze((loaded.result.config.environment.posture_requirements ?? [])
-            .map((requirement) => Object.freeze({ ...requirement }))),
-    })
+        },
+        postureRequirements: (loaded.result.config.environment.posture_requirements ?? [])
+            .map((requirement) => ({ ...requirement })),
+    }
     issuedPostureAuthorities.set(authority, identity.cockpitId as CockpitId)
     postureRefreshWindows.set(authority, Object.freeze({ cockpitId: identity.cockpitId as CockpitId, expiresAt: windowExpiresAt }))
     return authority
@@ -252,7 +252,7 @@ export function judgePostureDeclaration(
                         ? `${dimension} posture ${selected} is not named by a requirement`
                         : !pass ? `${dimension} requirement tags do not match selected posture ${selected}`
                             : 'declared requirement tags match the selected posture'
-        return Object.freeze({ dimension, selected, pass, reason })
+        return { dimension, selected, pass, reason }
     })
 }
 
@@ -301,7 +301,7 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     }
     if (stages.size !== authorities.size) throw new RefusalError('preflight needs one matching lifecycle stage authority per stack')
     const postureChecks = [...authorities.values()].flatMap((authority): PostureRequirementCheck[] =>
-        judgePostureDeclaration(authority.environmentPostures, authority.postureRequirements).map(({ dimension, selected, pass, reason }) => Object.freeze({
+        judgePostureDeclaration(authority.environmentPostures, authority.postureRequirements).map(({ dimension, selected, pass, reason }) => ({
             code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             owner: POSTURE_REQUIREMENT_OWNER,
             stackId: authority.stackId,
@@ -313,6 +313,6 @@ export function authenticateObservationPostureContext(context: PreflightContext)
             ...(selected === null ? {} : { measured: selected }),
             expected: { kind: 'present' as const },
         })))
-    return Object.freeze({ evaluationInstant, authorities, stages,
-        checks: Object.freeze(postureChecks) })
+    return { evaluationInstant, authorities, stages,
+        checks: postureChecks }
 }

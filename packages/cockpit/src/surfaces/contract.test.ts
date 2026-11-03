@@ -48,11 +48,6 @@ it('captures one exact complete batch as immutable caller-independent data', () 
     const captured = captureSurfaceBatch(input)
 
     expect(captured).toEqual(input)
-    expect(Object.isFrozen(captured)).toBe(true)
-    expect(Object.isFrozen(captured?.sources)).toBe(true)
-    expect(Object.isFrozen(captured?.sources[0])).toBe(true)
-    expect(Object.isFrozen(captured?.expectedOutputs)).toBe(true)
-    expect(Object.isFrozen(captured?.expectedOutputs.claudecode)).toBe(true)
     input.sources[0]!.bytes = 'changed'
     input.expectedOutputs.claudecode[0] = 'changed'
     expect(captured?.sources[0]?.bytes).toBe('# Shared rules\n')
@@ -76,10 +71,6 @@ it('captures only measured Claude plugin component families as an opt-in bundle'
     const captured = captureSurfaceBundleBatch(input)
 
     expect(captured).toEqual(input)
-    expect(Object.isFrozen(captured)).toBe(true)
-    expect(Object.isFrozen(captured?.features)).toBe(true)
-    expect(Object.isFrozen(captured?.sources)).toBe(true)
-    expect(Object.isFrozen(captured?.expectedOutputs)).toBe(true)
     expect(captureSurfaceBundleBatch({ ...input, features: ['rules'] })).toBeUndefined()
     expect(captureSurfaceBundleBatch({ ...input, format: 'unknown' })).toBeUndefined()
     expect(captureSurfaceBundleBatch({ ...input, expectedOutputs: [] })).toBeUndefined()
@@ -152,8 +143,6 @@ it('bundles admitted bytes under target prefixes in deterministic path order', (
         { path: 'codexcli/AGENTS.md', bytes: 'codex' },
         { path: 'opencode/AGENTS.md', bytes: 'open' },
     ])
-    expect(Object.isFrozen(bundle)).toBe(true)
-    expect(Object.isFrozen(bundle?.[0])).toBe(true)
     rendered[0]!.bytes = 'changed'
     expect(bundle?.[2]?.bytes).toBe('open')
 })

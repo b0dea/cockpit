@@ -79,7 +79,7 @@ const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
 
 function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string, fix?: string): readonly EnvironmentDiagnostic[] {
-    return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) })])
+    return [{ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) }]
 }
 
 function runtimeUnavailable(reason: string, target: string): readonly EnvironmentDiagnostic[] {
@@ -93,10 +93,10 @@ function mountMismatchDiagnostics(
     siblingsRoot: string,
 ): readonly EnvironmentDiagnostic[] {
     const bySource = new Map(config.sibling.map((sibling) => [resolve(siblingsRoot, sibling.dir), sibling]))
-    return Object.freeze([
+    return [
         ...mismatch.missing.map((source) => {
             const sibling = bySource.get(source)
-            return Object.freeze({
+            return {
                 severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
                 target: sibling ? `sibling:${sibling.slug}` : source,
                 message: sibling
@@ -105,14 +105,14 @@ function mountMismatchDiagnostics(
                 fix: sibling
                     ? `bind-mount \${${sibling.var}}, or a directory inside it, in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>`
                     : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>',
-            })
+            }
         }),
-        ...mismatch.unexpected.map((source) => Object.freeze({
+        ...mismatch.unexpected.map((source) => ({
             severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: source,
             message: `a Compose service bind-mounts ${source}, which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry, so cockpit will not hand it to a container`,
             fix: 'move the bind inside a mount = "always" sibling, declare it as one or as an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>',
         })),
-    ])
+    ]
 }
 
 /** Names the sibling a redirected bind sits in, so the refusal says which checkout holds the link. */
@@ -122,14 +122,14 @@ function redirectedMountDiagnostics(
     siblingsRoot: string,
 ): readonly EnvironmentDiagnostic[] {
     const bySource = new Map(config.sibling.map((sibling) => [resolve(siblingsRoot, sibling.dir), sibling]))
-    return Object.freeze(redirected.map(({ bind, holder }) => {
+    return redirected.map(({ bind, holder }) => {
         const sibling = bySource.get(holder)
-        return Object.freeze({
+        return {
             severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: bind,
             message: `a Compose service bind-mounts ${bind}, which resolves through a symbolic link to a path outside ${sibling ? `sibling ${sibling.slug}` : holder}, so cockpit will not hand that path to a container`,
             fix: `replace the link with a real directory, or bind the path it points at directly and declare it as a mount = "always" sibling or an environment.generated_host_paths entry; then run ${cockpitCommand('check')}`,
-        })
-    }))
+        }
+    })
 }
 
 export interface LifecycleCommandCompositionInput {
@@ -177,17 +177,17 @@ interface CompositionBinding {
 
 function refusal(target: string, message = 'lifecycle composition authority is unavailable',
     code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID): EnvironmentCommandOutcome<LifecycleRunContext> {
-    return Object.freeze({
+    return {
         kind: 'refusal' as const,
         status: 2 as const,
         result: null,
-        diagnostics: Object.freeze([Object.freeze({
+        diagnostics: [{
             severity: 'error' as const,
             code,
             message,
             target,
-        })]),
-    })
+        }],
+    }
 }
 
 function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommandCompositionInput | undefined {
@@ -223,11 +223,11 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
                 || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
-        return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), sessionId, timeoutMs,
-            ...(activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...activeProfiles].sort()) }),
+        return { configPath: resolve(configPath), env, sessionId, timeoutMs,
+            ...(activeProfiles === undefined ? {} : { activeProfiles: [...activeProfiles].sort() }),
             ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
-            ...(holderProcess === undefined ? {} : { holderProcess: Object.freeze({ pid: holderProcess.pid,
-                ...(holderProcess.processStart === undefined ? {} : { processStart: holderProcess.processStart }) }) }) })
+            ...(holderProcess === undefined ? {} : { holderProcess: { pid: holderProcess.pid,
+                ...(holderProcess.processStart === undefined ? {} : { processStart: holderProcess.processStart }) } }) }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -236,24 +236,24 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
 
 // Literals, so the diagnostic inventory captures each fix beside its code.
 function seedFailed(context: LifecycleRunContext, message: string) {
-    return Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([Object.freeze({
+    return { kind: 'refusal' as const, diagnostics: [{
         severity: 'error' as const, code: 'DATA_SEED_FAILED' as const satisfies typeof ENVIRONMENT_CODES.DATA_SEED_FAILED,
         message, target: 'environment.seed',
         fix: `correct environment.seed in ${basename(context.source.path)} or the seed it runs, then rerun npx --no cockpit up --config <your cockpit.toml>`,
-    })]) })
+    }] }
 }
 
 function seedUnavailable(context: LifecycleRunContext, message: string) {
-    return Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([Object.freeze({
+    return { kind: 'refusal' as const, diagnostics: [{
         severity: 'error' as const, code: 'DATA_SEED_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.DATA_SEED_UNAVAILABLE,
         message: `cockpit could not tell whether the seed is due: ${message}`, target: context.stackId,
         fix: 'make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml>',
-    })]) })
+    }] }
 }
 
 function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string')))
+    return Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
 }
 
 function confined(root: string, path: string): boolean {
@@ -280,7 +280,7 @@ async function composeArtifact(root: string, reference: string, expectedSha256?:
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
         const sha256 = createHash('sha256').update(bytes).digest('hex')
         if (expectedSha256 !== undefined && sha256 !== expectedSha256) return undefined
-        return Object.freeze({ reference, canonicalPath, source, sha256 })
+        return { reference, canonicalPath, source, sha256 }
     } catch {
         // Callers treat any unreadable or changed artifact as no file authority and refuse or report unavailable.
         return undefined
@@ -296,7 +296,7 @@ async function composeArtifacts(root: string, references: readonly string[]): Pr
         if (!artifact) return undefined
         artifacts.push(artifact)
     }
-    return Object.freeze(artifacts)
+    return artifacts
 }
 
 async function occupiedPort(port: number, timeoutMs: number): Promise<boolean | undefined> {
@@ -323,7 +323,7 @@ async function listenerEvidence(
     const deadline = Date.parse(requestedAt) + timeoutMs
     const candidates = Array.from({ length: context.ports.count }, (_, offset) => {
         const ports = Object.values(context.ports.bases).map((base) => base + offset * context.ports.step)
-        return Object.freeze({ ports: Object.freeze(ports) })
+        return { ports: ports }
     })
     const observed = candidates.map(({ ports }) => ports.map(() => undefined as boolean | undefined))
     const tasks = candidates.flatMap(({ ports }, family) => ports.map((port, index) => ({ family, index, port })))
@@ -339,26 +339,26 @@ async function listenerEvidence(
         }
     }))
     const completedAt = Date.now()
-    return Object.freeze(candidates.map(({ ports }, family) => {
+    return candidates.map(({ ports }, family) => {
         const familyObservation = observed[family]!
         const unavailable = completedAt > deadline || familyObservation.length !== ports.length
             || familyObservation.some((value) => value === undefined)
-        return Object.freeze({
+        return {
             ports,
             observation: unavailable
-                ? Object.freeze({
+                ? {
                     state: 'unavailable' as const,
                     reason: 'bounded loopback listener observation is unavailable',
                     producer: OWNER,
-                })
-                : Object.freeze({
+                }
+                : {
                     state: 'available' as const,
-                    value: Object.freeze(ports.filter((_port, index) => familyObservation[index] === true)),
+                    value: ports.filter((_port, index) => familyObservation[index] === true),
                     observedAt: new Date(Math.max(completedAt, Date.parse(requestedAt))).toISOString(),
                     producer: OWNER,
-                }),
-        })
-    }))
+                },
+        }
+    })
 }
 
 export function createLifecycleCommandAdapters(
@@ -375,10 +375,10 @@ export function createLifecycleCommandAdapters(
         }
         const loaded = await loadCockpitConfig(input.configPath)
         if (loaded.kind === 'refusal') return loaded
-        if (declaresNothingToRun(loaded.result.config.environment)) return Object.freeze({ kind: 'refusal' as const,
-            status: 2 as const, result: null, diagnostics: Object.freeze([runtimeNotDeclared(loaded.result.source.path)]) })
-        const setupEnvironment = Object.freeze(Object.fromEntries(Object.entries(input.env)
-            .filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
+        if (declaresNothingToRun(loaded.result.config.environment)) return { kind: 'refusal' as const,
+            status: 2 as const, result: null, diagnostics: [runtimeNotDeclared(loaded.result.source.path)] }
+        const setupEnvironment = Object.fromEntries(Object.entries(input.env)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return refusal(loaded.result.source.path, git.reason)
         const observedAt = new Date().toISOString()
@@ -445,25 +445,25 @@ export function createLifecycleCommandAdapters(
             sessionId: input.sessionId,
         }))
         if (!issued || issued.kind !== 'complete') return issued ?? refusal(loaded.result.source.path)
-        bindings.set(issued.result, Object.freeze({
+        bindings.set(issued.result, {
             config: loaded.result.config,
             checkoutRoot: dirname(loaded.result.source.path),
             siblingsRoot: resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root),
             ...(projected && 'authority' in projected ? { machineFloorAuthority: projected.authority } : {}),
-        }))
-        return Object.freeze({ ...issued, diagnostics: loaded.diagnostics })
+        })
+        return { ...issued, diagnostics: loaded.diagnostics }
     }
 
     const hostStep = (id: string, executable: ResolvedExecutable, args: readonly string[], cwd: string,
-        env: Readonly<Record<string, string>>, timeoutMs: number, stackId: string) => snapshotExecutionPlan({ steps: [Object.freeze({
-        id, argv: Object.freeze([executable.canonicalPath, ...args]) as unknown as readonly [string, ...string[]],
+        env: Readonly<Record<string, string>>, timeoutMs: number, stackId: string) => snapshotExecutionPlan({ steps: [{
+        id, argv: [executable.canonicalPath, ...args] as unknown as readonly [string, ...string[]],
         argv0: executable.invocationPath, cwd, env, timeoutMs,
         stdoutLimitBytes: 1_048_576, stderrLimitBytes: 65_536, outputOverflow: 'retain-tail' as const,
-        paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ stackId }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
-            argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode })]),
-        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-    })] })?.steps[0]
+        paths: [], ports: [], labels: { stackId }, expected: [],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    }] })?.steps[0]
 
     // When each resettable volume of this stack was created, by its Compose key; a volume no service
     // has created yet has no entry. Undefined when Docker could not say.
@@ -480,7 +480,7 @@ export function createLifecycleCommandAdapters(
         const keys = new Set(binding.config.environment.resettable_volumes)
         const names = Buffer.from(listed.stdout).toString('utf8').split('\n').filter(Boolean)
             .map((line) => line.split('\t')).filter(([, key]) => key !== undefined && keys.has(key)).map(([name]) => name!)
-        if (names.length === 0) return Object.freeze([])
+        if (names.length === 0) return []
         const inspection = hostStep('seed:volume-created', docker.value, ['volume', 'inspect', '--format', '{{json .CreatedAt}}', ...names],
             binding.checkoutRoot, env, input.timeoutMs, context.stackId)
         const inspected = inspection && authenticatedExecutionOutcome(await execute(inspection), inspection)
@@ -488,24 +488,24 @@ export function createLifecycleCommandAdapters(
         // `{{json .CreatedAt}}` prints one quoted instant per volume; anything else is unreadable.
         const created = Buffer.from(inspected.stdout).toString('utf8').trim().split('\n')
             .map((line) => /^"[^"\\]+"$/.test(line) ? Date.parse(line.slice(1, -1)) : Number.NaN)
-        return created.length === names.length && created.every(Number.isFinite) ? Object.freeze(created) : undefined
+        return created.length === names.length && created.every(Number.isFinite) ? created : undefined
     }
 
     const seed: LifecycleCommandAdapterComposition['seed'] = async (context, up) => {
         const binding = bindings.get(context)
         const declared = binding?.config.environment.seed
         if (!input || !binding) return seedUnavailable(context, 'the lifecycle binding is unavailable')
-        if (!declared) return Object.freeze({ kind: 'none' as const })
+        if (!declared) return { kind: 'none' as const }
         const [seededAt, created] = await Promise.all([readSeededAt(context.namespace, context.stackId),
             resettableVolumesCreatedAt(context, binding)])
         if (seededAt === undefined) return seedUnavailable(context, 'the record of the last seed is unreadable')
         if (created === undefined) return seedUnavailable(context, 'Docker did not report when the resettable volumes were created')
-        if (!seedDue(seededAt, created)) return Object.freeze({ kind: 'current' as const })
-        const env = Object.freeze({
+        if (!seedDue(seededAt, created)) return { kind: 'current' as const }
+        const env = {
             ...Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
             ...Object.fromEntries(Object.entries(up.ports).map(([name, port]) => [name, String(port)])),
             ...Object.fromEntries(up.entrypoints.map(({ name, value }) => [`COCKPIT_ENTRYPOINT_${name.toUpperCase().replaceAll('-', '_')}`, value])),
-        })
+        }
         const executable = await resolveExecutable(declared.argv[0]!, env)
         if (executable.state !== 'available') return seedFailed(context, `environment.seed names ${declared.argv[0]}, which could not be run: ${executable.reason}`)
         const step = hostStep('seed:run', executable.value, declared.argv.slice(1), binding.checkoutRoot, env,
@@ -520,7 +520,7 @@ export function createLifecycleCommandAdapters(
         }
         const recorded = await recordSeeded({ namespace: context.namespace, stackId: context.stackId,
             holderId: context.holderId, seededAt: new Date().toISOString() })
-        return recorded ? Object.freeze({ kind: 'ran' as const })
+        return recorded ? { kind: 'ran' as const }
             : seedUnavailable(context, 'the seed ran, and its success could not be recorded, so the next up runs it again')
     }
 
@@ -568,7 +568,7 @@ export function createLifecycleCommandAdapters(
                 timeoutMs: input.timeoutMs,
             }, execute)
             : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
-                ?? Object.freeze({ kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' })
+                ?? { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' }
         if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId, 'fix' in observed ? observed.fix : undefined))
         const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(context.namespace.root))
         const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
@@ -576,7 +576,7 @@ export function createLifecycleCommandAdapters(
         const measurementObservation = measured.kind === 'admitted'
             ? observeRuntimeMeasurement(measured, context.stackId) : undefined
         let artifacts: readonly ComposeArtifact[] | undefined
-        let inputs: Readonly<Record<string, string>> = Object.freeze({ [basename(context.source.path)]: context.runtimeSha256 })
+        let inputs: Readonly<Record<string, string>> = { [basename(context.source.path)]: context.runtimeSha256 }
         const activeProfiles = input.activeProfiles ?? []
         let expectedMountSources: readonly string[]
         const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
@@ -595,19 +595,19 @@ export function createLifecycleCommandAdapters(
         if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
             `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
             COMPOSE_OWNERSHIP_FILE))
-        artifacts = Object.freeze([...declared, override])
-        inputs = Object.freeze({ ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])) })
-        expectedMountSources = Object.freeze([...new Set([
+        artifacts = [...declared, override]
+        inputs = { ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])) }
+        expectedMountSources = [...new Set([
             ...currentBinding.config.sibling
                 .filter((sibling) => sibling.mount === 'always')
                 .map((sibling) => resolve(currentBinding.siblingsRoot, sibling.dir)),
             ...currentBinding.config.environment.generated_host_paths
                 .map((path) => resolve(currentBinding.checkoutRoot, path)),
-        ])].sort())
+        ])].sort()
         if (!artifacts || artifacts.length === 0) return undefined
         if (resolvedMounts) expectedMountSources = resolvedMounts
-        const siblingDirectories = Object.freeze(Object.fromEntries(currentBinding.config.sibling
-            .map((sibling) => [sibling.var, resolve(currentBinding.siblingsRoot, sibling.dir)])))
+        const siblingDirectories = Object.fromEntries(currentBinding.config.sibling
+            .map((sibling) => [sibling.var, resolve(currentBinding.siblingsRoot, sibling.dir)]))
         const batchId = randomBytes(32).toString('hex')
         const runtime = createRuntimeAdapter({
             runtime: observed.runtime,
@@ -618,7 +618,7 @@ export function createLifecycleCommandAdapters(
             composeFiles: artifacts,
             projectName: composeProjectName({ cockpitName: currentBinding.config.cockpit.name, stackId: context.stackId }),
             env,
-            ports: ports ? Object.freeze(Object.values(ports.lease.ports)) : Object.freeze([]),
+            ports: ports ? Object.values(ports.lease.ports) : [],
             labels: { stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256, batchId },
             timeoutMs: input.timeoutMs,
             stackId: context.stackId,
@@ -650,7 +650,7 @@ export function createLifecycleCommandAdapters(
             if (!mismatch) return undefined
             if (purpose === 'teardown' && !resolvedMounts) {
                 const resolved = [...expectedMountSources.filter((source) => !mismatch.missing.includes(source)), ...mismatch.unexpected].sort()
-                return runtimeReadiness(context, use, ports, refuse, purpose, Object.freeze(resolved))
+                return runtimeReadiness(context, use, ports, refuse, purpose, resolved)
             }
             return refuse?.(mountMismatchDiagnostics(mismatch, currentBinding.config, currentBinding.siblingsRoot))
         }
@@ -676,14 +676,14 @@ export function createLifecycleCommandAdapters(
         const hostObservations = observeHostCapacity({ evidence: machineEvidence })
         const lifecycle = projectRuntimeLifecycle(topology.topology)
         if (!lifecycle) return undefined
-        const readiness = Object.freeze({
+        const readiness = {
             topology: topology.topology,
             lifecycle,
             hostObservations,
-            runtimeObservations: Object.freeze(measurementObservation
-                ? [measurementObservation, ...topology.observations] : [...topology.observations]),
+            runtimeObservations: measurementObservation
+                ? [measurementObservation, ...topology.observations] : [...topology.observations],
             inputs,
-        })
+        }
         issuedRuntimeReadiness.add(readiness)
         return use(readiness)
     }
@@ -763,11 +763,11 @@ export function createLifecycleCommandAdapters(
             )
         }
         try {
-            return await use(Object.freeze({
+            return await use({
                 leaseResult: acquired.leaseResult,
                 projection: acquired.projection,
                 retainOnFailure: () => { retainOnFailure = true },
-            }))
+            })
         } catch (error) {
             if (!retainOnFailure && acquired.leaseResult.kind === 'complete' && acquired.leaseResult.change === 'acquired') {
                 let compensated: Awaited<ReturnType<typeof compensateAcquiredPortHolder>>
@@ -787,5 +787,5 @@ export function createLifecycleCommandAdapters(
         }
     }
 
-    return Object.freeze({ load, execute, seed, withRuntimeReadiness, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts })
+    return { load, execute, seed, withRuntimeReadiness, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts }
 }

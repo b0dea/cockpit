@@ -15,7 +15,7 @@ const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/
 const SAFE_HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
 function unknown(reason: Exclude<RepositoryIdentityResult, { kind: 'known' }>['reason']): RepositoryIdentityResult {
-    return Object.freeze({ kind: 'unknown', reason })
+    return { kind: 'unknown', reason }
 }
 
 function normalizedHost(value: string): string | undefined {
@@ -49,8 +49,8 @@ function known(hostValue: string, pathValue: string): RepositoryIdentityResult {
     if ([...segments, repository].some((segment) => Buffer.byteLength(segment) > PATH_SEGMENT_LIMIT_BYTES)) {
         return unknown('unbounded')
     }
-    const identity = Object.freeze({ host, owner: segments.join('/'), repository })
-    return Object.freeze({ kind: 'known', identity })
+    const identity = { host, owner: segments.join('/'), repository }
+    return { kind: 'known', identity }
 }
 
 function urlIdentity(value: string, scheme: string): RepositoryIdentityResult {

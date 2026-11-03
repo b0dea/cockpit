@@ -66,8 +66,8 @@ const STEP_TIMEOUT_MS = 10_000
 const FREE_TEXT_UNSAFE = /[\u0000-\u001f\u007f]/
 
 function refused(code: string, message: string, target?: string, fix?: string): SiblingOutcome {
-    return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) })]) })
+    return { status: 2, result: null, artifact: null, destination: null,
+        diagnostics: [{ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }] }
 }
 
 function usage(message: string, target?: string): SiblingOutcome {
@@ -81,23 +81,23 @@ function canonical(value: unknown): string {
 }
 
 function gitStep(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string, args: readonly string[]): ExecutionStep {
-    return Object.freeze({
+    return {
         id,
-        argv: Object.freeze([executable.canonicalPath, ...args]) as readonly [string, ...string[]],
+        argv: [executable.canonicalPath, ...args] as readonly [string, ...string[]],
         argv0: executable.invocationPath,
         cwd, env, timeoutMs: STEP_TIMEOUT_MS,
         stdoutLimitBytes: 4_096, stderrLimitBytes: 4_096,
-        paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ purpose: id }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
+        paths: [], ports: [],
+        labels: { purpose: id },
+        expected: [],
+        consumedFiles: [{
             path: executable.canonicalPath, sha256: executable.sha256,
-            maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true as const,
+            maxBytes: 536_870_912, argvIndexes: [0], executable: true as const,
             executionMode: executable.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
-    })
+        }],
+        filesystemChecks: [],
+        compensation: [],
+    }
 }
 
 type GitResult = Readonly<{ kind: 'complete'; text: string }> | Readonly<{ kind: 'failed'; exitCode: number; detail: string }>
@@ -306,7 +306,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     }
 
     const loaded = await loadCockpitConfig(input.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     const configDir = dirname(configPath)
@@ -422,7 +422,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     const failure = await commit(configPath, loaded.result.source.sha256, prepared, 'add')
     if (failure) {
         return mode === 'create'
-            ? Object.freeze({ ...failure, diagnostics: Object.freeze(failure.diagnostics.map((item) => Object.freeze({ ...item, message: `${item.message}. ${target} was initialised and is left in place` }))) })
+            ? { ...failure, diagnostics: failure.diagnostics.map((item) => ({ ...item, message: `${item.message}. ${target} was initialised and is left in place` })) }
             : failure
     }
 
@@ -434,10 +434,10 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     }
     // Creating a hosted repository is outward-facing, so cockpit only hands the commands over. The
     // JSON result carries them too: an agent reading --json would otherwise never see them.
-    const publish = Object.freeze({
+    const publish = {
         command: `gh repo create <owner>/${slug.data} --private --source ${JSON.stringify(target)} --remote origin`,
         recordRemote: cockpitCommand('sibling add', { operand: slug.data, config: configPath, args: '--remote <url>' }),
-    })
+    }
     const note = mode === 'create'
         ? `initialised ${target} and recorded sibling "${slug.data}" (acquire "none") in ${configPath}.\n`
           + `Creating a GitHub remote is outward-facing, so cockpit does not do it. To publish it yourself:\n`
@@ -478,8 +478,8 @@ function siblingMount(requested: string | undefined, config: CockpitConfig): Mou
 }
 
 function success(action: string, configPath: string, row: unknown, sources: Record<string, string>, note: string, extra: Record<string, unknown> = {}): SiblingOutcome {
-    return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: `${note}\nNext: ${cockpitCommand('sync', { config: configPath, args: '--dry-run' })}\n`,
-        result: Object.freeze({ action, config: configPath, sibling: row, sources, ...extra, next: cockpitCommand('sync', { config: configPath, args: '--dry-run' }) }) })
+    return { status: 0, diagnostics: [], destination: null, artifact: `${note}\nNext: ${cockpitCommand('sync', { config: configPath, args: '--dry-run' })}\n`,
+        result: { action, config: configPath, sibling: row, sources, ...extra, next: cockpitCommand('sync', { config: configPath, args: '--dry-run' }) } }
 }
 
 /** The text the edit is made on must be the text the configuration was parsed from. */
@@ -538,7 +538,7 @@ async function composeReferencesTo(configDir: string, config: CockpitConfig, row
 
 export async function runSiblingRemove(input: SiblingRemoveInput): Promise<SiblingOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     const index = config.sibling.findIndex((sibling) => sibling.slug === input.slug)
@@ -550,9 +550,9 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
     if (!Array.isArray(composeReferences)) return composeReferences
     const references = [...referencesTo(config, index), ...composeReferences]
     if (references.length > 0) {
-        return Object.freeze({ ...refused('SIBLING_REFERENCED',
+        return { ...refused('SIBLING_REFERENCED',
             `sibling "${row.slug}" is still referenced, so its table was not removed. Remove or repoint these first: ${references.map((reference) => `${reference.where} (${reference.detail})`).join('; ')}`, row.slug),
-            result: Object.freeze({ slug: row.slug, references }) })
+            result: { slug: row.slug, references } }
     }
     const original = await sourceText(configPath, loaded.result.source.sha256)
     if (typeof original !== 'string') return original
@@ -566,6 +566,6 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
 
     const message = `removed sibling "${row.slug}" from ${configPath}. The checkout at ${resolve(dirname(configPath), config.cockpit.siblings_root, row.dir)} and every generated file were left alone.\n`
         + `Comments above the removed table were kept. Run \`${cockpitCommand('sync', { config: configPath, args: '--dry-run' })}\` to see exactly what changes before syncing.\n`
-    return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: message,
-        result: Object.freeze({ action: 'removed', config: configPath, slug: row.slug, dir: row.dir, next: cockpitCommand('sync', { config: configPath, args: '--dry-run' }) }) })
+    return { status: 0, diagnostics: [], destination: null, artifact: message,
+        result: { action: 'removed', config: configPath, slug: row.slug, dir: row.dir, next: cockpitCommand('sync', { config: configPath, args: '--dry-run' }) } }
 }

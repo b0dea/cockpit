@@ -48,8 +48,8 @@ function tomlFailure(error: unknown): string {
 }
 
 function refused(code: string, message: string, target?: string, fix?: string): SyncAdoptionOutcome {
-    return Object.freeze({ status: 2, result: null, diagnostics: Object.freeze([Object.freeze({
-        severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) })]) })
+    return { status: 2, result: null, diagnostics: [{
+        severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }] }
 }
 
 const ADOPT_BY_HAND_FIX = 'move the settings file to cockpit/adopted/<the same path>, add its [[surfaces.adopted]] row to cockpit.toml by hand with the fields the configuration reference lists, then run npx --no cockpit sync --config <your cockpit.toml>'
@@ -162,13 +162,13 @@ export async function runSyncAdoption(
         return refused('CLI_USAGE_INVALID', 'name each harness settings file to adopt once with --adopt <path>', '--adopt')
     }
     const loaded = await loadCockpitConfig(input.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
     const configPath = loaded.result.source.path
     const root = dirname(configPath)
     const config = loaded.result.config
     const node = await nodeAuthority()
     if (!node) return refused('GENERATED_EXECUTABLE_UNAVAILABLE', 'adoption requires an authenticated Node filesystem helper; reinstall cockpit and re-run the command', process.execPath)
-    const adapters: PublicationAdapters = Object.freeze({ execute: adapterOverrides.execute ?? executeProbe })
+    const adapters: PublicationAdapters = { execute: adapterOverrides.execute ?? executeProbe }
     const owned = await ownedPaths(root, configPath, config.cockpit.name, node, adapters)
     if (!(owned instanceof Set)) return owned as SyncAdoptionOutcome
     const already = new Set(config.surfaces.adopted.map(row => row.path))
@@ -241,8 +241,8 @@ export async function runSyncAdoption(
         const note = failures.length === 0
             ? `the adoption was rolled back: ${candidates.map(item => item.path).join(', ')} ${candidates.length === 1 ? 'is' : 'are'} back in place and cockpit.toml is unchanged`
             : `the adoption could not be fully rolled back: ${failures.join('; ')}`
-        return Object.freeze({ ...reason, status: reason.status === 0 ? 2 : reason.status, diagnostics: Object.freeze([...reason.diagnostics,
-            Object.freeze({ severity: 'error' as const, code: 'SURFACE_ADOPTION_REFUSED', message: note, target: candidates[0]!.path })]) })
+        return { ...reason, status: reason.status === 0 ? 2 : reason.status, diagnostics: [...reason.diagnostics,
+            { severity: 'error' as const, code: 'SURFACE_ADOPTION_REFUSED', message: note, target: candidates[0]!.path }] }
     }
     for (const item of candidates) {
         const relocated = await relocateAnchoredFile(root, item.target, item.destination, SURFACE_FILE_MAX_BYTES, item.sha256, node, adapters)
@@ -296,6 +296,6 @@ export async function runSyncAdoption(
         return synced
     }
     const result = synced.result !== null && typeof synced.result === 'object' && !Array.isArray(synced.result) ? synced.result : {}
-    return Object.freeze({ ...synced, result: Object.freeze({ ...result, adopted: Object.freeze(rows.map(row => Object.freeze({
-        path: row.path, source: resolve(root, row.source), sha256: row.sha256 }))) }) })
+    return { ...synced, result: { ...result, adopted: rows.map(row => ({
+        path: row.path, source: resolve(root, row.source), sha256: row.sha256 })) } }
 }

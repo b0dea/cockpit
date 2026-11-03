@@ -196,7 +196,7 @@ export function bundleSurfaceFiles(input: readonly RenderedSurfaceFile[]): reado
         totalBytes += Buffer.byteLength(admitted.bytes)
         if (totalBytes > SURFACE_OUTPUT_MAX_BYTES) return undefined
         paths.add(path)
-        bundled.push(Object.freeze({ path, bytes: admitted.bytes }))
+        bundled.push({ path, bytes: admitted.bytes })
     }
     bundled.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
     const bounded = snapshotGeneratedJson(bundled)

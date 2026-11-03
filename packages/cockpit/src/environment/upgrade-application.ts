@@ -48,7 +48,7 @@ const INSTALL_TIMEOUT_MS = 600_000
 
 // Each call site writes its code and fix as literals so the troubleshooting index captures them.
 function refused(diagnostic: Diagnostic, status = 2): UpgradeOutcome {
-    return Object.freeze({ status, result: null, diagnostics: Object.freeze([Object.freeze(diagnostic)]) })
+    return { status, result: null, diagnostics: [diagnostic] }
 }
 
 /** Orders two versions; a prerelease sorts before its release, and prerelease identifiers compare as semver says. */
@@ -71,16 +71,16 @@ function compareVersions(a: string, b: string): number {
 
 function step(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string,
     args: readonly string[], timeoutMs: number): ExecutionStep {
-    return Object.freeze({
-        id, argv: Object.freeze([executable.canonicalPath, ...args]) as readonly [string, ...string[]],
+    return {
+        id, argv: [executable.canonicalPath, ...args] as readonly [string, ...string[]],
         argv0: executable.invocationPath, cwd, env, timeoutMs,
         stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
         outputOverflow: 'retain-tail' as const, failureOutput: 'stderr-tail' as const,
-        paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ purpose: id }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256,
-            maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true as const, executionMode: executable.executionMode })]),
-        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-    })
+        paths: [], ports: [], labels: { purpose: id }, expected: [],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256,
+            maxBytes: 536_870_912, argvIndexes: [0], executable: true as const, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    }
 }
 
 async function lockfilesAt(root: string): Promise<string[]> {
@@ -147,8 +147,8 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     const syncArgv = ['npx', '--no', 'cockpit', 'sync', '--config', configPath]
     const result = { from: installed, to: target, packageManager: lockfile.manager,
         install: formatShellCommand(installArgv), sync: formatShellCommand(syncArgv), dryRun: input.dryRun }
-    if (input.dryRun) return Object.freeze({ status: 0, diagnostics: Object.freeze([]),
-        result: { ...result, next: 'nothing was run; drop --dry-run to install and sync' } })
+    if (input.dryRun) return { status: 0, diagnostics: [],
+        result: { ...result, next: 'nothing was run; drop --dry-run to install and sync' } }
 
     const install = step(manager.value, root, input.env, 'upgrade:install', installArgv.slice(1), INSTALL_TIMEOUT_MS)
     const installOutcome = authenticatedExecutionOutcome(await dependencies.execute(install), install)
@@ -167,11 +167,11 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     let notes: string[]
     try { notes = upgradeNotes(await readFile(join(root, 'node_modules', name, 'CHANGELOG.md'), 'utf8'), installed, target) }
     catch (error) {
-        return Object.freeze({ status: 0, diagnostics: Object.freeze([]), result: { ...result,
+        return { status: 0, diagnostics: [], result: { ...result,
             upgradeSteps: `the installed package's CHANGELOG.md could not be read (${hasErrorCode(error, 'ENOENT') ? 'missing' : errorCause(error)}); release notes: ${npmPage(target)}`,
-            next: 'review git diff, then commit package.json, the lockfile and the regenerated files together' } })
+            next: 'review git diff, then commit package.json, the lockfile and the regenerated files together' } }
     }
-    return Object.freeze({ status: 0, diagnostics: Object.freeze([]), result: { ...result,
+    return { status: 0, diagnostics: [], result: { ...result,
         upgradeSteps: notes.length === 0 ? 'the changelog lists no Upgrade: steps between these versions' : notes,
-        next: 'review git diff, then commit package.json, the lockfile and the regenerated files together' } })
+        next: 'review git diff, then commit package.json, the lockfile and the regenerated files together' } }
 }

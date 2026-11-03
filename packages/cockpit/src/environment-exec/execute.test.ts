@@ -540,7 +540,6 @@ describe('mechanical environment executor', () => {
             startedAt: expect.stringMatching(/Z$/),
             finishedAt: expect.stringMatching(/Z$/),
         }))
-        expect(Object.isFrozen(probe.receipt)).toBe(true)
         expect(probe.receipt.receiptMatches(step)).toBe(true)
         expect(probe.receipt.receiptMatches({ ...step, labels: { ...step.labels, batchId: 'caller-relabelled' } })).toBe(false)
         expect(executionOutcomeMatches(probe, step)).toBe(true)
@@ -637,7 +636,7 @@ describe('mechanical environment executor', () => {
         expect(valueReads).toBe(0)
     })
 
-    it('keeps returned output and execution observations immutable', async () => {
+    it('returns output a caller cannot alter through its copy', async () => {
         const outcome = await executeProbe(nodeStep('observation-control', "process.stdout.write('safe')"))
 
         expect(outcome.kind).toBe('complete')
@@ -645,8 +644,6 @@ describe('mechanical environment executor', () => {
         const callerCopy = outcome.stdout
         callerCopy.fill(0)
         expect(outcome.stdout.toString()).toBe('safe')
-        expect(Object.isFrozen(outcome)).toBe(true)
-        expect(Object.isFrozen(outcome.execution)).toBe(true)
     })
 
     it('authenticates only the exact issued outcome and its resolved step', async () => {

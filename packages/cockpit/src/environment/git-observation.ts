@@ -193,7 +193,7 @@ export function decodeGitObservation(
         : !headers.has('adjacency') ? 'upstream-gone'
             : ahead > 0 && behind > 0 ? 'diverged'
                 : ahead > 0 ? 'ahead' : behind > 0 ? 'behind' : 'aligned'
-    const evidence = Object.freeze({ revision: committed, branch, upstream, ahead, behind, trackedDirtyCount, untrackedCount, workingTree, adjacency })
+    const evidence: GitObservationEvidence = { revision: committed, branch, upstream, ahead, behind, trackedDirtyCount, untrackedCount, workingTree, adjacency }
     const git = (...args: string[]) => formatShellCommand(['git', '-C', context.checkoutRoot, ...args])
     const workingTreeRemedy = unborn
         ? `review the files with \`${git('status', '--short')}\`, then commit them with \`${git('add', '-A')} && ${git('commit', '-m', 'Add the cockpit')}\``
@@ -208,20 +208,20 @@ export function decodeGitObservation(
         owner: OWNER,
         stackId: context.stackId,
         observedAt: context.observedAt,
-        applicability: { state: 'required' as const, posture: 'environment' },
+        applicability: { state: 'required' as const, posture: 'environment' as const },
         freshness: { state: 'current' as const },
     }
-    const workingTreeValue = Object.freeze({ revision: committed, branch, trackedDirtyCount, untrackedCount })
-    const workingTreeExpected = Object.freeze({ revision: committed, branch, trackedDirtyCount: 0, untrackedCount: 0 })
+    const workingTreeValue = { revision: committed, branch, trackedDirtyCount, untrackedCount }
+    const workingTreeExpected = { revision: committed, branch, trackedDirtyCount: 0, untrackedCount: 0 }
     // Without a commit there is no revision for the working tree to be clean against, so the missing
     // commit is the one cause reported rather than a count of files that are all simply uncommitted.
     const workingTreeObserved = unborn
         ? { state: 'failed' as const, reason: `the repository at ${context.checkoutRoot} has no commits yet (${trackedDirtyCount} staged, ${untrackedCount} untracked), so there is no committed revision for its working tree to match`, observedAt: common.observedAt }
         : { state: 'available' as const, value: workingTreeValue, observedAt: common.observedAt }
-    const adjacencyValue = Object.freeze({ revision: committed, branch, upstream, ahead, behind, adjacency })
-    const adjacencyExpected = Object.freeze({ revision: committed, branch, upstream, ahead: 0, behind: 0,
-        adjacency: upstream === null ? 'untracked-upstream' : 'aligned' })
-    const observations: readonly EnvironmentObservation[] = Object.freeze([
+    const adjacencyValue = { revision: committed, branch, upstream, ahead, behind, adjacency }
+    const adjacencyExpected = { revision: committed, branch, upstream, ahead: 0, behind: 0,
+        adjacency: upstream === null ? 'untracked-upstream' : 'aligned' }
+    const observations: readonly EnvironmentObservation[] = [
         {
             code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY,
             owner: common.owner,
@@ -244,7 +244,7 @@ export function decodeGitObservation(
             freshness: common.freshness,
             remedy: adjacencyRemedy,
         },
-    ])
+    ]
     return { kind: 'complete', evidence, observations }
 }
 
@@ -260,11 +260,11 @@ export function observeGit(
     const decoded = decodeGitObservation(authenticated.stdout, { stackId: context.stackId, observedAt: authenticated.receipt.finishedAt,
         source: context.source, checkoutRoot: binding.checkoutRoot })
     if (decoded.kind !== 'complete') return decoded
-    const result = Object.freeze({
+    const result = {
         kind: 'complete' as const,
         evidence: decoded.evidence,
-        observations: Object.freeze(decoded.observations.map(issueObservation)),
-    })
+        observations: decoded.observations.map(issueObservation),
+    }
     issuedGitResults.set(result, Object.freeze({ ...binding, evidence: decoded.evidence }))
     return result
 }
@@ -313,9 +313,9 @@ const COMPARISON_OUTPUT_LIMIT = 4_096
 const comparisonCode = ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH
 
 function comparisonUnavailable(reason: string, remoteName?: string): Extract<ComparisonRemoteResult, { kind: 'unavailable' }> {
-    return Object.freeze(remoteName === undefined
+    return remoteName === undefined
         ? { kind: 'unavailable' as const, code: comparisonCode, reason }
-        : { kind: 'unavailable' as const, code: comparisonCode, reason, remoteName })
+        : { kind: 'unavailable' as const, code: comparisonCode, reason, remoteName }
 }
 
 function safeSibling(value: unknown): value is string {
@@ -372,7 +372,7 @@ export function observeGitAncestry(step: ExecutionStep, outcome: ExecuteProbeOut
     const authenticated = authenticatedExecutionOutcome(outcome, step)
     if (!authenticated || authenticated.kind !== 'complete' || authenticated.stdout.byteLength !== 0
         || authenticated.stderr.byteLength !== 0) return undefined
-    const observation = Object.freeze({}) as GitAncestryObservation
+    const observation = {} as GitAncestryObservation
     issuedGitAncestryObservations.add(observation)
     return observation
 }
@@ -393,7 +393,7 @@ export function createComparisonRemoteRefStep(input: {
     if (!safeSibling(input.sibling)) return comparisonUnavailable('comparison sibling identity is unavailable')
     if (input.declaredRemote === undefined) {
         return input.acquire === 'none'
-            ? Object.freeze({ kind: 'not-applicable', code: comparisonCode, reason: `sibling ${input.sibling} has no declared comparison remote` })
+            ? { kind: 'not-applicable', code: comparisonCode, reason: `sibling ${input.sibling} has no declared comparison remote` }
             : comparisonUnavailable(`declared repository identity is unavailable for sibling ${input.sibling}`)
     }
     const expected = repositoryIdentity(input.declaredRemote)
@@ -418,7 +418,7 @@ export function createComparisonRemoteRefStep(input: {
     if (git.evidence.adjacency !== 'aligned') {
         return comparisonUnavailable(`comparison upstream is ${git.evidence.adjacency} for sibling ${input.sibling}`)
     }
-    const binding = Object.freeze({ ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream })
+    const binding = { ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream }
     const step = comparisonStep({
         id: `git:${input.sibling}:comparison-ref`, binding, env: input.env, timeoutMs: input.timeoutMs,
         argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'for-each-ref',
@@ -426,7 +426,7 @@ export function createComparisonRemoteRefStep(input: {
             '--count=1', '--', `refs/heads/${branch}`],
     })
     if (!step) return comparisonUnavailable(`comparison ref probe is unavailable for sibling ${input.sibling}`)
-    const stage = Object.freeze({ kind: 'probe' as const, step })
+    const stage = { kind: 'probe' as const, step }
     issuedComparisonRefs.set(stage, binding)
     return stage
 }
@@ -443,7 +443,7 @@ function decodeComparisonRef(bytes: Buffer, binding: ComparisonBinding): Readonl
     if (revision !== binding.revision || ref !== `refs/heads/${binding.branch}` || upstream !== binding.upstream
         || !safeRemoteName(remoteName) || !/^refs\/(?:heads|remotes)\/[^\x00-\x20\x7f]+$/.test(upstreamRef)
         || Buffer.byteLength(upstreamRef) > 1_024) return undefined
-    return Object.freeze({ remoteName, upstreamRef })
+    return { remoteName, upstreamRef }
 }
 
 export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outcome: ExecuteProbeOutcome): ComparisonRemoteUrlStage {
@@ -461,7 +461,7 @@ export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outc
         argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'remote', 'get-url', '--', remoteName],
     })
     if (!step) return comparisonUnavailable(`comparison remote probe is unavailable for sibling ${binding.sibling}`, remoteName)
-    const next = Object.freeze({ kind: 'probe' as const, step, remoteName })
+    const next = { kind: 'probe' as const, step, remoteName }
     issuedComparisonUrls.set(next, Object.freeze({ ...binding, remoteName, upstreamRef }))
     return next
 }
@@ -496,7 +496,7 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
             '--', `refs/heads/${binding.branch}`, binding.upstreamRef],
     })
     if (!step) return comparisonUnavailable(`comparison revalidation probe is unavailable for sibling ${binding.sibling}`, binding.remoteName)
-    const next = Object.freeze({ kind: 'probe' as const, step, remoteName: binding.remoteName })
+    const next = { kind: 'probe' as const, step, remoteName: binding.remoteName }
     issuedComparisonRevalidations.set(next, Object.freeze({ ...binding, state }))
     return next
 }
@@ -529,11 +529,11 @@ export function observeComparisonRemoteRevalidation(
         return comparisonUnavailable(`comparison upstream changed while authenticating sibling ${binding.sibling}`, binding.remoteName)
     }
     return binding.state === 'match'
-        ? Object.freeze({ kind: 'complete', code: comparisonCode, state: binding.state, remoteName: binding.remoteName })
-        : Object.freeze({
+        ? { kind: 'complete', code: comparisonCode, state: binding.state, remoteName: binding.remoteName }
+        : {
             kind: 'complete', code: comparisonCode, state: binding.state, remoteName: binding.remoteName,
             reason: `comparison remote ${binding.remoteName} does not match the declared repository for sibling ${binding.sibling}`,
-        })
+        }
 }
 
 export type RunningCheckoutObservationResult =
@@ -557,9 +557,9 @@ export function observeRunningCheckout(
         return { kind: 'unavailable', reason: 'running checkout needs current authenticated topology and checkout evidence' }
     }
     const expectedStack = deriveStackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } })
-    const measured = Object.freeze({ stackId: topology.stackId, configSha256: topology.configSha256,
-        checkoutMatches: topology.cwd === dirname(checkout.source.path) })
-    const expected = Object.freeze({ stackId: expectedStack, configSha256: runtimeSha256, checkoutMatches: true })
+    const measured = { stackId: topology.stackId, configSha256: topology.configSha256,
+        checkoutMatches: topology.cwd === dirname(checkout.source.path) }
+    const expected = { stackId: expectedStack, configSha256: runtimeSha256, checkoutMatches: true }
     const observation: EnvironmentObservation = {
         code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, owner: OWNER, stackId: expectedStack,
         source: `${checkout.source.path}:running-checkout`, observed: { state: 'available', value: measured, observedAt },
@@ -587,13 +587,13 @@ export function gitRepositoryRefusal(stderr: Buffer):
     const lines = stderr.toString('utf8').split(/\r?\n/)
     const line = (lines.find((candidate) => candidate.startsWith('fatal: ')) ?? lines[0]!)
         .replace(/[\u0000-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').slice(0, 512)
-    if (NOT_A_REPOSITORY.test(line)) return Object.freeze({ kind: 'not-a-repository' })
+    if (NOT_A_REPOSITORY.test(line)) return { kind: 'not-a-repository' }
     const owned = DUBIOUS_OWNERSHIP.exec(line)?.[1]
-    if (owned !== undefined) return Object.freeze({ kind: 'refused',
+    if (owned !== undefined) return { kind: 'refused',
         reason: `Git refuses to read ${owned} because another user owns it (dubious ownership)`,
-        fix: `ask the person who owns this machine whether to trust ${owned}; only if they agree, run ${formatShellCommand(['git', 'config', '--global', '--add', 'safe.directory', owned])}, then rerun this command` })
-    return Object.freeze({ kind: 'refused', reason: line === '' ? 'Git failed without a message' : `Git failed: ${line}`,
-        fix: 'fix what Git reports, then rerun this command' })
+        fix: `ask the person who owns this machine whether to trust ${owned}; only if they agree, run ${formatShellCommand(['git', 'config', '--global', '--add', 'safe.directory', owned])}, then rerun this command` }
+    return { kind: 'refused', reason: line === '' ? 'Git failed without a message' : `Git failed: ${line}`,
+        fix: 'fix what Git reports, then rerun this command' }
 }
 
 // The names the guard denies agents from reading: `.env` and `.env.<suffix>`, except the templates
@@ -635,22 +635,22 @@ export async function inspectTrackedSecretFiles(input: {
             ? gitRepositoryRefusal(outcome.stderr) : undefined
         if (refused?.kind === 'not-a-repository') return []
         if (refused) {
-            return [Object.freeze({
+            return [{
                 severity: 'warning' as const,
                 code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 message: `whether sibling ${repository.slug} commits secret-shaped files could not be checked: ${refused.reason}`,
                 target: `sibling:${repository.slug}`,
                 fix: refused.fix,
-            })]
+            }]
         }
         if (!outcome || outcome.kind !== 'complete') {
-            return [Object.freeze({
+            return [{
                 severity: 'warning' as const,
                 code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 message: `whether sibling ${repository.slug} commits secret-shaped files could not be checked (${outcome?.code ?? 'unauthenticated Git outcome'})`,
                 target: `sibling:${repository.slug}`,
                 fix: `run git -C ${repository.root} ls-files to see why Git cannot list the repository, fix that, then rerun this command`,
-            })]
+            }]
         }
         const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => {
             const name = path.slice(path.lastIndexOf('/') + 1)
@@ -658,14 +658,14 @@ export async function inspectTrackedSecretFiles(input: {
         })
         if (tracked.length === 0) return []
         const shown = tracked.slice(0, 8).join(', ')
-        return [Object.freeze({
+        return [{
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'SECRET_FILE_TRACKED' satisfies typeof ENVIRONMENT_CODES.SECRET_FILE_TRACKED,
             message: `sibling ${repository.slug} commits ${tracked.length === 1 ? 'a secret-shaped file' : `${tracked.length} secret-shaped files`} (${shown}${tracked.length > 8 ? ', ...' : ''}); the guard keeps agents from reading ${tracked.length === 1 ? 'it' : 'them'}, but every clone of the repository already holds the values. cockpit did not read ${tracked.length === 1 ? 'it' : 'them'}`,
             target: `sibling:${repository.slug}`,
             fix: 'a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead',
-        })]
+        }]
     }))
-    return Object.freeze(perRepository.flat())
+    return perRepository.flat()
 }

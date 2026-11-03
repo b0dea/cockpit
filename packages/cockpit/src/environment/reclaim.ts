@@ -228,12 +228,12 @@ interface PendingAbsentReclaimAction {
 }
 
 function issueAbsentReclaimAction(input: Omit<PendingAbsentReclaimAction, 'continuation'>, runtimeDigest: string): object {
-    const continuation = Object.freeze({})
-    const common = Object.freeze({ completedTargetId: input.targetId, issuedAt: new Date().toISOString(), runtimeDigest,
-        targetIds: input.targetIds, removedTargetIds: input.removedTargetIds, targetIdentities: input.targetIdentities })
+    const continuation = {}
+    const common = { completedTargetId: input.targetId, issuedAt: new Date().toISOString(), runtimeDigest,
+        targetIds: input.targetIds, removedTargetIds: input.removedTargetIds, targetIdentities: input.targetIdentities }
     if (input.purpose === 'down') teardownContinuations.set(continuation, { ...common, discoveryDigest: input.planDigest })
     else resetContinuations.set(continuation, { ...common, consentDigest: input.planDigest })
-    const authority = Object.freeze({})
+    const authority = {}
     pendingAbsentReclaimActions.set(authority, Object.freeze({ ...input, continuation }))
     return authority
 }
@@ -324,11 +324,11 @@ export type ReclaimResult =
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
 function diagnostic(code: EnvironmentCode, message: string, target: string, fix?: string): EnvironmentDiagnostic {
-    return Object.freeze({ severity: 'error', code, message, target, ...(fix ? { fix } : {}) })
+    return { severity: 'error', code, message, target, ...(fix ? { fix } : {}) }
 }
 
 function refuse(code: EnvironmentCode, message: string, target: string, fix?: string): ReclaimResult {
-    return Object.freeze({ kind: 'refusal', diagnostics: Object.freeze([diagnostic(code, message, target, fix)]) })
+    return { kind: 'refusal', diagnostics: [diagnostic(code, message, target, fix)] }
 }
 
 function exactKeys(value: object, keys: readonly string[]): boolean {
@@ -362,16 +362,16 @@ function snapshotResource(value: unknown): ReclaimResource | undefined {
         || candidate.dataBearing !== undefined && typeof candidate.dataBearing !== 'boolean'
         || candidate.generation !== undefined && (candidate.kind !== 'volume' || typeof candidate.generation !== 'string'
             || candidate.generation.length === 0 || candidate.generation.length > 128 || candidate.generation.includes('\0'))) return undefined
-    return Object.freeze({
+    return {
         id: candidate.id,
         name: candidate.name,
         kind: candidate.kind as ReclaimResourceKind,
-        labels: Object.freeze({ ...candidate.labels }),
+        labels: { ...candidate.labels },
         referenced: candidate.referenced,
         bytes: candidate.bytes as number | null,
         ...(candidate.dataBearing === undefined ? {} : { dataBearing: candidate.dataBearing }),
         ...(candidate.generation === undefined ? {} : { generation: candidate.generation }),
-    })
+    }
 }
 
 function snapshotClassificationInput(value: unknown): {
@@ -412,18 +412,18 @@ function snapshotClassificationInput(value: unknown): {
             || !Number.isSafeInteger(record.revision) || (record.revision as number) < 0
             || typeof record.updatedAt !== 'string' || !isCanonicalTimestamp(record.updatedAt)) return undefined
     }
-    return Object.freeze({
+    return {
         stackId: input.stackId as StackId,
         cockpitId: input.cockpitId as CockpitId,
         configSha256: input.configSha256,
         coordinationRecord: coordinationRecord as StateRecord | null,
-        declaredCacheIds: Object.freeze([...input.declaredCacheIds]) as readonly string[],
-        discovery: Object.freeze({
+        declaredCacheIds: [...input.declaredCacheIds] as readonly string[],
+        discovery: {
             observedAt: discovery.observedAt,
             producer: 'runtime-resource-discovery' as const,
-            resources: Object.freeze(resources as ReclaimResource[]),
-        }),
-    })
+            resources: resources as ReclaimResource[],
+        },
+    }
 }
 
 function labelOwnership(
@@ -474,10 +474,10 @@ function shellQuote(value: string): string {
 function suggestion(resource: ReclaimResource, ownership: OwnershipEvidence): { command: string; risk: string } | undefined {
     if (resource.kind === 'build-cache' || resource.kind === 'cache') return undefined
     const noun = resource.kind === 'image' ? 'image' : resource.kind
-    return Object.freeze({
+    return {
         command: `docker ${noun} rm -- ${shellQuote(resource.id)}`,
         risk: `${ownership} ${resource.kind} is not owned for automatic removal; verify its consumers before running this exact command`,
-    })
+    }
 }
 
 export function classifyReclaim(rawInput: ClassifyReclaimInput): ReclaimResult {
@@ -502,17 +502,17 @@ export function classifyReclaim(rawInput: ClassifyReclaimInput): ReclaimResult {
                 : reverse === 'regenerable-cache' ? 'reclaim' : 'teardown'
             : evidence.ownership === 'stale-config' && reverse === 'runtime' ? 'teardown'
             : exactUnknownCache ? 'reclaim' : 'report-only'
-        return Object.freeze({
+        return {
             ...resource,
             ownership: evidence.ownership,
             reversibility: reverse,
             action,
-            evidence: Object.freeze([...evidence.evidence]),
+            evidence: [...evidence.evidence],
             reason: evidence.reason,
             ...(action === 'report-only' ? { suggestion: suggestion(resource, evidence.ownership) } : {}),
-        })
+        }
     }).sort((left, right) => lexical(left.id, right.id))
-    return Object.freeze({ kind: 'complete', noop: resources.length === 0, resources: Object.freeze(resources) })
+    return { kind: 'complete', noop: resources.length === 0, resources }
 }
 
 export interface KeptTeardownResource {
@@ -530,16 +530,16 @@ export interface KeptTeardownResource {
 export function keptTeardownResources(input: ClassifyReclaimInput): readonly KeptTeardownResource[] | undefined {
     const classified = classifyReclaim(reclaimInput(input))
     if (classified.kind !== 'complete') return undefined
-    return Object.freeze(classified.resources
+    return classified.resources
         .filter(({ kind, ownership, action }) => kind !== 'volume' && action === 'report-only'
             && (ownership === 'current' || ownership === 'stale-config'))
-        .map(({ kind, id, name, referenced, reason }) => Object.freeze({
+        .map(({ kind, id, name, referenced, reason }) => ({
             kind, id, name,
             reason: !referenced ? reason
                 : kind === 'network' ? 'a container outside this stack is still attached to it'
                     : kind === 'image' ? 'it is tagged under more than one name, so another name may still need it'
                         : 'something outside this stack still uses it',
-        })))
+        }))
 }
 
 export interface ReclaimDiscoveryPlanInput {
@@ -557,7 +557,7 @@ function safeEnvironment(value: unknown): Readonly<Record<string, string>> | und
     const entries = Object.entries(value)
     if (entries.some(([key, item]) => !key || key.includes('\0') || key.includes('=') || DAEMON_ENV.test(key)
         || typeof item !== 'string' || item.includes('\0'))) return undefined
-    return Object.freeze(Object.fromEntries(entries.filter(([key]) => SAFE_ENV.has(key)).sort(([a], [b]) => lexical(a, b))))
+    return Object.fromEntries(entries.filter(([key]) => SAFE_ENV.has(key)).sort(([a], [b]) => lexical(a, b)))
 }
 
 export interface DockerSelectionProbeInput {
@@ -584,11 +584,11 @@ export function createDockerSelectionSteps(rawInput: DockerSelectionProbeInput):
         || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
     // Only the selection reads DOCKER_HOST; discovery and actions address the admitted endpoint
     // with --host, so the rest of the plan keeps a daemon-free environment.
-    const selectionEnv = host === undefined ? env : Object.freeze({ ...env, DOCKER_HOST: host })
-    const steps = Object.freeze([
+    const selectionEnv = host === undefined ? env : { ...env, DOCKER_HOST: host }
+    const steps = [
         exactStep('runtime:select:context', [executable.canonicalPath, 'context', 'inspect', input.context, '--format', contextSelectionFormat],
             executable, input.cwd, selectionEnv, input.timeoutMs, [], { selectionKind: 'context' }),
-    ])
+    ]
     if (steps.some((step) => step === undefined)) return undefined
     const complete = steps as readonly ExecutionStep[]
     selectionProbePlans.set(complete, Object.freeze({
@@ -642,7 +642,7 @@ export function admitDockerSelection(
             || plan.host !== undefined && context.endpoint !== plan.host
             || !isCanonicalTimestamp(startedAt) || !isCanonicalTimestamp(finishedAt)
             || Date.parse(finishedAt) < Date.parse(startedAt) || Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
-        const token = Object.freeze({ kind: 'docker-selection' })
+        const token = { kind: 'docker-selection' }
         selectionAuthorities.set(token, Object.freeze({
             executable: plan.executable, cwd: plan.cwd, env: plan.env,
             selection: Object.freeze({ context: plan.context, endpoint: context.endpoint }),
@@ -694,7 +694,7 @@ function dockerLabels(value: unknown, kind?: ReclaimResourceKind): Readonly<Reco
         if (typeof labelValue !== 'string' || labelValue.length > 512 || labelValue.includes('\0')) return undefined
         if (labelValue !== '') labels[key] = labelValue
     }
-    return Object.freeze(labels)
+    return labels
 }
 
 function dockerBytes(value: unknown, allowVirtualSize = false): number | null | undefined {
@@ -731,7 +731,7 @@ function dockerResource(value: unknown, kind: Exclude<ReclaimResourceKind, 'cach
     const id = row.id
     const name = row.name
     const labels = kind === 'image'
-        ? row.labels !== null && typeof row.labels === 'object' && !Array.isArray(row.labels) && exactKeys(row.labels, []) ? Object.freeze({}) : undefined
+        ? row.labels !== null && typeof row.labels === 'object' && !Array.isArray(row.labels) && exactKeys(row.labels, []) ? {} : undefined
         : dockerLabels(row.labels, kind)
     const bytes = dockerBytes(row.bytes, kind === 'container')
     const referenced = kind === 'image' ? typeof row.referenced === 'boolean' ? row.referenced : undefined : row.referenced
@@ -810,7 +810,7 @@ export function createImageInspectionSteps(discovery: ReclaimDiscoverySnapshot):
     const steps = inspectionSteps(authority, 'image', imageInspectionFormat(), images, {
         resourceKind: 'image-inspection', dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint,
     })
-    return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
+    return steps.every((step) => step !== undefined) ? (steps as ExecutionStep[]) : undefined
 }
 
 export function admitImageInspections(
@@ -842,10 +842,10 @@ export function admitImageInspections(
             finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
             receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
         }
-        const snapshot = Object.freeze({
+        const snapshot = {
             observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
-            resources: Object.freeze(discovery.resources.map((resource) => snapshotResource({ ...resource, labels: labels.get(resource.id) ?? resource.labels })!)),
-        })
+            resources: discovery.resources.map((resource) => snapshotResource({ ...resource, labels: labels.get(resource.id) ?? resource.labels })!),
+        }
         admittedDiscoveries.add(snapshot)
         discoveryAuthorities.set(snapshot, Object.freeze({
             ...authority, receipts: Object.freeze(receipts.sort(lexical)), finishedAt, imagesInspected: true,
@@ -865,7 +865,7 @@ export function createVolumeInspectionSteps(discovery: ReclaimDiscoverySnapshot)
     const steps = inspectionSteps(authority, 'volume',
         `{"name":{{json .Name}},"generation":{{with .Labels}}{{json (or (index . "dev.b0dea.cockpit.generation-id") "")}}{{else}}""{{end}}}`,
         owned.map(({ id }) => id), { resourceKind: 'volume-inspection' })
-    return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
+    return steps.every((step) => step !== undefined) ? (steps as ExecutionStep[]) : undefined
 }
 
 export function admitVolumeInspections(
@@ -899,13 +899,13 @@ export function admitVolumeInspections(
             finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
             receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
         }
-        const snapshot = Object.freeze({
+        const snapshot = {
             observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
-            resources: Object.freeze(discovery.resources.map((resource) => {
+            resources: discovery.resources.map((resource) => {
                 const generation = generations.get(resource.id)
                 return snapshotResource({ ...resource, ...(generation === undefined || generation === '' ? {} : { generation }) })!
-            })),
-        })
+            }),
+        }
         admittedDiscoveries.add(snapshot)
         discoveryAuthorities.set(snapshot, Object.freeze({
             ...authority, receipts: Object.freeze(receipts.sort(lexical)), finishedAt, volumesInspected: true,
@@ -998,7 +998,7 @@ export function createNetworkInspectionSteps(
     if (names.some((name) => !NETWORK_NAME.test(name))) return undefined
     const containerSteps = networkHolderSteps(authority, names, { resourceKind: 'network-holder-listing', ...selection })
     const steps = [...networkSteps, ...containerSteps]
-    return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
+    return steps.every((step) => step !== undefined) ? (steps as ExecutionStep[]) : undefined
 }
 
 export function admitNetworkInspections(
@@ -1057,12 +1057,12 @@ export function admitNetworkInspections(
             finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
             receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
         }
-        const snapshot = Object.freeze({
+        const snapshot = {
             observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
-            resources: Object.freeze(discovery.resources.map((resource) => snapshotResource({
+            resources: discovery.resources.map((resource) => snapshotResource({
                 ...resource, referenced: [...holders.get(resource.id) ?? []].some((holder) => !sameStackHolder(resource, containersById.get(holder))),
-            })!)),
-        })
+            })!),
+        }
         admittedDiscoveries.add(snapshot)
         discoveryAuthorities.set(snapshot, Object.freeze({
             ...authority, receipts: Object.freeze(receipts.sort(lexical)), finishedAt, networksInspected: true,
@@ -1118,7 +1118,7 @@ export function createReclaimDiscoverySteps(rawInput: ReclaimDiscoveryPlanInput)
     if (steps.some((step) => step === undefined)) return undefined
     consumedSelectionAuthorities.add(rawAuthority)
     for (let index = 0; index < steps.length; index += 1) plannedDiscoverySteps.set(steps[index]!, Object.freeze({ authority, kind: (['container', 'network', 'volume', 'image', 'build-cache'] as const)[index]! }))
-    return Object.freeze(steps as ExecutionStep[])
+    return steps as ExecutionStep[]
 }
 
 export function admitReclaimDiscovery(
@@ -1168,13 +1168,13 @@ export function admitReclaimDiscovery(
             const duplicate = resources.find(({ id }) => id === owned.id)
             if (duplicate !== undefined && kind === 'image') {
                 if (duplicate.bytes !== owned.bytes) return undefined
-                resources.splice(resources.indexOf(duplicate), 1, Object.freeze({ ...duplicate, referenced: true, name: [duplicate.name, owned.name].sort(lexical)[0]! }))
+                resources.splice(resources.indexOf(duplicate), 1, { ...duplicate, referenced: true, name: [duplicate.name, owned.name].sort(lexical)[0]! })
                 continue
             }
             resources.push(owned)
         }
         if (resources.length > MAX_RESOURCES || new Set(resources.map(({ id }) => id)).size !== resources.length) return undefined
-        const snapshot = Object.freeze({ observedAt: admitted.receipt.finishedAt, producer: 'runtime-resource-discovery' as const, resources: Object.freeze(resources.sort((a, b) => lexical(a.id, b.id))) })
+        const snapshot = { observedAt: admitted.receipt.finishedAt, producer: 'runtime-resource-discovery' as const, resources: resources.sort((a, b) => lexical(a.id, b.id)) }
         admittedDiscoveries.add(snapshot)
         discoveryAuthorities.set(snapshot, Object.freeze({
             stackId: step.labels.stackId as StackId, executable, cwd: step.cwd, env, selection,
@@ -1217,7 +1217,7 @@ export function combineReclaimDiscoveries(snapshots: readonly ReclaimDiscoverySn
         const startedAt = authorities.map(({ startedAt }) => startedAt).sort(lexical)[0]!
         const finishedAt = authorities.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
         if (Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
-        const combined = Object.freeze({ observedAt: finishedAt, producer: 'runtime-resource-discovery' as const, resources: Object.freeze(resources) })
+        const combined = { observedAt: finishedAt, producer: 'runtime-resource-discovery' as const, resources }
         admittedDiscoveries.add(combined)
         discoveryAuthorities.set(combined, Object.freeze({
             stackId: first.stackId, executable: first.executable, cwd: first.cwd, env: first.env, selection: first.selection,
@@ -1363,7 +1363,7 @@ export type TeardownPlanResult =
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
 function refusal(code: EnvironmentCode, message: string, target: string, fix?: string): { kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] } {
-    return Object.freeze({ kind: 'refusal', diagnostics: Object.freeze([diagnostic(code, message, target, fix)]) })
+    return { kind: 'refusal', diagnostics: [diagnostic(code, message, target, fix)] }
 }
 
 function canonicalValue(value: unknown): unknown {
@@ -1381,7 +1381,7 @@ function captureDataInput(raw: unknown): { readonly value: unknown; readonly opa
     if (Reflect.ownKeys(descriptors).some((key) => typeof key !== 'string')
         || Object.values(descriptors).some((descriptor) => !('value' in descriptor))) return undefined
     const data = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    return { value: snapshotJson(data), opaque: Object.freeze({ ...data }) }
+    return { value: snapshotJson(data), opaque: { ...data } }
 }
 
 function digestValue(value: unknown): string {
@@ -1447,7 +1447,7 @@ function recordPreview(digest: string, authority: DiscoveryAuthority): void {
 }
 
 function issueConsent(digest: string, authority: DiscoveryAuthority | undefined): object {
-    const consent = Object.freeze({ kind: 'reclaim-consent', digest })
+    const consent = { kind: 'reclaim-consent', digest }
     if (authority !== undefined) consentAuthorities.set(consent, Object.freeze({
         digest, receipts: authority.receipts, issuedAt: new Date().toISOString(),
     }))
@@ -1512,9 +1512,9 @@ async function inspectHostPath(declaration: HostPathDeclaration): Promise<HostPa
     try {
         const rootStatus = await lstat(declaration.root, { bigint: true })
         if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink() || await realpath(declaration.root) !== declaration.root) return undefined
-        const ancestors: FilesystemAncestorIdentity[] = [Object.freeze({
+        const ancestors: FilesystemAncestorIdentity[] = [{
             path: declaration.root, ...filesystemObjectIdentity(rootStatus),
-        })]
+        }]
         let cursor = declaration.root
         const parts = relation.split(sep)
         for (let index = 0; index < parts.length; index += 1) {
@@ -1525,16 +1525,16 @@ async function inspectHostPath(declaration: HostPathDeclaration): Promise<HostPa
                 if (index < parts.length - 1 && !status.isDirectory()) return undefined
                 if (index === parts.length - 1) {
                     if (await realpath(cursor) !== cursor) return undefined
-                    return Object.freeze({
+                    return {
                         state: 'present', type: status.isDirectory() ? 'directory' : status.isFile() ? 'file' : undefined,
                         ...filesystemObjectIdentity(status), mode: Number(status.mode),
-                        size: Number(status.size), mtimeMs: Number(status.mtimeNs) / 1_000_000, ancestors: Object.freeze(ancestors),
-                    })
+                        size: Number(status.size), mtimeMs: Number(status.mtimeNs) / 1_000_000, ancestors,
+                    }
                 }
-                ancestors.push(Object.freeze({ path: cursor, ...filesystemObjectIdentity(status) }))
+                ancestors.push({ path: cursor, ...filesystemObjectIdentity(status) })
             } catch (error) {
                 if (!hasErrorCode(error, 'ENOENT')) return undefined
-                return Object.freeze({ state: 'absent' })
+                return { state: 'absent' }
             }
         }
     } catch {
@@ -1547,7 +1547,7 @@ async function inspectHostPath(declaration: HostPathDeclaration): Promise<HostPa
 async function dependencyCacheAuthorities(
     declarations: readonly DependencyCacheDeclaration[] | undefined,
 ): Promise<readonly DependencyCacheAuthority[] | undefined> {
-    if (declarations === undefined) return Object.freeze([])
+    if (declarations === undefined) return []
     if (!Array.isArray(declarations) || declarations.length > MAX_RESOURCES) return undefined
     const authorities: DependencyCacheAuthority[] = []
     for (const declaration of declarations) {
@@ -1557,20 +1557,20 @@ async function dependencyCacheAuthorities(
             || resolve(declaration.root, declaration.cacheId) !== declaration.path) return undefined
         const evidence = await inspectHostPath({ ...declaration, declaration: declaration.cacheId })
         if (evidence === undefined || evidence.state === 'present' && evidence.type !== 'directory') return undefined
-        authorities.push(Object.freeze({ ...declaration, evidence }))
+        authorities.push({ ...declaration, evidence })
     }
     if (new Set(authorities.map(({ cacheId }) => cacheId)).size !== authorities.length
         || new Set(authorities.map(({ path }) => path)).size !== authorities.length) return undefined
-    return Object.freeze(authorities.sort((left, right) => lexical(left.cacheId, right.cacheId)))
+    return authorities.sort((left, right) => lexical(left.cacheId, right.cacheId))
 }
 
 function safeTarget(value: ResetTargetAuthority): ResetTargetInput {
-    return Object.freeze({
+    return {
         kind: value.kind,
         identity: value.identity,
         declaration: value.declaration,
-        ...(value.labels === undefined ? {} : { labels: Object.freeze({ ...value.labels }) }),
-    })
+        ...(value.labels === undefined ? {} : { labels: { ...value.labels } }),
+    }
 }
 
 function reclaimInput(input: ClassifyReclaimInput): ClassifyReclaimInput {
@@ -1611,10 +1611,10 @@ async function resetAuthorities(input: PlanResetInput): Promise<ResetTargetAutho
         // volume id, labels and generation, so a volume replaced before the action is refused.
         if (match.ownership !== 'current' && match.ownership !== 'stale-config' || match.referenced
             || match.reversibility !== 'data-bearing' || typeof match.generation !== 'string') return undefined
-        targets.push(Object.freeze({
-            kind: 'volume', identity: match.name, declaration: key, labels: Object.freeze({ ...match.labels }),
-            evidence: Object.freeze({ resourceId: match.id, bytes: match.bytes, generation: match.generation }),
-        }))
+        targets.push({
+            kind: 'volume', identity: match.name, declaration: key, labels: { ...match.labels },
+            evidence: { resourceId: match.id, bytes: match.bytes, generation: match.generation },
+        })
     }
     // Docker refuses to remove a volume a container still references, stopped or not, and the
     // runtime stop leaves the stack's containers in place. So a reset that removes volumes first
@@ -1626,10 +1626,10 @@ async function resetAuthorities(input: PlanResetInput): Promise<ResetTargetAutho
             if (match.kind !== 'container' || match.ownership !== 'current' && match.ownership !== 'stale-config'
                 || match.action !== 'teardown') continue
             const { ownership: _ownership, reversibility: _reversibility, action: _action, evidence: _evidence, reason: _reason, suggestion: _suggestion, ...resource } = match
-            targets.push(Object.freeze({
-                kind: 'container', identity: match.id, declaration: match.name, labels: Object.freeze({ ...match.labels }),
-                evidence: Object.freeze({ resource: Object.freeze(resource) }),
-            }))
+            targets.push({
+                kind: 'container', identity: match.id, declaration: match.name, labels: { ...match.labels },
+                evidence: { resource },
+            })
         }
     }
     const hostIdentities = new Set<string>()
@@ -1637,10 +1637,10 @@ async function resetAuthorities(input: PlanResetInput): Promise<ResetTargetAutho
         const evidence = await inspectHostPath(declaration)
         if (evidence === undefined || evidence.state === 'present' && evidence.type === undefined || hostIdentities.has(declaration.path)) return undefined
         hostIdentities.add(declaration.path)
-        targets.push(Object.freeze({
+        targets.push({
             kind: 'host-path', identity: declaration.path, declaration: declaration.declaration,
             root: declaration.root, evidence,
-        }))
+        })
     }
     return targets.sort((left, right) => lexical(left.kind, right.kind) || lexical(left.identity, right.identity))
 }
@@ -1670,11 +1670,11 @@ function coordinationIsFresh(record: StateRecord, observedAt: string): boolean {
 
 function coordinationWorkBasis(record: StateRecord, stackId: StackId): unknown | undefined {
     const value = decodeCoordinationRecord(record, stackId)
-    return value === undefined ? undefined : Object.freeze({
+    return value === undefined ? undefined : {
         holders: value.holders,
         lease: value.lease,
         lastReleasedHolder: value.lastReleasedHolder,
-    })
+    }
 }
 
 async function rereadCoordination(
@@ -1770,9 +1770,9 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             }
             authorities = remainingNow
         }
-        const digestTargetIds = Object.freeze(authorities
+        const digestTargetIds = authorities
             .filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
-            .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
+            .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
         const digestIdentities = coldPlanningIdentities ?? resetTargetIdentities(digestTargetIds, authorities)
         const coldCurrentIdentity = coldPlanningIdentities?.find(({ targetId }) => targetId === coldPlanningRecovery?.current.targetId)
         const coldCurrentAbsent = coldCurrentIdentity !== undefined && targetIsAbsent(coldCurrentIdentity, discovery.resources)
@@ -1794,17 +1794,17 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         if (continued !== undefined && continued.runtimeDigest !== runtimeDigest) {
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset continuation does not match the original runtime authority', 'reset-continuation')
         }
-        const publicTargets = Object.freeze(authorities.map(safeTarget))
+        const publicTargets = authorities.map(safeTarget)
         if (input.confirmationDigest === undefined) {
             const previewAuthority = discoveryAuthorities.get(discovery)
             if (previewAuthority !== undefined) recordPreview(digest, previewAuthority)
-            const preview = Object.freeze({
-                kind: 'preview', digest, coordinationRevision: coordination.revision,
+            const preview = {
+                kind: 'preview' as const, digest, coordinationRevision: coordination.revision,
                 targets: publicTargets, noop: authorities.length === 0 && !coldCurrentAbsent,
                 consent: issueConsent(digest, previewAuthority),
-            })
+            }
             const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
-            const targetIds = Object.freeze(actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
+            const targetIds = actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
             const identities = coldPlanningIdentities ?? resetTargetIdentities(targetIds, actionable)
             if (identities === undefined) {
                 return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be committed exactly', 'reset-targets')
@@ -1877,8 +1877,8 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                         .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
                 },
             }, runtimeDigest)
-            const result = Object.freeze({ kind: 'complete' as const, step: null, actionAuthority, remaining: digestTargetIds.length,
-                noop: false, digest, continuation: null })
+            const result = { kind: 'complete' as const, step: null, actionAuthority, remaining: digestTargetIds.length,
+                noop: false, digest, continuation: null }
             issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId, input.configSha256,
                 digest, targetCommitments(coldIdentities!)))
             return result
@@ -1886,7 +1886,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         // Revalidation narrows cooperative races; portable process APIs cannot bind a daemon object or pathname descriptor through its final removal syscall.
         const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
         const target = actionable[0]
-        if (target === undefined) return Object.freeze({ kind: 'complete', step: null, actionAuthority: null, remaining: 0, noop: true, digest, continuation: null })
+        if (target === undefined) return { kind: 'complete', step: null, actionAuthority: null, remaining: 0, noop: true, digest, continuation: null }
         const step = target.kind === 'host-path'
             ? exactStep(
                 `reset:host-path:${digestValue(target.identity).slice(0, 16)}`,
@@ -1908,19 +1908,19 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 { stackId: input.stackId, configSha256: input.configSha256, resetKind: target.kind, volume: target.identity },
             )
         if (step === undefined) return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'exact reset action could not cross the execution boundary', target.identity)
-        const actionAuthority = Object.freeze({ kind: 'reset-action-authority' })
+        const actionAuthority = { kind: 'reset-action-authority' }
         consumeAuthority(authority)
         consumedSelectionAuthorities.add(currentSelectionToken as object)
         if (continuation !== undefined) {
             consumedContinuations.add(continuation as object)
             reconciledContinuationDiscoveries.delete(continuation as object)
         }
-        const receipt = Object.freeze({ kind: 'reset-continuation', digest: digestValue([digest, target.kind, target.identity]) })
-        const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? Object.freeze(actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
-        const removedTargetIds = coldTargetsMatch ? Object.freeze(coldCompletedTargetIds!) : continued === undefined
-            ? Object.freeze([] as string[])
+        const receipt = { kind: 'reset-continuation', digest: digestValue([digest, target.kind, target.identity]) }
+        const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
+        const removedTargetIds = coldTargetsMatch ? coldCompletedTargetIds! : continued === undefined
+            ? ([] as string[])
             : continuedAfterFailure ? continued.removedTargetIds
-                : Object.freeze([...continued.removedTargetIds, continued.completedTargetId].sort(lexical))
+                : [...continued.removedTargetIds, continued.completedTargetId].sort(lexical)
         const targetIdentities = continued?.targetIdentities ?? (coldTargetsMatch ? coldIdentities : resetTargetIdentities(targetIds, actionable))
         if (targetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be retained exactly', 'reset-targets')
@@ -1934,8 +1934,8 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             step, target, coordinationRecord: currentCoordination, continuation: receipt,
             planDigest: digest, targetIds, removedTargetIds, targetIdentities,
         }))
-        const result = Object.freeze({ kind: 'complete' as const, step: null, actionAuthority,
-            remaining: actionable.length - 1, noop: false, digest, continuation: null })
+        const result = { kind: 'complete' as const, step: null, actionAuthority,
+            remaining: actionable.length - 1, noop: false, digest, continuation: null }
         if (coldTargetsMatch) issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId,
             input.configSha256, digest, targetCommitments(coldIdentities!)))
         return result
@@ -2038,13 +2038,13 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if (coordination.holders.length > 1 || coordination.holders.length === 1 && (coordination.lease === null || coordination.lease.released)) {
             return refusal(ENVIRONMENT_CODES.RESET_CO_TENANT, 'teardown requires no more than one retained holder with its lease', input.stackId)
         }
-        const cacheResources = caches.filter(({ evidence }) => evidence.state === 'present').map(({ cacheId }) => Object.freeze({
-            id: cacheId, name: cacheId, kind: 'cache' as const, labels: Object.freeze({}), referenced: false, bytes: null,
+        const cacheResources = caches.filter(({ evidence }) => evidence.state === 'present').map(({ cacheId }) => ({
+            id: cacheId, name: cacheId, kind: 'cache' as const, labels: {}, referenced: false, bytes: null,
         }))
-        const observedDiscovery = Object.freeze({
+        const observedDiscovery = {
             ...input.discovery,
-            resources: Object.freeze([...input.discovery.resources, ...cacheResources]),
-        })
+            resources: [...input.discovery.resources, ...cacheResources],
+        }
         const classified = classifyReclaim({ ...reclaimInput(input), discovery: observedDiscovery })
         if (classified.kind !== 'complete') return classified
         const coldAuthority = inputContinuation === undefined && consent === undefined && recoveryAuthority !== undefined
@@ -2086,7 +2086,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             }
         }
         const actionable = actionableReclaimResources(classified.resources)
-        const freshTargetIds = Object.freeze(actionable.map(({ kind, id }) => `${kind}:${id}`).sort(lexical))
+        const freshTargetIds = actionable.map(({ kind, id }) => `${kind}:${id}`).sort(lexical)
         const freshTargetIdentities = teardownTargetIdentities(freshTargetIds, actionable, caches)
         if (freshTargetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown target identities could not be committed exactly', 'teardown-targets')
@@ -2157,18 +2157,18 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'exact teardown action could not cross the execution boundary', first.id)
         }
         const raw = observedDiscovery.resources
-        const observed = Object.freeze({
+        const observed = {
             orphans: sumBytes(raw.filter(({ kind }) => kind === 'container')),
             images: sumBytes(raw.filter(({ kind }) => kind === 'image')),
             buildCache: sumBytes(raw.filter(({ kind }) => kind === 'build-cache' || kind === 'cache')),
             staleNetworks: sumBytes(classified.resources.filter(({ kind, ownership }) => kind === 'network' && ownership === 'stale-config')),
-        })
-        const reclaimable = Object.freeze({
+        }
+        const reclaimable = {
             orphans: sumBytes(actionable.filter(({ kind }) => kind === 'container')),
             images: sumBytes(actionable.filter(({ kind }) => kind === 'image')),
             buildCache: sumBytes(actionable.filter(({ kind }) => kind === 'build-cache' || kind === 'cache')),
             staleNetworks: sumBytes(actionable.filter(({ kind, ownership }) => kind === 'network' && ownership === 'stale-config')),
-        })
+        }
         if ([...Object.values(observed), ...Object.values(reclaimable)].some((value) => value === undefined)) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim byte accounting exceeds the safe integer range', 'teardown-accounting')
         }
@@ -2195,14 +2195,14 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
                 return classified.kind === 'complete' ? actionableReclaimResources(classified.resources)
                     .map(({ kind, id }) => `${kind}:${id}`).sort(lexical) : undefined
             },
-        }, runtimeDigest) : step === undefined || first === undefined ? null : Object.freeze({ kind: 'teardown-action-authority' })
+        }, runtimeDigest) : step === undefined || first === undefined ? null : { kind: 'teardown-action-authority' }
         const continuation = step === undefined || first === undefined ? null
-            : Object.freeze({ kind: 'teardown-continuation', digest: digestValue([discoveryDigest, first.kind, first.id]) })
+            : { kind: 'teardown-continuation', digest: digestValue([discoveryDigest, first.kind, first.id]) }
         const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? freshTargetIds
-        const removedTargetIds = coldTargetsMatch ? Object.freeze(coldCompletedTargetIds!) : continued === undefined
-            ? Object.freeze([] as string[])
+        const removedTargetIds = coldTargetsMatch ? coldCompletedTargetIds! : continued === undefined
+            ? ([] as string[])
             : continuedAfterFailure ? continued.removedTargetIds
-                : Object.freeze([...continued.removedTargetIds, continued.completedTargetId])
+                : [...continued.removedTargetIds, continued.completedTargetId]
         const targetIdentities = continued?.targetIdentities ?? (coldTargetsMatch ? coldIdentities : freshTargetIdentities)
         if (targetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown target identities could not be retained exactly', 'teardown-targets')
@@ -2218,18 +2218,18 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             coordinationRecord: currentCoordination!, planDigest: discoveryDigest, continuation,
             targetIds, removedTargetIds, targetIdentities,
         }))
-        const result = Object.freeze({
-            kind: 'complete', steps: Object.freeze([]), actionAuthority,
+        const result: TeardownPlanResult = {
+            kind: 'complete', steps: [], actionAuthority,
             remaining: step === undefined ? actionable.length : actionable.length - 1,
             noop: actionable.length === 0 && !absent, discoveryDigest,
-            byteAccounting: Object.freeze({
+            byteAccounting: {
                 observed: observed as ByteClasses, reclaimable: reclaimable as ByteClasses,
-                action: first === undefined || step === undefined ? null : Object.freeze({ resourceId: first.id, observedBytes: first.bytes }),
+                action: first === undefined || step === undefined ? null : { resourceId: first.id, observedBytes: first.bytes },
                 actuallyReclaimed: null,
-            }),
+            },
             consent: input.expectedDiscoveryDigest === undefined ? issueConsent(discoveryDigest, previewAuthority) : null,
             continuation: null,
-        })
+        }
         issuedTeardownPlans.set(result, reclaimTargetEnvelope(
             'down', input.stackId, input.configSha256, discoveryDigest, targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities),
         ))
@@ -2258,14 +2258,14 @@ export interface ReclaimTargetEnvelope {
 
 function targetCommitment(identity: ReclaimTargetIdentity): ReclaimTargetCommitment {
     const body = JSON.stringify(canonicalValue(identity))
-    return Object.freeze({
+    return {
         format: 'cockpit-reclaim-target/v1', targetId: identity.targetId,
         sha256: createHash('sha256').update(body).digest('hex'), body,
-    })
+    }
 }
 
 function targetCommitments(identities: readonly ReclaimTargetIdentity[]): readonly ReclaimTargetCommitment[] {
-    return Object.freeze(identities.map(targetCommitment))
+    return identities.map(targetCommitment)
 }
 
 function reclaimTargetEnvelope(
@@ -2275,10 +2275,10 @@ function reclaimTargetEnvelope(
     planDigest: string,
     commitments: readonly ReclaimTargetCommitment[],
 ): ReclaimTargetEnvelope {
-    return Object.freeze({
+    return {
         purpose, stackId, configSha256, planDigest,
-        commitments: Object.freeze(commitments.map((commitment) => Object.freeze({ ...commitment }))),
-    })
+        commitments: commitments.map((commitment) => ({ ...commitment })),
+    }
 }
 
 function snapshotCommittedTargetIdentity(value: unknown): ReclaimTargetIdentity | undefined {
@@ -2298,7 +2298,7 @@ function snapshotCommittedTargetIdentity(value: unknown): ReclaimTargetIdentity 
             || typeof candidate.generation !== 'string' || !validLabels(candidate.labels)
             || candidate.targetId !== `volume:${candidate.name}`
             || digestValue(canonicalLabels(candidate.labels as Record<string, string>)) !== digestValue(candidate.labels)) return undefined
-        return Object.freeze(candidate) as unknown as ResetVolumeTargetIdentity
+        return candidate as unknown as ResetVolumeTargetIdentity
     }
     if (candidate.medium === 'runtime' && candidate.scope === 'teardown-runtime') {
         if (!exactKeys(candidate, ['medium', 'scope', 'targetId', 'kind', 'runtimeId', 'name', 'labels', 'referenced', 'dataBearing', 'generation'])
@@ -2310,7 +2310,7 @@ function snapshotCommittedTargetIdentity(value: unknown): ReclaimTargetIdentity 
             || candidate.generation !== null && typeof candidate.generation !== 'string'
             || candidate.targetId !== `${candidate.kind}:${candidate.runtimeId}`
             || digestValue(canonicalLabels(candidate.labels as Record<string, string>)) !== digestValue(candidate.labels)) return undefined
-        return Object.freeze(candidate) as unknown as TeardownRuntimeTargetIdentity
+        return candidate as unknown as TeardownRuntimeTargetIdentity
     }
     if (candidate.medium === 'path') {
         const ancestors = candidate.ancestors
@@ -2332,7 +2332,7 @@ function snapshotCommittedTargetIdentity(value: unknown): ReclaimTargetIdentity 
                 || !isFilesystemObjectIdentity(ancestor as Record<string, unknown>)
                 || (index === 0 ? ancestor.path !== candidate.root : dirname(ancestor.path) !== (ancestors[index - 1] as { path: string }).path))
             || dirname(candidate.path) !== (ancestors.at(-1) as { path: string }).path) return undefined
-        return Object.freeze(candidate) as unknown as PathTargetIdentity
+        return candidate as unknown as PathTargetIdentity
     }
     return undefined
 }
@@ -2348,7 +2348,7 @@ function committedTargetIdentities(recovery: FailedReclaimRecovery): readonly Re
                 || commitment.body !== JSON.stringify(canonicalValue(parsed))) throw new RefusalError('invalid identity')
             return parsed
         })
-        return identities.length === targets.length ? Object.freeze(identities) : undefined
+        return identities.length === targets.length ? identities : undefined
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -2356,7 +2356,7 @@ function committedTargetIdentities(recovery: FailedReclaimRecovery): readonly Re
 }
 
 function issueTargetProjection(envelope: ReclaimTargetEnvelope): ReclaimTargetProjection {
-    const projection = Object.freeze({}) as ReclaimTargetProjection
+    const projection = {} as ReclaimTargetProjection
     issuedTargetProjections.set(projection, envelope)
     return projection
 }
@@ -2386,19 +2386,19 @@ export function consumeReclaimTargetProjection(projection: ReclaimTargetProjecti
 
 function canonicalLabels(labels: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
     const required = new Set<string>(Object.values(REQUIRED_LABELS))
-    return Object.freeze(Object.fromEntries(Object.entries(labels)
+    return Object.fromEntries(Object.entries(labels)
         .filter(([key]) => required.has(key))
-        .sort(([left], [right]) => lexical(left, right))))
+        .sort(([left], [right]) => lexical(left, right)))
 }
 
 function teardownRuntimeTargetIdentity(targetId: string, resource: ReclaimResource): TeardownRuntimeTargetIdentity | undefined {
     if (resource.kind === 'cache') return undefined
-    return Object.freeze({
+    return {
         medium: 'runtime', scope: 'teardown-runtime', targetId, kind: resource.kind,
         runtimeId: resource.id, name: resource.name, labels: canonicalLabels(resource.labels),
         referenced: resource.referenced, dataBearing: resource.dataBearing ?? null,
         generation: resource.generation ?? null,
-    })
+    }
 }
 
 function pathTargetIdentity(
@@ -2411,11 +2411,11 @@ function pathTargetIdentity(
 ): PathTargetIdentity | undefined {
     if (evidence.state !== 'present' || evidence.type === undefined || evidence.dev === undefined || evidence.ino === undefined
         || evidence.birthtimeNs === undefined || evidence.ancestors === undefined) return undefined
-    return Object.freeze({
+    return {
         medium: 'path', targetId, kind, declaration, root, path, type: evidence.type,
         dev: evidence.dev, ino: evidence.ino, birthtimeNs: evidence.birthtimeNs,
-        ancestors: Object.freeze(evidence.ancestors.map((ancestor) => Object.freeze({ ...ancestor }))),
-    })
+        ancestors: evidence.ancestors.map((ancestor) => ({ ...ancestor })),
+    }
 }
 
 async function identityBoundFilesystemCheck(expected: PathTargetIdentity): Promise<FilesystemCheck | undefined> {
@@ -2437,16 +2437,16 @@ async function identityBoundFilesystemCheck(expected: PathTargetIdentity): Promi
             const status = await lstat(path, { bigint: true })
             if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== path
                 || !sameFilesystemObject(status, committed)) return undefined
-            ancestors.push(Object.freeze({ path, ...filesystemObjectIdentity(status) }))
+            ancestors.push({ path, ...filesystemObjectIdentity(status) })
         }
         const target = await lstat(expected.path, { bigint: true })
         const type = target.isDirectory() ? 'directory' : target.isFile() ? 'file' : undefined
         if (target.isSymbolicLink() || type !== expected.type || !sameFilesystemObject(target, expected)) return undefined
-        return Object.freeze({
+        return {
             path: expected.path,
             expected: expected.type,
-            identity: Object.freeze({ ...filesystemObjectIdentity(target), ancestors: Object.freeze(ancestors) }),
-        })
+            identity: { ...filesystemObjectIdentity(target), ancestors },
+        }
     } catch {
         // A target that cannot be re-identified no longer matches; the caller refuses it.
         return undefined
@@ -2474,16 +2474,16 @@ function resetTargetIdentities(
             return identity === undefined ? [] : [identity]
         }
         const evidence = target.evidence
-        return [Object.freeze({
+        return [{
             medium: 'runtime' as const, scope: 'reset-volume' as const,
             targetId, kind: 'volume' as const, declaration: target.declaration,
             runtimeId: evidence.resourceId, name: target.identity,
-            labels: canonicalLabels(target.labels ?? Object.freeze({})), generation: evidence.generation,
-        })]
+            labels: canonicalLabels(target.labels ?? {}), generation: evidence.generation,
+        }]
     }).sort((left, right) => lexical(left.targetId, right.targetId))
     return identities.length === targetIds.length
         && sameStrings(identities.map(({ targetId }) => targetId), targetIds)
-        ? Object.freeze(identities) : undefined
+        ? identities : undefined
 }
 
 function teardownTargetIdentities(
@@ -2505,7 +2505,7 @@ function teardownTargetIdentities(
     }).sort((left, right) => lexical(left.targetId, right.targetId))
     return identities.length === targetIds.length
         && sameStrings(identities.map(({ targetId }) => targetId), targetIds)
-        ? Object.freeze(identities) : undefined
+        ? identities : undefined
 }
 
 export async function redeemReclaimAction(input: {
@@ -2573,14 +2573,14 @@ export async function redeemReclaimAction(input: {
     pendingResetActions.delete(actionAuthority)
     pendingTeardownActions.delete(actionAuthority)
     consumedPendingTeardownActions.add(actionAuthority)
-    const authority = Object.freeze({})
+    const authority = {}
     pendingReclaimExecutions.set(authority, Object.freeze({
         step: fencedStep, targetId,
         reservation: candidate.reservation, attempt: candidate.attempt, execution, continuation: pending.continuation,
         targetIds: pending.targetIds, removedTargetIds: pending.removedTargetIds,
         targetIdentities,
     }))
-    return Object.freeze({ step: fencedStep, authority })
+    return { step: fencedStep, authority }
 }
 
 export const redeemTeardownAction = redeemReclaimAction
@@ -2611,10 +2611,10 @@ export function redeemAbsentReclaimAction(input: {
             planningRecord: pending.coordinationRecord, continuation: pending.continuation })
         if (!execution) return undefined
         pendingAbsentReclaimActions.delete(actionAuthority)
-        const authority = Object.freeze({})
+        const authority = {}
         absentReclaimExecutions.set(authority, { pending, execution,
             reservation: candidate.reservation, attempt: candidate.attempt })
-        return Object.freeze({ authority })
+        return { authority }
     } catch {
         // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
@@ -2659,10 +2659,10 @@ export async function reconcileAbsentReclaimAction(input: {
             fact: reclaimCompletionFact(reservation, attempt, observed.finishedAt, remainder) })
         if (!settled) throw new RefusalError('absence completion authority is unavailable')
         if (remainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, observed)
-        const resultAuthority = Object.freeze({})
+        const resultAuthority = {}
         issuedReclaimCompleted.set(resultAuthority, settled)
-        return Object.freeze({ kind: 'complete', continuation: remainder.length === 0 ? null : pending.continuation,
-            authority: resultAuthority })
+        return { kind: 'complete', continuation: remainder.length === 0 ? null : pending.continuation,
+            authority: resultAuthority }
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
             `fresh discovery did not prove the exact interrupted removal and remaining target set: ${errorCause(error)}`, 'reclaim-reconciliation')
@@ -2747,11 +2747,11 @@ export function admitReclaimFailure(input: {
     try {
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.authority!) || !('value' in descriptors.outcome!)) {
-            return Object.freeze({ kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' })
+            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
         }
         const executionAuthority = descriptors.authority!.value as object
         if (!executionAuthority || typeof executionAuthority !== 'object') {
-            return Object.freeze({ kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' })
+            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
         }
         const pending = pendingReclaimExecutions.get(executionAuthority)
         const suppliedOutcome = descriptors.outcome!.value as ExecuteProbeOutcome
@@ -2759,22 +2759,22 @@ export function admitReclaimFailure(input: {
         if (pending) pendingReclaimExecutions.delete(executionAuthority)
         if (!pending || !outcome || outcome.kind !== 'refusal' || outcome.receipt !== undefined
             || outcome.execution.started || outcome.execution.signal !== null || outcome.execution.exitCode === 0) {
-            return Object.freeze({ kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' })
+            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
         }
         const reset = resetContinuations.get(pending.continuation)
         const teardown = teardownContinuations.get(pending.continuation)
         if (reset === undefined && teardown === undefined) {
-            return Object.freeze({ kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' })
+            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
         }
         const failedAt = new Date().toISOString()
-        const fact = Object.freeze({ ...pending.attempt, failedAt }) satisfies DrainAttemptFailure
+        const fact = { ...pending.attempt, failedAt } satisfies DrainAttemptFailure
         const settled = settleReclaimDrainFailure({ authority: pending.execution, fact })
-        if (!settled) return Object.freeze({ kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' })
-        const authority = Object.freeze({})
+        if (!settled) return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
+        const authority = {}
         issuedReclaimFailures.set(authority, settled)
-        return Object.freeze({ kind: 'complete', authority, continuation: pending.continuation })
+        return { kind: 'complete', authority, continuation: pending.continuation }
     } catch (error) {
-        return Object.freeze({ kind: 'unavailable', reason: `reclaim failure evidence is unavailable: ${errorCause(error)}` })
+        return { kind: 'unavailable', reason: `reclaim failure evidence is unavailable: ${errorCause(error)}` }
     }
 }
 
@@ -2792,7 +2792,7 @@ function reclaimCompletionFact(
     observedAt: string,
     remainingTargetIds: readonly string[],
 ): ReclaimCompleted {
-    return Object.freeze({
+    return {
         purpose: reservation.purpose,
         stackId: reservation.stackId,
         configSha256: reservation.configSha256,
@@ -2810,8 +2810,8 @@ function reclaimCompletionFact(
         currentTarget: attempt.currentTarget,
         currentStage: attempt.currentStage,
         observedAt: observedAt,
-        remainingTargetIds: Object.freeze([...remainingTargetIds]),
-    }) satisfies ReclaimCompleted
+        remainingTargetIds: [...remainingTargetIds],
+    } satisfies ReclaimCompleted
 }
 
 export function reconcileReclaimAction(input: {
@@ -2870,11 +2870,11 @@ export function reconcileReclaimAction(input: {
     const settled = settleReclaimDrainSuccess({ authority: pending.execution, fact })
     if (!settled) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim completion authority is unavailable', 'reclaim-reconciliation')
     if (expectedRemainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, discoveryAuthority)
-    const resultAuthority = Object.freeze({})
+    const resultAuthority = {}
     issuedReclaimCompleted.set(resultAuthority, settled)
-    return Object.freeze({
+    return {
         kind: 'complete', continuation: expectedRemainder.length === 0 ? null : pending.continuation, authority: resultAuthority,
-    })
+    }
 }
 
 export function consumeReclaimCompleted(authority: object): DrainOutcomeAuthority | undefined {

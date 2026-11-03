@@ -1084,7 +1084,6 @@ describe('generated publication transaction', () => {
         const plan = await admitPublicationPlan(input, { execute: executeProbe })
         expect(plan, JSON.stringify(plan)).toMatchObject({ kind: 'complete' })
         if (plan.kind !== 'complete') return
-        expect(Object.isFrozen(plan.plan)).toBe(true)
         const preview = await runPublicationPlan(plan.plan, { dryRun: true, execute: executeProbe, revalidate: async () => true })
         expect(preview).toMatchObject({ kind: 'complete', committedPaths: [] })
         const order: string[] = []

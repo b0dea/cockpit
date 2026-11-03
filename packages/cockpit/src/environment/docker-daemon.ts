@@ -26,25 +26,25 @@ const DOCKER_CONTEXT_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
 
 async function readContext(execute: Executor, executable: ResolvedExecutable, env: Readonly<Record<string, string>>,
     timeoutMs: number, id: string, args: readonly string[]): Promise<string | undefined> {
-    const step: ExecutionStep = Object.freeze({
+    const step: ExecutionStep = {
         id,
-        argv: Object.freeze([executable.canonicalPath, ...args]) as readonly [string, ...string[]],
+        argv: [executable.canonicalPath, ...args] as readonly [string, ...string[]],
         argv0: executable.invocationPath,
         // The context lookup reads only Docker's client configuration, and the config's own
         // directory may not exist yet; a missing config is reported by the command, not here.
         cwd: '/', env, timeoutMs,
         stdoutLimitBytes: 1_024, stderrLimitBytes: 4_096,
-        paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ purpose: id }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
+        paths: [], ports: [],
+        labels: { purpose: id },
+        expected: [],
+        consumedFiles: [{
             path: executable.canonicalPath, sha256: executable.sha256,
-            maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true as const,
+            maxBytes: 536_870_912, argvIndexes: [0], executable: true as const,
             executionMode: executable.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
-    })
+        }],
+        filesystemChecks: [],
+        compensation: [],
+    }
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
     if (outcome?.kind !== 'complete' || outcome.stderr.byteLength !== 0) return undefined
     const text = outcome.stdout.toString('utf8')
@@ -65,15 +65,15 @@ export async function selectLocalDockerDaemon(
     execute: Executor,
     use: DaemonUse,
 ): Promise<LocalDockerDaemon> {
-    const refuse = (code: string, message: string, target: string): LocalDockerDaemon => Object.freeze({
-        kind: 'refusal' as const, diagnostic: Object.freeze({ severity: 'error' as const, code, message, target }),
+    const refuse = (code: string, message: string, target: string): LocalDockerDaemon => ({
+        kind: 'refusal' as const, diagnostic: { severity: 'error' as const, code, message, target },
     })
     if (env.DOCKER_HOST !== undefined) {
         return admitLocalDockerEndpoint(env.DOCKER_HOST) === undefined
             ? refuse('CLI_USAGE_INVALID',
                 `DOCKER_HOST is not a local Docker endpoint, and ${use.localOnly}; fix: unset DOCKER_HOST to use the active Docker context, or set DOCKER_HOST to a local Unix socket`,
                 'DOCKER_HOST')
-            : Object.freeze({ kind: 'complete' as const, dockerContext: 'default', endpoint: env.DOCKER_HOST, source: 'DOCKER_HOST' })
+            : { kind: 'complete' as const, dockerContext: 'default', endpoint: env.DOCKER_HOST, source: 'DOCKER_HOST' }
     }
     const named = env.DOCKER_CONTEXT
     if (named !== undefined && !DOCKER_CONTEXT_NAME.test(named)) {
@@ -83,7 +83,7 @@ export async function selectLocalDockerDaemon(
     const executable = await resolveDockerExecutable(env)
     if (executable.state !== 'available') return refuse(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, executable.reason, 'docker')
     // Only the search path: Docker then reads the operator's own context store, as `up` does.
-    const stepEnv: Readonly<Record<string, string>> = Object.freeze({ ...(env.PATH === undefined ? {} : { PATH: env.PATH }) })
+    const stepEnv: Readonly<Record<string, string>> = { ...(env.PATH === undefined ? {} : { PATH: env.PATH }) }
     const context = named ?? await readContext(execute, executable.value, stepEnv, timeoutMs, 'runtime:daemon:context', ['context', 'show'])
     if (context === undefined || !DOCKER_CONTEXT_NAME.test(context)) {
         return refuse(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
@@ -103,5 +103,5 @@ export async function selectLocalDockerDaemon(
         return refuse(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             `the ${which} points at ${endpoint}, not a local Unix socket, and ${use.localOnly}; fix: ${select}, then retry`, target)
     }
-    return Object.freeze({ kind: 'complete' as const, dockerContext: context, endpoint, source: target })
+    return { kind: 'complete' as const, dockerContext: context, endpoint, source: target }
 }

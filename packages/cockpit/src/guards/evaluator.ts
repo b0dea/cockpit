@@ -137,8 +137,8 @@ export const GUARD_LOCATION_LIMITS = Object.freeze({
 export const GUARD_SECRET_FILE_LIMIT = 512
 /** Root-relative paths whose identity every policy carries beside each instance's. */
 export const GUARD_ROOT_PROTECTIONS: readonly { readonly path: string; readonly type: 'file' | 'directory' }[] = Object.freeze([
-    ...GUARD_CONTROL_FILES.map((path) => Object.freeze({ path, type: 'file' as const })),
-    ...[...GUARD_CONTROL_DIRECTORIES, SECRETS_ROOT].map((path) => Object.freeze({ path, type: 'directory' as const })),
+    ...GUARD_CONTROL_FILES.map((path) => ({ path, type: 'file' as const })),
+    ...[...GUARD_CONTROL_DIRECTORIES, SECRETS_ROOT].map((path) => ({ path, type: 'directory' as const })),
 ])
 /** One spelling of a file's identity, shared by the policy build and the path inspector. */
 export function guardIdentity(status: { readonly dev: number; readonly ino: number }): string {
@@ -732,7 +732,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const resolvedEvidence = (request: PathInspectionRequest): JsonSnapshotObject | undefined => {
         let evidence: JsonSnapshot | undefined
         inspectionFailure = undefined
-        try { evidence = snapshotJson(inspect(Object.freeze(request))) }
+        try { evidence = snapshotJson(inspect(request)) }
         catch (error) { inspectionFailure = errorCause(error); return undefined }
         const lexical = posix.resolve(request.cwd, request.path)
         const listed = request.operation === 'search' || request.operation === 'unignored-search' ? 'sensitive' : request.operation === 'repository' ? 'tracked' : undefined

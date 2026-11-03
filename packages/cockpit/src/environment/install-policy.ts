@@ -15,11 +15,11 @@ export function renderGuardProjectCommand(argv: readonly string[]):
     | { readonly kind: 'complete'; readonly command: string }
     | { readonly kind: 'unavailable'; readonly reason: string } {
     const parsed = GuardCommandArgv.safeParse(snapshotJson(argv))
-    if (!parsed.success) return Object.freeze({ kind: 'unavailable', reason: 'project command argv exceeds the scalar or word bounds' })
+    if (!parsed.success) return { kind: 'unavailable', reason: 'project command argv exceeds the scalar or word bounds' }
     const command = parsed.data.map(word => `'${word.replaceAll("'", "'\\''")}'`).join(' ')
     return Buffer.byteLength(command) < GUARD_PROJECT_COMMAND_RENDERED_BYTES
-        ? Object.freeze({ kind: 'complete', command })
-        : Object.freeze({ kind: 'unavailable', reason: 'project command rendering exceeds the byte bound' })
+        ? { kind: 'complete', command }
+        : { kind: 'unavailable', reason: 'project command rendering exceeds the byte bound' }
 }
 
 export interface InstallPolicyResolutionInput {
@@ -67,23 +67,23 @@ export type InstallPolicyResolution =
       }
 
 function immutablePolicy(policy: InstallPolicyValue): ResolvedInstallPolicy {
-    return Object.freeze({
+    return {
         ...policy,
-        install: Object.freeze([...policy.install]),
-        load_probe: Object.freeze([...policy.load_probe]),
-        ...(policy.build ? { build: Object.freeze([...policy.build]) } : {}),
-        ...(policy.test ? { test: Object.freeze([...policy.test]) } : {}),
-    })
+        install: [...policy.install],
+        load_probe: [...policy.load_probe],
+        ...(policy.build ? { build: [...policy.build] } : {}),
+        ...(policy.test ? { test: [...policy.test] } : {}),
+    }
 }
 
 function unavailable(siblingIndex: number, siblingSlug: string, reason: string): InstallPolicyResolution {
-    return Object.freeze({
+    return {
         kind: 'unavailable',
         code: ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_UNAVAILABLE,
         siblingIndex,
         siblingSlug,
         reason,
-    })
+    }
 }
 
 function ownRecord(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> | undefined {
@@ -128,7 +128,7 @@ function sourceProvenance(value: unknown): SourceProvenance | undefined {
         && isAbsolute(source.path) && normalize(source.path) === source.path
         && Number.isSafeInteger(source.byteLength) && (source.byteLength as number) >= 0
         && typeof source.sha256 === 'string' && /^[a-f0-9]{64}$/.test(source.sha256)
-        ? Object.freeze({ path: source.path, byteLength: source.byteLength as number, sha256: source.sha256 })
+        ? { path: source.path, byteLength: source.byteLength as number, sha256: source.sha256 }
         : undefined
 }
 
@@ -159,7 +159,7 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
     if (new Set(selectors).size !== selectors.length || new Set(volumes).size !== volumes.length) {
         return unavailable(siblingIndex as number, sibling.data.slug, 'install policy catalog is invalid')
     }
-    if (sibling.data.toolchain === 'none') return Object.freeze({ kind: 'complete', bindings: Object.freeze([]) })
+    if (sibling.data.toolchain === 'none') return { kind: 'complete', bindings: [] }
     if (typeof root?.checkoutRoot !== 'string' || typeof root.checkoutId !== 'string') {
         return unavailable(siblingIndex as number, sibling.data.slug, 'authenticated lockfile evidence is unavailable')
     }
@@ -180,14 +180,14 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
             ? [{ catalogIndex, policy: candidate }]
             : [])
     if (matches.length !== 1) {
-        const candidates = Object.freeze(matches.map(({ policy }) => `${policy.toolchain}:${policy.lockfile}`).sort())
-        return Object.freeze({
+        const candidates = matches.map(({ policy }) => `${policy.toolchain}:${policy.lockfile}`).sort()
+        return {
             kind: 'refusal',
             code: matches.length === 0 ? ENVIRONMENT_CODES.INSTALL_POLICY_MISSING : ENVIRONMENT_CODES.INSTALL_POLICY_AMBIGUOUS,
             siblingIndex: siblingIndex as number,
             siblingSlug: sibling.data.slug,
             candidates,
-        })
+        }
     }
     const selected = matches[0]!
     for (const kind of ['build', 'test'] as const) {
@@ -196,14 +196,14 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
             return unavailable(siblingIndex as number, sibling.data.slug, `${kind} project command rendering exceeds the byte bound`)
         }
     }
-    const binding = Object.freeze({
+    const binding = {
         source,
         siblingIndex: siblingIndex as number,
-        diagnostics: Object.freeze({ catalogIndex: selected.catalogIndex }),
+        diagnostics: { catalogIndex: selected.catalogIndex },
         siblingSlug: sibling.data.slug,
         checkoutRoot: observation.checkoutRoot,
         checkoutId: observation.checkoutId,
         policy: immutablePolicy(selected.policy),
-    })
-    return Object.freeze({ kind: 'complete', bindings: Object.freeze([binding]) })
+    }
+    return { kind: 'complete', bindings: [binding] }
 }

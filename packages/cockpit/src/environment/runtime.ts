@@ -185,7 +185,7 @@ export function observeRuntimeExecution(input: {
             freshness: { state: 'current' }, remedy: 'restore the declared cold-start budget',
         }))
     }
-    return Object.freeze(observations)
+    return observations
 }
 
 export type RuntimeOperation = 'validate' | 'up' | 'down'
@@ -276,7 +276,7 @@ function captureOwnValues(value: unknown, keys: readonly string[]): Readonly<Rec
             if (!descriptor || !('value' in descriptor)) return undefined
             captured[key] = descriptor.value
         }
-        return Object.freeze(captured)
+        return captured
     } catch {
         // A throwing accessor or proxy trap makes the input unreadable, which the caller refuses.
         return undefined
@@ -317,8 +317,8 @@ function runtimeAdapterInput(value: unknown): RuntimeAdapterInput | undefined {
         ...input,
         ...(input.expectedMountSources === undefined
             ? {}
-            : { expectedMountSources: Object.freeze([...input.expectedMountSources].sort()) }),
-        ...(input.activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...input.activeProfiles].sort()) }),
+            : { expectedMountSources: [...input.expectedMountSources].sort() }),
+        ...(input.activeProfiles === undefined ? {} : { activeProfiles: [...input.activeProfiles].sort() }),
     } as RuntimeAdapterInput
 }
 
@@ -418,14 +418,14 @@ export function issueMachineFloorAuthority(input: {
         freeDiskBytes: configuration.floor.freeDiskMb * 1_024 * 1_024,
     }
     if (Object.values(floor).some((value) => !Number.isSafeInteger(value) || value < 1)) return undefined
-    const authority = Object.freeze({ kind: 'machine-floor-authority' as const })
+    const authority = { kind: 'machine-floor-authority' as const }
     issuedMachineFloorAuthorities.set(authority, Object.freeze({
         stackId: deriveStackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } }),
         checkoutPath: dirname(configuration.source.path),
         configSha256: configuration.runtimeSha256,
         floor: Object.freeze(floor),
     }))
-    return Object.freeze({ authority, checkout })
+    return { authority, checkout }
 }
 
 export function isMachineFloorEvidence(value: unknown): value is MachineFloorEvidence {
@@ -462,9 +462,9 @@ function safeMachineFloorEnvironment(value: unknown): value is Readonly<Record<s
 }
 
 function machineFloorEnvironment(value: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(
+    return Object.fromEntries(
         Object.entries(value).filter(([name]) => MACHINE_FLOOR_ENV.has(name)),
-    ))
+    )
 }
 
 export interface DockerRuntimeObservationInput {
@@ -516,7 +516,7 @@ function dockerIdentityFields(text: string): readonly [string, string, string] |
     const bounded = (value: unknown, limit: number): value is string => typeof value === 'string'
         && value.length > 0 && value.length <= limit && !/[\u0000-\u001f\u007f]/.test(value)
     return bounded(operatingSystem, 128) && bounded(name, 128) && bounded(osType, 16)
-        ? Object.freeze([operatingSystem, name, osType] as const) : undefined
+        ? ([operatingSystem, name, osType] as const) : undefined
 }
 
 export type DockerRuntimeObservation =
@@ -534,18 +534,18 @@ export type DockerRuntimeObservation =
     | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE; reason: string; fix?: string }>
 
 function runtimeVersionUnavailable(reason: string): DockerRuntimeObservation {
-    return Object.freeze({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason })
+    return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason }
 }
 
 // The runtime answered, so starting it is the wrong remedy: the installed tool prints a version
 // that floors and measurements cannot compare.
 function runtimeVersionUnparseable(tool: string, command: string, printed: string): DockerRuntimeObservation {
-    return Object.freeze({
+    return {
         kind: 'unavailable',
         code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
         reason: `${tool} reported version ${JSON.stringify(printed.slice(0, 64))} from \`${command}\`, which has no numeric X.Y.Z core`,
         fix: 'install a Docker Engine and Docker Compose release whose `docker version --format {{.Server.Version}}` and `docker compose version --short` print X.Y.Z (a suffix such as -desktop.1 is fine), then retry',
-    })
+    }
 }
 
 const issuedDockerRuntimeObservations = new WeakSet<object>()
@@ -556,7 +556,7 @@ const issuedRuntimeMeasurementProbeAuthorities = new WeakMap<object, Extract<Doc
 export function issueRuntimeMeasurementProbeAuthority(observation: DockerRuntimeObservation): RuntimeMeasurementProbeAuthority {
     if (!observation || typeof observation !== 'object' || observation.kind !== 'complete'
         || !issuedDockerRuntimeObservations.has(observation)) throw new RefusalError('runtime measurement probe evidence is not authentic')
-    const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
+    const authority = { kind: 'runtime-measurement-probe-authority' as const }
     issuedRuntimeMeasurementProbeAuthorities.set(authority, observation)
     return authority
 }
@@ -577,7 +577,7 @@ export type RuntimeMeasurementAdmission =
     | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNMEASURED; reason: string }>
 
 function runtimeUnmeasured(reason: string): RuntimeMeasurementAdmission {
-    return Object.freeze({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason })
+    return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason }
 }
 
 /** A floor cockpit writes: a bare numeric core. */
@@ -642,8 +642,8 @@ export function admitRuntimeMeasurement(
     if (!VERSION.test(row.composeFloor) || !versionAtLeast(observation.composeVersion, row.composeFloor)) {
         return remeasure(`Runtime ${identity} runs Docker Compose ${observation.composeVersion}, below the measured floor ${row.composeFloor}`)
     }
-    const result = Object.freeze({ kind: 'admitted' as const, runtimeIdentity: identity,
-        measurement: `${identity} on ${JSON.stringify(observation.name)}, engine ${row.engineVersion}, Compose floor ${row.composeFloor}, measured ${row.measuredOn}` })
+    const result = { kind: 'admitted' as const, runtimeIdentity: identity,
+        measurement: `${identity} on ${JSON.stringify(observation.name)}, engine ${row.engineVersion}, Compose floor ${row.composeFloor}, measured ${row.measuredOn}` }
     issuedRuntimeMeasurementAdmissions.set(result, observation)
     return result
 }
@@ -689,32 +689,32 @@ export async function observeDockerRuntime(
             || typeof execute !== 'function') {
             return runtimeVersionUnavailable('Docker runtime version input needs a resolved executable, local working directory, and bounded environment')
         }
-        input = Object.freeze({ ...candidate, executable, env: Object.freeze({ ...candidate.env }) })
+        input = { ...candidate, executable, env: { ...candidate.env } }
     } catch (error) {
         return runtimeVersionUnavailable(`Docker runtime version input is unreadable: ${errorCause(error)}`)
     }
 
     const batchId = randomBytes(16).toString('hex')
-    const step = (id: string, args: readonly string[], stdoutLimitBytes = 128): ExecutionStep => Object.freeze({
+    const step = (id: string, args: readonly string[], stdoutLimitBytes = 128): ExecutionStep => ({
         id,
-        argv: Object.freeze([input.executable.canonicalPath, ...args]) as readonly [string, ...string[]],
+        argv: [input.executable.canonicalPath, ...args] as [string, ...string[]],
         argv0: input.executable.invocationPath,
         cwd: input.cwd,
         env: input.env,
         timeoutMs: input.timeoutMs,
         stdoutLimitBytes,
         stderrLimitBytes: 512,
-        paths: Object.freeze([]),
-        ports: Object.freeze([]),
-        labels: Object.freeze({ purpose: id, batchId }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
+        paths: [],
+        ports: [],
+        labels: { purpose: id, batchId },
+        expected: [],
+        consumedFiles: [{
             path: input.executable.canonicalPath, sha256: input.executable.sha256,
-            maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true as const,
+            maxBytes: 536_870_912, argvIndexes: [0], executable: true as const,
             executionMode: input.executable.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
+        }],
+        filesystemChecks: [],
+        compensation: [],
     })
     const versionStep = step('runtime:docker-server-version', ['version', '--format', '{{.Server.Version}}'])
     const composeStep = step('runtime:docker-compose-version', ['compose', 'version', '--short'])
@@ -749,9 +749,9 @@ export async function observeDockerRuntime(
     if (!identityText || !fields) return runtimeVersionUnavailable('Docker identity probe (docker info OperatingSystem, Name, OSType) failed or returned unauthenticated output' + probeCause)
     const [operatingSystem, name, osType] = fields
     const hostPlatform = platform()
-    const result = Object.freeze({
+    const result: DockerRuntimeObservation = {
         kind: 'complete',
-        runtime: Object.freeze({ name: 'docker', version: server.value, executableSha256: input.executable.sha256 }),
+        runtime: { name: 'docker', version: server.value, executableSha256: input.executable.sha256 },
         runtimeIdentity: runtimeIdentity({ operatingSystem, name, osType, hostPlatform }),
         operatingSystem,
         name,
@@ -759,7 +759,7 @@ export async function observeDockerRuntime(
         hostPlatform,
         composeVersion: compose.value,
         observedAt: [server.observedAt, compose.observedAt, identityText.observedAt].sort().at(-1)!,
-    })
+    }
     issuedDockerRuntimeObservations.add(result)
     return result
 }
@@ -785,11 +785,11 @@ function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | und
             if (!diskExecutable || !safeMachineFloorEnvironment(env)
                 || !authority || authority.stackId !== runtime.stackId || authority.configSha256 !== runtime.configSha256
                 || !Number.isSafeInteger(candidate.timeoutMs) || (candidate.timeoutMs as number) < 1 || (candidate.timeoutMs as number) > 30_000) return undefined
-            return Object.freeze({
+            return {
                 runtimeExecutable: runtime.runtimeExecutable, diskExecutable, cwd: runtime.cwd,
                 env, timeoutMs: candidate.timeoutMs as number, stackId: runtime.stackId,
                 floor: authority.floor,
-            })
+            }
         }
         const snapshot = snapshotJson(value)
         if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)
@@ -807,11 +807,11 @@ function machineFloorPlanInput(value: unknown): OwnedMachineFloorPlanInput | und
         const authority = authorityDescriptor && 'value' in authorityDescriptor
             ? issuedMachineFloorAuthorities.get(authorityDescriptor.value as object) : undefined
         if (authorityDescriptor && (!authority || candidate.cwd !== authority.checkoutPath)) return undefined
-        return Object.freeze({
+        return {
             runtimeExecutable, diskExecutable, cwd: candidate.cwd,
-            env: Object.freeze({ ...candidate.env }), timeoutMs: candidate.timeoutMs as number,
+            env: { ...candidate.env }, timeoutMs: candidate.timeoutMs as number,
             ...(authority ? { stackId: authority.stackId, floor: authority.floor } : {}),
-        })
+        }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -824,18 +824,18 @@ export function createMachineFloorPlan(rawInput: MachineFloorPlanInput): Environ
         return refusal<null>(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors require canonical digest-bound executables and a bounded timeout', 'machine-floor')
     }
     const { runtimeExecutable, diskExecutable } = input
-    const makeStep = (id: string, argv: readonly [string, ...string[]], executable: ResolvedExecutable): ExecutionStep => Object.freeze({
-        id, argv: Object.freeze([...argv]) as unknown as readonly [string, ...string[]], argv0: executable.invocationPath, cwd: input.cwd,
-        env: Object.freeze({ ...input.env }), timeoutMs: input.timeoutMs, stdoutLimitBytes: 4096, stderrLimitBytes: 4096,
-        paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ collector: id }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
+    const makeStep = (id: string, argv: readonly [string, ...string[]], executable: ResolvedExecutable): ExecutionStep => ({
+        id, argv: [...argv] as unknown as [string, ...string[]], argv0: executable.invocationPath, cwd: input.cwd,
+        env: { ...input.env }, timeoutMs: input.timeoutMs, stdoutLimitBytes: 4096, stderrLimitBytes: 4096,
+        paths: [], ports: [], labels: { collector: id }, expected: [],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [],
+        compensation: [],
     })
-    const steps = Object.freeze([
+    const steps = [
         makeStep('runtime:measure:resources', [runtimeExecutable.canonicalPath, 'info', '--format', '{{json .MemTotal}}|{{json .NCPU}}'], runtimeExecutable),
         makeStep('runtime:measure:free-disk', [diskExecutable.canonicalPath, '--input-type=module', '-e', DISK_CAPACITY_COLLECTOR, input.cwd], diskExecutable),
-    ])
+    ]
     const plan = snapshotExecutionPlan({ steps })
     if (plan === undefined) return refusal<null>(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors did not produce a valid execution plan', input.cwd)
     issuedMachineFloorPlans.set(plan, Object.freeze({
@@ -873,12 +873,12 @@ export function collectMachineFloorEvidence(
     const cpuMillis = Number(resourceMatch[2]) * 1_000
     const freeDiskBytes = Number(diskText)
     if (![memoryBytes, cpuMillis, freeDiskBytes].every((value) => Number.isSafeInteger(value) && value >= 0)) return undefined
-    const evidence = Object.freeze({
+    const evidence = {
         memoryBytes, cpuMillis, freeDiskBytes,
         observedAt: resources.receipt.finishedAt > disk.receipt.finishedAt ? resources.receipt.finishedAt : disk.receipt.finishedAt,
         ...(contract.stackId ? { stackId: contract.stackId } : {}),
         ...(contract.floor ? { floor: contract.floor } : {}),
-    }) as MachineFloorEvidence
+    } as MachineFloorEvidence
     issuedMachineFloorEvidence.add(evidence)
     return evidence
 }
@@ -924,25 +924,25 @@ function composeStep(
 ): ExecutionStep {
     const step: ExecutionStep = {
         id: `runtime:docker-compose:${operation}:${input.projectName}`,
-        argv: Object.freeze([...composeArgv([input.executable.canonicalPath, 'compose'], files, projectDirectory, input.projectName, operation, input.activeProfiles ?? [])]) as unknown as readonly [string, ...string[]],
+        argv: [...composeArgv([input.executable.canonicalPath, 'compose'], files, projectDirectory, input.projectName, operation, input.activeProfiles ?? [])] as unknown as [string, ...string[]],
         argv0: input.executable.invocationPath,
         cwd: input.cwd,
-        env: Object.freeze({ ...input.env }),
+        env: { ...input.env },
         timeoutMs: input.timeoutMs,
         stdoutLimitBytes: OUTPUT_LIMIT_BYTES,
         stderrLimitBytes: OUTPUT_LIMIT_BYTES,
-        paths: Object.freeze([...files]),
-        ports: Object.freeze([...input.ports]),
-        labels: Object.freeze({ ...input.labels, operation, runtime: input.runtime.name, composeVersion: input.composeVersion }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([
-        Object.freeze({ path: input.executable.canonicalPath, sha256: input.executable.sha256, maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true, executionMode: input.executable.executionMode }),
-            ...input.composeFiles.map(({ canonicalPath: path, sha256 }, index) => Object.freeze({ path, sha256, maxBytes: 1_048_576, argvIndexes: Object.freeze([5 + index * 2]), executable: false })),
-        ]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([...compensation]),
+        paths: [...files],
+        ports: [...input.ports],
+        labels: { ...input.labels, operation, runtime: input.runtime.name, composeVersion: input.composeVersion },
+        expected: [],
+        consumedFiles: [
+        { path: input.executable.canonicalPath, sha256: input.executable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: input.executable.executionMode },
+            ...input.composeFiles.map(({ canonicalPath: path, sha256 }, index) => ({ path, sha256, maxBytes: 1_048_576, argvIndexes: [5 + index * 2], executable: false as const })),
+        ],
+        filesystemChecks: [],
+        compensation: [...compensation],
     }
-    return Object.freeze(step)
+    return step
 }
 
 function exactInputValues(input: RuntimeAdapterInput): readonly string[] {
@@ -1026,7 +1026,7 @@ export function createRuntimeAdapter(
         || (suppliedPortProjection !== undefined && portProjection === undefined)) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime artifact authority is malformed', 'runtime-input')
     }
-    let interpolatedNames: readonly string[] = Object.freeze([])
+    let interpolatedNames: readonly string[] = []
     if (portProjection !== undefined) {
         const originalEnv = input.env
         const entries = Object.entries(portProjection.lease.ports).sort(([left], [right]) => left.localeCompare(right))
@@ -1038,11 +1038,11 @@ export function createRuntimeAdapter(
             || JSON.stringify(projectedPorts) !== JSON.stringify(requestedPorts)) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime port authority does not match the stack', input.projectName)
         }
-        interpolatedNames = Object.freeze(entries.map(([name]) => name))
-        input = Object.freeze({
+        interpolatedNames = entries.map(([name]) => name)
+        input = {
             ...input,
-            env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries.map(([name, port]) => [name, String(port)])) }),
-        })
+            env: { ...originalEnv, ...Object.fromEntries(entries.map(([name, port]) => [name, String(port)])) },
+        }
     }
     // Sibling directories reach Compose the way the lease does: as named variables every derived
     // step keeps, so `${API_DIR}` in a cockpit's own file resolves instead of falling back.
@@ -1056,8 +1056,8 @@ export function createRuntimeAdapter(
             || typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime sibling directory authority is malformed', input.projectName)
         }
-        interpolatedNames = Object.freeze([...interpolatedNames, ...entries.map(([name]) => name)])
-        input = Object.freeze({ ...input, env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries) as Record<string, string> }) })
+        interpolatedNames = [...interpolatedNames, ...entries.map(([name]) => name)]
+        input = { ...input, env: { ...originalEnv, ...Object.fromEntries(entries) as Record<string, string> } }
     }
     if (ownComposeFiles) {
         const runtimeStackId = capturedAuthority?.stackId
@@ -1066,9 +1066,9 @@ export function createRuntimeAdapter(
             || typeof runtimeCockpitId !== 'string' || !/^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/.test(runtimeCockpitId)) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime identity labels are unavailable', input.projectName)
         }
-        interpolatedNames = Object.freeze([...interpolatedNames, 'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
-        input = Object.freeze({ ...input, env: Object.freeze({ ...input.env,
-            COCKPIT_OWNER_ID: runtimeCockpitId, COCKPIT_STACK_ID: runtimeStackId }) })
+        interpolatedNames = [...interpolatedNames, 'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID']
+        input = { ...input, env: { ...input.env,
+            COCKPIT_OWNER_ID: runtimeCockpitId, COCKPIT_STACK_ID: runtimeStackId } }
     }
     if (hasUnresolvedInput(input)) {
         return refusal(
@@ -1087,7 +1087,7 @@ export function createRuntimeAdapter(
             'runtime-input',
         )
     }
-    input = Object.freeze({ ...input, env: composeProcessEnvironment(input.env) })
+    input = { ...input, env: composeProcessEnvironment(input.env) }
     if (!isAbsolute(input.cwd)) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime working directory must be absolute', input.cwd)
     }
@@ -1281,7 +1281,7 @@ function unavailableReason(base: string, error?: unknown): string {
 }
 
 function unavailableTopology(reason = 'runtime topology is unavailable'): RuntimeTopologyPlan {
-    return Object.freeze({ kind: 'unavailable', reason })
+    return { kind: 'unavailable', reason }
 }
 
 function canonicalWindow(value: RuntimeObservationWindow): RuntimeObservationWindow | undefined {
@@ -1295,7 +1295,7 @@ function canonicalWindow(value: RuntimeObservationWindow): RuntimeObservationWin
         const expiresAt = Date.parse(expiresAtValue)
         if (!Number.isFinite(startedAt) || !Number.isFinite(expiresAt)
             || Math.abs(expiresAt - startedAt) > MAX_OBSERVATION_WINDOW_MS) return undefined
-        return Object.freeze({ startedAt: startedAtValue, expiresAt: expiresAtValue })
+        return { startedAt: startedAtValue, expiresAt: expiresAtValue }
     } catch {
         // A throwing accessor or proxy trap makes the window malformed, which the caller refuses.
         return undefined
@@ -1307,7 +1307,7 @@ function runtimeCommandEnvironment(
     interpolatedNames: readonly string[],
 ): Readonly<Record<string, string>> {
     const allowed = new Set([...DOCKER_CLIENT_ENVIRONMENT, ...interpolatedNames])
-    return Object.freeze(Object.fromEntries(Object.entries(env).filter(([name]) => allowed.has(name))))
+    return Object.fromEntries(Object.entries(env).filter(([name]) => allowed.has(name)))
 }
 
 function runtimeComposeEnvironment(
@@ -1324,19 +1324,19 @@ function derivedComposeStep(base: ExecutionStep, id: string, operation: string, 
         && !(suffix.length === 4 && suffix[1] === '--format' && suffix[2] === 'json'
             && suffix[3] === '--no-env-resolution')) return undefined
     const env = runtimeComposeEnvironment(base.env, interpolatedNames)
-    const step: ExecutionStep = Object.freeze({
+    const step: ExecutionStep = {
         ...base,
         id,
-        argv: Object.freeze([...base.argv.slice(0, configIndex), ...operationArgs]) as readonly [string, ...string[]],
+        argv: [...base.argv.slice(0, configIndex), ...operationArgs] as [string, ...string[]],
         env,
         timeoutMs: Math.min(base.timeoutMs, MAX_OBSERVATION_WINDOW_MS, timeoutLimitMs),
         ...(spawnNotAfter === undefined ? {} : { spawnNotAfter }),
         stdoutLimitBytes,
         stderrLimitBytes: OUTPUT_LIMIT_BYTES,
-        ports: Object.freeze([]),
-        labels: Object.freeze({ ...base.labels, operation, issuanceId }),
-        compensation: Object.freeze([]),
-    })
+        ports: [],
+        labels: { ...base.labels, operation, issuanceId },
+        compensation: [],
+    }
     return snapshotExecutionPlan({ steps: [step] })?.steps[0]
 }
 
@@ -1376,7 +1376,7 @@ export function createRuntimeTopologyPlan(input: {
             runtime.interpolatedNames,
         )
         if (!step) return unavailableTopology()
-        const plan = Object.freeze({ kind: 'planned' as const, step })
+        const plan = { kind: 'planned' as const, step }
         issuedTopologyPlans.set(plan, Object.freeze({
             runtimePlan,
             runtime,
@@ -1405,26 +1405,26 @@ function healthcheckEnabled(value: unknown): boolean | undefined {
 }
 
 function dependencyNames(value: unknown): readonly string[] | undefined {
-    if (value === undefined) return Object.freeze([])
+    if (value === undefined) return []
     if (Array.isArray(value)) {
         if (value.some((item) => typeof item !== 'string' || !SERVICE_ID.test(item))) return undefined
-        return Object.freeze([...new Set(value)].sort())
+        return [...new Set(value)].sort()
     }
     if (value === null || typeof value !== 'object') return undefined
     const names = Object.keys(value)
     if (names.some((name) => !SERVICE_ID.test(name))) return undefined
-    return Object.freeze([...new Set(names)].sort())
+    return [...new Set(names)].sort()
 }
 
 function profileNames(value: unknown): readonly string[] | undefined {
-    if (value === undefined) return Object.freeze([])
+    if (value === undefined) return []
     if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_SERVICES
         || value.some((name) => typeof name !== 'string' || !SERVICE_ID.test(name))) return undefined
-    return Object.freeze([...new Set(value)].sort())
+    return [...new Set(value)].sort()
 }
 
 function bindMountSources(value: unknown): readonly string[] | undefined {
-    if (value === undefined) return Object.freeze([])
+    if (value === undefined) return []
     if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
     const sources: string[] = []
     for (const item of value) {
@@ -1435,11 +1435,11 @@ function bindMountSources(value: unknown): readonly string[] | undefined {
             || normalize(volume.source) !== volume.source || volume.source.includes('\0')) return undefined
         sources.push(volume.source)
     }
-    return Object.freeze([...new Set(sources)].sort())
+    return [...new Set(sources)].sort()
 }
 
 function bindMounts(value: unknown): readonly RuntimeBindMount[] | undefined {
-    if (value === undefined) return Object.freeze([])
+    if (value === undefined) return []
     if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
     const mounts: RuntimeBindMount[] = []
     for (const item of value) {
@@ -1449,17 +1449,17 @@ function bindMounts(value: unknown): readonly RuntimeBindMount[] | undefined {
         if (typeof volume.source !== 'string' || !isAbsolute(volume.source)
             || normalize(volume.source) !== volume.source || volume.source.includes('\0')
             || typeof volume.target !== 'string' || !CONTAINER_PATH.test(volume.target)) return undefined
-        mounts.push(Object.freeze({ source: volume.source, target: volume.target }))
+        mounts.push({ source: volume.source, target: volume.target })
     }
     const identities = mounts.map(({ source, target }) => `${source}\0${target}`)
     if (new Set(identities).size !== identities.length) return undefined
-    return Object.freeze([...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
+    return [...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`))
 }
 
 const PUBLISHED_HOSTS = new Set(['127.0.0.1', '::1', '0.0.0.0', '::'])
 
 function composePublishedPorts(value: unknown): readonly RuntimePublishedPort[] | undefined {
-    if (value === undefined) return Object.freeze([])
+    if (value === undefined) return []
     if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
     const ports: RuntimePublishedPort[] = []
     for (const item of value) {
@@ -1474,17 +1474,17 @@ function composePublishedPorts(value: unknown): readonly RuntimePublishedPort[] 
         if (!Number.isSafeInteger(target) || (target as number) < 1 || (target as number) > 65_535
             || !Number.isSafeInteger(published) || (published as number) < 1 || (published as number) > 65_535
             || typeof hostIp !== 'string' || !PUBLISHED_HOSTS.has(hostIp) || protocol !== 'tcp') return undefined
-        ports.push(Object.freeze({
+        ports.push({
             hostIp: hostIp as RuntimePublishedPort['hostIp'],
             target: target as number,
             published: published as number,
             protocol: 'tcp',
-        }))
+        })
     }
     const identities = ports.map(({ hostIp, target, published, protocol }) => `${hostIp}\0${published}\0${target}\0${protocol}`)
     if (new Set(identities).size !== identities.length) return undefined
-    return Object.freeze([...ports].sort((left, right) =>
-        `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`)))
+    return [...ports].sort((left, right) =>
+        `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`))
 }
 
 const RUNTIME_VOLUME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
@@ -1509,7 +1509,7 @@ function namedVolumeMounts(
     value: unknown,
     volumeNames: ReadonlyMap<string, string>,
 ): readonly Readonly<{ readonly source: string; readonly name: string; readonly target: string }>[] | undefined {
-    if (value === undefined) return Object.freeze([])
+    if (value === undefined) return []
     if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
     const mounts: Readonly<{ readonly source: string; readonly name: string; readonly target: string }>[] = []
     for (const item of value) {
@@ -1521,11 +1521,11 @@ function namedVolumeMounts(
         const name = typeof source === 'string' ? volumeNames.get(source) : undefined
         if (typeof source !== 'string' || !SERVICE_ID.test(source) || !name
             || typeof target !== 'string' || !CONTAINER_PATH.test(target)) return undefined
-        mounts.push(Object.freeze({ source, name, target }))
+        mounts.push({ source, name, target })
     }
     const identities = mounts.map(({ source, target }) => `${source}\0${target}`)
     if (new Set(identities).size !== identities.length) return undefined
-    return Object.freeze([...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
+    return [...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`))
 }
 
 // Compose prints labels as a mapping, but as a `KEY=VALUE` list once an override merges labels into
@@ -1593,14 +1593,14 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
                 || (labels as Record<string, unknown>)['dev.b0dea.cockpit.config-sha256'] !== configSha256) return undefined
             edgeCount += dependsOn.length + mounts.length + namedMounts.length + publishedPorts.length
             if (edgeCount > MAX_TOPOLOGY_EDGES) return undefined
-            byId.set(id, Object.freeze({
+            byId.set(id, {
                 id,
                 dependsOn,
                 bindMountSources: mounts,
                 namedVolumeMounts: namedMounts,
                 healthcheck,
-            }))
-            runtimeHealth.set(id, Object.freeze({ bindMounts: exactBindMounts, publishedPorts }))
+            })
+            runtimeHealth.set(id, { bindMounts: exactBindMounts, publishedPorts })
         }
         const indegree = new Map(names.map((name) => [name, byId.get(name)?.dependsOn.length ?? 0]))
         const dependents = new Map(names.map((name) => [name, [] as string[]]))
@@ -1622,7 +1622,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
             }
         }
         if (order.length !== names.length) return undefined
-        return Object.freeze({ services: Object.freeze(names.map((name) => byId.get(name) as RuntimeTopologyService)), order: Object.freeze(order), byId, runtimeHealth })
+        return { services: names.map((name) => byId.get(name) as RuntimeTopologyService), order, byId, runtimeHealth }
     } catch {
         // A malformed declaration shape yields no topology, which the caller reports as unavailable.
         return undefined
@@ -1642,7 +1642,7 @@ export function admitRuntimeTopology(input: {
     readonly outcome: ExecuteProbeOutcome
 }): { readonly kind: 'complete'; readonly topology: RuntimeTopologyEvidence; readonly observations: readonly EnvironmentObservation[] }
     | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch } {
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, reason: unavailableReason('runtime topology is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, reason: unavailableReason('runtime topology is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['plan', 'outcome'])
         const plan = captured?.plan as RuntimeTopologyPlan | undefined
@@ -1668,12 +1668,12 @@ export function admitRuntimeTopology(input: {
             contract.runtime.expectedMountSources)
         // The caller can name the sibling or host path behind each difference; a bare refusal here
         // left `up` reporting only that readiness authority was unavailable.
-        if (mounts.missing.length > 0 || mounts.unexpected.length > 0) return Object.freeze({
+        if (mounts.missing.length > 0 || mounts.unexpected.length > 0) return {
             kind: 'unavailable' as const,
             reason: 'the bind mounts Compose resolves differ from the declared mount sources',
             mounts,
-        })
-        const topology = Object.freeze({
+        }
+        const topology = {
             stackId: contract.stackId,
             configSha256: contract.configSha256,
             batchId: contract.batchId,
@@ -1684,7 +1684,7 @@ export function admitRuntimeTopology(input: {
             cwd: contract.runtime.cwd,
             observationWindow: contract.observationWindow,
             services: projected.services,
-        })
+        }
         issuedTopologyEvidence.set(topology, Object.freeze({
             ...contract,
             step: plan.step,
@@ -1692,7 +1692,7 @@ export function admitRuntimeTopology(input: {
             services: projected.byId,
             runtimeHealth: projected.runtimeHealth,
         }))
-        const observations = Object.freeze([
+        const observations = [
             issueObservation({
                 code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
                 owner: OWNER,
@@ -1715,8 +1715,8 @@ export function admitRuntimeTopology(input: {
                 freshness: { state: 'current' },
                 remedy: 'restore every declared bind source and refuse undeclared host binds',
             }),
-        ])
-        return Object.freeze({ kind: 'complete', topology, observations })
+        ]
+        return { kind: 'complete', topology, observations }
     } catch (error) {
         return unavailable(error)
     }
@@ -1734,7 +1734,7 @@ export function resolveRuntimeServiceOrder(topology: RuntimeTopologyEvidence): r
     const contract = topology !== null && typeof topology === 'object' ? issuedTopologyEvidence.get(topology) : undefined
     const now = Date.now()
     return contract && Date.parse(contract.observationWindow.startedAt) <= now
-        && now <= Date.parse(contract.observationWindow.expiresAt) ? Object.freeze([...contract.order]) : Object.freeze([])
+        && now <= Date.parse(contract.observationWindow.expiresAt) ? [...contract.order] : []
 }
 
 export function projectRuntimeExecutionEnvironment(
@@ -1817,12 +1817,12 @@ const consumedRuntimeLifecycleProjections = new WeakSet<object>()
 function freezeRuntimeValue<Value>(value: Value): Value {
     if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
     for (const item of Object.values(value)) freezeRuntimeValue(item)
-    return Object.freeze(value)
+    return value
 }
 
 function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ index: number; service: string }>): RuntimeLifecycleExecutionSemantics | undefined {
     const argv = step.argv.map((value, index) => slot?.index === index
-        ? Object.freeze({ kind: 'runtime-container-id' as const, service: slot.service })
+        ? { kind: 'runtime-container-id' as const, service: slot.service }
         : value)
     if (argv.length === 0 || slot && (slot.index < 0 || slot.index >= argv.length)) return undefined
     const compensation = step.compensation.map((item) => projectRuntimeExecutionStep(item))
@@ -1935,7 +1935,7 @@ const issuedRuntimeServiceEvidence = new WeakMap<object, RuntimeServiceEvidenceC
 const issuedRuntimeServiceFailures = new WeakMap<object, RuntimeServiceFailureLogContext>()
 
 function unavailableRuntimeService(service: unknown, error?: unknown): RuntimeServicePlan {
-    return Object.freeze({ kind: 'unavailable', service: typeof service === 'string' ? service : '', reason: unavailableReason('runtime service is unavailable', error) })
+    return { kind: 'unavailable', service: typeof service === 'string' ? service : '', reason: unavailableReason('runtime service is unavailable', error) }
 }
 
 interface RuntimeServiceInitialSteps {
@@ -1977,7 +1977,7 @@ function runtimeServiceLookupSteps(
         undefined,
         topologyContract.runtime.interpolatedNames,
     )
-    return status && identity ? Object.freeze({ status, identity }) : undefined
+    return status && identity ? { status, identity } : undefined
 }
 
 function runtimeServiceInitialSteps(
@@ -2019,7 +2019,7 @@ function runtimeServiceInitialSteps(
         topologyContract.runtime.interpolatedNames,
     )
     const lookup = runtimeServiceLookupSteps(topologyContract, service, issuanceId)
-    return start && stop && lookup ? Object.freeze({ start, stop, ...lookup }) : undefined
+    return start && stop && lookup ? { start, stop, ...lookup } : undefined
 }
 
 export function createRuntimeServicePlan(input: { readonly topology: RuntimeTopologyEvidence; readonly service: string }): RuntimeServicePlan {
@@ -2035,7 +2035,7 @@ export function createRuntimeServicePlan(input: { readonly topology: RuntimeTopo
         const issuanceId = randomBytes(32).toString('hex')
         const steps = runtimeServiceInitialSteps(topologyContract, service, issuanceId)
         if (!steps) return unavailableRuntimeService(serviceId)
-        const plan = Object.freeze({ kind: 'planned' as const, service: serviceId, ...steps })
+        const plan = { kind: 'planned' as const, service: serviceId, ...steps }
         issuedRuntimeServicePlans.set(plan, Object.freeze({ topology, topologyContract, service }))
         return plan
     } catch (error) {
@@ -2049,7 +2049,7 @@ export function createRuntimeServiceRevalidationPlan(input: {
     readonly expectedContainerId: string
 }): RuntimeServiceRevalidationPlan {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['topology', 'service', 'expectedContainerId'])
         const topology = captured?.topology as RuntimeTopologyEvidence | undefined
@@ -2065,7 +2065,7 @@ export function createRuntimeServiceRevalidationPlan(input: {
             || now > Date.parse(topologyContract.observationWindow.expiresAt)) return unavailable()
         const steps = runtimeServiceLookupSteps(topologyContract, service, randomBytes(32).toString('hex'))
         if (!steps) return unavailable()
-        const plan = Object.freeze({ kind: 'planned' as const, service: serviceId, expectedContainerId, ...steps })
+        const plan = { kind: 'planned' as const, service: serviceId, expectedContainerId, ...steps }
         issuedRuntimeServiceRevalidationPlans.set(plan, Object.freeze({ topology, topologyContract, service, expectedContainerId }))
         return plan
     } catch (error) {
@@ -2079,21 +2079,21 @@ type RuntimeServiceOutput<Value> =
     | { readonly kind: 'malformed' }
 
 function classifyComposeStatus(stdout: Buffer, projectName: string, service: string): RuntimeServiceOutput<string> {
-    if (stdout.byteLength === 0) return Object.freeze({ kind: 'empty' })
+    if (stdout.byteLength === 0) return { kind: 'empty' }
     try {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(stdout)
         const lines = source.split('\n')
         if (lines.at(-1) === '') lines.pop()
-        if (lines.length !== 1 || lines[0]?.length === 0) return Object.freeze({ kind: 'malformed' })
+        if (lines.length !== 1 || lines[0]?.length === 0) return { kind: 'malformed' }
         const parsed: unknown = JSON.parse(lines[0] as string)
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return Object.freeze({ kind: 'malformed' })
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { kind: 'malformed' }
         const value = parsed as Record<string, unknown>
         if (typeof value.ID !== 'string' || !SHORT_CONTAINER_ID.test(value.ID)
-            || value.Project !== projectName || value.Service !== service) return Object.freeze({ kind: 'malformed' })
-        return Object.freeze({ kind: 'valid', value: value.ID })
+            || value.Project !== projectName || value.Service !== service) return { kind: 'malformed' }
+        return { kind: 'valid', value: value.ID }
     } catch {
         // Unparsable output is the malformed verdict.
-        return Object.freeze({ kind: 'malformed' })
+        return { kind: 'malformed' }
     }
 }
 
@@ -2103,16 +2103,16 @@ function parseComposeStatus(stdout: Buffer, projectName: string, service: string
 }
 
 function classifyContainerIdentity(stdout: Buffer, shortId: string): RuntimeServiceOutput<string> {
-    if (stdout.byteLength === 0) return Object.freeze({ kind: 'empty' })
+    if (stdout.byteLength === 0) return { kind: 'empty' }
     try {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(stdout)
         const lines = source.split('\n')
         if (lines.at(-1) === '') lines.pop()
-        if (lines.length !== 1 || !CONTAINER_ID.test(lines[0] ?? '') || !lines[0]?.startsWith(shortId)) return Object.freeze({ kind: 'malformed' })
-        return Object.freeze({ kind: 'valid', value: lines[0] as string })
+        if (lines.length !== 1 || !CONTAINER_ID.test(lines[0] ?? '') || !lines[0]?.startsWith(shortId)) return { kind: 'malformed' }
+        return { kind: 'valid', value: lines[0] as string }
     } catch {
         // Undecodable output is the malformed verdict.
-        return Object.freeze({ kind: 'malformed' })
+        return { kind: 'malformed' }
     }
 }
 
@@ -2133,7 +2133,7 @@ function classifyRuntimeServiceStageEvidence(
     const parsed = stage === 'status'
         ? classifyComposeStatus(outcome.stdout, projectName, service)
         : shortId === undefined
-            ? Object.freeze({ kind: 'malformed' as const })
+            ? { kind: 'malformed' as const }
             : classifyContainerIdentity(outcome.stdout, shortId)
     return parsed.kind === 'valid' ? 'clean' : parsed.kind === 'empty' ? 'failure' : 'unavailable'
 }
@@ -2148,10 +2148,10 @@ function parseRuntimeServiceLookup(
     projectName: string,
     service: string,
 ): RuntimeServiceLookupObservation | undefined {
-    if (status.byteLength === 0) return identity.byteLength === 0 ? Object.freeze({ kind: 'missing' }) : undefined
+    if (status.byteLength === 0) return identity.byteLength === 0 ? { kind: 'missing' } : undefined
     const shortId = parseComposeStatus(status, projectName, service)
     const containerId = shortId ? parseContainerIdentity(identity, shortId) : undefined
-    return shortId && containerId ? Object.freeze({ kind: 'present', shortId, containerId }) : undefined
+    return shortId && containerId ? { kind: 'present', shortId, containerId } : undefined
 }
 
 function receiptWithinWindow(outcome: Extract<ExecuteProbeOutcome, { kind: 'complete' }>, window: RuntimeObservationWindow, now: number): boolean {
@@ -2172,7 +2172,7 @@ export function admitRuntimeServiceRevalidation(input: {
     readonly identityOutcome: ExecuteProbeOutcome
 }): RuntimeServiceRevalidationResult {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['plan', 'outcome', 'identityOutcome'])
         const plan = captured?.plan as RuntimeServiceRevalidationPlan | undefined
@@ -2205,11 +2205,11 @@ export function admitRuntimeServiceRevalidation(input: {
         )
         if (!observed) return unavailable()
         if (observed.kind === 'missing' || observed.containerId !== contract.expectedContainerId) {
-            return Object.freeze({
+            return {
                 kind: 'stale' as const,
                 service: contract.service.id,
                 expectedContainerId: contract.expectedContainerId,
-            })
+            }
         }
         const step = runtimeServiceInspectStep(
             contract.topologyContract,
@@ -2222,18 +2222,18 @@ export function admitRuntimeServiceRevalidation(input: {
             ),
         )
         if (!step) return unavailable()
-        const healthPlan = Object.freeze({ kind: 'planned' as const, service: contract.service.id, step })
+        const healthPlan = { kind: 'planned' as const, service: contract.service.id, step }
         issuedRuntimeServiceHealthPlans.set(healthPlan, Object.freeze({
             ...contract,
             containerId: observed.containerId,
             identityFinishedAt: identityOutcome.receipt.finishedAt,
         }))
-        return Object.freeze({
+        return {
             kind: 'planned' as const,
             service: contract.service.id,
             expectedContainerId: contract.expectedContainerId,
             plan: healthPlan,
-        })
+        }
     } catch (error) {
         return unavailable(error)
     }
@@ -2252,18 +2252,18 @@ function runtimeServiceInspectStep(
     timeoutMs: number,
 ): ExecutionStep | undefined {
     const executable = topologyContract.runtime.runtimeExecutable
-    return snapshotExecutionPlan({ steps: [Object.freeze({
+    return snapshotExecutionPlan({ steps: [{
         id: `runtime:docker-container:health:${service.id}`,
-        argv: Object.freeze([executable.canonicalPath, 'container', 'inspect', '--format', CONTAINER_INSPECT_FORMAT, containerId]) as readonly [string, ...string[]],
+        argv: [executable.canonicalPath, 'container', 'inspect', '--format', CONTAINER_INSPECT_FORMAT, containerId] as [string, ...string[]],
         argv0: executable.invocationPath,
         cwd: topologyContract.runtime.cwd,
         env: runtimeCommandEnvironment(topologyContract.runtime.env, topologyContract.runtime.interpolatedNames),
         timeoutMs,
         stdoutLimitBytes: OUTPUT_LIMIT_BYTES,
         stderrLimitBytes: OUTPUT_LIMIT_BYTES,
-        paths: Object.freeze([]),
-        ports: Object.freeze([]),
-        labels: Object.freeze({
+        paths: [],
+        ports: [],
+        labels: {
             stackId: topologyContract.stackId,
             configSha256: topologyContract.configSha256,
             batchId: topologyContract.batchId,
@@ -2274,19 +2274,19 @@ function runtimeServiceInspectStep(
             executableSha256: executable.sha256,
             projectName: topologyContract.runtime.projectName,
             issuanceId,
-        }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
+        },
+        expected: [],
+        consumedFiles: [{
             path: executable.canonicalPath,
             sha256: executable.sha256,
             maxBytes: 536_870_912,
-            argvIndexes: Object.freeze([0]),
+            argvIndexes: [0],
             executable: true,
             executionMode: executable.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
-    })] })?.steps[0]
+        }],
+        filesystemChecks: [],
+        compensation: [],
+    }] })?.steps[0]
 }
 
 export function projectRuntimeLifecycle(topology: RuntimeTopologyEvidence): RuntimeLifecycleProjection | undefined {
@@ -2346,7 +2346,7 @@ export function projectRuntimeLifecycle(topology: RuntimeTopologyEvidence): Runt
             services,
         }) satisfies RuntimeLifecycleSemantics
         if (Buffer.byteLength(JSON.stringify(semantics), 'utf8') > MAX_TOPOLOGY_BYTES) return undefined
-        const projection = Object.freeze({}) as RuntimeLifecycleProjection
+        const projection = {} as RuntimeLifecycleProjection
         issuedRuntimeLifecycleProjections.set(projection, Object.freeze({
             topology,
             semantics,
@@ -2367,7 +2367,7 @@ export function consumeRuntimeLifecycleProjection(projection: RuntimeLifecyclePr
         if (!contract || now < Date.parse(contract.observationWindow.startedAt)
             || now > Date.parse(contract.observationWindow.expiresAt)) return undefined
         consumedRuntimeLifecycleProjections.add(projection)
-        return Object.freeze({ topology: contract.topology, semantics: contract.semantics })
+        return { topology: contract.topology, semantics: contract.semantics }
     } catch {
         // A throwing accessor or proxy trap makes the projection unusable, which the caller refuses.
         return undefined
@@ -2381,7 +2381,7 @@ export function createRuntimeServiceHealthPlan(input: {
     readonly identityOutcome: ExecuteProbeOutcome
 }): RuntimeServiceHealthPlan {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service health is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service health is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['plan', 'startOutcome', 'outcome', 'identityOutcome'])
         const plan = captured?.plan as RuntimeServicePlan | undefined
@@ -2425,7 +2425,7 @@ export function createRuntimeServiceHealthPlan(input: {
             Math.min(contract.topologyContract.step.timeoutMs, Math.max(1, windowEnd - now)),
         )
         if (!step) return unavailable()
-        const healthPlan = Object.freeze({ kind: 'planned' as const, service: contract.service.id, step })
+        const healthPlan = { kind: 'planned' as const, service: contract.service.id, step }
         issuedRuntimeServiceHealthPlans.set(healthPlan, Object.freeze({
             ...contract,
             containerId,
@@ -2462,12 +2462,12 @@ function inspectedBindMounts(value: unknown): readonly RuntimeBindMount[] | unde
         if (row.Type !== 'bind') continue
         if (typeof row.Source !== 'string' || !isAbsolute(row.Source) || normalize(row.Source) !== row.Source
             || row.Source.includes('\0') || typeof row.Destination !== 'string' || !CONTAINER_PATH.test(row.Destination)) return undefined
-        mounts.push(Object.freeze({ source: row.Source, target: row.Destination }))
+        mounts.push({ source: row.Source, target: row.Destination })
     }
     const identities = mounts.map(({ source, target }) => `${source}\0${target}`)
     if (new Set(identities).size !== identities.length) return undefined
-    return Object.freeze([...mounts].sort((left, right) =>
-        `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
+    return [...mounts].sort((left, right) =>
+        `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`))
 }
 
 function inspectedPublishedPorts(value: unknown): readonly RuntimePublishedPort[] | undefined {
@@ -2488,18 +2488,18 @@ function inspectedPublishedPorts(value: unknown): readonly RuntimePublishedPort[
                 ? Number(row.HostPort) : undefined
             if (typeof row.HostIp !== 'string' || !PUBLISHED_HOSTS.has(row.HostIp)
                 || published === undefined || published > 65_535) return undefined
-            ports.push(Object.freeze({
+            ports.push({
                 hostIp: row.HostIp as RuntimePublishedPort['hostIp'],
                 target: Number(match[1]),
                 published,
                 protocol: 'tcp',
-            }))
+            })
         }
     }
     const identities = ports.map(({ hostIp, target, published }) => `${hostIp}\0${published}\0${target}`)
     if (new Set(identities).size !== identities.length) return undefined
-    return Object.freeze([...ports].sort((left, right) =>
-        `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`)))
+    return [...ports].sort((left, right) =>
+        `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`))
 }
 
 function parseRuntimeServiceInspection(stdout: Buffer, contract: RuntimeServiceHealthPlanContract): RuntimeServiceInspection | undefined {
@@ -2519,13 +2519,13 @@ function parseRuntimeServiceInspection(stdout: Buffer, contract: RuntimeServiceH
             || labels['dev.b0dea.cockpit.config-sha256'] !== contract.topologyContract.configSha256
             || labels['dev.b0dea.cockpit.stack-id'] !== contract.topologyContract.stackId
             || !contract.service.healthcheck && value.Health !== '' || !mounts || !ports) return undefined
-        return Object.freeze({
+        return {
             containerId: value.ID,
             state: value.State as RuntimeServiceObservation['state'],
             health: value.Health === '' ? null : value.Health as Exclude<RuntimeServiceObservation['health'], null>,
             bindMounts: mounts,
             publishedPorts: ports,
-        })
+        }
     } catch {
         // A malformed inspection shape yields no observation, which the caller reports as unavailable.
         return undefined
@@ -2537,7 +2537,7 @@ export function admitRuntimeServiceObservation(input: {
     readonly outcome: ExecuteProbeOutcome
 }): { readonly kind: 'complete'; readonly observation: RuntimeServiceObservation } | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string } {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service observation is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service observation is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['plan', 'outcome'])
         const plan = captured?.plan as RuntimeServiceHealthPlan | undefined
@@ -2561,7 +2561,7 @@ export function admitRuntimeServiceObservation(input: {
             || receiptEnd > windowEnd || now < windowStart || now > windowEnd) return unavailable()
         const value = parseRuntimeServiceInspection(outcome.stdout, contract)
         if (!value) return unavailable()
-        const observation = Object.freeze({
+        const observation = {
             stackId: contract.topologyContract.stackId,
             configSha256: contract.topologyContract.configSha256,
             batchId: contract.topologyContract.batchId,
@@ -2575,9 +2575,9 @@ export function admitRuntimeServiceObservation(input: {
             health: value.health,
             observedAt,
             observationWindow: contract.topologyContract.observationWindow,
-        })
+        }
         issuedRuntimeServiceObservations.set(observation, Object.freeze({ ...contract, inspection: value }))
-        return Object.freeze({ kind: 'complete', observation })
+        return { kind: 'complete', observation }
     } catch (error) {
         return unavailable(error)
     }
@@ -2587,7 +2587,7 @@ export function admitRuntimeServiceHealth(input: {
     readonly observation: RuntimeServiceObservation
 }): { readonly kind: 'complete'; readonly evidence: RuntimeServiceEvidence } | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string } {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service health is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service health is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['observation'])
         const observation = captured?.observation as RuntimeServiceObservation | undefined
@@ -2600,7 +2600,7 @@ export function admitRuntimeServiceHealth(input: {
             || now > Date.parse(contract.topologyContract.observationWindow.expiresAt)
             || observation.state !== 'running'
             || (contract.service.healthcheck ? observation.health !== 'healthy' : observation.health !== null)) return unavailable()
-        const evidence = Object.freeze({
+        const evidence = {
             stackId: observation.stackId,
             configSha256: observation.configSha256,
             batchId: observation.batchId,
@@ -2614,9 +2614,9 @@ export function admitRuntimeServiceHealth(input: {
             health: observation.health === 'healthy' ? 'healthy' as const : null,
             observedAt: observation.observedAt,
             observationWindow: observation.observationWindow,
-        })
+        }
         issuedRuntimeServiceEvidence.set(evidence, contract)
-        return Object.freeze({ kind: 'complete', evidence })
+        return { kind: 'complete', evidence }
     } catch (error) {
         return unavailable(error)
     }
@@ -2949,7 +2949,7 @@ function runtimeServiceFailureContext(
     if (!step || configIndex < 2 || step.argv[1] !== 'compose'
         || !(suffix?.length === 4 && suffix[1] === '--format' && suffix[2] === 'json'
             && suffix[3] === '--no-env-resolution')) return undefined
-    return Object.freeze({
+    return {
         stage,
         stackId: topology.stackId,
         configSha256: topology.configSha256,
@@ -2962,14 +2962,14 @@ function runtimeServiceFailureContext(
         containerId,
         observedAt,
         observationWindow: topology.observationWindow,
-        executable: Object.freeze({ ...topology.runtime.runtimeExecutable }),
+        executable: { ...topology.runtime.runtimeExecutable },
         cwd: topology.runtime.cwd,
         env: runtimeComposeEnvironment(topology.runtime.env, topology.runtime.interpolatedNames),
-        composeArgvPrefix: Object.freeze(step.argv.slice(1, configIndex)),
+        composeArgvPrefix: step.argv.slice(1, configIndex),
         paths: step.paths,
         consumedFiles: step.consumedFiles,
         filesystemChecks: step.filesystemChecks,
-    })
+    }
 }
 
 function failedBoundaryObservedAt(
@@ -2995,9 +2995,9 @@ function failedBoundaryObservedAt(
 }
 
 function issueRuntimeServiceFailure(context: RuntimeServiceFailureLogContext): RuntimeServiceFailureResult {
-    const evidence = Object.freeze({}) as RuntimeServiceFailureEvidence
+    const evidence = {} as RuntimeServiceFailureEvidence
     issuedRuntimeServiceFailures.set(evidence, context)
-    return Object.freeze({ kind: 'complete', evidence })
+    return { kind: 'complete', evidence }
 }
 
 export function admitRuntimeServiceStageOutcome(input: {
@@ -3008,7 +3008,7 @@ export function admitRuntimeServiceStageOutcome(input: {
     readonly statusOutcome?: ExecuteProbeOutcome
 }): RuntimeServiceStageOutcomeAdmission {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service stage evidence is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service stage evidence is unavailable', error) })
     try {
         const planDescriptor = input !== null && typeof input === 'object'
             ? Object.getOwnPropertyDescriptor(input, 'plan')
@@ -3101,7 +3101,7 @@ export function admitRuntimeServiceStageOutcome(input: {
             if (!context) return unavailable()
             const failure = issueRuntimeServiceFailure(context)
             return failure.kind === 'complete'
-                ? Object.freeze({ kind: 'failure' as const, service: contract.service.id, evidence: failure.evidence })
+                ? { kind: 'failure' as const, service: contract.service.id, evidence: failure.evidence }
                 : unavailable()
         }
         if (outcome.kind !== 'complete' || !receiptWithinWindow(outcome, window, now)
@@ -3116,7 +3116,7 @@ export function admitRuntimeServiceStageOutcome(input: {
             : stage === 'status'
                 ? Object.freeze({ startOutcome: suppliedStart as object, statusOutcome: suppliedOutcome as object })
                 : Object.freeze({ ...progress!, identityOutcome: suppliedOutcome as object }))
-        return Object.freeze({ kind: 'admitted' as const, service: contract.service.id })
+        return { kind: 'admitted' as const, service: contract.service.id }
     } catch (error) {
         return unavailable(error)
     }
@@ -3127,7 +3127,7 @@ export function admitRuntimeServiceRevalidationStatus(input: {
     readonly outcome: ExecuteProbeOutcome
 }): RuntimeServiceRevalidationStatusAdmission {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation status is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation status is unavailable', error) })
     try {
         const planDescriptor = input !== null && typeof input === 'object'
             ? Object.getOwnPropertyDescriptor(input, 'plan')
@@ -3161,7 +3161,7 @@ export function admitRuntimeServiceRevalidationStatus(input: {
         const status = classifyComposeStatus(outcome.stdout, contract.topologyContract.runtime.projectName, contract.service.id)
         if (status.kind === 'empty') {
             consumedRuntimeServiceRevalidationPlans.add(plan)
-            return Object.freeze({ kind: 'stale' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId })
+            return { kind: 'stale' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId }
         }
         if (status.kind === 'malformed') {
             consumedRuntimeServiceRevalidationPlans.add(plan)
@@ -3169,10 +3169,10 @@ export function admitRuntimeServiceRevalidationStatus(input: {
         }
         if (!contract.expectedContainerId.startsWith(status.value)) {
             consumedRuntimeServiceRevalidationPlans.add(plan)
-            return Object.freeze({ kind: 'stale' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId })
+            return { kind: 'stale' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId }
         }
         admittedRuntimeServiceRevalidationStatuses.set(plan, suppliedOutcome as object)
-        return Object.freeze({ kind: 'admitted' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId })
+        return { kind: 'admitted' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId }
     } catch (error) {
         return unavailable(error)
     }
@@ -3186,7 +3186,7 @@ export function admitRuntimeServicePlanFailure(input: {
     readonly statusOutcome?: ExecuteProbeOutcome
 }): RuntimeServiceFailureResult {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service failure evidence is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service failure evidence is unavailable', error) })
     try {
         const planDescriptor = input !== null && typeof input === 'object'
             ? Object.getOwnPropertyDescriptor(input, 'plan')
@@ -3269,7 +3269,7 @@ export function admitRuntimeServiceInspectFailure(input: {
     readonly outcome: ExecuteProbeOutcome
 }): RuntimeServiceFailureResult {
     let serviceName = ''
-    const unavailable = (error?: unknown) => Object.freeze({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service failure evidence is unavailable', error) })
+    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service failure evidence is unavailable', error) })
     try {
         const captured = captureOwnValues(input, ['plan', 'outcome'])
         const plan = captured?.plan as RuntimeServiceHealthPlan | undefined
@@ -3319,12 +3319,12 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
             contract.topologyContract.runtime.env,
             contract.topologyContract.runtime.interpolatedNames,
         )
-        const context = Object.freeze({
+        const context = {
             observation: value,
-            executable: Object.freeze({ ...contract.topologyContract.runtime.runtimeExecutable }),
+            executable: { ...contract.topologyContract.runtime.runtimeExecutable },
             cwd: contract.topologyContract.runtime.cwd,
             env,
-        })
+        }
         consumedRuntimeServiceFailureObservations.add(value)
         return context
     } catch {
@@ -3369,7 +3369,7 @@ const issuedRuntimeStoppedAuthorities = new WeakMap<object, DrainOutcomeAuthorit
 const issuedRuntimeStopFailureAuthorities = new WeakMap<object, DrainOutcomeAuthority>()
 
 function unavailableRuntimeStop(error?: unknown): { readonly kind: 'unavailable'; readonly reason: string } {
-    return Object.freeze({ kind: 'unavailable', reason: unavailableReason('runtime stop evidence is unavailable', error) })
+    return { kind: 'unavailable', reason: unavailableReason('runtime stop evidence is unavailable', error) }
 }
 
 export function createRuntimeStopPlan(input: {
@@ -3411,7 +3411,7 @@ export function createRuntimeStopPlan(input: {
         const fence = inspectDrainExecutionFence(execution)
         const fencedStep = fence && snapshotExecutionStep({ ...step, executionFence: fence })
         if (!fencedStep) return unavailableRuntimeStop()
-        const plan = Object.freeze({ kind: 'planned' as const, step: fencedStep })
+        const plan = { kind: 'planned' as const, step: fencedStep }
         issuedRuntimeStopPlans.set(plan, Object.freeze({ topology: topologyContract, reservation, execution }))
         return plan
     } catch (error) { return unavailableRuntimeStop(error) }
@@ -3447,7 +3447,7 @@ export function createRuntimeStopObservationPlan(input: {
             contract.topology.runtime.interpolatedNames,
         )
         if (!step) return unavailableRuntimeStop()
-        const observation = Object.freeze({ kind: 'planned' as const, step })
+        const observation = { kind: 'planned' as const, step }
         issuedRuntimeStopObservationPlans.set(observation, Object.freeze({ ...contract, stopFinishedAt: outcome.receipt.finishedAt }))
         return observation
     } catch (error) { return unavailableRuntimeStop(error) }
@@ -3471,7 +3471,7 @@ export function admitRuntimeStopped(input: {
             || Date.parse(outcome.receipt.startedAt) > Date.parse(outcome.receipt.finishedAt)
             || Date.parse(outcome.receipt.finishedAt) > Date.parse(contract.reservation.attempt!.validThrough)
             || Date.parse(outcome.receipt.finishedAt) > Date.now()) return unavailableRuntimeStop()
-        const fact = Object.freeze({
+        const fact = {
             purpose: contract.reservation.purpose,
             stackId: contract.reservation.stackId,
             configSha256: contract.reservation.configSha256,
@@ -3489,12 +3489,12 @@ export function admitRuntimeStopped(input: {
             currentTarget: contract.reservation.attempt!.currentTarget,
             currentStage: contract.reservation.attempt!.currentStage,
             observedAt: outcome.receipt.finishedAt,
-        }) satisfies RuntimeStopped
+        } satisfies RuntimeStopped
         const settled = settleRuntimeDrainSuccess({ authority: contract.execution, fact })
         if (!settled) return unavailableRuntimeStop()
-        const authority = Object.freeze({}) as RuntimeStoppedAuthority
+        const authority = {} as RuntimeStoppedAuthority
         issuedRuntimeStoppedAuthorities.set(authority, settled)
-        return Object.freeze({ kind: 'complete', authority })
+        return { kind: 'complete', authority }
     } catch (error) { return unavailableRuntimeStop(error) }
 }
 
@@ -3514,12 +3514,12 @@ export function admitRuntimeStopFailure(input: {
             || outcome.execution.started || outcome.execution.signal !== null || outcome.execution.exitCode === 0) return unavailableRuntimeStop()
         const attempt = contract.reservation.attempt!
         const failedAt = new Date().toISOString()
-        const fact = Object.freeze({ ...attempt, failedAt }) satisfies DrainAttemptFailure
+        const fact = { ...attempt, failedAt } satisfies DrainAttemptFailure
         const settled = settleRuntimeDrainFailure({ authority: contract.execution, fact })
         if (!settled) return unavailableRuntimeStop()
-        const authority = Object.freeze({}) as RuntimeStopFailureAuthority
+        const authority = {} as RuntimeStopFailureAuthority
         issuedRuntimeStopFailureAuthorities.set(authority, settled)
-        return Object.freeze({ kind: 'complete', authority })
+        return { kind: 'complete', authority }
     } catch (error) { return unavailableRuntimeStop(error) }
 }
 

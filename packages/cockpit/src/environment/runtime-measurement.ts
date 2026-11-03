@@ -55,29 +55,29 @@ const STEP_TIMEOUT_MS = 10_000
 const PROBE_STEP_TIMEOUT_MS = 30_000
 
 function refused(code: string, message: string, target?: string, fix?: string): RuntimeMeasureOutcome {
-    return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message,
-            ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) })]) })
+    return { status: 2, result: null, artifact: null, destination: null,
+        diagnostics: [{ severity: 'error' as const, code, message,
+            ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }] }
 }
 
 function dockerStep(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string, args: readonly string[], stdoutLimitBytes = 1_024): ExecutionStep {
-    return Object.freeze({
+    return {
         id,
-        argv: Object.freeze([executable.canonicalPath, ...args]) as readonly [string, ...string[]],
+        argv: [executable.canonicalPath, ...args] as readonly [string, ...string[]],
         argv0: executable.invocationPath,
         cwd, env, timeoutMs: STEP_TIMEOUT_MS,
         stdoutLimitBytes, stderrLimitBytes: 4_096,
-        paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ purpose: id }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
+        paths: [], ports: [],
+        labels: { purpose: id },
+        expected: [],
+        consumedFiles: [{
             path: executable.canonicalPath, sha256: executable.sha256,
-            maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true as const,
+            maxBytes: 536_870_912, argvIndexes: [0], executable: true as const,
             executionMode: executable.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
-    })
+        }],
+        filesystemChecks: [],
+        compensation: [],
+    }
 }
 
 async function readDocker(execute: RuntimeMeasureDependencies['execute'], step: ExecutionStep): Promise<
@@ -99,11 +99,11 @@ async function readDocker(execute: RuntimeMeasureDependencies['execute'], step: 
 
 export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies: RuntimeMeasureDependencies): Promise<RuntimeMeasureOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
     const configPath = loaded.result.source.path
     const config = loaded.result.config
-    if (declaresNothingToRun(config.environment)) return Object.freeze({ status: 2, result: null,
-        diagnostics: Object.freeze([runtimeNotDeclared(configPath)]) })
+    if (declaresNothingToRun(config.environment)) return { status: 2, result: null,
+        diagnostics: [runtimeNotDeclared(configPath)] }
     if (input.image.length === 0 || input.image.length > 256 || input.image.startsWith('-') || /[\s\u0000-\u001f\u007f]/.test(input.image)) {
         return refused('CLI_USAGE_INVALID', '--image must name one local image reference or ID', '--image')
     }
@@ -116,7 +116,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     // resolving the "default" context instead.
     const daemon = await selectLocalDockerDaemon(input.env, STEP_TIMEOUT_MS, dependencies.execute, {
         command: 'runtime measure', localOnly: 'a measurement describes this machine, which a remote daemon says nothing about' })
-    if (daemon.kind === 'refusal') return Object.freeze({ status: 2, result: null, artifact: null, destination: null, diagnostics: Object.freeze([daemon.diagnostic]) })
+    if (daemon.kind === 'refusal') return { status: 2, result: null, artifact: null, destination: null, diagnostics: [daemon.diagnostic] }
     // Where the measurement is recorded: the per-user root every checkout of this machine shares.
     if (process.platform !== 'darwin' && process.platform !== 'linux') return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
         'runtime measurements are recorded on macOS or Linux only', process.platform)
@@ -128,8 +128,8 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (docker.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, docker.reason, 'docker')
     if (git.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, git.reason, 'git')
     const cwd = dirname(configPath)
-    const runtimeEnv = Object.freeze({ PATH: path,
-        ...(input.env.DOCKER_HOST === undefined ? { DOCKER_CONTEXT: daemon.dockerContext } : { DOCKER_HOST: input.env.DOCKER_HOST }) })
+    const runtimeEnv = { PATH: path,
+        ...(input.env.DOCKER_HOST === undefined ? { DOCKER_CONTEXT: daemon.dockerContext } : { DOCKER_HOST: input.env.DOCKER_HOST }) }
 
     const observed = await observeDockerRuntime({ executable: docker.value, cwd, env: runtimeEnv, timeoutMs: STEP_TIMEOUT_MS }, dependencies.execute)
     if (observed.kind !== 'complete') return refused(observed.code, observed.reason, 'docker', observed.fix)
@@ -145,13 +145,13 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         ['image', 'inspect', input.image, '--format', '{{.Id}}']))
     if (image.kind !== 'complete' || !IMAGE_ID.test(image.text)) {
         // The runtime answered, so the remedy is the image, not the runtime.
-        return Object.freeze({ status: 2, result: null, artifact: null, destination: null, diagnostics: Object.freeze([Object.freeze({
+        return { status: 2, result: null, artifact: null, destination: null, diagnostics: [{
             severity: 'error' as const,
             code: ENVIRONMENT_CODES.RUNTIME_IMAGE_UNAVAILABLE,
             message: `--image ${JSON.stringify(input.image)} is not a local image (${image.kind === 'complete' ? 'unexpected image ID' : image.detail}); the probe never pulls`,
             target: '--image',
             fix: 'pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again',
-        })]) })
+        }] }
     }
 
     // The floor is the numeric core; a vendor suffix such as `-desktop.1` is evidence, not a floor.
@@ -185,42 +185,42 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         await mkdir(probeRoot, { mode: 0o700 })
         verdict = await dependencies.probe({
             executable: docker.value, gitExecutable: git.value, cwd: probeRoot, projectPrefix: config.cockpit.name.slice(0, 40), owner,
-            env: Object.freeze({ ...runtimeEnv, ...(input.env.TMPDIR === undefined ? {} : { TMPDIR: input.env.TMPDIR }) }),
+            env: { ...runtimeEnv, ...(input.env.TMPDIR === undefined ? {} : { TMPDIR: input.env.TMPDIR }) },
             composeFloor, measuredOn, timeoutMs: PROBE_STEP_TIMEOUT_MS,
-            image: Object.freeze({ reference: image.text, id: image.text }),
+            image: { reference: image.text, id: image.text },
         })
     } finally {
         await rm(parent, { recursive: true, force: true })
     }
 
     const evidence = verdict.evidence
-    const summary = Object.freeze({
-        runtime: identity, dockerInfo: Object.freeze({ operatingSystem: observed.operatingSystem, name: observed.name, osType: observed.osType }),
-        endpoint: Object.freeze({ value: daemon.endpoint, source: daemon.source }),
+    const summary = {
+        runtime: identity, dockerInfo: { operatingSystem: observed.operatingSystem, name: observed.name, osType: observed.osType },
+        endpoint: { value: daemon.endpoint, source: daemon.source },
         image: image.text, candidate: verdict.candidate, brokenControl: verdict.brokenControl,
         checks: evidence?.candidateChecks ?? null,
         removedLeftovers: swept.removed, leftUntouched: swept.left,
-    })
+    }
     if (verdict.status !== 'supported' || verdict.candidate !== 'passed' || verdict.brokenControl !== 'rejected') {
-        return Object.freeze({ ...refused(verdict.operatorAction?.code ?? ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+        return { ...refused(verdict.operatorAction?.code ?? ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             `runtime ${identity} was not measured as supported (candidate ${verdict.candidate}, broken control ${verdict.brokenControl}): `
-            + `${verdict.operatorAction?.reason ?? 'no reason was reported'}; nothing was recorded`, identity), result: summary })
+            + `${verdict.operatorAction?.reason ?? 'no reason was reported'}; nothing was recorded`, identity), result: summary }
     }
     // The probe observes the runtime again; a different daemon or Compose answering it would make
     // this row describe something other than the identity read above.
     if (evidence === null || evidence.runtimeVersion !== observed.runtime.version || evidence.composeVersion !== observed.composeVersion
         || evidence.runtimeExecutableSha256 !== docker.value.sha256) {
-        return Object.freeze({ ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
-            `the probe measured a different runtime than ${identity} ${observed.runtime.version} with Compose ${observed.composeVersion}; nothing was recorded`, identity), result: summary })
+        return { ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+            `the probe measured a different runtime than ${identity} ${observed.runtime.version} with Compose ${observed.composeVersion}; nothing was recorded`, identity), result: summary }
     }
 
-    const row = Object.freeze({ runtime: identity, daemon: observed.name, engineVersion: observed.runtime.version,
-        composeFloor, measuredOn })
+    const row = { runtime: identity, daemon: observed.name, engineVersion: observed.runtime.version,
+        composeFloor, measuredOn }
     const recorded = await recordLocalRuntimeMeasurement(stateRoot.value, row)
     if (recorded.kind === 'refusal') {
-        return Object.freeze({ ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+        return { ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
             `runtime ${identity} passed, but this machine's measurement could not be recorded in ${recorded.path}: ${recorded.reason}`, recorded.path),
-            result: Object.freeze({ ...summary, row, recorded: false }) })
+            result: { ...summary, row, recorded: false } }
     }
     const notes = [
         ...(swept.removed.length === 0 ? [] : [`removed what an interrupted measure left behind: ${swept.removed.join('; ')}`]),
@@ -230,8 +230,8 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         ...(recorded.discardedUnreadable === null ? [] : [`the previous record was unreadable and was replaced: ${recorded.discardedUnreadable}`]),
         `${basename(configPath)} is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,
     ]
-    return Object.freeze({ status: 0, result: Object.freeze({ ...summary, row, recorded: true, path: recorded.path }), destination: null,
-        artifact: `${notes.join('\n')}\n`, diagnostics: Object.freeze([]) })
+    return { status: 0, result: { ...summary, row, recorded: true, path: recorded.path }, destination: null,
+        artifact: `${notes.join('\n')}\n`, diagnostics: [] }
 }
 
 /**
@@ -243,13 +243,13 @@ export async function probeInstalledRuntime(request: Omit<RuntimeProbeRequest, '
     const canonicalPath = await realpath(modulePath)
     const installedSuffix = ['node_modules', '@b00dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js'].join(sep)
     if (!canonicalPath.endsWith(`${sep}${installedSuffix}`)) {
-        return Object.freeze({
+        return {
             status: 'unavailable', runtime: null, composeVersion: null, composeFloor: request.composeFloor, measuredOn: request.measuredOn,
             candidate: 'failed', brokenControl: 'inconclusive', evidence: null,
-            operatorAction: Object.freeze({ required: true, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-                reason: `runtime measurement runs only from an installed @b00dea/cockpit package, and this cockpit runs from ${dirname(canonicalPath)}; install the package and use its cockpit binary` }),
-        })
+            operatorAction: { required: true, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+                reason: `runtime measurement runs only from an installed @b00dea/cockpit package, and this cockpit runs from ${dirname(canonicalPath)}; install the package and use its cockpit binary` },
+        }
     }
     const sha256 = createHash('sha256').update(await readFile(canonicalPath)).digest('hex')
-    return probeRuntimeSupport({ ...request, installedModule: Object.freeze({ canonicalPath, sha256 }) })
+    return probeRuntimeSupport({ ...request, installedModule: { canonicalPath, sha256 } })
 }

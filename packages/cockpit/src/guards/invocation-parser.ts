@@ -496,7 +496,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             if (tool === 'Bash') invocations = parseShell(fields.command, cwd)
             else {
                 ({ paths, removed } = patchPaths(fields.command))
-                content = Object.freeze({ kind: 'patch', text: fields.command })
+                content = { kind: 'patch', text: fields.command }
             }
         } else if (tool === 'NotebookEdit') {
             if (!keys(fields, ['notebook_path', 'new_source'], ['cell_id', 'cell_type', 'edit_mode'])
@@ -513,9 +513,9 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             // Writing nothing empties the file, which is the shell's `: > file`.
             if (tool === 'Write' && fields.content === '') removed = [...paths]
             // OpenCode's plugin passes new text only for the configuration file, so a payload may lack it.
-            if (tool === 'Write' && typeof fields.content === 'string') content = Object.freeze({ kind: 'write', path: paths[0]!, content: fields.content })
+            if (tool === 'Write' && typeof fields.content === 'string') content = { kind: 'write', path: paths[0]!, content: fields.content }
             if (tool === 'Edit' && typeof fields.old_string === 'string' && typeof fields.new_string === 'string') {
-                content = Object.freeze({ kind: 'replace', path: paths[0]!, old: fields.old_string, new: fields.new_string, all: fields.replace_all === true })
+                content = { kind: 'replace', path: paths[0]!, old: fields.old_string, new: fields.new_string, all: fields.replace_all === true }
             }
         } else refuse('Unsupported guard tool.')
         if (paths.length + invocations.reduce((sum, item) => sum + item.redirects.length, 0) > GUARD_INPUT_LIMITS.paths) refuse('Guard path limit exceeded.')
@@ -527,8 +527,8 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             Object.freeze(item.redirects)
             Object.freeze(item)
         }
-        const result = Object.freeze({ status: 'parsed' as const, tool, cwd, paths: Object.freeze(paths), removed: Object.freeze(removed), invocations: Object.freeze(invocations),
-            ...content ? { content } : {} })
+        const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
+            ...content ? { content } : {} }
         parsedInputs.add(result)
         return result
     } catch (error) {

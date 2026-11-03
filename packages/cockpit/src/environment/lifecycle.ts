@@ -79,10 +79,10 @@ const admittedUpPlans = new WeakMap<object, UpPlanningRecord>()
 const issuedPlans = new WeakMap<object, LifecycleIssuance>()
 
 function refusal(code: EnvironmentDiagnostic['code'], message: string, target: string): LifecycleRefusal {
-    return Object.freeze({
+    return {
         kind: 'refusal',
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target })]),
-    })
+        diagnostics: [{ severity: 'error' as const, code, message, target }],
+    }
 }
 
 function ownData(input: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
@@ -91,7 +91,7 @@ function ownData(input: unknown, keys: readonly string[]): Readonly<Record<strin
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== keys.length
             || keys.some((key) => !('value' in (descriptors[key] ?? {})))) return undefined
-        return Object.freeze(Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value])))
+        return Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value]))
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -237,7 +237,7 @@ function consumePlannerEvidence(runtimeProjection: RuntimeLifecycleProjection, p
         || ports.ownership.holderIds.length !== ports.ownership.holderCount
         || !unique(ports.ownership.holderIds, String)
         || !ports.ownership.holderIds.includes(ports.ownership.holderId)) return undefined
-    return Object.freeze({ runtime, ports })
+    return { runtime, ports }
 }
 
 function progressValue(value: unknown): LifecycleProgress | null | undefined {
@@ -250,13 +250,13 @@ function progressValue(value: unknown): LifecycleProgress | null | undefined {
     const values = completed.map((item) => ownData(item, ['service', 'containerId']))
     if (values.some((item) => !item || typeof item.service !== 'string' || !SERVICE_ID.test(item.service)
         || typeof item.containerId !== 'string' || !SHA256.test(item.containerId))) return undefined
-    return Object.freeze({
+    return {
         workBasisSha256: captured.workBasisSha256 as string,
         operationGeneration: captured.operationGeneration as string,
-        completedServices: Object.freeze(values.map((item) => Object.freeze({
+        completedServices: values.map((item) => ({
             service: item!.service as string, containerId: item!.containerId as string,
-        }))),
-    })
+        })),
+    }
 }
 
 function authenticatedCompletedServices(values: unknown): readonly RuntimeServiceEvidence[] | undefined {
@@ -352,14 +352,14 @@ export function admitUpProgress(input: {
         || prior.operationGeneration !== captured.operationGeneration)) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID, 'lifecycle progress does not match the current work', 'up-progress')
     }
-    const progress = prior ?? Object.freeze({
+    const progress = prior ?? {
         workBasisSha256: basis,
         operationGeneration: captured.operationGeneration,
-        completedServices: Object.freeze([]),
-    })
-    const authority = Object.freeze({}) as UpPlanningAuthority
+        completedServices: [],
+    }
+    const authority = {} as UpPlanningAuthority
     admittedUpPlans.set(authority, Object.freeze({ ...evidence, progress, mode: prior === null ? 'start' : 'resume' }))
-    return Object.freeze({ kind: 'admitted', authority })
+    return { kind: 'admitted', authority }
 }
 
 export function planAdmittedUp(input: {
@@ -400,23 +400,23 @@ export function planAdmittedUp(input: {
         || completed.some((item, index) => item.service !== order[index])) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID, 'completed services are not the current dependency prefix', 'up-progress')
     }
-    const steps: LifecyclePlan['steps'] = Object.freeze([
-        Object.freeze({ id: 'lifecycle:preflight', kind: 'preflight' as const }),
-        Object.freeze({ id: 'lifecycle:claim:acquire', kind: 'claim' as const, action: 'acquire' as const }),
-        ...order.map((service) => Object.freeze({ id: `lifecycle:service:${service}`, kind: 'service' as const, service })),
-        Object.freeze({
+    const steps: LifecyclePlan['steps'] = [
+        { id: 'lifecycle:preflight', kind: 'preflight' as const },
+        { id: 'lifecycle:claim:acquire', kind: 'claim' as const, action: 'acquire' as const },
+        ...order.map((service) => ({ id: `lifecycle:service:${service}`, kind: 'service' as const, service })),
+        {
             id: 'lifecycle:entrypoints', kind: 'publish-entrypoints' as const,
-            values: Object.freeze(evidence.ports.entrypoints.map((entrypoint) => Object.freeze({ ...entrypoint }))),
-        }),
-    ])
+            values: evidence.ports.entrypoints.map((entrypoint) => ({ ...entrypoint })),
+        },
+    ]
     const compensation: LifecyclePlan['compensation'] = evidence.ports.ownership.change === 'acquired'
-        ? Object.freeze([Object.freeze({
-            step: Object.freeze({ id: 'lifecycle:claim:release', kind: 'claim' as const, action: 'release' as const }),
-            ownership: Object.freeze({
+        ? [{
+            step: { id: 'lifecycle:claim:release', kind: 'claim' as const, action: 'release' as const },
+            ownership: {
                 stackId: evidence.ports.lease.stackId, holderId: evidence.ports.ownership.holderId,
                 recordRevision: evidence.ports.ownership.recordRevision, change: 'acquired' as const,
-            }),
-        })]) : Object.freeze([])
+            },
+        }] : []
     const complete = completed.length === order.length && evidence.mode === 'resume'
     const completedStepCount = complete ? steps.length : 2 + completed.length
     const plan = lifecyclePlan('up', progress.workBasisSha256, progress.operationGeneration, progress.completedServices, steps, completedStepCount, compensation)
@@ -425,8 +425,8 @@ export function planAdmittedUp(input: {
         topology: evidence.runtime.topology, firstIncompleteServiceIndex: completed.length,
         portOwnership: evidence.ports.ownership, drainRequest: null, reclaim: null,
     })
-    if (complete) return Object.freeze({ kind: 'noop', plan })
-    return Object.freeze({ kind: 'execute', mode: evidence.mode, plan })
+    if (complete) return { kind: 'noop', plan }
+    return { kind: 'execute', mode: evidence.mode, plan }
 }
 
 function validDrainInputs(generation: unknown, runtimeStopValidForMs: unknown, reclaimValidForMs?: unknown): boolean {
@@ -447,16 +447,16 @@ function drainRequest(
 ): DrainReservationRequest {
     const operationBasis = workBasis(purpose, evidence.runtime.semantics, evidence.ports,
         reclaim === undefined ? {} : { reclaim })!
-    const targetIds = Object.freeze([
+    const targetIds = [
         evidence.runtime.semantics.stackId,
         ...(reclaim?.commitments.map(({ targetId }) => targetId) ?? []),
-    ].sort())
-    const actions = Object.freeze([
-        Object.freeze({ stage: 'runtime-stop' as const, targetId: evidence.runtime.semantics.stackId, validForMs: runtimeStopValidForMs }),
-        ...(reclaim?.commitments.map(({ targetId, ...targetCommitment }) => Object.freeze({
-            stage: 'reclaim' as const, targetId, validForMs: reclaimValidForMs!, targetCommitment: Object.freeze({ ...targetCommitment }),
+    ].sort()
+    const actions = [
+        { stage: 'runtime-stop' as const, targetId: evidence.runtime.semantics.stackId, validForMs: runtimeStopValidForMs },
+        ...(reclaim?.commitments.map(({ targetId, ...targetCommitment }) => ({
+            stage: 'reclaim' as const, targetId, validForMs: reclaimValidForMs!, targetCommitment: { ...targetCommitment },
         })) ?? []),
-    ])
+    ]
     return deepFreeze({
         purpose, stackId: evidence.runtime.semantics.stackId,
         holderId: evidence.ports.ownership.holderId, requesterId: evidence.ports.ownership.holderId,
@@ -474,7 +474,7 @@ function passivePlan(
     const basis = workBasis(verb, evidence.runtime.semantics, evidence.ports,
         reclaim === null ? {} : { reclaim })
     if (!basis) return undefined
-    const plan = lifecyclePlan(verb, basis, generation, Object.freeze([]), steps, 0, Object.freeze([]))
+    const plan = lifecyclePlan(verb, basis, generation, [], steps, 0, [])
     if (!plan) return undefined
     return issue(plan, {
         topology: evidence.runtime.topology, firstIncompleteServiceIndex: 0,
@@ -495,15 +495,15 @@ export function planSleep(input: {
     const evidence = consumePlannerEvidence(captured.runtime as RuntimeLifecycleProjection, captured.ports as PortLeaseProjection)
     if (!evidence) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep planning evidence is invalid', 'sleep')
     if (evidence.ports.ownership.holderCount > 1) {
-        const steps = Object.freeze([{ id: 'lifecycle:claim:release', kind: 'claim' as const, action: 'release' as const }])
+        const steps = [{ id: 'lifecycle:claim:release', kind: 'claim' as const, action: 'release' as const }]
         const plan = passivePlan('sleep', evidence, captured.operationGeneration as string, steps, null, null)
-        return plan ? Object.freeze({ kind: 'release-only', plan })
+        return plan ? { kind: 'release-only', plan }
             : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep plan could not be represented', 'sleep')
     }
     const request = drainRequest('sleep', evidence, captured.operationGeneration as string, captured.runtimeStopValidForMs as number)
     const plan = passivePlan('sleep', evidence, captured.operationGeneration as string,
-        Object.freeze([{ id: 'lifecycle:preflight', kind: 'preflight' as const }]), request, null)
-    return plan ? Object.freeze({ kind: 'drain', plan, request })
+        [{ id: 'lifecycle:preflight', kind: 'preflight' as const }], request, null)
+    return plan ? { kind: 'drain', plan, request }
         : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep plan could not be represented', 'sleep')
 }
 
@@ -535,8 +535,8 @@ function planDestructive(
         captured.reclaimValidForMs as number, reclaim,
     )
     const plan = passivePlan(verb, evidence, captured.operationGeneration as string,
-        Object.freeze([{ id: 'lifecycle:preflight', kind: 'preflight' as const }]), request, reclaim)
-    return plan ? Object.freeze({ kind: 'drain', plan, request })
+        [{ id: 'lifecycle:preflight', kind: 'preflight' as const }], request, reclaim)
+    return plan ? { kind: 'drain', plan, request }
         : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, `${verb} plan could not be represented`, verb)
 }
 

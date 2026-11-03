@@ -28,7 +28,7 @@ export async function readBoundedInput(path: string): Promise<BoundedInputRead> 
     try {
         const opened = await file.stat()
         if (!opened.isFile()) throw Object.assign(new RefusalError('structured input is not a regular file'), { code: 'EISDIR' })
-        if (opened.size > STRUCTURED_INPUT_BYTE_LIMIT) return Object.freeze({ kind: 'too-large' })
+        if (opened.size > STRUCTURED_INPUT_BYTE_LIMIT) return { kind: 'too-large' }
         const buffer = Buffer.allocUnsafe(STRUCTURED_INPUT_BYTE_LIMIT + 1)
         let offset = 0
         while (offset < buffer.length) {
@@ -36,7 +36,7 @@ export async function readBoundedInput(path: string): Promise<BoundedInputRead> 
             if (read.bytesRead === 0) break
             offset += read.bytesRead
         }
-        if (offset > STRUCTURED_INPUT_BYTE_LIMIT) return Object.freeze({ kind: 'too-large' })
+        if (offset > STRUCTURED_INPUT_BYTE_LIMIT) return { kind: 'too-large' }
         const openedAfter = await file.stat()
         const namedAfter = await lstat(path)
         if (
@@ -47,7 +47,7 @@ export async function readBoundedInput(path: string): Promise<BoundedInputRead> 
             || namedAfter.size !== opened.size || namedAfter.mtimeMs !== opened.mtimeMs || namedAfter.ctimeMs !== opened.ctimeMs
             || offset !== opened.size
         ) throw Object.assign(new RefusalError('structured input changed while reading'), { code: 'EIO' })
-        return Object.freeze({ kind: 'complete', bytes: Buffer.from(buffer.subarray(0, offset)) })
+        return { kind: 'complete', bytes: Buffer.from(buffer.subarray(0, offset)) }
     } finally {
         await file.close()
     }
@@ -108,65 +108,65 @@ export interface ConsumedWorkEnvironmentConfig {
 const issuedWorkEnvironmentConfigProjections = new WeakMap<object, ConsumedWorkEnvironmentConfig>()
 
 function projectBrowserConfig(declaredBrowser: NonNullable<CockpitConfig['browser']>) {
-    return Object.freeze({
+    return {
         engine: declaredBrowser.engine,
         networkExposure: declaredBrowser.network_exposure,
         ...(declaredBrowser.network_exposure_reason === undefined ? {} : { networkExposureReason: declaredBrowser.network_exposure_reason }),
-        harnesses: Object.freeze(declaredBrowser.harnesses.map((row) => Object.freeze({ ...row }))),
-        images: Object.freeze({
-            runner: Object.freeze({ reference: declaredBrowser.images.runner.reference, driverVersion: declaredBrowser.images.runner.driver_version }),
-            mcp: Object.freeze({ reference: declaredBrowser.images.mcp.reference, driverVersion: declaredBrowser.images.mcp.driver_version }),
-        }),
-        project: Object.freeze({ lockfile: declaredBrowser.project.lockfile, sha256: declaredBrowser.project.sha256, driverVersion: declaredBrowser.project.driver_version,
-            ...(declaredBrowser.project.manifest === undefined ? {} : { manifest: declaredBrowser.project.manifest, manifestSha256: declaredBrowser.project.manifest_sha256! }) }),
+        harnesses: declaredBrowser.harnesses.map((row) => ({ ...row })),
+        images: {
+            runner: { reference: declaredBrowser.images.runner.reference, driverVersion: declaredBrowser.images.runner.driver_version },
+            mcp: { reference: declaredBrowser.images.mcp.reference, driverVersion: declaredBrowser.images.mcp.driver_version },
+        },
+        project: { lockfile: declaredBrowser.project.lockfile, sha256: declaredBrowser.project.sha256, driverVersion: declaredBrowser.project.driver_version,
+            ...(declaredBrowser.project.manifest === undefined ? {} : { manifest: declaredBrowser.project.manifest, manifestSha256: declaredBrowser.project.manifest_sha256! }) },
         ...(declaredBrowser.endpoint === undefined ? {} : { endpoint: declaredBrowser.endpoint }),
         maxClients: declaredBrowser.max_clients,
-        proxy: Object.freeze({
+        proxy: {
             ...(declaredBrowser.proxy.host_variable === undefined ? {} : { hostVariable: declaredBrowser.proxy.host_variable }),
             serverPort: declaredBrowser.proxy.server_port,
             proxyPort: declaredBrowser.proxy.proxy_port,
-            allowedHosts: Object.freeze([...declaredBrowser.proxy.allowed_hosts]),
+            allowedHosts: [...declaredBrowser.proxy.allowed_hosts],
             bind: declaredBrowser.proxy.bind,
-        }),
-        resolver: Object.freeze(declaredBrowser.resolver.map((row) => Object.freeze({ ...row }))),
-        authentication: Object.freeze({
+        },
+        resolver: declaredBrowser.resolver.map((row) => ({ ...row })),
+        authentication: {
             policy: declaredBrowser.authentication.policy,
-            states: Object.freeze(declaredBrowser.authentication.states.map((row) => Object.freeze({ ...row }))),
-        }),
-        data: Object.freeze({
+            states: declaredBrowser.authentication.states.map((row) => ({ ...row })),
+        },
+        data: {
             mode: declaredBrowser.data.mode,
             isolated: declaredBrowser.data.isolated,
             reachesProduction: declaredBrowser.data.reaches_production,
-        }),
+        },
         requestPreapproval: declaredBrowser.request_preapproval,
         headed: declaredBrowser.headed,
-        artifacts: Object.freeze({ ...declaredBrowser.artifacts }),
-    })
+        artifacts: { ...declaredBrowser.artifacts },
+    }
 }
 
 function projectTestingConfig(declaredTesting: NonNullable<CockpitConfig['testing']>) {
-    return Object.freeze({
-        declarations: Object.freeze({
-            stages: Object.freeze(declaredTesting.stages.map((stage) => Object.freeze({
+    return {
+        declarations: {
+            stages: declaredTesting.stages.map((stage) => ({
                 id: stage.id,
-                command: Object.freeze([...stage.command]) as readonly [string, ...string[]],
+                command: [...stage.command] as [string, ...string[]],
                 requiresStack: stage.requires_stack,
                 timeoutSeconds: stage.timeout_seconds,
-                ...(stage.select === undefined ? {} : { select: Object.freeze(Object.fromEntries(Object.entries(stage.select)
-                    .map(([kind, argv]) => [kind, Object.freeze([...argv])]))) }),
-            }))),
-            gates: Object.freeze(declaredTesting.gates.map((gate) => Object.freeze({
+                ...(stage.select === undefined ? {} : { select: Object.fromEntries(Object.entries(stage.select)
+                    .map(([kind, argv]) => [kind, [...argv]])) }),
+            })),
+            gates: declaredTesting.gates.map((gate) => ({
                 id: gate.id,
                 tier: gate.tier,
-                stages: Object.freeze([...gate.stages]),
+                stages: [...gate.stages],
                 changes: gate.changes,
-            }))),
-        }),
+            })),
+        },
         nativeHookInstall: declaredTesting.native_hooks.install,
         ...(declaredTesting.native_hook_policy === undefined ? {} : {
-            nativeHookPolicy: Object.freeze({ ...declaredTesting.native_hook_policy }),
+            nativeHookPolicy: { ...declaredTesting.native_hook_policy },
         }),
-    })
+    }
 }
 
 export function projectWorkEnvironmentConfig(
@@ -179,14 +179,14 @@ export function projectWorkEnvironmentConfig(
     if (browser && (new Set(Object.values(browser.artifacts)).size !== loaded.config.environment.generated_host_paths.length
         || loaded.config.environment.generated_host_paths.some((path) => !Object.values(browser.artifacts).includes(path)))) return undefined
     const testing = loaded.config.testing === undefined ? undefined : projectTestingConfig(loaded.config.testing)
-    const result = Object.freeze({ kind: 'work-environment-config-projection' as const })
+    const result = { kind: 'work-environment-config-projection' as const }
     issuedWorkEnvironmentConfigProjections.set(result, Object.freeze({
         cockpitName: loaded.config.cockpit.name,
         cockpitRoot: dirname(loaded.source.path),
         siblingsRoot: loaded.config.cockpit.siblings_root,
         source: Object.freeze({ ...loaded.source }),
-        siblings: Object.freeze(loaded.config.sibling.map(({ slug, dir, environment_files }) => Object.freeze({ slug, dir,
-            environmentFiles: Object.freeze((environment_files ?? []).map(row => Object.freeze({ template: row.template, instance: row.instance }))),
+        siblings: Object.freeze(loaded.config.sibling.map(({ slug, dir, environment_files }) => ({ slug, dir,
+            environmentFiles: (environment_files ?? []).map(row => ({ template: row.template, instance: row.instance })),
         }))),
         policy: effectivePolicy(loaded.config),
         wipCap: loaded.config.work.wip_cap,
@@ -214,7 +214,7 @@ export function projectMachineFloorConfig(projection: LoadedConfigProjection): M
     const loaded = projection && typeof projection === 'object' ? issuedConfigProjections.get(projection) : undefined
     const machine = loaded?.config.environment.machine
     if (!loaded || !machine) return undefined
-    const result = Object.freeze({ kind: 'machine-floor-config-projection' as const })
+    const result = { kind: 'machine-floor-config-projection' as const }
     issuedMachineFloorConfigProjections.set(result, Object.freeze({
         cockpitName: loaded.config.cockpit.name,
         source: Object.freeze({ ...loaded.source }),
@@ -448,12 +448,12 @@ export async function loadCockpitConfig(
         && Object.hasOwn(writtenGuards, 'hosted_db_hosts') && Object.hasOwn(writtenGuards, 'vendor_endpoint_hosts')
     const immutableConfig = snapshotJson(reconstructed.data) as unknown as CockpitConfig
     const runtimeSha256 = runtimeDeclarationSha256(immutableConfig)
-    const bound = Object.freeze({
+    const bound = {
         config: immutableConfig,
-        source: Object.freeze({ ...provenance }),
+        source: { ...provenance },
         runtimeSha256,
         guardHostsStated,
-    })
+    }
     const result = { config: validated.data, source: provenance, runtimeSha256, guardHostsStated } as LoadedCockpitConfig
     issuedConfigProjections.set(result, bound)
     return {

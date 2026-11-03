@@ -129,7 +129,7 @@ function captureProbeEnvironment(value: unknown): Readonly<Record<string, string
                     || Buffer.byteLength(descriptor.value) > 65_536)) return undefined
             env[key] = descriptor.value
         }
-        return Object.freeze(env)
+        return env
     } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
 }
 
@@ -146,7 +146,7 @@ function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
         const env = captureProbeEnvironment(descriptors.env!.value)
         const specifications = descriptors.specifications!.value
         if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
-        return Object.freeze({ application: descriptors.application!.value, root, specifications, env }) as SurfaceSelftestCommandInput
+        return { application: descriptors.application!.value, root, specifications, env } as SurfaceSelftestCommandInput
     } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
 }
 
@@ -165,7 +165,7 @@ function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestComman
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
             || probeSpecificationsPath.includes('\0') || !env) return undefined
-        return Object.freeze({ configPath, probeSpecificationsPath, env })
+        return { configPath, probeSpecificationsPath, env }
     } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
 }
 
@@ -174,7 +174,7 @@ function sha256(value: string | Buffer): string {
 }
 
 function refusal(code: Extract<SurfaceSelftestCommandOutcome, { kind: 'refusal' }>['code'], reason: string): SurfaceSelftestCommandOutcome {
-    return Object.freeze({ kind: 'refusal', status: 2, code, reason })
+    return { kind: 'refusal', status: 2, code, reason }
 }
 
 // A string is the file's text, `undefined` a file that is not a bounded regular file, and `{ cause }` an I/O or decoding failure.
@@ -245,11 +245,11 @@ async function hasExecutableAuthority(
     const operatorIdentity = approved.get(harness)
     if (operatorIdentity?.canonicalPath === executable.canonicalPath && operatorIdentity.sha256 === executable.sha256) return true
     if (adapters.requestExecutableApproval) {
-        const confirmation = await adapters.requestExecutableApproval(Object.freeze({
+        const confirmation = await adapters.requestExecutableApproval({
             harness, canonicalPath: executable.canonicalPath, sha256: executable.sha256,
-        }))
+        })
         if (confirmation === executable.sha256) {
-            approved.set(harness, Object.freeze({ canonicalPath: executable.canonicalPath, sha256: executable.sha256 }))
+            approved.set(harness, { canonicalPath: executable.canonicalPath, sha256: executable.sha256 })
             return true
         }
     }
@@ -335,11 +335,11 @@ function event(
     const stdout = boundedStream(execution.stdout)
     const stderr = boundedStream(execution.stderr)
     if (stdout === undefined || stderr === undefined) return undefined
-    return Object.freeze({
-        cwd, command: Object.freeze([...command]), exitCode: execution.execution.exitCode,
+    return {
+        cwd, command: [...command], exitCode: execution.execution.exitCode,
         signal: execution.execution.signal, result, code, stdout, stderr,
         stdoutSha256: sha256(stdout), stderrSha256: sha256(stderr),
-    })
+    }
 }
 
 function selectedEntryBytes(probe: PlannedSelftestProbe): string | undefined {
@@ -468,9 +468,9 @@ async function runEvidenceProbe(
     const invocation = publicCommand(probe.invocation, executable.canonicalPath)
     const versionCommand = publicCommand(probe.versionCommand, executable.canonicalPath)
     const helpCommand = publicCommand(probe.helpCommand, executable.canonicalPath)
-    const commonFiles = Object.freeze([consumedExecutable(executable)])
-    const probeEnvironment = Object.freeze(Object.fromEntries(Object.entries(env).filter(
-        (row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0 && !row[1].includes('\0'))))
+    const commonFiles = [consumedExecutable(executable)]
+    const probeEnvironment = Object.fromEntries(Object.entries(env).filter(
+        (row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0 && !row[1].includes('\0')))
     const controlIndex = invocation.indexOf('{control}')
     if (controlIndex < 0) return undefined
     const candidateCommand = publicCommand(invocation, executable.canonicalPath, candidatePath)
@@ -526,17 +526,17 @@ async function runEvidenceProbe(
         generatedManifestSha256: expectation.generatedManifestSha256, verdict, version: versionValue, measuredOn: startedAt.slice(0, 10),
         runId: `selftest-${randomBytes(16).toString('hex')}`, startedAt, finishedAt, expiresAt,
         candidatePath, brokenPath, transcriptPath, candidateSha256: controls.candidateSha256,
-        brokenSha256: controls.brokenSha256, transcriptSha256: '', invocation: Object.freeze([...invocation]),
-        versionCommand: Object.freeze([...versionCommand]), helpCommand: Object.freeze([...helpCommand]),
+        brokenSha256: controls.brokenSha256, transcriptSha256: '', invocation: [...invocation],
+        versionCommand: [...versionCommand], helpCommand: [...helpCommand],
         candidateCode, brokenCode: probe.brokenCode, sample: probe.sample,
-        authority: Object.freeze({ kind: 'native-executable', name: probe.harness.name, executable: executable.canonicalPath }),
-        events: Object.freeze(events as SelftestEvidenceRecord['events']),
+        authority: { kind: 'native-executable', name: probe.harness.name, executable: executable.canonicalPath },
+        events: events as SelftestEvidenceRecord['events'],
     }
     const { transcriptSha256: _transcriptSha256, ...transcriptRecord } = record
     void _transcriptSha256
     const transcriptBytes = JSON.stringify(transcriptRecord)
     await writeFile(transcript, transcriptBytes, { flag: 'wx', mode: 0o600 })
-    return Object.freeze({ ...record, transcriptSha256: sha256(transcriptBytes) })
+    return { ...record, transcriptSha256: sha256(transcriptBytes) }
 }
 
 export async function runSurfaceSelftestApplication(
@@ -570,10 +570,10 @@ export async function runSurfaceSelftestApplication(
     }
     const reviews = surfaceSelftestReviews(plan.expectation, [])
     if (!reviews) return refusal('SELFTEST_SOURCE_INVALID', 'skill review inventory could not be constructed')
-    const bundle: SelftestEvidenceBundle = Object.freeze({
+    const bundle: SelftestEvidenceBundle = {
         schema: 'cockpit-harness-selftest/v1', generatedManifestSha256: plan.expectation.generatedManifestSha256,
-        records: Object.freeze(records), skillInventory: plan.expectation.shippedSkills, skillReviews: reviews,
-    })
+        records, skillInventory: plan.expectation.shippedSkills, skillReviews: reviews,
+    }
     const testOnlyExecutableIdentities = process.env.NODE_ENV === 'test'
         ? adapters.testOnlyExecutableIdentities : undefined
     const evidence = validateSelftestEvidenceBundle(bundle, plan.expectation, root, {
@@ -581,7 +581,7 @@ export async function runSurfaceSelftestApplication(
         testOnlyExecutableIdentities,
     })
     if (evidence.errors.length > 0) return refusal('SELFTEST_EXECUTION_INVALID', evidence.errors.join('; '))
-    return Object.freeze({ kind: 'complete', status: 0, bundle, evidence })
+    return { kind: 'complete', status: 0, bundle, evidence }
 }
 
 export async function runConfiguredSurfaceSelftestApplication(
@@ -636,20 +636,20 @@ export async function runConfiguredSurfaceSelftestApplication(
     const plan = planSurfaceSelftest(checked.result.application.surfaceSelftest, specifications)
     if (plan.kind === 'refusal') return refusal(plan.code, plan.reason)
     const artifactSha256 = sha256(bytes)
-    const candidate: SurfaceSelftestProbeSpecificationsCandidate = Object.freeze({
+    const candidate: SurfaceSelftestProbeSpecificationsCandidate = {
         canonicalPath: artifactPath,
         sha256: artifactSha256,
         sourceSha256: checked.result.application.sourceSha256,
         generatedManifestSha256: checked.result.application.surfaceSelftest.manifestSha256,
-        commandVectors: Object.freeze(plan.probes.map((probe) => Object.freeze({
+        commandVectors: plan.probes.map((probe) => ({
             harness: probe.harness.name,
             capability: probe.capability,
             skill: probe.sample?.skill ?? null,
-            invocation: Object.freeze([...probe.invocation]) as readonly [string, ...string[]],
-            versionCommand: Object.freeze([...probe.versionCommand]) as readonly [string, ...string[]],
-            helpCommand: Object.freeze([...probe.helpCommand]) as readonly [string, ...string[]],
-        }))),
-    })
+            invocation: [...probe.invocation] as readonly [string, ...string[]],
+            versionCommand: [...probe.versionCommand] as readonly [string, ...string[]],
+            helpCommand: [...probe.helpCommand] as readonly [string, ...string[]],
+        })),
+    }
     const confirmation = await adapters.requestProbeSpecificationsApproval?.(candidate)
     if (confirmation !== artifactSha256) {
         // No `fix` field: the diagnostic index would print it as the remedy for every

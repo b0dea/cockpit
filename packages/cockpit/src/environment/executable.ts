@@ -41,7 +41,7 @@ export function resolvedExecutable(value: unknown): ResolvedExecutable | undefin
             && normalize(invocationPath) === invocationPath && !invocationPath.includes('\0')
             && typeof sha256 === 'string' && SHA256.test(sha256)
             && executionMode === 'verified-path'
-            ? Object.freeze({ canonicalPath, invocationPath, sha256, executionMode })
+            ? { canonicalPath, invocationPath, sha256, executionMode }
             : undefined
     } catch {
         // A throwing accessor or proxy trap means the identity is malformed.
@@ -82,7 +82,7 @@ function searchPath(env: Readonly<Record<string, string | undefined>>): Readonly
 }
 
 function unavailable(reason: string): ExecutableResolution {
-    return Object.freeze({ state: 'unavailable', reason })
+    return { state: 'unavailable', reason }
 }
 
 async function digestRegularFile(path: string): Promise<string | undefined> {
@@ -138,7 +138,7 @@ export async function resolveExecutablePath(path: string): Promise<ExecutableRes
     const sha256 = await digestRegularFile(canonicalPath)
     if (sha256 === undefined) return unavailable(`Executable identity is unavailable: ${path}`)
     const value = resolvedExecutable({ canonicalPath, invocationPath: path, sha256, executionMode: 'verified-path' })
-    return value ? Object.freeze({ state: 'available', value }) : unavailable(`Executable identity is invalid: ${path}`)
+    return value ? { state: 'available', value } : unavailable(`Executable identity is invalid: ${path}`)
 }
 
 export async function resolveExecutable(name: string, env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {

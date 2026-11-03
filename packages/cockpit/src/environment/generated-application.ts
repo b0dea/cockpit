@@ -328,14 +328,14 @@ function absentSibling(sibling: DerivedRegistry['config']['sibling'][number], pa
     const fix = sibling.acquire === 'auto' ? `run ${setup}, which clones ${sibling.remote} there, then rerun this command`
         : sibling.acquire === 'manual' ? `clone ${sibling.remote} into ${path}, then rerun this command`
             : `clone or create the repository at ${path}, then rerun this command; cockpit.toml records no remote for it (acquire = "none"), so setup cannot clone it: whoever has the checkout records one with ${cockpitCommand('sibling add', { operand: sibling.slug, config: configPath, args: '--remote <url>' })} and commits cockpit.toml, and every later ${setup} clones it`
-    return Object.freeze({
+    return {
         kind: 'refusal' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_MISSING' satisfies typeof ENVIRONMENT_CODES.SIBLING_MISSING,
         reason: `sibling ${sibling.slug} is declared at ${path}, and nothing is there`,
         target: `sibling:${sibling.slug}`,
         fix,
-    })
+    }
 }
 
 async function authenticateSiblingRoots(
@@ -370,11 +370,11 @@ async function authenticateSiblingRoots(
             if (!status.isDirectory() || status.isSymbolicLink()) {
                 return { kind: 'refusal', reason: `sibling ${sibling.slug} is not an ordinary directory` }
             }
-            siblings.set(sibling.slug, Object.freeze({ root: canonical, identity: Object.freeze({ dev: status.dev, ino: status.ino }) }))
+            siblings.set(sibling.slug, { root: canonical, identity: { dev: status.dev, ino: status.ino } })
         }
-        return { kind: 'complete', roots: Object.freeze({
-            declaredRoot, canonicalRoot, rootIdentity: Object.freeze({ dev: rootStatus.dev, ino: rootStatus.ino }), siblings,
-        }) }
+        return { kind: 'complete', roots: {
+            declaredRoot, canonicalRoot, rootIdentity: { dev: rootStatus.dev, ino: rootStatus.ino }, siblings,
+        } }
     } catch (error) {
         const reason = errorCause(error)
         return { kind: 'refusal', reason: `could not verify the sibling root (${reason})` }
@@ -659,21 +659,21 @@ function guideLines(bytes: string): number {
 // An overlay pins the digest of the built-in it replaces, so a cockpit upgrade that changes that
 // built-in is reviewed before the override keeps shadowing it.
 function overrideChanged(finding: SurfaceUpgradeFinding, severity: 'error' | 'warning') {
-    return Object.freeze({
+    return {
         severity, code: 'OVERRIDDEN_CORE_CHANGED' as const satisfies SurfaceUpgradeFinding['code'], target: finding.overlaySource,
         message: `overlay ${finding.name} replaces the built-in ${finding.name} recorded as sha256 ${finding.recordedSha256}, but this cockpit version's built-in is sha256 ${finding.currentSha256}`,
         fix: 'review the new built-in against your override, set the overlay\'s replaces.sha256 to the current digest this message names, then run npx --no cockpit sync --config <your cockpit.toml>',
-    })
+    }
 }
 
 // Copied sibling guides count toward the cap, so a sibling's own edit can push it over.
 function guideCapExceeded(cost: Readonly<{ target: string; value: number; cap: number }>): RefusalOutcome {
-    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([Object.freeze({
+    return { kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: [{
             severity: 'error' as const, code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, target: 'cockpit.guide_cap',
             message: `the instructions ${cost.target} loads at start are ${cost.value} lines, over cockpit.guide_cap ${cost.cap}; the count includes each sibling guide copied into the root AGENTS.md`,
             fix: 'shorten the root or sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
-        })]) })
+        }] }
 }
 
 // Codex 0.166.0 dropped the end of a project AGENTS.md past 32 KiB without saying so (measured
@@ -682,52 +682,52 @@ function guideCapExceeded(cost: Readonly<{ target: string; value: number; cap: n
 const CODEX_PROJECT_DOC_BYTES = 32_768
 
 function guideBytesExceeded(bytes: number): RefusalOutcome {
-    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([Object.freeze({
+    return { kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: [{
             severity: 'error' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'GUIDE_CAP_EXCEEDED' as const satisfies typeof ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
             target: 'AGENTS.md',
             message: `cockpit's part of the root AGENTS.md, with the sibling guides it copies, is ${bytes} bytes; Codex drops whatever follows the first 32768 bytes of a project AGENTS.md without saying so`,
             fix: 'shorten the root or sibling guides, or name fewer guides in sibling.guides, then run npx --no cockpit sync --config <your cockpit.toml>',
-        })]) })
+        }] }
 }
 
 // The projection skips an absent guide, so a misspelled name otherwise copies nothing and says nothing.
 function siblingGuideMissing(slug: string, guide: string, sourcePath: string): RefusalOutcome {
-    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([Object.freeze({
+    return { kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: [{
             severity: 'error' as const,
             code: 'SIBLING_GUIDE_MISSING' as const satisfies typeof ENVIRONMENT_CODES.SIBLING_GUIDE_MISSING,
             target: `sibling.${slug}.guides`,
             message: `sibling ${slug} declares the guide ${guide}, but ${sourcePath} does not exist, so no harness would load it`,
             fix: 'correct or remove the guide name in that sibling\'s guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
-        })]) })
+        }] }
 }
 
 function overrideChangedRefusal(finding: SurfaceUpgradeFinding): RefusalOutcome {
-    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([overrideChanged(finding, 'error')]) })
+    return { kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: [overrideChanged(finding, 'error')] }
 }
 
 function refuse(code: string, message: string, target?: string, fix?: string): RefusalOutcome {
-    return Object.freeze({
+    return {
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([{ severity: 'error' as const, code, message, target, fix }]),
-    })
+        diagnostics: [{ severity: 'error' as const, code, message, target, fix }],
+    }
 }
 
 function complete(
     action: CommandResult['action'],
     prepared: PreparedEnvironment,
     dryRun = false,
-    changes: readonly GeneratedEnvironmentChange[] = Object.freeze([]),
+    changes: readonly GeneratedEnvironmentChange[] = [],
     staleRemoval?: GeneratedStaleRemovalApprovalRequest,
 ): CompleteOutcome | RefusalOutcome {
     if (!prepared.surfaceSelftest || !prepared.surfaceHealth) return refuse('SURFACE_INPUT_INVALID', 'authenticated surface health inputs are missing', 'surfaces')
     const generatedPaths = generatedPathFacts(prepared, dryRun ? 'declared-before-sync' : 'required-after-sync')
     if (generatedPaths.kind !== 'complete') return refuse(generatedPaths.diagnostic.code, generatedPaths.diagnostic.message, generatedPaths.diagnostic.target)
-    const application = Object.freeze({
+    const application = {
         generatedPaths: generatedPaths.facts,
         sourceSha256: prepared.sourceSha256,
         runtimeSha256: prepared.runtimeSha256,
@@ -735,46 +735,46 @@ function complete(
         surfaceSelftest: prepared.surfaceSelftest,
         activeSurfaceOverrides: prepared.activeSurfaceOverrides,
         changedOverrideOriginals: prepared.changedOverrideOriginals,
-        inspection: Object.freeze({
+        inspection: {
             kind: 'passed' as const,
-            files: Object.freeze(prepared.owned.map(({ path, sha256: digest }) => Object.freeze({ path, sha256: digest, ownership: 'whole-file' as const }))),
-        }),
-    })
+            files: prepared.owned.map(({ path, sha256: digest }) => ({ path, sha256: digest, ownership: 'whole-file' as const })),
+        },
+    }
     issuedApplicationProjections.set(application, Object.freeze({
         root: prepared.root, stackId: prepared.stackId, currentPublication: !dryRun,
         siblingRoots: prepared.siblingRoots,
         node: prepared.node, surfaceSelftest: prepared.surfaceSelftest, surfaceHealth: prepared.surfaceHealth,
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
     }))
-    return Object.freeze({
+    return {
         kind: 'complete', artifact: null, destination: null,
-        diagnostics: Object.freeze([
+        diagnostics: [
             // A trust warning is a review prompt for settings being written; repeating it for an
             // unchanged file on every sync and check trained people to ignore it.
             ...prepared.warnings.filter(warning => changes.some(change => change.operation === 'write' && change.path === warning.path))
-                .map(({ severity, code, target, path, message }) => Object.freeze({
+                .map(({ severity, code, target, path, message }) => ({
                     severity, code, target: `${target}:${path}`, message,
                 })),
-            ...prepared.unapprovedMcpServers.map(server => Object.freeze({
+            ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current command, arguments, working directory and environment names (sha256 ${server.sha256}), so every harness keeps it disabled`,
                 fix: 'to enable it, review its declaration, set its name to the sha256 in this message under [mcp.approved] in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed',
             })),
             // Real sync and check refuse a changed original; a preview reports it so it can be reviewed.
             ...prepared.changedOverrideOriginals.map(finding => overrideChanged(finding, 'warning')),
-        ]),
+        ],
         status: 0,
-        result: Object.freeze({
+        result: {
             action,
             dryRun,
             changes,
             generation: prepared.generation,
             sourceSha256: prepared.sourceSha256,
-            paths: Object.freeze([...prepared.owned.map(({ path }) => path), ...prepared.surfaces.map(({ path }) => path)].sort(compareCodeUnits)),
+            paths: [...prepared.owned.map(({ path }) => path), ...prepared.surfaces.map(({ path }) => path)].sort(compareCodeUnits),
             application,
             ...(staleRemoval ? { staleRemoval } : {}),
-        }),
-    })
+        },
+    }
 }
 
 function generatedPathFacts(prepared: PreparedEnvironment, applicability: 'declared-before-sync' | 'required-after-sync') {
@@ -799,7 +799,7 @@ export function projectWorkApplicationAuthorities(
     if (application === null || typeof application !== 'object' || projectedWorkApplicationAuthorities.has(application)) return undefined
     const record = issuedApplicationProjections.get(application)
     if (!record?.workApplication) return undefined
-    const projection: WorkApplicationAuthoritiesProjection = Object.freeze({ kind: 'work-application-authorities' })
+    const projection: WorkApplicationAuthoritiesProjection = { kind: 'work-application-authorities' }
     projectedWorkApplicationAuthorities.add(application)
     issuedWorkApplicationAuthorities.set(projection, record.workApplication)
     return projection
@@ -821,10 +821,10 @@ export async function prepareWorkApplicationAuthorities(
     const request = commandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'work application input is invalid', 'work')
     const loaded = await loadCockpitConfig(request.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({
+    if (loaded.kind !== 'complete') return {
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([...loaded.diagnostics]),
-    })
+        diagnostics: [...loaded.diagnostics],
+    }
     const configProjection = projectWorkEnvironmentConfig(loaded.result)
     const workEnvironment = configProjection && consumeWorkEnvironmentConfigProjection(configProjection)
     const node = await nodeAuthority()
@@ -832,7 +832,7 @@ export async function prepareWorkApplicationAuthorities(
     const read = await readAnchoredFile(SURFACE_ROOT, EVALUATOR_ASSET, MAX_SURFACE_FILE_BYTES, node, defaultAdapters)
     const evaluator = readSurfaceAsset(EVALUATOR_ASSET, read)
     if (!evaluator) return refuse('SURFACE_INPUT_INVALID', 'the shipped evaluator could not be authenticated', EVALUATOR_ASSET)
-    const projection: WorkApplicationAuthoritiesProjection = Object.freeze({ kind: 'work-application-authorities' })
+    const projection: WorkApplicationAuthoritiesProjection = { kind: 'work-application-authorities' }
     issuedWorkApplicationAuthorities.set(projection, Object.freeze({
         workEnvironment,
         evaluator: Object.freeze({ path: resolve(SURFACE_ROOT, evaluator.path), bytes: evaluator.bytes,
@@ -848,7 +848,7 @@ function selectedBootstrapInput(input: unknown): SelectedBootstrapSurfaceInput |
     if (!record || !exactKeys(record, ['root', 'target']) || typeof record.root !== 'string'
         || !isAbsolute(record.root) || resolve(record.root) !== record.root
         || !SURFACE_TARGETS.includes(record.target as SurfaceTarget)) return undefined
-    return Object.freeze({ root: record.root, target: record.target as SurfaceTarget })
+    return { root: record.root, target: record.target as SurfaceTarget }
 }
 
 type AuthenticatedAsset = Readonly<{ path: string; bytes: string; sha256: string }>
@@ -863,28 +863,28 @@ function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>): R
     const collection = assets.get('skills/collection.json')
     const procedures = PROCEDURE_ASSETS.map(path => assets.get(path))
     if (!skills || !collection || procedures.some(row => row === undefined)) return undefined
-    const pick = ({ path, bytes, sha256: digest }: AuthenticatedAsset) => Object.freeze({ path, bytes, sha256: digest })
-    return Object.freeze({ sources: Object.freeze(skills.flatMap(skill => skill.sources)), collection: pick(collection),
-        procedures: Object.freeze((procedures as AuthenticatedAsset[]).map(pick)) })
+    const pick = ({ path, bytes, sha256: digest }: AuthenticatedAsset) => ({ path, bytes, sha256: digest })
+    return { sources: skills.flatMap(skill => skill.sources), collection: pick(collection),
+        procedures: (procedures as AuthenticatedAsset[]).map(pick) }
 }
 
 async function selectedBootstrapAssets(
     node: ResolvedExecutable,
     adapters: GeneratedEnvironmentCommandAdapters,
 ): Promise<readonly Readonly<{ path: SurfaceAssetPath; bytes: string; sha256: string; identity: PersonaSourceIdentity }>[] | undefined> {
-    const reads = await readAnchoredBatches(SURFACE_ROOT, SKILL_ASSETS.map(path => Object.freeze({
+    const reads = await readAnchoredBatches(SURFACE_ROOT, SKILL_ASSETS.map(path => ({
         path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
     })), node, adapters)
     if (!reads || reads.kind !== 'complete' || reads.results.length !== SKILL_ASSETS.length) return undefined
     const assets = SKILL_ASSETS.map((path, index) => readSurfaceAsset(path, reads.results[index]!))
-    return assets.every((asset): asset is NonNullable<typeof asset> => asset !== undefined) ? Object.freeze(assets) : undefined
+    return assets.every((asset): asset is NonNullable<typeof asset> => asset !== undefined) ? assets : undefined
 }
 
 async function selectedBootstrapRecordCurrent(record: SelectedBootstrapRecord): Promise<boolean> {
     try {
         const root = await lstat(record.root)
         if (!root.isDirectory() || root.isSymbolicLink() || root.dev !== record.rootIdentity.dev || root.ino !== record.rootIdentity.ino) return false
-        const reads = await readAnchoredBatches(SURFACE_ROOT, record.assets.map(asset => Object.freeze({
+        const reads = await readAnchoredBatches(SURFACE_ROOT, record.assets.map(asset => ({
             path: asset.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
         })), record.node, record.adapters)
         const state = record.bootstrapState && await readState(record.bootstrapState.address)
@@ -912,7 +912,7 @@ export async function prepareSelectedBootstrapSurface(
         root = await realpath(captured.root)
         const status = await lstat(root)
         if (root !== captured.root || !status.isDirectory() || status.isSymbolicLink()) throw new RefusalError('root')
-        rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
+        rootIdentity = { dev: status.dev, ino: status.ino }
     } catch (error) {
         return refuse('GENERATED_INPUT_INVALID', `selected bootstrap root is not a canonical directory: ${errorCause(error)}`, captured.root)
     }
@@ -926,7 +926,7 @@ export async function prepareSelectedBootstrapSurface(
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap skill set was refused', 'bootstrap')
     const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'selected bootstrap output set was refused', captured.target)
-    const reads = await readAnchoredBatches(root, inspected.files.map(file => Object.freeze({
+    const reads = await readAnchoredBatches(root, inspected.files.map(file => ({
         path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
     })), node, adapters)
     if (!reads || reads.kind !== 'complete' || reads.results.length !== inspected.files.length) {
@@ -937,22 +937,22 @@ export async function prepareSelectedBootstrapSurface(
         const current = reads.results[index]!
         if (current.kind !== 'missing' && current.kind !== 'file') return refuse('SURFACE_STATE_CONFLICT', 'selected bootstrap destination is not a regular file or missing', file.path)
         if (current.kind === 'file' && current.sha256 !== file.sha256) return refuse('SURFACE_STATE_CONFLICT', 'selected bootstrap destination contains unmanaged bytes', file.path)
-        if (current.kind === 'missing') mutations.push(Object.freeze({ path: file.path, phase: 'desired', operation: 'write-file',
-            bytes: file.bytes, sha256: file.sha256, expected: Object.freeze({ kind: 'missing' as const }) }))
+        if (current.kind === 'missing') mutations.push({ path: file.path, phase: 'desired', operation: 'write-file',
+            bytes: file.bytes, sha256: file.sha256, expected: { kind: 'missing' as const } })
     }
     const admitted = await admitPublicationPlan({ mode: 'bootstrap', root, rootIdentity, node, inspected,
-        mutations: Object.freeze(mutations) }, adapters)
+        mutations }, adapters)
     if (admitted.kind !== 'complete') return admitted
-    const sourceRows = Object.freeze(sources.map(source => Object.freeze({ path: source.path, sha256: sha256(source.bytes) })))
-    const files = Object.freeze(inspected.files.map(file => Object.freeze({ path: file.path, sha256: file.sha256 })))
+    const sourceRows = sources.map(source => ({ path: source.path, sha256: sha256(source.bytes) }))
+    const files = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
     const previewSha256 = sha256(JSON.stringify({ target: captured.target, sources: sourceRows, files }))
-    const result: SelectedBootstrapSurfaceResult = Object.freeze({ root, target: captured.target, sources: sourceRows, files,
-        previewSha256, changes: admitted.plan.changes })
-    const authority: SelectedBootstrapPublicationAuthority = Object.freeze({ kind: 'selected-bootstrap-publication-authority' })
+    const result: SelectedBootstrapSurfaceResult = { root, target: captured.target, sources: sourceRows, files,
+        previewSha256, changes: admitted.plan.changes }
+    const authority: SelectedBootstrapPublicationAuthority = { kind: 'selected-bootstrap-publication-authority' }
     issuedSelectedBootstrapAuthorities.set(authority, Object.freeze({ root, rootIdentity, target: captured.target, node,
-        assets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => Object.freeze({ path, sha256: digest, identity }))),
+        assets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => ({ path, sha256: digest, identity }))),
         inspected, result, plan: admitted.plan, adapters }))
-    return Object.freeze({ kind: 'complete', artifact: null, destination: null, diagnostics: Object.freeze([]), result, authority, status: 0 })
+    return { kind: 'complete', artifact: null, destination: null, diagnostics: [], result, authority, status: 0 }
 }
 
 export async function applySelectedBootstrapSurface(
@@ -964,8 +964,8 @@ export async function applySelectedBootstrapSurface(
     const outcome = await runPublicationPlan(record.plan, { execute: record.adapters.execute,
         revalidate: async () => selectedBootstrapRecordCurrent(record) })
     if (outcome.kind !== 'complete') return outcome
-    return Object.freeze({ kind: 'complete', artifact: null, destination: null, diagnostics: Object.freeze([]),
-        result: record.result, authority, status: 0 })
+    return { kind: 'complete', artifact: null, destination: null, diagnostics: [],
+        result: record.result, authority, status: 0 }
 }
 
 export async function resumeSelectedBootstrapSurface(
@@ -985,7 +985,7 @@ export async function resumeSelectedBootstrapSurface(
     try {
         const status = await lstat(captured.root)
         if (!status.isDirectory() || status.isSymbolicLink() || await realpath(captured.root) !== captured.root) throw new RefusalError('root')
-        rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
+        rootIdentity = { dev: status.dev, ino: status.ino }
     } catch (error) {
         return refuse('GENERATED_INPUT_INVALID', `selected bootstrap root is not a canonical directory: ${errorCause(error)}`, captured.root)
     }
@@ -1004,22 +1004,22 @@ export async function resumeSelectedBootstrapSurface(
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume skill set was refused', 'bootstrap')
     const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume output projection was refused', captured.target)
-    const sourceRows = Object.freeze(sources.map(source => Object.freeze({ path: source.path, sha256: sha256(source.bytes) })))
-    const files = Object.freeze(inspected.files.map(file => Object.freeze({ path: file.path, sha256: file.sha256 })))
+    const sourceRows = sources.map(source => ({ path: source.path, sha256: sha256(source.bytes) }))
+    const files = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
     const previewSha256 = sha256(JSON.stringify({ target: captured.target, sources: sourceRows, files }))
     const state = durable.value.value
     const sourcesCurrent = JSON.stringify(state.sources) === JSON.stringify(sourceRows)
         && JSON.stringify(state.published) === JSON.stringify(files) && state.previewSha256 === previewSha256
     if (ownership.kind === 'missing') {
-        if (sourcesCurrent) return Object.freeze({ kind: 'pending', status: 0, diagnostics: Object.freeze([]),
-            result: null, canonicalOwnership: false })
+        if (sourcesCurrent) return { kind: 'pending', status: 0, diagnostics: [],
+            result: null, canonicalOwnership: false }
         const priorPreviewSha256 = sha256(JSON.stringify({ target: captured.target, sources: state.sources, files: state.published }))
         if (input.expectedRevision !== durable.value.revision || input.expectedCommandSha256 !== state.commandSha256
             || priorPreviewSha256 !== state.previewSha256 || state.stage !== 'surface-published'
             || JSON.stringify(state.published.map(row => row.path)) !== JSON.stringify(files.map(row => row.path))) return refuse(
             'GENERATED_SOURCE_CHANGED', 'bootstrap resume package sources differ from the accepted durable preview', 'bootstrap',
         )
-        const reads = await readAnchoredBatches(captured.root, inspected.files.map(file => Object.freeze({
+        const reads = await readAnchoredBatches(captured.root, inspected.files.map(file => ({
             path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
         })), node, adapters)
         if (!reads || reads.kind !== 'complete' || reads.results.length !== inspected.files.length) return refuse(
@@ -1035,24 +1035,24 @@ export async function resumeSelectedBootstrapSurface(
             if (current.sha256 === file.sha256) continue
             const expected = expectedState(current)
             if (!expected) return refuse('SURFACE_STATE_CONFLICT', 'bootstrap refresh destination could not be authenticated', file.path)
-            mutations.push(Object.freeze({ path: file.path, phase: 'desired', operation: 'write-file',
-                bytes: file.bytes, sha256: file.sha256, expected }))
+            mutations.push({ path: file.path, phase: 'desired', operation: 'write-file',
+                bytes: file.bytes, sha256: file.sha256, expected })
         }
         const admitted = await admitPublicationPlan({ mode: 'bootstrap', root: captured.root, rootIdentity, node, inspected,
-            mutations: Object.freeze(mutations), refresh: Object.freeze({ address: input.address,
-                revision: durable.value.revision, commandSha256: state.commandSha256 }) }, adapters)
+            mutations, refresh: { address: input.address,
+                revision: durable.value.revision, commandSha256: state.commandSha256 } }, adapters)
         if (admitted.kind !== 'complete') return admitted
-        const result: SelectedBootstrapSurfaceResult = Object.freeze({ root: captured.root, target: captured.target,
-            sources: sourceRows, files, previewSha256, changes: admitted.plan.changes })
-        const authority: SelectedBootstrapPublicationAuthority = Object.freeze({ kind: 'selected-bootstrap-publication-authority' })
+        const result: SelectedBootstrapSurfaceResult = { root: captured.root, target: captured.target,
+            sources: sourceRows, files, previewSha256, changes: admitted.plan.changes }
+        const authority: SelectedBootstrapPublicationAuthority = { kind: 'selected-bootstrap-publication-authority' }
         issuedSelectedBootstrapAuthorities.set(authority, Object.freeze({ root: captured.root, rootIdentity,
             target: captured.target, node,
-            assets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => Object.freeze({ path, sha256: digest, identity }))),
+            assets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => ({ path, sha256: digest, identity }))),
             inspected, result, plan: admitted.plan, adapters,
             bootstrapState: Object.freeze({ address: input.address, record: durable.value }),
         }))
-        return Object.freeze({ kind: 'refresh', status: 0, diagnostics: Object.freeze([]), result, authority,
-            canonicalOwnership: false })
+        return { kind: 'refresh', status: 0, diagnostics: [], result, authority,
+            canonicalOwnership: false }
     }
     if (ownership.kind !== 'file') return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'bootstrap resume ownership changed after classification', OWNERSHIP_PATH,
@@ -1074,9 +1074,9 @@ export async function resumeSelectedBootstrapSurface(
         || refreshed.kind !== 'complete' || JSON.stringify(refreshed.value) !== JSON.stringify(durable.value)) return refuse(
         'GENERATED_SOURCE_CHANGED', 'bootstrap resume ownership or state changed during checking', 'bootstrap',
     )
-    return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), canonicalOwnership: true,
-        result: Object.freeze({ root: captured.root, target: captured.target, sources: sourceRows, files, previewSha256,
-            changes: Object.freeze([]) }) })
+    return { kind: 'complete', status: 0, diagnostics: [], canonicalOwnership: true,
+        result: { root: captured.root, target: captured.target, sources: sourceRows, files, previewSha256,
+            changes: [] } }
 }
 
 async function authenticatedBootstrapPriorSurfaces(
@@ -1111,8 +1111,8 @@ async function unfinishedInitSurfaces(
             xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoot: root, target })
         if (namespace.kind !== 'complete') return undefined
         const read = await readState(namespace.value.paths.bootstrap(target))
-        if (read.kind === 'complete') return Object.freeze({ root, target, published: read.value.value.published.map(row => row.path),
-            surfaces: await bootstrapPublishedSurfaces(root, read.value, node, adapters) })
+        if (read.kind === 'complete') return { root, target, published: read.value.value.published.map(row => row.path),
+            surfaces: await bootstrapPublishedSurfaces(root, read.value, node, adapters) }
     }
     return undefined
 }
@@ -1145,16 +1145,16 @@ async function bootstrapPublishedSurfaces(
     if (inspected.kind !== 'complete') return undefined
     const published = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
     if (JSON.stringify(published) !== JSON.stringify(record.value.published)) return undefined
-    const reads = await readAnchoredBatches(root, inspected.files.map(file => Object.freeze({
+    const reads = await readAnchoredBatches(root, inspected.files.map(file => ({
         path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
     })), node, adapters)
     if (!reads || reads.kind !== 'complete' || reads.results.length !== inspected.files.length
         || reads.results.some((read, index) => read.kind !== 'file' || read.sha256 !== inspected.files[index]!.sha256)) return undefined
-    return Object.freeze(inspected.files.map(file => Object.freeze({
+    return inspected.files.map(file => ({
         kind: 'file' as const, path: file.path, harnesses: [record.target] as [SurfaceTarget], scope: 'always' as const,
         capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,
         ownership: 'whole-file' as const, sha256: file.sha256,
-    })))
+    }))
 }
 
 export function observeGeneratedApplicationSurfaces(
@@ -1216,7 +1216,7 @@ export function observeGeneratedApplicationSurfaces(
     if (!observations.every((observation): observation is EnvironmentObservation => observation !== undefined)) return undefined
     const issuedAt = Date.now()
     for (const observation of observations) issuedSurfaceObservations.set(observation, issuedAt)
-    return Object.freeze(observations)
+    return observations
 }
 
 export function isGeneratedApplicationSurfaceObservation(value: unknown): value is EnvironmentObservation {
@@ -1236,7 +1236,7 @@ function commandInput(input: unknown): GeneratedEnvironmentCommandInput | undefi
             || !Object.hasOwn(descriptors, 'configPath') || !('value' in descriptors.configPath!)) return undefined
         const configPath = descriptors.configPath.value
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')) return undefined
-        return Object.freeze({ configPath })
+        return { configPath }
     } catch {
         // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
@@ -1259,7 +1259,7 @@ function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput | undef
             const state = ownRecord(bootstrapState)
             if (!state || !exactKeys(state, ['publication', 'address'])) return undefined
         }
-        return Object.freeze({ configPath, dryRun, ...(bootstrapState === undefined ? {} : { bootstrapState }) })
+        return { configPath, dryRun, ...(bootstrapState === undefined ? {} : { bootstrapState }) }
     } catch {
         // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
@@ -1342,10 +1342,10 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const request = commandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const loaded = await loadCockpitConfig(request.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({
+    if (loaded.kind !== 'complete') return {
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
-        diagnostics: Object.freeze([...loaded.diagnostics]),
-    })
+        diagnostics: [...loaded.diagnostics],
+    }
     const workProjection = projectWorkEnvironmentConfig(loaded.result)
     const workEnvironment = workProjection && consumeWorkEnvironmentConfigProjection(workProjection)
     if (!workEnvironment || workEnvironment.source.path !== loaded.result.source.path
@@ -1400,15 +1400,15 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             if (read.kind !== 'complete') return refuse('GENERATED_PATH_UNSAFE',
                 'a declared Compose file is missing, unreadable, or crosses a symbolic-link boundary', reference)
             sources.push({ reference, source: read.bytes.toString('utf8') })
-            composeSources.push(Object.freeze({ path: reference, sha256: read.sha256, identity: read.identity }))
+            composeSources.push({ path: reference, sha256: read.sha256, identity: read.identity })
         }
         const ownership = renderComposeOwnership({ sources, stackId: currentStack, cockpitId: currentCockpit,
             configSha256: loaded.result.runtimeSha256, resettableVolumes: config.environment.resettable_volumes })
         if (ownership.kind !== 'complete') return refuse('GENERATED_DECLARATION_INVALID',
             `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target)
-        composeOwnership = Object.freeze({ path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) })
+        composeOwnership = { path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) }
     }
-    const generated = Object.freeze(composeOwnership ? [composeOwnership] : [])
+    const generated = composeOwnership ? [composeOwnership] : []
     // The anchored read of the configuration file pins the publication root's identity for the whole sync.
     const sourcePath = relative(root, loaded.result.source.path)
     const sourceTarget = await safePath(root, sourcePath, false)
@@ -1421,7 +1421,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     if (!source) {
         return refuse('GENERATED_PERSONA_SOURCE_UNAVAILABLE', 'the declared persona source is unreadable', sourcePath)
     }
-    const owned = Object.freeze([...generated].sort((left, right) => compareCodeUnits(left.path, right.path)))
+    const owned = [...generated].sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(owned.map(({ path }) => path)).size !== owned.length
         || owned.some(({ path }) => path === OWNERSHIP_PATH)
         || owned.some(({ path }) => [loaded.result.source.path, sourceTarget].includes(resolve(root, path)))) {
@@ -1434,7 +1434,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     }
     const producedAt = (adapters.now ?? (() => new Date().toISOString()))()
     const now = producedAt.slice(0, 10)
-    return Object.freeze({
+    return {
         root,
         cockpitId: publishedCockpit,
         stackId: currentStack,
@@ -1442,33 +1442,33 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
         runtimeSha256: loaded.result.runtimeSha256,
-        personaSource: Object.freeze({ path: sourcePath, sha256: source.sha256 }),
+        personaSource: { path: sourcePath, sha256: source.sha256 },
         personaSourceIdentity: source.identity,
         generation,
         generated,
         owned,
-        surfaces: Object.freeze([]),
+        surfaces: [],
         compactSurfacePaths: new Set<string>(),
-        configuredHarnesses: Object.freeze([...SURFACE_TARGETS]),
-        activeSurfaceOverrides: Object.freeze([]),
-        changedOverrideOriginals: Object.freeze([]),
-        composeSources: Object.freeze(composeSources),
-        guideSources: Object.freeze({ requests: Object.freeze([]), observations: Object.freeze([]), missing: Object.freeze([]) }),
-        openCodeGrantRoots: Object.freeze([]),
-        sourceEvidence: Object.freeze([]),
-        sourceRoots: Object.freeze([]),
-        customSources: Object.freeze([]),
-        adoptedSources: Object.freeze([]),
-        surfaceAssets: Object.freeze([]),
-        warnings: Object.freeze([]),
-        unapprovedMcpServers: Object.freeze([]),
+        configuredHarnesses: [...SURFACE_TARGETS],
+        activeSurfaceOverrides: [],
+        changedOverrideOriginals: [],
+        composeSources,
+        guideSources: { requests: [], observations: [], missing: [] },
+        openCodeGrantRoots: [],
+        sourceEvidence: [],
+        sourceRoots: [],
+        customSources: [],
+        adoptedSources: [],
+        surfaceAssets: [],
+        warnings: [],
+        unapprovedMcpServers: [],
         registry: derived.result,
         siblingRoots,
         workEnvironment,
         node,
         now,
         producedAt,
-    })
+    }
 }
 
 function expectedSurfaceOutputs(
@@ -1528,7 +1528,7 @@ function expectedSurfaceOutputs(
         rows.cursor.push(`.cursor/skills/${path}`)
         rows.grokcli.push(`.grok/skills/${path}`)
     }
-    return Object.freeze(Object.fromEntries(tools.map(target => [target, Object.freeze([...new Set(rows[target])].sort(compareCodeUnits))]))) as Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>
+    return Object.fromEntries(tools.map(target => [target, [...new Set(rows[target])].sort(compareCodeUnits)])) as Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>
 }
 
 function expectedClaudePluginOutputs(
@@ -1544,7 +1544,7 @@ function expectedClaudePluginOutputs(
     if (features.includes('skills')) for (const source of sources.filter(row => row.path.startsWith('skills/'))) {
         rows.push(source.path)
     }
-    return Object.freeze([...new Set(rows)].sort(compareCodeUnits))
+    return [...new Set(rows)].sort(compareCodeUnits)
 }
 
 function claudePluginManifest(): Readonly<{ bytes: string; sha256: string }> {
@@ -1552,7 +1552,7 @@ function claudePluginManifest(): Readonly<{ bytes: string; sha256: string }> {
         name: 'cockpit-surfaces',
         description: 'Generated cockpit agent surfaces.',
     }, null, 2)}\n`
-    return Object.freeze({ bytes, sha256: sha256(bytes) })
+    return { bytes, sha256: sha256(bytes) }
 }
 
 // A rules overlay is written into the instruction file every harness loads at start, so Rulesync
@@ -1599,11 +1599,11 @@ function expectsCodexSkillSidecar(bytes: string): boolean {
 }
 
 function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'complete' }> {
-    return Object.freeze({
-        kind: 'complete', status: 0, diagnostics: Object.freeze([]) as readonly [],
-        mechanism: Object.freeze({ package: 'rulesync', version: '43.1.2', role: 'spelling' }),
-        files: Object.freeze([]),
-    })
+    return {
+        kind: 'complete', status: 0, diagnostics: [] as readonly [],
+        mechanism: { package: 'rulesync', version: '43.1.2', role: 'spelling' },
+        files: [],
+    }
 }
 
 function sourceIdentity(identity: PersonaSourceIdentity): string {
@@ -1616,8 +1616,8 @@ function readSurfaceAsset(
 ): Readonly<{ path: SurfaceAssetPath; bytes: string; sha256: string; identity: PersonaSourceIdentity }> | undefined {
     if (read.kind !== 'complete') return undefined
     try {
-        return Object.freeze({ path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes),
-            sha256: read.sha256, identity: read.identity })
+        return { path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes),
+            sha256: read.sha256, identity: read.identity }
     } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
 }
 
@@ -1718,10 +1718,10 @@ function claudeCommandAllowances(): Readonly<Record<string, 'allow'>> {
 // scoped rule only to matching files, so a scoped source counts separately there.
 const GUIDE_LOAD_CHARACTERIZATIONS = Object.freeze(Object.fromEntries(shippedInstructionCapabilities()
     .filter(fact => isGuardSurfaceTarget(fact.target))
-    .map(fact => [fact.target, Object.freeze({
+    .map(fact => [fact.target, {
         measuredOn: fact.characterizedOn, metric: 'lines' as const, scopeSemantics: fact.target === 'claudecode' ? 'conditional' as const : 'full' as const,
         provenance: fact.provenance,
-    })])))
+    }])))
 
 function nativeSources(
     mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
@@ -1741,7 +1741,7 @@ function nativeSources(
                 mcpServers: Object.fromEntries(removed.map(server => [server.name, null])),
             }]] : []
         }))
-        sources.push(Object.freeze({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` }))
+        sources.push({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` })
     }
     const paths = (target: SurfaceTarget) => [...new Set(grants.filter(grant => grant.target === target).map(grant => grant.path))].sort(compareCodeUnits)
     const claudeServers = mcp.result.harnesses.find(row => row.target === 'claudecode')?.servers ?? []
@@ -1749,7 +1749,7 @@ function nativeSources(
     // Claude Code ignores `disabled` in `.mcp.json` and offers an unlisted server for one-click
     // approval; only this list keeps it off (measured with Claude Code 2.1.316 on 2026-11-02).
     const disabledMcpjsonServers = claudeServers.filter(server => !server.enabled).map(server => server.name).sort()
-    sources.push(Object.freeze({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
+    sources.push({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
         permission: {},
         claudecode: {
             permission: {
@@ -1775,8 +1775,8 @@ function nativeSources(
                 edit: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
             },
         },
-    }, null, 2)}\n` }))
-    return Object.freeze(sources)
+    }, null, 2)}\n` })
+    return sources
 }
 
 function nativeFragmentSet(
@@ -1788,10 +1788,10 @@ function nativeFragmentSet(
     if (!modelSha256) return undefined
     const fragments = Object.entries(paths).map(([target, path]) => {
         const row = generated.files.find(candidate => candidate.target === target && candidate.path === path)
-        return row ? Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row.sha256, bytes: row.bytes, sha256: row.sha256 }) : undefined
+        return row ? { target: target as SurfaceTarget, path, baseSha256: row.sha256, bytes: row.bytes, sha256: row.sha256 } : undefined
     })
     if (fragments.some(fragment => fragment === undefined)) return undefined
-    return Object.freeze({ modelSha256, fragments: Object.freeze(fragments as NonNullable<typeof fragments[number]>[]) })
+    return { modelSha256, fragments: fragments as NonNullable<typeof fragments[number]>[] }
 }
 
 function nativeGrantFragmentSet(
@@ -1805,7 +1805,7 @@ function nativeGrantFragmentSet(
     const fragments = Object.entries(paths).map(([target, path]) => {
         const row = generated.files.find(candidate => candidate.target === target && candidate.path === path)
         if (target !== 'opencode' && target !== 'codexcli') {
-            return row ? Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row.sha256, bytes: row.bytes, sha256: row.sha256 }) : undefined
+            return row ? { target: target as SurfaceTarget, path, baseSha256: row.sha256, bytes: row.bytes, sha256: row.sha256 } : undefined
         }
         if (target === 'codexcli') {
             let base: Record<string, unknown> = {}
@@ -1826,7 +1826,7 @@ function nativeGrantFragmentSet(
             const writableRoots = [...new Set(grants.filter(grant => grant.target === target)
                 .map(grant => codexWritableRoot(grant.path)))].sort(compareCodeUnits)
             const bytes = stringifyToml({ ...base, sandbox_mode: 'workspace-write', sandbox_workspace_write: { writable_roots: writableRoots } })
-            return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
+            return { target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) }
         }
         let base: Record<string, unknown> = {}
         if (row) {
@@ -1840,10 +1840,10 @@ function nativeGrantFragmentSet(
         // OpenCode writes `$schema` into a project config that lacks it at every start, which put an
         // unowned member before the owned region; supplying OpenCode's exact value leaves it untouched.
         const bytes = `${JSON.stringify({ $schema: OPENCODE_CONFIG_SCHEMA, ...base, permission: { external_directory: externalDirectory, read } }, null, 2)}\n`
-        return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
+        return { target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) }
     })
     if (fragments.some(fragment => fragment === undefined)) return undefined
-    return Object.freeze({ modelSha256, fragments: Object.freeze(fragments as NonNullable<typeof fragments[number]>[]) })
+    return { modelSha256, fragments: fragments as NonNullable<typeof fragments[number]>[] }
 }
 
 function bindNativeGrantsToMcp(
@@ -1857,18 +1857,18 @@ function bindNativeGrantsToMcp(
         if (grant.baseSha256 !== base.sha256) return undefined
         replacements.set(`${base.target}\0${base.path}`, grant)
     }
-    return Object.freeze({ ...mcp, fragments: Object.freeze(mcp.fragments.map(fragment => {
+    return { ...mcp, fragments: mcp.fragments.map(fragment => {
         const grant = replacements.get(`${fragment.target}\0${fragment.path}`)
-        return grant ? Object.freeze({ ...fragment, bytes: grant.bytes, sha256: grant.sha256 }) : fragment
-    })) })
+        return grant ? { ...fragment, bytes: grant.bytes, sha256: grant.sha256 } : fragment
+    }) }
 }
 
 function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
-    return Object.freeze(Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.mcp])))
+    return Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.mcp]))
 }
 
 function nativeGrantPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
-    return Object.freeze(Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.permissions[0]])))
+    return Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.permissions[0]]))
 }
 
 // The worker runs in its own process and cannot import modules; `safe` mirrors safeSurfacePath in
@@ -1914,8 +1914,8 @@ async function executeCustomCapability(
             prepared.root, capability.evidence.reference, MAX_SURFACE_FILE_BYTES, prepared.node, adapters,
         )
         if (evidenceRead.kind !== 'complete' || evidenceRead.sha256 !== capability.evidence.sha256) return undefined
-        evidenceSource = Object.freeze({ harness, feature: capability.feature, path: capability.evidence.reference,
-            sha256: evidenceRead.sha256, identity: evidenceRead.identity, maxBytes: MAX_SURFACE_FILE_BYTES })
+        evidenceSource = { harness, feature: capability.feature, path: capability.evidence.reference,
+            sha256: evidenceRead.sha256, identity: evidenceRead.identity, maxBytes: MAX_SURFACE_FILE_BYTES }
     }
     const moduleRead = await readAnchoredFile(prepared.root, capability.mechanism.module, MAX_GENERATED_BYTES, prepared.node, adapters)
     if (moduleRead.kind !== 'complete') return undefined
@@ -1929,7 +1929,7 @@ async function executeCustomCapability(
         scratch = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-custom-surface-')))
         const scratchStatus = await lstat(scratch)
         if (!scratchStatus.isDirectory() || scratchStatus.isSymbolicLink()) return undefined
-        scratchIdentity = Object.freeze({ dev: scratchStatus.dev, ino: scratchStatus.ino })
+        scratchIdentity = { dev: scratchStatus.dev, ino: scratchStatus.ino }
         const input = snapshotGeneratedJson({ harness, feature: capability.feature, sources })
         if (!input) return undefined
         const absoluteModule = confined(prepared.root, capability.mechanism.module)
@@ -1962,9 +1962,9 @@ async function executeCustomCapability(
             if (!row || !exactKeys(row, ['path', 'sha256', 'scope', 'output']) || row.output !== String(index)
                 || typeof row.path !== 'string' || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)
                 || row.scope !== 'always' && row.scope !== 'scoped') return undefined
-            descriptors.push(Object.freeze({ path: row.path, sha256: row.sha256, scope: row.scope, output: row.output }))
+            descriptors.push({ path: row.path, sha256: row.sha256, scope: row.scope, output: row.output })
         }
-        const reads = await readAnchoredBatches(scratch, descriptors.map(row => Object.freeze({
+        const reads = await readAnchoredBatches(scratch, descriptors.map(row => ({
             path: row.output, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
         })), prepared.node, adapters)
         if (!reads || reads.kind !== 'complete' || reads.results.length !== descriptors.length) return undefined
@@ -1974,22 +1974,22 @@ async function executeCustomCapability(
             if (read.kind !== 'complete' || read.sha256 !== row.sha256
                 || read.identity.root.dev !== scratchIdentity.dev || read.identity.root.ino !== scratchIdentity.ino) return undefined
             const bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes)
-            files.push(Object.freeze({ path: row.path, bytes, sha256: row.sha256, scope: row.scope }))
+            files.push({ path: row.path, bytes, sha256: row.sha256, scope: row.scope })
         }
         if (files.length === 0 || !files.some(file => file.path === capability.spelling || file.bytes.includes(capability.spelling))) return undefined
         const resultSha256 = surfaceModelSha256(files)
         if (!resultSha256) return undefined
-        return Object.freeze({
-            receipt: Object.freeze({ harness, feature: capability.feature, state: capability.state, measuredOn: capability.measured_on,
+        return {
+            receipt: { harness, feature: capability.feature, state: capability.state, measuredOn: capability.measured_on,
                 module: capability.mechanism.module, export: capability.mechanism.export, sourceSha256: moduleRead.sha256,
-                resultSha256, files: Object.freeze(files) }),
-            sources: Object.freeze([
-                Object.freeze({ harness, feature: capability.feature, path: capability.mechanism.module,
-                    sha256: moduleRead.sha256, identity: moduleRead.identity, maxBytes: MAX_GENERATED_BYTES }),
+                resultSha256, files },
+            sources: [
+                { harness, feature: capability.feature, path: capability.mechanism.module,
+                    sha256: moduleRead.sha256, identity: moduleRead.identity, maxBytes: MAX_GENERATED_BYTES },
                 ...(evidenceSource ? [evidenceSource] : []),
-            ]),
-            ...(capability.state === 'enforced' ? { evidence: Object.freeze({ ...capability.evidence }) } : {}),
-        })
+            ],
+            ...(capability.state === 'enforced' ? { evidence: { ...capability.evidence } } : {}),
+        }
     } catch { /* an unavailable authority is refused by the caller. */ return undefined } finally {
         if (scratch && scratchIdentity) {
             try {
@@ -2017,20 +2017,20 @@ async function projectExplicitNativeHooks(
     if (policyRead.kind !== 'complete' || policyRead.sha256 !== policyDeclaration.sha256) return undefined
     let policyBytes: string
     try { policyBytes = new TextDecoder('utf-8', { fatal: true }).decode(policyRead.bytes) } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
-    const policy: NativeHookPolicy = Object.freeze({
+    const policy: NativeHookPolicy = {
         manifest,
-        authority: Object.freeze({ root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath }),
-        declarations: Object.freeze([]),
+        authority: { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath },
+        declarations: [],
         path: policyDeclaration.path,
         exists: true,
         bytes: policyBytes,
-    })
-    const source = Object.freeze({ path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity })
+    }
+    const source = { path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity }
     const git = await resolveGitExecutable(process.env)
-    if (git.state !== 'available') return Object.freeze({
-        projection: Object.freeze({ kind: 'refusal' as const, reason: git.reason }),
+    if (git.state !== 'available') return {
+        projection: { kind: 'refusal' as const, reason: git.reason },
         source,
-    })
+    }
     const revisionStep = snapshotExecutionStep({
         id: 'native-hook-revisions',
         argv: [git.value.invocationPath, 'rev-list', '--max-count=2', 'HEAD'],
@@ -2063,7 +2063,7 @@ async function projectExplicitNativeHooks(
         scratch = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-native-hook-cost-')))
         const status = await lstat(scratch)
         if (!status.isDirectory() || status.isSymbolicLink()) return undefined
-        scratchIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
+        scratchIdentity = { dev: status.dev, ino: status.ino }
         const shell = await resolveExecutablePath('/bin/sh')
         if (shell.state !== 'available') return undefined
         const projection = await projectNativeHooks({
@@ -2103,10 +2103,10 @@ async function projectExplicitNativeHooks(
                 },
             },
         })
-        return Object.freeze({
+        return {
             projection,
             source,
-        })
+        }
     } finally {
         if (scratch && scratchIdentity) {
             try {
@@ -2147,7 +2147,7 @@ async function prepareSurfaces(
             const status = await lstat(root)
             if (!status.isDirectory() || status.isSymbolicLink()) throw new RefusalError('root')
             siblingRoots.set(sibling.slug, root)
-            sourceRoots.push(Object.freeze({ slug: sibling.slug, root, identity: authority.identity }))
+            sourceRoots.push({ slug: sibling.slug, root, identity: authority.identity })
         }
     } catch (error) {
         return refuse('SURFACE_SOURCE_UNAVAILABLE', `an active sibling checkout could not be authenticated: ${errorCause(error)}`, 'surfaces')
@@ -2159,11 +2159,11 @@ async function prepareSurfaces(
         siblingRoots.get(sibling.slug) === prepared.root
             ? sibling.guides.filter(guide => !rootInstructionOutputs.has(guide))
             : sibling.guides
-    const guideRequests = selected.flatMap(sibling => projectionGuides(sibling).map(guide => Object.freeze({
+    const guideRequests = selected.flatMap(sibling => projectionGuides(sibling).map(guide => ({
         slug: sibling.slug, root: siblingRoots.get(sibling.slug)!, sourcePath: resolve(siblingRoots.get(sibling.slug)!, guide),
     }))).sort((left, right) => compareCodeUnits(left.sourcePath, right.sourcePath))
     const observedGuides = guideRequests.length === 0
-        ? { kind: 'complete' as const, observations: Object.freeze([]) as readonly GuideObservation[], missing: Object.freeze([]) as readonly string[] }
+        ? { kind: 'complete' as const, observations: [] as readonly GuideObservation[], missing: [] as readonly string[] }
         : await observeSiblingGuides({ allowedRoots: selected.map(row => siblingRoots.get(row.slug)!), requests: guideRequests })
     if (observedGuides.kind !== 'complete') return refuse(observedGuides.diagnostic.code, observedGuides.diagnostic.message, observedGuides.diagnostic.target)
     for (const sibling of selected) for (const guide of projectionGuides(sibling)) {
@@ -2186,7 +2186,7 @@ async function prepareSurfaces(
     let projection = planSiblingProjection(projectionInput)
     if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)
 
-    const evidence: SurfaceInputEvidence[] = observedGuides.observations.map(row => Object.freeze({
+    const evidence: SurfaceInputEvidence[] = observedGuides.observations.map(row => ({
         kind: 'guide' as const, root: siblingRoots.get(row.slug)!, path: row.sourcePath,
         sha256: row.contentSha256, identity: row.contentIdentity,
     }))
@@ -2204,25 +2204,25 @@ async function prepareSurfaces(
         const parsed = parseMcpDeclarationFile({ bytes, source: { kind: 'sibling', slug: source.slug, path: source.path, sha256: read.sha256 }, workingDirectory: root })
         if (parsed.kind !== 'complete') return refuse(parsed.diagnostic.code, parsed.diagnostic.message, source.path)
         declarations.push(...parsed.declarations)
-        evidence.push(Object.freeze({ kind: 'mcp' as const, root, path: source.path, sha256: read.sha256, identity: sourceIdentity(read.identity) }))
+        evidence.push({ kind: 'mcp' as const, root, path: source.path, sha256: read.sha256, identity: sourceIdentity(read.identity) })
     }
     // Under [autonomy] mcp_approve = "agent" every declared server is approved as declared now; under
     // "person" only the digests a person recorded in [mcp.approved] are, and the guard pins that table.
     const approved = effectivePolicy(config).autonomy.mcp_approve === 'agent'
-        ? Object.freeze({ ...config.mcp.approved, ...Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)])) })
+        ? { ...config.mcp.approved, ...Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)])) }
         : config.mcp.approved
     let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved, targets: tools })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
-    const unapprovedMcpServers = Object.freeze(mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
-        .map(row => Object.freeze({ name: row.server!, sha256: row.sha256!, sources: Object.freeze((row.sources ?? []).map(source =>
-            source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path)) })))
+    const unapprovedMcpServers = mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
+        .map(row => ({ name: row.server!, sha256: row.sha256!, sources: (row.sources ?? []).map(source =>
+            source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path) }))
     if (mcp.diagnostics.some(row => row.code === 'MCP_APPROVAL_UNKNOWN')) {
         const row = mcp.diagnostics.find(candidate => candidate.code === 'MCP_APPROVAL_UNKNOWN')!
         return refuse(row.code, row.message, row.server)
     }
 
     const assetPaths = [EVALUATOR_ASSET, ...SKILL_ASSETS, ...REFERENCE_ASSETS, ...RESTRICTION_ASSETS, ...WORK_ASSETS]
-    const assetReads = await readAnchoredBatches(SURFACE_ROOT, assetPaths.map(path => Object.freeze({
+    const assetReads = await readAnchoredBatches(SURFACE_ROOT, assetPaths.map(path => ({
         path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
     })), prepared.node, adapters)
     if (!assetReads || assetReads.kind !== 'complete' || assetReads.results.length !== assetPaths.length) {
@@ -2280,7 +2280,7 @@ async function prepareSurfaces(
             if (stage.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'browser lifecycle authority could not be observed', prepared.root)
             const configuredRuntime = resolveBrowserRuntime({
                 ...browserConfiguration,
-                postures: Object.freeze({ authorities: Object.freeze([authority]), stages: Object.freeze([stage.authority]) }),
+                postures: { authorities: [authority], stages: [stage.authority] },
             }, namespace.value)
             const runtime = configuredRuntime
             const browserMcp = playwright[0]!
@@ -2289,7 +2289,7 @@ async function prepareSurfaces(
                 runtime,
                 cockpitDirectory: prepared.root,
                 harnesses: browserConfiguration.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
-                    ? [Object.freeze({ target: row.target, version: row.version })] : []),
+                    ? [{ target: row.target, version: row.version }] : []),
                 mcp: browserMcp,
                 approved: true,
                 testPackage: null,
@@ -2308,17 +2308,17 @@ async function prepareSurfaces(
                 targets: tools,
             })
             if (boundMcp.kind !== 'complete') throw new RefusalError(`bound browser MCP declaration was refused: ${boundMcp.diagnostic.code}`)
-            mcp = Object.freeze({ ...boundMcp, result: Object.freeze({ ...boundMcp.result,
-                harnesses: Object.freeze(boundMcp.result.harnesses.map(row => Object.freeze({ ...row,
-                    servers: Object.freeze(row.servers.filter(server => server.name !== 'playwright' || browserTargets.has(row.target))),
-                }))),
-            }) })
-            browserAuthority = Object.freeze({
+            mcp = { ...boundMcp, result: { ...boundMcp.result,
+                harnesses: boundMcp.result.harnesses.map(row => ({ ...row,
+                    servers: row.servers.filter(server => server.name !== 'playwright' || browserTargets.has(row.target)),
+                })),
+            } }
+            browserAuthority = {
                 runtime,
                 namespace: namespace.value,
                 mcp: browserMcp,
                 skillTemplate: browserSkill,
-            })
+            }
         } catch (error) {
             return refuse('SURFACE_INPUT_INVALID', `browser surface projection was refused: ${errorCause(error)}`, 'browser')
         }
@@ -2376,12 +2376,12 @@ async function prepareSurfaces(
             || feature === 'skills' || feature === 'hooks')
         const bundleSources = generatedSources.filter(source => source.path === 'mcp.jsonc' || source.path === 'hooks.jsonc'
             || source.path.startsWith('subagents/') || source.path.startsWith('skills/'))
-        return Object.freeze({
+        return {
             format: 'claudecode-plugin' as const,
             features: bundleFeatures,
             sources: bundleSources,
             expectedOutputs: expectedClaudePluginOutputs(bundleFeatures, bundleSources),
-        })
+        }
     })() : undefined
     const estate = generatedSources.length === 0 ? undefined : await generateSurfaceEstate({
         batch: { targets: tools, features, sources: generatedSources, expectedOutputs: expected },
@@ -2415,18 +2415,18 @@ async function prepareSurfaces(
             ...bundle.files,
             ...references,
         ]
-        for (const file of files) bundleEntries.push(Object.freeze({
+        for (const file of files) bundleEntries.push({
             kind: 'file' as const,
             ownership: 'whole-file' as const,
             path: `.cockpit/bundles/claudecode-plugin/${file.path}`,
             bytes: file.bytes,
             sha256: file.sha256,
-            harnesses: Object.freeze(['claudecode']) as readonly ['claudecode'],
+            harnesses: ['claudecode'] as readonly ['claudecode'],
             scope: 'always' as const,
             capability: 'instructed' as const,
             writer: 'cockpit' as const,
             schemaVersion: 1 as const,
-        }))
+        })
     }
 
     const skillSources = generatedSources.filter(source => source.path.startsWith('skills/'))
@@ -2456,12 +2456,12 @@ async function prepareSurfaces(
     const nodeFingerprint = fileFingerprint(prepared.node.canonicalPath, await lstat(prepared.node.canonicalPath))
     if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
         'the Node executable changed while sync was running', 'guard', 'run `npx --no cockpit sync --config <your cockpit.toml>` again in a terminal')
-    const guardHandler: GuardHandlerIdentity = Object.freeze({ root: prepared.root,
+    const guardHandler: GuardHandlerIdentity = { root: prepared.root,
         rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino),
         configPath: prepared.configPath, configSha256: prepared.sourceSha256,
         configDevice: String(configStat.dev), configInode: String(configStat.ino),
         node: prepared.node.canonicalPath, nodeSha256: prepared.node.sha256, nodeFingerprint,
-        module: modulePath, moduleSha256: moduleRead.sha256 })
+        module: modulePath, moduleSha256: moduleRead.sha256 }
     const restrictions = expandRestrictions({
         canonicalProjectRoot: prepared.root,
         allowedProjectRoots: [...new Set([prepared.root, ...selected.map(row => siblingRoots.get(row.slug)!)])].sort(compareCodeUnits),
@@ -2475,8 +2475,8 @@ async function prepareSurfaces(
         configFile: relative(prepared.root, prepared.configPath),
     })
     if (restrictions.kind !== 'complete') return refuse(restrictions.code, restrictions.message, 'surfaces')
-    const listedRestrictions = Object.freeze({ ...restrictions,
-        targets: Object.freeze(restrictions.targets.filter(row => tools.includes(row.target))) })
+    const listedRestrictions = { ...restrictions,
+        targets: restrictions.targets.filter(row => tools.includes(row.target)) }
 
     const customReceipts: CustomSurfaceReceipt[] = []
     const customSources: CustomSourceIdentity[] = []
@@ -2542,7 +2542,7 @@ async function prepareSurfaces(
         skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
         browserRunner: browser && prepared.workEnvironment.browser && Object.hasOwn(prepared.workEnvironment.browser, 'endpoint')
             ? { path: runnerAsset.path, bytes: runnerAsset.bytes, sha256: runnerAsset.sha256 } : null,
-        testing: Object.freeze({ tierGuide, nativeHooks }),
+        testing: { tierGuide, nativeHooks },
         customHarnesses: config.surfaces.harnesses, customReceipts, sourceEvidence: evidence })
     if (rendered.kind !== 'complete') return refuse(rendered.diagnostic.code, rendered.diagnostic.message, rendered.diagnostic.target)
     const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
@@ -2578,8 +2578,8 @@ async function prepareSurfaces(
     }
     const bound = bindSurfaceOwnershipIdentity(adoptedEntries, prepared.cockpitId)
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
-    const surfaceEntries = Object.freeze([...bound.entries, ...bundleEntries]
-        .sort((left, right) => compareCodeUnits(left.path, right.path)))
+    const surfaceEntries = [...bound.entries, ...bundleEntries]
+        .sort((left, right) => compareCodeUnits(left.path, right.path))
     const browserSkillFiles: RenderedSurfaceFile[] = []
     const renderedBrowserSkills = browser?.files.filter(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) ?? []
     const publishedBrowserSkills = surfaceEntries.filter(entry => entry.path.endsWith('/skills/cockpit-browser/SKILL.md'))
@@ -2591,7 +2591,7 @@ async function prepareSurfaces(
             if (!rendered || bytes !== entry.bytes || sha256(bytes) !== entry.sha256) {
                 return refuse('SURFACE_INPUT_INVALID', 'the published browser skill differs from its authenticated renderer', entry.path)
             }
-            browserSkillFiles.push(Object.freeze({ target: rendered.target, path: entry.path, bytes, sha256: entry.sha256 }))
+            browserSkillFiles.push({ target: rendered.target, path: entry.path, bytes, sha256: entry.sha256 })
         }
     }
     if (renderedBrowserSkills.length !== browserSkillFiles.length
@@ -2616,7 +2616,7 @@ async function prepareSurfaces(
     // The root region carries the copied sibling guides, so every tool's start-up cost is that region.
     const rootGuideLines = guideLines(rootGuide.region.bytes)
     const actualGuideCosts = characterizedGuideCosts.map(cost =>
-        Object.freeze({ ...cost, value: rootGuideLines, status: rootGuideLines > cost.cap ? 'exceeded' as const : 'within_cap' as const }))
+        ({ ...cost, value: rootGuideLines, status: rootGuideLines > cost.cap ? 'exceeded' as const : 'within_cap' as const }))
     const rootGuideBytes = Buffer.byteLength(rootGuide.region.bytes)
     if (rootGuideBytes > CODEX_PROJECT_DOC_BYTES) return guideBytesExceeded(rootGuideBytes)
     const overCap = actualGuideCosts.filter(cost => cost.status === 'exceeded').sort((left, right) => right.value - left.value)[0]
@@ -2636,7 +2636,7 @@ async function prepareSurfaces(
     }
     const selftestPayload = {
         schema: 'cockpit-generated-surface-selftest/v1' as const,
-        configuredHarnesses: Object.freeze(configuredHarnesses),
+        configuredHarnesses,
         declarations: config.surfaces.harnesses,
         entries: surfaceEntries,
         custom: customSelftest.sort((left, right) => compareCodeUnits(`${left.harness}\0${left.feature}`, `${right.harness}\0${right.feature}`)),
@@ -2645,74 +2645,74 @@ async function prepareSurfaces(
     if (!captured) return refuse('SURFACE_BOUNDS', 'authenticated selftest inputs exceed the captured bounds', 'surfaces')
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom }
-    const surfaceSelftest = Object.freeze({ ...payload, manifestSha256: sha256(JSON.stringify(payload)) })
-    const skillInventory = Object.freeze(surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
+    const surfaceSelftest = { ...payload, manifestSha256: sha256(JSON.stringify(payload)) }
+    const skillInventory = surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
         entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {
         if (!SURFACE_TARGETS.includes(target as SurfaceTarget)) return []
         const prefix = `${harnessFact(target as SurfaceTarget).outputs.skills}/`
         if (!entry.path.startsWith(prefix) || !/^[^/]+\/SKILL\.md$/.test(entry.path.slice(prefix.length))) return []
-        return [Object.freeze({ target, path: entry.path, sha256: entry.sha256 })]
-    })).sort((left, right) => compareCodeUnits(`${left.target}\0${left.path}`, `${right.target}\0${right.path}`)))
+        return [{ target, path: entry.path, sha256: entry.sha256 }]
+    })).sort((left, right) => compareCodeUnits(`${left.target}\0${left.path}`, `${right.target}\0${right.path}`))
     const installedSkillTargets = new Set(skillInventory.map(({ target }) => target))
     const installedSkillCosts = installedSkillInspection.costs.filter(({ target }) => installedSkillTargets.has(target))
     if (installedSkillCosts.length !== installedSkillTargets.size) {
         return refuse('SURFACE_INPUT_INVALID', 'a published skill target has no admitted standing-cost measurement', 'surfaces')
     }
-    const surfaceHealth: GeneratedSurfaceHealthEvidence = Object.freeze({
+    const surfaceHealth: GeneratedSurfaceHealthEvidence = {
         observedAt: prepared.producedAt,
-        grants: Object.freeze(projection.grants.map(grant => Object.freeze({ ...grant }))),
+        grants: projection.grants.map(grant => ({ ...grant })),
         nativeGrants,
-        guideCosts: Object.freeze(actualGuideCosts),
-        skillCosts: Object.freeze(installedSkillCosts),
+        guideCosts: actualGuideCosts,
+        skillCosts: installedSkillCosts,
         skillInventorySha256: sha256(JSON.stringify(skillInventory)),
         skillInventory,
         skills: installedSkillInspection.skills,
         skillCollectionSha256: skillInspection.collection.source.sha256,
-    })
+    }
     const customSurfacePaths = new Set(customReceipts.flatMap(receipt => receipt.files.map(file => file.path)))
     const compactSurfacePaths = new Set(generated.files.map(file => file.path).filter(path => !customSurfacePaths.has(path)))
     const evaluator = asset(EVALUATOR_ASSET)
-    const workApplication: WorkApplicationAuthorityRecord = Object.freeze({
+    const workApplication: WorkApplicationAuthorityRecord = {
         workEnvironment: prepared.workEnvironment,
-        evaluator: Object.freeze({
+        evaluator: {
             path: resolve(SURFACE_ROOT, evaluator.path),
             bytes: evaluator.bytes,
             sha256: evaluator.sha256,
             identity: evaluator.identity,
             restriction: 'instructed',
-        }),
-        installedSkills: Object.freeze(surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
+        },
+        installedSkills: surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
             entry.kind === 'file' && /^(?:\.agents|\.claude|\.opencode)\/skills\/[^/]+\/SKILL\.md$/.test(entry.path))
-            .map(({ path, sha256: digest }) => Object.freeze({ path, sha256: digest }))
-            .sort((left, right) => compareCodeUnits(left.path, right.path))),
+            .map(({ path, sha256: digest }) => ({ path, sha256: digest }))
+            .sort((left, right) => compareCodeUnits(left.path, right.path)),
         ...(browserAuthority ? { browser: browserAuthority } : {}),
-        testing: Object.freeze({ registry: testingRegistry }),
-    })
+        testing: { registry: testingRegistry },
+    }
     const openCodeGrantRoots = projection.grants.filter(grant => grant.target === 'opencode')
-        .map(grant => Object.freeze({ slug: grant.slug, root: siblingRoots.get(grant.slug)! }))
+        .map(grant => ({ slug: grant.slug, root: siblingRoots.get(grant.slug)! }))
     // The file's bytes become part of an OpenCode pattern: a wildcard would widen the grant and a
     // quote or backslash would change the JSON around it.
     const unsafeGrant = openCodeGrantRoots.find(row => row.root === undefined || /[*?"\\\x00-\x1f\x7f]/.test(row.root))
     if (unsafeGrant) return refuse('SURFACE_INPUT_INVALID',
         `the directory of sibling ${unsafeGrant.slug} contains *, ?, a quote, a backslash or a control character, which OpenCode would read as part of its access pattern; move the checkout to a plain path`,
         unsafeGrant.slug)
-    return Object.freeze({ ...prepared, guardHandler, openCodeGrantRoots: Object.freeze(openCodeGrantRoots), unapprovedMcpServers,
-        surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses: Object.freeze(configuredHarnesses),
+    return { ...prepared, guardHandler, openCodeGrantRoots, unapprovedMcpServers,
+        surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses,
         activeSurfaceOverrides: merge.overrides, changedOverrideOriginals: merge.findings,
         surfaceSelftest,
         surfaceHealth,
-        guideSources: Object.freeze({
-            requests: Object.freeze(guideRequests),
-            observations: Object.freeze(observedGuides.observations.map(row => Object.freeze({ ...row }))
-                .sort((left, right) => compareCodeUnits(left.sourcePath, right.sourcePath))),
-            missing: Object.freeze([...observedGuides.missing].sort(compareCodeUnits)),
-        }),
-        sourceEvidence: Object.freeze(evidence), sourceRoots: Object.freeze(sourceRoots), customSources: Object.freeze(customSources),
+        guideSources: {
+            requests: guideRequests,
+            observations: observedGuides.observations.map(row => ({ ...row }))
+                .sort((left, right) => compareCodeUnits(left.sourcePath, right.sourcePath)),
+            missing: [...observedGuides.missing].sort(compareCodeUnits),
+        },
+        sourceEvidence: evidence, sourceRoots, customSources,
         adoptedSources: adopted.sources,
         ...(explicitNativeHooks ? { nativeHookPolicySource: explicitNativeHooks.source } : {}),
-        surfaceAssets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => Object.freeze({ path, sha256: digest, identity }))),
+        surfaceAssets: assets.map(({ path, sha256: digest, identity }) => ({ path, sha256: digest, identity })),
         workApplication,
-        warnings: Object.freeze([...rendered.warnings]) })
+        warnings: [...rendered.warnings] }
 }
 
 const ADOPTED_HARNESS = Object.freeze({ '.claude/settings.json': 'claudecode', '.codex/config.toml': 'codexcli', '.codex/hooks.json': 'codexcli' } as const)
@@ -2729,7 +2729,7 @@ async function mergeAdoptedSurfaces(
     adapters: GeneratedEnvironmentCommandAdapters,
 ): Promise<Readonly<{ entries: readonly SurfaceDesiredEntry[]; sources: readonly AdoptedSourceIdentity[] }> | RefusalOutcome> {
     const rows = prepared.registry.config.surfaces.adopted
-    if (rows.length === 0) return Object.freeze({ entries, sources: Object.freeze([]) })
+    if (rows.length === 0) return { entries, sources: [] }
     const merged = [...entries]
     const sources: AdoptedSourceIdentity[] = []
     for (const row of rows) {
@@ -2749,15 +2749,15 @@ async function mergeAdoptedSurfaces(
         const harness = ADOPTED_HARNESS[row.path]
         if (!configuredHarnesses.includes(harness)) return refuse('SURFACE_ADOPTION_REFUSED', `${row.path} belongs to ${harness}, which this cockpit does not configure`, row.path)
         const entry: SurfaceDesiredEntry = current
-            ? Object.freeze({ ...current, bytes: result.bytes, sha256: sha256(result.bytes) })
-            : Object.freeze({ kind: 'file', path: row.path, harnesses: [harness] as [string], scope: 'always', capability: 'instructed', writer: 'cockpit',
-                schemaVersion: 1, ownership: 'whole-file', bytes: result.bytes, sha256: sha256(result.bytes) })
+            ? { ...current, bytes: result.bytes, sha256: sha256(result.bytes) }
+            : { kind: 'file', path: row.path, harnesses: [harness] as [string], scope: 'always', capability: 'instructed', writer: 'cockpit',
+                schemaVersion: 1, ownership: 'whole-file', bytes: result.bytes, sha256: sha256(result.bytes) }
         if (index < 0) merged.push(entry)
         else merged[index] = entry
-        sources.push(Object.freeze({ path: row.source, sha256: read.sha256, identity: read.identity }))
+        sources.push({ path: row.source, sha256: read.sha256, identity: read.identity })
     }
     merged.sort((left, right) => compareCodeUnits(left.path, right.path))
-    return Object.freeze({ entries: Object.freeze(merged), sources: Object.freeze(sources) })
+    return { entries: merged, sources }
 }
 
 function mergedAdapters(overrides: Partial<GeneratedEnvironmentCommandAdapters>): GeneratedEnvironmentCommandAdapters {
@@ -2817,7 +2817,7 @@ async function inputSourcesCurrent(
             mcpByRoot.set(evidence.root, group)
         }
         for (const [root, evidence] of mcpByRoot) {
-            const reads = await readAnchoredBatches(root, evidence.map(row => Object.freeze({
+            const reads = await readAnchoredBatches(root, evidence.map(row => ({
                 path: row.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-file' as const,
             })), prepared.node, adapters, deadline)
             if (!reads || reads.kind !== 'complete' || reads.results.length !== evidence.length || reads.results.some((read, index) => read.kind !== 'complete'
@@ -2825,12 +2825,12 @@ async function inputSourcesCurrent(
             if (deadline !== undefined && Date.now() >= deadline) return false
         }
         const reads = await readAnchoredBatches(prepared.root, [
-            Object.freeze({ path: prepared.personaSource.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-persona' as const }),
-            ...prepared.customSources.map(source => Object.freeze({ path: source.path, maxBytes: source.maxBytes, action: 'read-file' as const })),
-            ...(prepared.nativeHookPolicySource ? [Object.freeze({ path: prepared.nativeHookPolicySource.path,
-                maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })] : []),
-            ...prepared.adoptedSources.map(source => Object.freeze({ path: source.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })),
-            ...prepared.composeSources.map(source => Object.freeze({ path: source.path, maxBytes: COMPOSE_SOURCE_BYTES, action: 'read-file' as const })),
+            { path: prepared.personaSource.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-persona' as const },
+            ...prepared.customSources.map(source => ({ path: source.path, maxBytes: source.maxBytes, action: 'read-file' as const })),
+            ...(prepared.nativeHookPolicySource ? [{ path: prepared.nativeHookPolicySource.path,
+                maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }] : []),
+            ...prepared.adoptedSources.map(source => ({ path: source.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })),
+            ...prepared.composeSources.map(source => ({ path: source.path, maxBytes: COMPOSE_SOURCE_BYTES, action: 'read-file' as const })),
         ], prepared.node, adapters, deadline)
         const adoptedOffset = prepared.customSources.length + 1 + (prepared.nativeHookPolicySource ? 1 : 0)
         const composeOffset = adoptedOffset + prepared.adoptedSources.length
@@ -2865,8 +2865,8 @@ async function inputSourcesCurrent(
             })
         if (!localCurrent) return false
         const assetReads = prepared.surfaceAssets.length === 0
-            ? Object.freeze({ kind: 'complete' as const, results: Object.freeze([]) })
-            : await readAnchoredBatches(SURFACE_ROOT, prepared.surfaceAssets.map(asset => Object.freeze({
+            ? { kind: 'complete' as const, results: [] }
+            : await readAnchoredBatches(SURFACE_ROOT, prepared.surfaceAssets.map(asset => ({
             path: asset.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
         })), prepared.node, adapters, deadline)
         if (!assetReads || assetReads.kind !== 'complete' || assetReads.results.length !== prepared.surfaceAssets.length || assetReads.results.some((read, index) => read.kind !== 'complete'
@@ -2913,7 +2913,7 @@ async function ownedInputOverlap(
         }
     }
     if (directories.size > MAX_OWNED_FILES * 4 || constants.O_DIRECTORY === undefined || constants.O_NOFOLLOW === undefined) {
-        return Object.freeze({ kind: 'invalid' })
+        return { kind: 'invalid' }
     }
     type DirectoryWatch = Readonly<{
         path: string
@@ -2925,7 +2925,7 @@ async function ownedInputOverlap(
     }>
     const handles: Array<Awaited<ReturnType<typeof open>>> = []
     const watches: DirectoryWatch[] = []
-    let outcome: Readonly<{ kind: 'complete'; path?: string }> | Readonly<{ kind: 'invalid' }> = Object.freeze({ kind: 'invalid' })
+    let outcome: Readonly<{ kind: 'complete'; path?: string }> | Readonly<{ kind: 'invalid' }> = { kind: 'invalid' }
     let closeFailed = false
     const stable = async (watch: DirectoryWatch): Promise<boolean> => {
         const opened = await watch.handle.stat({ bigint: true })
@@ -2952,8 +2952,8 @@ async function ownedInputOverlap(
                 || opened.dev !== named.dev || opened.ino !== named.ino) throw new RefusalError('directory identity changed')
             if (path === prepared.root && (opened.dev !== BigInt(prepared.personaSourceIdentity.root.dev)
                 || opened.ino !== BigInt(prepared.personaSourceIdentity.root.ino))) throw new RefusalError('publication root identity changed')
-            watches.push(Object.freeze({ path, handle, dev: opened.dev, ino: opened.ino,
-                mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs }))
+            watches.push({ path, handle, dev: opened.dev, ino: opened.ino,
+                mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs })
         }
         if (!(await Promise.all(watches.map(stable))).every(Boolean)) throw new RefusalError('directory namespace changed')
         const exact = new Set<string>()
@@ -2969,11 +2969,11 @@ async function ownedInputOverlap(
                     && missingGuidePaths.has(path) && !requiredPresentPaths.has(path)) continue
                 throw error
             }
-            physical.push(Object.freeze({ dev: status.dev, ino: status.ino }))
+            physical.push({ dev: status.dev, ino: status.ino })
         }
         for (const row of [...prior].sort((left, right) => compareCodeUnits(left.path, right.path))) {
             if (exact.has(row.path)) {
-                outcome = Object.freeze({ kind: 'complete', path: row.path })
+                outcome = { kind: 'complete', path: row.path }
                 break
             }
             const path = resolve(prepared.root, row.path)
@@ -2985,19 +2985,19 @@ async function ownedInputOverlap(
                 throw error
             }
             if (physical.some(input => input.dev === status.dev && input.ino === status.ino)) {
-                outcome = Object.freeze({ kind: 'complete', path: row.path })
+                outcome = { kind: 'complete', path: row.path }
                 break
             }
         }
-        if (outcome.kind === 'invalid') outcome = Object.freeze({ kind: 'complete' })
-        if (!(await Promise.all(watches.map(stable))).every(Boolean)) outcome = Object.freeze({ kind: 'invalid' })
+        if (outcome.kind === 'invalid') outcome = { kind: 'complete' }
+        if (!(await Promise.all(watches.map(stable))).every(Boolean)) outcome = { kind: 'invalid' }
     } catch {
         // an unobservable directory is reported as an invalid read.
-        outcome = Object.freeze({ kind: 'invalid' })
+        outcome = { kind: 'invalid' }
     } finally {
         for (const handle of handles.reverse()) try { await handle.close() } catch { /* an unobservable directory is reported as an invalid read. */ closeFailed = true }
     }
-    return closeFailed ? Object.freeze({ kind: 'invalid' }) : outcome
+    return closeFailed ? { kind: 'invalid' } : outcome
 }
 
 async function surfaceObservationMaxBytes(root: string, path: string): Promise<number | undefined> {
@@ -3026,7 +3026,7 @@ async function observeSurfaceState(
     const orderedPaths = [...paths].sort(compareCodeUnits)
     const maxBytes = await Promise.all(orderedPaths.map(path => surfaceObservationMaxBytes(prepared.root, path)))
     if (maxBytes.some(limit => limit === undefined)) return undefined
-    const entries = await readAnchoredBatches(prepared.root, orderedPaths.map((path, index) => Object.freeze({
+    const entries = await readAnchoredBatches(prepared.root, orderedPaths.map((path, index) => ({
         path, maxBytes: maxBytes[index]!, action: 'read-entry' as const,
     })), prepared.node, adapters)
     if (!entries || entries.kind !== 'complete' || entries.results.length !== orderedPaths.length) return undefined
@@ -3035,7 +3035,7 @@ async function observeSurfaceState(
         if (entry.kind === 'invalid') return undefined
         if (entry.kind === 'complete') return undefined
         raw.set(path, entry)
-        if (entry.kind === 'missing') observed.push(Object.freeze({ path, kind: 'missing' }))
+        if (entry.kind === 'missing') observed.push({ path, kind: 'missing' })
         else if (entry.kind === 'file') {
             let bytes: string
             try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(entry.bytes) } catch {
@@ -3043,11 +3043,11 @@ async function observeSurfaceState(
                 opaque.add(path)
                 continue
             }
-            observed.push(Object.freeze({ path, kind: 'file', bytes, sha256: entry.sha256, identity: sourceIdentity(entry.identity) }))
-        } else if (entry.kind === 'symlink') observed.push(Object.freeze({ path, kind: 'symlink', target: entry.target, identity: JSON.stringify(entry.identity) }))
-        else observed.push(Object.freeze({ path, kind: 'other', identity: 'other' }))
+            observed.push({ path, kind: 'file', bytes, sha256: entry.sha256, identity: sourceIdentity(entry.identity) })
+        } else if (entry.kind === 'symlink') observed.push({ path, kind: 'symlink', target: entry.target, identity: JSON.stringify(entry.identity) })
+        else observed.push({ path, kind: 'other', identity: 'other' })
     }
-    return Object.freeze({ observed: Object.freeze(observed), raw, opaque })
+    return { observed, raw, opaque }
 }
 
 async function classifyOwnedState(
@@ -3093,7 +3093,7 @@ function planObservedSurfaces(
         extra.push(desired ? { kind: 'write', path, desired } : { kind: 'remove', path, priorOwned: prior })
     }
     const actions = [...plan.actions, ...extra].sort((a, b) => (a.kind === 'write' ? 0 : 1) - (b.kind === 'write' ? 0 : 1) || compareCodeUnits(a.path, b.path))
-    return Object.freeze({ kind: 'complete', actions: Object.freeze(actions) })
+    return { kind: 'complete', actions }
 }
 
 /** A hand edit to a merged adopted file belongs in its adopted copy; say so where the conflict is reported. */
@@ -3124,20 +3124,20 @@ function surfaceMutations(
     const result: PublicationMutation[] = []
     for (const action of actions) {
         if (action.kind === 'already-absent') continue
-        const current = raw.get(action.path) ?? Object.freeze({ kind: 'missing' as const })
+        const current = raw.get(action.path) ?? { kind: 'missing' as const }
         const expected = expectedState(current)
         if (!expected) return undefined
         if (action.kind === 'write') {
             const compactAnchor = compactSurfacePaths.has(action.path) ? compactAnchorFor(action.path) : undefined
             const bytes = action.desired.kind === 'file' ? action.desired.bytes : action.postimage
             if (bytes === undefined) return undefined
-            result.push(Object.freeze({ path: action.path, phase: 'desired', operation: 'write-file', bytes, sha256: sha256(bytes), expected,
-                ...(compactAnchor ? { compactAnchor } : {}) }))
-        } else if (action.postimage !== undefined) result.push(Object.freeze({ path: action.path, phase: 'stale', operation: 'write-file', bytes: action.postimage,
-            sha256: sha256(action.postimage), expected }))
-        else result.push(Object.freeze({ path: action.path, phase: 'stale', operation: 'remove-file', expected }))
+            result.push({ path: action.path, phase: 'desired', operation: 'write-file', bytes, sha256: sha256(bytes), expected,
+                ...(compactAnchor ? { compactAnchor } : {}) })
+        } else if (action.postimage !== undefined) result.push({ path: action.path, phase: 'stale', operation: 'write-file', bytes: action.postimage,
+            sha256: sha256(action.postimage), expected })
+        else result.push({ path: action.path, phase: 'stale', operation: 'remove-file', expected })
     }
-    return Object.freeze(result)
+    return result
 }
 
 async function environmentMutations(
@@ -3151,33 +3151,33 @@ async function environmentMutations(
     const desired = new Map(prepared.owned.map(row => [row.path, row]))
     const paths = [...new Set([...priorEnvironment.keys(), ...desired.keys()])].sort(compareCodeUnits)
     const mutations: PublicationMutation[] = []
-    const entries = await readAnchoredBatches(prepared.root, paths.map(path => Object.freeze({
+    const entries = await readAnchoredBatches(prepared.root, paths.map(path => ({
         path, maxBytes: MAX_GENERATED_BYTES, action: 'read-entry' as const,
     })), prepared.node, adapters)
-    if (!entries) return Object.freeze({ kind: 'invalid', path: paths[0] ?? 'generated-environment' })
-    if (entries.kind === 'invalid') return Object.freeze({ kind: 'invalid', path: paths[entries.index] ?? paths[0] ?? 'generated-environment' })
-    if (entries.results.length !== paths.length) return Object.freeze({ kind: 'invalid', path: paths[0] ?? 'generated-environment' })
+    if (!entries) return { kind: 'invalid', path: paths[0] ?? 'generated-environment' }
+    if (entries.kind === 'invalid') return { kind: 'invalid', path: paths[entries.index] ?? paths[0] ?? 'generated-environment' }
+    if (entries.results.length !== paths.length) return { kind: 'invalid', path: paths[0] ?? 'generated-environment' }
     const classified = await classifyOwnedState(prepared, manifest, new Map(paths.map((path, index) => [path, entries.results[index]!])))
-    if (classified.kind !== 'complete') return Object.freeze({ kind: 'invalid', path: classified.diagnostic.target ?? 'generated-environment' })
+    if (classified.kind !== 'complete') return { kind: 'invalid', path: classified.diagnostic.target ?? 'generated-environment' }
     const unknown = classified.paths.find(row => row.state === 'unknown')
-    if (unknown) return Object.freeze({ kind: 'invalid', path: unknown.fact.path })
+    if (unknown) return { kind: 'invalid', path: unknown.fact.path }
     for (const [index, path] of paths.entries()) {
         const current = entries.results[index]!
-        if (current.kind === 'complete') return Object.freeze({ kind: 'invalid', path })
+        if (current.kind === 'complete') return { kind: 'invalid', path }
         const expected = expectedState(current)
-        if (!expected) return Object.freeze({ kind: 'invalid', path })
+        if (!expected) return { kind: 'invalid', path }
         const owned = priorEnvironment.get(path)
         const next = desired.get(path)
         if (current.kind !== 'missing' && (!owned || current.kind !== 'file'
             || current.sha256 !== owned.sha256 && next?.sha256 !== owned.sha256)) {
-            return Object.freeze({ kind: 'invalid', path })
+            return { kind: 'invalid', path }
         }
         if (next) {
             if (current.kind === 'file' && current.sha256 === next.sha256) continue
-            mutations.push(Object.freeze({ path, phase: 'desired', operation: 'write-file', bytes: next.bytes, sha256: next.sha256, expected }))
-        } else if (current.kind === 'file') mutations.push(Object.freeze({ path, phase: 'stale', operation: 'remove-file', expected }))
+            mutations.push({ path, phase: 'desired', operation: 'write-file', bytes: next.bytes, sha256: next.sha256, expected })
+        } else if (current.kind === 'file') mutations.push({ path, phase: 'stale', operation: 'remove-file', expected })
     }
-    return Object.freeze({ kind: 'complete', mutations: Object.freeze(mutations) })
+    return { kind: 'complete', mutations }
 }
 
 async function preparePublication(
@@ -3251,9 +3251,9 @@ async function preparePublication(
     if (unknown) return refuse('SURFACE_STATE_CONFLICT', 'owned surface identity or confinement is unknown', unknown.fact.path)
     const effectivePriorSurfaces = priorSurfaces
     const environment = await environmentMutations(prepared, ownership.kind === 'complete' ? ownership.manifest : undefined, adapters)
-    if (environment.kind === 'invalid') return Object.freeze({ prepared, ownership, refusal: refuse(
+    if (environment.kind === 'invalid') return { prepared, ownership, refusal: refuse(
         'GENERATED_STALE_ARTIFACT_DRIFT', 'a generated whole-file path is unmanaged, changed, or unsafe', environment.path,
-    ) })
+    ) }
     const plan = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
     if (plan.kind !== 'complete') return surfacePlanRefusal(prepared, plan.diagnostic, unfinishedInit)
     const surface = surfaceMutations(plan.actions, surfaceState.raw, prepared.compactSurfacePaths)
@@ -3270,11 +3270,11 @@ async function preparePublication(
         ledgerExpected: ownership.kind === 'missing' ? { kind: 'missing' }
             : { kind: 'file', sha256: ownership.sha256, identity: ownership.identity.file },
         nextLedgerBytes: encodeOwnershipManifest(prepared).bytes,
-        mutations: Object.freeze(all),
+        mutations: all,
         surfaceActions: plan.actions,
     }, adapters)
-    if (publication.kind === 'refusal') return Object.freeze({ prepared, ownership, refusal: publication })
-    return Object.freeze({ prepared, ownership, plan: publication.plan })
+    if (publication.kind === 'refusal') return { prepared, ownership, refusal: publication }
+    return { prepared, ownership, plan: publication.plan }
 }
 
 export interface GeneratedEnvironmentRepairAuthority {
@@ -3299,7 +3299,7 @@ interface RepairRecord {
 const issuedRepairs = new WeakMap<GeneratedEnvironmentRepairAuthority, RepairRecord>()
 
 function issueRepairAuthority(record: RepairRecord): GeneratedEnvironmentRepairAuthority {
-    const authority: GeneratedEnvironmentRepairAuthority = Object.freeze({ kind: 'generated-environment-repair' })
+    const authority: GeneratedEnvironmentRepairAuthority = { kind: 'generated-environment-repair' }
     issuedRepairs.set(authority, record)
     return authority
 }
@@ -3316,18 +3316,18 @@ export async function prepareGeneratedEnvironmentCurrentness(
     const outcome = 'status' in publication ? publication : await checkCanonicalGeneratedEnvironment(input, prepared, adapters)
     const authority = prepared && 'plan' in publication
         ? issueRepairAuthority({ prepared, plan: publication.plan, adapters }) : undefined
-    return Object.freeze({
+    return {
         outcome,
-        changes: 'plan' in publication ? publication.plan.changes : Object.freeze([]),
+        changes: 'plan' in publication ? publication.plan.changes : [],
         storedProducer: ownership?.kind === 'complete' ? ownership.manifest.producer : null,
-        currentProducer: Object.freeze({ package: installedPackageMetadata.name, version: installedPackageMetadata.version,
-            sourceRevision: installedPackageMetadata.cockpitSourceRevision }),
-        fixContext: Object.freeze({ resolvedConfigPath: prepared?.configPath ?? null,
-            generatedTargets: Object.freeze(prepared ? [...prepared.owned, ...prepared.surfaces].map(row => row.path) : []) }),
+        currentProducer: { package: installedPackageMetadata.name, version: installedPackageMetadata.version,
+            sourceRevision: installedPackageMetadata.cockpitSourceRevision },
+        fixContext: { resolvedConfigPath: prepared?.configPath ?? null,
+            generatedTargets: prepared ? [...prepared.owned, ...prepared.surfaces].map(row => row.path) : [] },
         ...(authority ? { repairAuthority: authority } : {}),
         ...('status' in publication ? { repairRefusal: publication }
             : 'refusal' in publication ? { repairRefusal: publication.refusal } : {}),
-    })
+    }
 }
 
 async function prepareGeneratedEnvironmentSync(
@@ -3387,7 +3387,7 @@ export async function syncTeamGeneratedEnvironment(
     }
     const outcome = await applyGeneratedEnvironmentRepair(prepared.authority, { dryRun: prepared.dryRun })
     return outcome.kind === 'refusal' ? outcome : { ...outcome,
-        result: { ...outcome.result, changes: Object.freeze([...metadata.authority.changes, ...outcome.result.changes]) } }
+        result: { ...outcome.result, changes: [...metadata.authority.changes, ...outcome.result.changes] } }
 }
 
 export async function applyGeneratedEnvironmentRepair(
@@ -3490,7 +3490,7 @@ async function checkCanonicalGeneratedEnvironment(
         'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
     const required = generatedPathFacts(prepared, 'required-after-sync')
     if (required.kind !== 'complete') return refuse(required.diagnostic.code, required.diagnostic.message, required.diagnostic.target)
-    const canonicalReads = await readAnchoredBatches(prepared.root, prepared.generated.map(file => Object.freeze({
+    const canonicalReads = await readAnchoredBatches(prepared.root, prepared.generated.map(file => ({
         path: file.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-file' as const,
     })), prepared.node, adapters)
     // An indexed refusal omits the prefix receipts. Reobserve only that prefix to retain
@@ -3550,29 +3550,29 @@ async function composeTopologyDiagnostics(
     adapters: GeneratedEnvironmentCommandAdapters,
 ): Promise<readonly Diagnostic[]> {
     const loaded = await loadCockpitConfig(configPath)
-    if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return Object.freeze([{ severity: 'error' as const,
-        code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }])
+    if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return [{ severity: 'error' as const,
+        code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }]
     const config = loaded.result.config
-    if (declaredRuntime(config.environment) !== 'compose') return Object.freeze([])
+    if (declaredRuntime(config.environment) !== 'compose') return []
     const env = { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST, DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
         DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH }
     const [docker, node] = await Promise.all([resolveDockerExecutable(process.env), nodeAuthority()])
-    const observed = docker.state !== 'available' ? Object.freeze({ kind: 'unavailable' as const, reason: docker.reason })
-        : !node ? Object.freeze({ kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' })
+    const observed = docker.state !== 'available' ? { kind: 'unavailable' as const, reason: docker.reason }
+        : !node ? { kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' }
             : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,
                 projectName: config.cockpit.name, docker: docker.value, node, env }, adapters.execute)
-    if (observed.kind !== 'complete') return Object.freeze([{ severity: 'error' as const, code: 'COMPOSE_TOPOLOGY_UNAVAILABLE',
+    if (observed.kind !== 'complete') return [{ severity: 'error' as const, code: 'COMPOSE_TOPOLOGY_UNAVAILABLE',
         message: `check could not read the declared Compose topology, so its ports, healthchecks and images are unverified: ${observed.reason}`,
         target: config.environment.compose_files.join(', '),
-        fix: 'install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files' }])
+        fix: 'install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files' }]
     const root = dirname(loaded.result.source.path)
     const siblingsRoot = resolve(root, config.cockpit.siblings_root)
     return assessComposeTopology(observed.services, {
         projectDirectory: composeProjectDirectory(root, config.environment.compose_files),
         portVariables: Object.keys(config.ports.bases),
-        siblings: config.sibling.map(sibling => Object.freeze({
+        siblings: config.sibling.map(sibling => ({
             slug: sibling.slug, var: sibling.var, mount: sibling.mount, path: resolve(siblingsRoot, sibling.dir) })),
-        hostPaths: config.environment.generated_host_paths.map(declared => Object.freeze({ declared, path: resolve(root, declared) })),
+        hostPaths: config.environment.generated_host_paths.map(declared => ({ declared, path: resolve(root, declared) })),
     })
 }
 
@@ -3584,12 +3584,12 @@ export async function checkGeneratedEnvironment(
     const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters)
     const findings = currentness.outcome.kind === 'complete'
         ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters) : []
-    const diagnostics = Object.freeze([...currentness.outcome.diagnostics, ...findings])
+    const diagnostics = [...currentness.outcome.diagnostics, ...findings]
     const outcome = findings.some(row => row.severity === 'error')
-        ? Object.freeze({ kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics })
-        : Object.freeze({ ...currentness.outcome, diagnostics })
-    return Object.freeze({ ...outcome, fixContext: currentness.fixContext, report: Object.freeze({
+        ? { kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics }
+        : { ...currentness.outcome, diagnostics }
+    return { ...outcome, fixContext: currentness.fixContext, report: {
         storedProducer: currentness.storedProducer, currentProducer: currentness.currentProducer,
         repair: proposeGeneratedEnvironmentRepair(currentness),
-    }) })
+    } }
 }

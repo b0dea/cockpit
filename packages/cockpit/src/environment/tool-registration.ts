@@ -27,8 +27,8 @@ export interface ToolChangeInput {
 const EDIT_BY_HAND_FIX = 'edit the tools list under [surfaces] in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
 
 function refused(code: string, message: string, target: string, fix?: string): SiblingOutcome {
-    return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
-        diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) })]) })
+    return { status: 2, result: null, artifact: null, destination: null,
+        diagnostics: [{ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) }] }
 }
 
 /** Key order must not matter when two parsed configurations are compared. */
@@ -38,7 +38,7 @@ function canonical(value: unknown): string {
 }
 
 function done(artifact: string, result: Record<string, unknown>): SiblingOutcome {
-    return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact, result: Object.freeze(result) })
+    return { status: 0, diagnostics: [], destination: null, artifact, result }
 }
 
 export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutcome> {
@@ -47,7 +47,7 @@ export async function runToolChange(input: ToolChangeInput): Promise<SiblingOutc
     }
     const tool = input.tool as SurfaceTarget
     const loaded = await loadCockpitConfig(input.configPath)
-    if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    if (loaded.kind !== 'complete') return { status: 2, result: null, diagnostics: loaded.diagnostics }
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     // The list keeps the order it was written in; an added tool goes last.

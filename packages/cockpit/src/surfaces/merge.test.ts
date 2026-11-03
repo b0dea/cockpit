@@ -44,8 +44,6 @@ describe('surface merge authority', () => {
         })
         expect(core).toEqual([original])
         expect(overlays).toEqual([overlay])
-        expect(Object.isFrozen(result)).toBe(true)
-        if (result.kind === 'complete') expect(Object.isFrozen(result.surfaces[0]!.sources)).toBe(true)
     })
 
     it('accepts a custom consumer surface without requiring a core declaration', () => {

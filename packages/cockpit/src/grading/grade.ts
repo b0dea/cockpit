@@ -18,26 +18,26 @@ export interface GradingSubject {
 export type Verdict = Readonly<{ id: string; verdict: 'met' | 'unmet' | 'unclear'; note: string }>
 
 export function gradingDocument(instruction: string, repositoryRoot: string, subject: GradingSubject): Readonly<Record<string, unknown>> {
-    return Object.freeze({
+    return {
         protocol: 'cockpit-independent-grade/v1', instruction, repositoryRoot,
         // No evaluator command line wires a browser, so a criterion about what a person sees cannot be observed.
         browser: 'unavailable',
         order: { objective: subject.objective ?? null, criteria: subject.criteria.map(row => ({ id: row.id, text: row.text, check: row.check ?? null })),
             nonGoals: subject.nonGoals, scope: subject.scope },
         checks: subject.checks, changes: subject.changes, outOfScope: subject.outOfScope,
-    })
+    }
 }
 
 export function gradingSchema(criteria: readonly WorkOrderCriterion[]): Readonly<Record<string, unknown>> {
     const string = { type: 'string' }
-    return Object.freeze({ type: 'object', additionalProperties: false, required: ['criteria'], properties: {
+    return { type: 'object', additionalProperties: false, required: ['criteria'], properties: {
         criteria: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'verdict', 'note', 'evidence'], properties: {
             id: { type: 'string', enum: criteria.map(row => row.id) },
             verdict: { type: 'string', enum: ['met', 'unmet', 'unclear'] },
             note: string,
             evidence: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['source', 'quote'], properties: { source: string, quote: string } } },
         } } },
-    } })
+    } }
 }
 
 // A quote is evidence only when it is specific: at least this long, unless it is the whole text, and
@@ -68,11 +68,11 @@ export function readGradingAnswer(answer: Readonly<Record<string, unknown>>, sub
         : subject.changes.find(row => row.path === source)?.diff
     return { criteria: subject.criteria.map(criterion => {
         const row = rows.find(candidate => candidate.id === criterion.id)!
-        if (row.verdict !== 'met') return Object.freeze({ id: row.id, verdict: row.verdict, note: row.note })
+        if (row.verdict !== 'met') return { id: row.id, verdict: row.verdict, note: row.note }
         const unsupported = row.evidence.length === 0 ? 'cites no evidence'
             : row.evidence.find(item => { const textCited = cited(item.source); return textCited === undefined || !quoted(textCited, item.quote) })
-        return unsupported === undefined ? Object.freeze({ id: row.id, verdict: 'met' as const, note: row.note })
-            : Object.freeze({ id: row.id, verdict: 'unclear' as const, note: `the grader said met but ${typeof unsupported === 'string' ? unsupported
-                : `its quote from ${unsupported.source} is not found exactly once there`}: ${row.note}` })
+        return unsupported === undefined ? { id: row.id, verdict: 'met' as const, note: row.note }
+            : { id: row.id, verdict: 'unclear' as const, note: `the grader said met but ${typeof unsupported === 'string' ? unsupported
+                : `its quote from ${unsupported.source} is not found exactly once there`}: ${row.note}` }
     }) }
 }

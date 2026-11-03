@@ -69,7 +69,7 @@ function captureOwnValues(value: unknown, keys: readonly string[]): Readonly<Rec
         if (value === null || typeof value !== 'object' || Array.isArray(value) || !exactKeys(value, keys)) return undefined
         const captured: Record<string, unknown> = {}
         for (const key of keys) captured[key] = (value as Record<string, unknown>)[key]
-        return Object.freeze(captured)
+        return captured
     } catch {
         // A throwing accessor or proxy trap means the value is malformed.
         return undefined
@@ -153,23 +153,23 @@ export function planLogs(
     }, ownComposeAuthority)
     if (composeBoundary.kind === 'refusal') return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: composeBoundary.diagnostics[0].message }
     const argv = [input.executable.canonicalPath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', String(input.tail), ...(input.follow ? ['--follow'] : []), input.containerId] as [string, ...string[]]
-    const step: ExecutionStep = Object.freeze({
-        id: `runtime:logs:${input.projectName}:${input.service}`, argv: Object.freeze(argv) as readonly [string, ...string[]], argv0: input.executable.invocationPath, cwd: input.cwd,
+    const step: ExecutionStep = {
+        id: `runtime:logs:${input.projectName}:${input.service}`, argv: argv as readonly [string, ...string[]], argv0: input.executable.invocationPath, cwd: input.cwd,
         // A follow runs until it is cancelled, so the per-query budget would end it with nothing shown;
         // it gets the longest step the executor accepts instead.
-        env: Object.freeze({ ...input.env }), timeoutMs: input.follow ? MAX_STEP_TIMEOUT_MS : input.timeoutMs, stdoutLimitBytes: input.outputLimitBytes,
+        env: { ...input.env }, timeoutMs: input.follow ? MAX_STEP_TIMEOUT_MS : input.timeoutMs, stdoutLimitBytes: input.outputLimitBytes,
         // The newest records are the ones asked for, so output past the limit drops the oldest bytes
         // rather than the whole read.
-        stderrLimitBytes: Math.min(input.outputLimitBytes, 65_536), outputOverflow: 'retain-tail', paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ stackId: input.stackId, configSha256: input.configSha256, batchId: input.batchId, containerId: input.containerId, service: input.service, since: input.since, runtimeVersion: input.runtimeVersion, executableSha256: input.executable.sha256, ...(input.restartBatches === undefined ? {} : { restartBeforeBatch: input.restartBatches[0], restartAfterBatch: input.restartBatches[1] }) }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([
-            Object.freeze({ path: input.executable.canonicalPath, sha256: input.executable.sha256, maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true, executionMode: input.executable.executionMode }),
-        ]),
-        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-    })
+        stderrLimitBytes: Math.min(input.outputLimitBytes, 65_536), outputOverflow: 'retain-tail', paths: [], ports: [],
+        labels: { stackId: input.stackId, configSha256: input.configSha256, batchId: input.batchId, containerId: input.containerId, service: input.service, since: input.since, runtimeVersion: input.runtimeVersion, executableSha256: input.executable.sha256, ...(input.restartBatches === undefined ? {} : { restartBeforeBatch: input.restartBatches[0], restartAfterBatch: input.restartBatches[1] }) }, expected: [],
+        consumedFiles: [
+            { path: input.executable.canonicalPath, sha256: input.executable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: input.executable.executionMode },
+        ],
+        filesystemChecks: [], compensation: [],
+    }
     const resolvedStep = snapshotExecutionStep(step)
     if (resolvedStep === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request did not produce a valid execution plan' }
-    const plan = Object.freeze({ kind: 'planned' as const, step: resolvedStep })
+    const plan = { kind: 'planned' as const, step: resolvedStep }
     issuedLogPlans.add(plan)
     return plan
 }
@@ -194,7 +194,7 @@ const issuedFailureLogPlans = new WeakMap<object, FailureLogContract>()
 const consumedFailureLogPlans = new WeakSet<object>()
 
 function unavailableFailurePlan(): FailureLogPlan {
-    return Object.freeze({ kind: 'unavailable', reason: 'failure logs are unavailable' })
+    return { kind: 'unavailable', reason: 'failure logs are unavailable' }
 }
 
 function composeFailurePrefix(context: RuntimeServiceFailureLogContext): readonly string[] | undefined {
@@ -234,7 +234,7 @@ export function planFailureLogs(input: FailureLogRequest): FailureLogPlan {
         const containerId = evidence.containerId
         const composePrefix = failureContext && containerId === null ? composeFailurePrefix(failureContext) : undefined
         if (failureContext && containerId === null && !composePrefix) return unavailableFailurePlan()
-        const argv = Object.freeze(containerId === null ? [
+        const argv = containerId === null ? [
             context.executable.canonicalPath,
             ...composePrefix!,
             'logs',
@@ -263,22 +263,22 @@ export function planFailureLogs(input: FailureLogRequest): FailureLogPlan {
             '--tail',
             String(tail),
             evidence.containerId,
-        ]) as readonly [string, ...string[]]
-        const executableConsumedFile = Object.freeze({
+        ] as readonly [string, ...string[]]
+        const executableConsumedFile = {
             path: context.executable.canonicalPath,
             sha256: context.executable.sha256,
             maxBytes: 536_870_912,
-            argvIndexes: Object.freeze([0]),
+            argvIndexes: [0],
             executable: true,
             executionMode: context.executable.executionMode,
-        })
+        }
         const inheritedConsumedFiles = failureContext && containerId === null
             ? failureContext.consumedFiles
-            : Object.freeze([])
+            : []
         const consumedFiles = inheritedConsumedFiles.some(({ path }) => path === context.executable.canonicalPath)
             ? inheritedConsumedFiles
-            : Object.freeze([executableConsumedFile, ...inheritedConsumedFiles])
-        const step = snapshotExecutionStep(Object.freeze({
+            : [executableConsumedFile, ...inheritedConsumedFiles]
+        const step = snapshotExecutionStep({
             id: `runtime:failure-logs:${containerId ?? `${evidence.projectName}:${evidence.service}`}`,
             argv,
             argv0: context.executable.invocationPath,
@@ -287,9 +287,9 @@ export function planFailureLogs(input: FailureLogRequest): FailureLogPlan {
             timeoutMs: timeoutMs as number,
             stdoutLimitBytes: outputLimitBytes as number,
             stderrLimitBytes: Math.min(outputLimitBytes as number, 65_536),
-            paths: failureContext && containerId === null ? failureContext.paths : Object.freeze([]),
-            ports: Object.freeze([]),
-            labels: Object.freeze({
+            paths: failureContext && containerId === null ? failureContext.paths : [],
+            ports: [],
+            labels: {
                 stackId: evidence.stackId,
                 configSha256: evidence.configSha256,
                 batchId: evidence.batchId,
@@ -303,14 +303,14 @@ export function planFailureLogs(input: FailureLogRequest): FailureLogPlan {
                 until: evidence.observationWindow.expiresAt,
                 follow: 'false',
                 issuanceId: randomBytes(32).toString('hex'),
-            }),
-            expected: Object.freeze([]),
+            },
+            expected: [],
             consumedFiles,
-            filesystemChecks: failureContext && containerId === null ? failureContext.filesystemChecks : Object.freeze([]),
-            compensation: Object.freeze([]),
-        }))
+            filesystemChecks: failureContext && containerId === null ? failureContext.filesystemChecks : [],
+            compensation: [],
+        })
         if (!step) return unavailableFailurePlan()
-        const plan = Object.freeze({ kind: 'planned' as const, step })
+        const plan = { kind: 'planned' as const, step }
         issuedFailureLogPlans.set(plan, Object.freeze({ evidence, step, early: failureContext !== undefined }))
         return plan
     } catch {
@@ -348,7 +348,7 @@ export function admitFailureLogs(input: {
     readonly plan: FailureLogPlan
     readonly outcome: ExecuteProbeOutcome
 }): FailureLogAdmission {
-    const unavailable = () => Object.freeze({ kind: 'unavailable' as const, records: Object.freeze([]) as readonly FailureLogRecord[] })
+    const unavailable = () => ({ kind: 'unavailable' as const, records: [] as readonly FailureLogRecord[] })
     try {
         const captured = captureOwnValues(input, ['plan', 'outcome'])
         const plan = captured?.plan as FailureLogPlan | undefined
@@ -359,12 +359,12 @@ export function admitFailureLogs(input: {
         if (!contract || !outcome) return unavailable()
         consumedFailureLogPlans.add(plan)
         if (outcome.kind !== 'complete') {
-            if (contract.early) return Object.freeze({
+            if (contract.early) return {
                 kind: 'unavailable' as const,
                 code: outcome.code,
                 service: contract.evidence.service,
-                records: Object.freeze([]) as readonly FailureLogRecord[],
-            })
+                records: [] as readonly FailureLogRecord[],
+            }
             return unavailable()
         }
         if (outcome.stdout.byteLength + outcome.stderr.byteLength > contract.step.stdoutLimitBytes) return unavailable()
@@ -388,7 +388,7 @@ export function admitFailureLogs(input: {
                 if (timestamp < windowStartNanoseconds || timestamp > windowEndNanoseconds) return unavailable()
                 const message = redactSensitiveMessage(match[2])
                 if (message === undefined) return unavailable()
-                records.push(Object.freeze({
+                records.push({
                     stackId: contract.evidence.stackId,
                     configSha256: contract.evidence.configSha256,
                     batchId: contract.evidence.batchId,
@@ -400,12 +400,12 @@ export function admitFailureLogs(input: {
                     message,
                     stream: contract.evidence.containerId === null ? 'combined' : stream,
                     restart: false,
-                } as FailureLogRecord))
+                } as FailureLogRecord)
             }
         }
         records.sort((left, right) => compareInstants(left.timestamp, right.timestamp)
             || (left.stream === right.stream ? 0 : left.stream === 'stdout' ? -1 : 1))
-        return Object.freeze({ kind: 'complete', records: Object.freeze(records) })
+        return { kind: 'complete', records }
     } catch {
         // Any throw while parsing yields unavailable; log content and parser errors can echo secrets.
         return unavailable()
@@ -489,7 +489,7 @@ function ownedLogPlan(value: unknown): Extract<LogPlan, { kind: 'planned' }> | u
 // Collection failures are about the log read itself, never the runtime measurement, so they name what
 // failed instead of sending the reader to measure a runtime that is already measured.
 function unreadable(reason: string) {
-    return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason, records: Object.freeze([]) }
+    return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason, records: [] }
 }
 
 export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, execute: (step: ExecutionStep, options: { signal?: AbortSignal }) => Promise<LogExecution>, signal?: AbortSignal, restart?: RestartWindow) {
@@ -509,8 +509,8 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
     // A follow that reaches its budget has ended, as it does when the container stops: what it read is the result.
     const followEnded = outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT
         && resolvedPlan.step.argv.includes('--follow')
-    if (outcome.kind === 'refusal' && !cancelled && !followEnded) return { kind: 'unavailable' as const, code: outcome.code, reason: `the log read failed (${outcome.code})`, records: Object.freeze([]) }
-    if (cancelled && !outcome.execution.started) return { kind: 'cancelled' as const, records: Object.freeze([]), truncated: false }
+    if (outcome.kind === 'refusal' && !cancelled && !followEnded) return { kind: 'unavailable' as const, code: outcome.code, reason: `the log read failed (${outcome.code})`, records: [] }
+    if (cancelled && !outcome.execution.started) return { kind: 'cancelled' as const, records: [], truncated: false }
     if (!outcome.receipt || outcome.receipt.stepId !== resolvedPlan.step.id
         || !validInstant(outcome.receipt.startedAt) || !validInstant(outcome.receipt.finishedAt)
         || instantMs(outcome.receipt.startedAt) > instantMs(outcome.receipt.finishedAt)) {
@@ -535,13 +535,13 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
             if (match === null || !validInstant(match[1])) return unreadable(`the container runtime returned a ${stream} line without a valid timestamp`)
             const message = redactSensitiveMessage(match[2])
             if (message === undefined) return unreadable(`a ${stream} record could not be redacted, so none are shown`)
-            records.push(Object.freeze({
+            records.push({
                 stackId: authority.stackId as StackId, configSha256: authority.configSha256,
                 batchId: authority.batchId, containerId: authority.containerId,
                 service: authority.service, runtimeVersion: authority.runtimeVersion,
                 executableSha256: authority.executableSha256,
                 timestamp: match[1], message, restart: false, stream,
-            }))
+            })
         }
         if (truncated && records.length > streamStart) truncatedStreamStarts.push(records[streamStart].timestamp)
     }
@@ -560,13 +560,13 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
             return unreadable('the restart evidence does not bracket the log read')
         }
         if (before.stability.processIdentitySha256 !== after.stability.processIdentitySha256) {
-            records.push(Object.freeze({
+            records.push({
                 stackId: authority.stackId as StackId, configSha256: authority.configSha256,
                 batchId: authority.batchId, containerId: authority.containerId,
                 service: authority.service, runtimeVersion: authority.runtimeVersion,
                 executableSha256: authority.executableSha256,
                 timestamp: after.observedAt, message: 'runtime restart observed', stream: 'stdout', restart: true,
-            }))
+            })
         }
     }
     if (resolvedRestart === undefined && restartBatches !== undefined) {
@@ -581,7 +581,7 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
     const shown = wholeFrom === undefined ? records : records.filter(({ timestamp }) => compareInstants(timestamp, wholeFrom) >= 0)
     return {
         kind: cancelled ? 'cancelled' as const : 'complete' as const,
-        records: Object.freeze(shown),
+        records: shown,
         truncated: outcome.execution.stdoutObservedBytes > outcome.stdout.byteLength
             || outcome.execution.stderrObservedBytes > outcome.stderr.byteLength,
     }

@@ -91,9 +91,9 @@ interface StableReadContext {
 }
 
 function freezeJson(value: JsonValue): JsonValue {
-    if (Array.isArray(value)) return Object.freeze(value.map(freezeJson))
+    if (Array.isArray(value)) return value.map(freezeJson)
     if (value !== null && typeof value === 'object') {
-        return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, child]) => [key, freezeJson(child)])))
+        return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, freezeJson(child)]))
     }
     return value
 }
@@ -127,23 +127,23 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
                 || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
-        return Object.freeze({
+        return {
             configPath: resolve(configPath),
-            env: Object.freeze(env),
+            env,
             sessionId,
             timeoutMs,
             outputLimitBytes,
             ...(signal ? { signal } : {}),
             ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
-        })
+        }
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }
 
 function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string')))
+    return Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
 }
 
 function confined(root: string, path: string): boolean {
@@ -168,12 +168,12 @@ async function composeArtifact(root: string, reference: string): Promise<Compose
         const after = await handle.stat()
         if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return undefined
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-        return Object.freeze({
+        return {
             reference,
             canonicalPath,
             source,
             sha256: createHash('sha256').update(bytes).digest('hex'),
-        })
+        }
     } catch {
         // An artifact that cannot be read carries no authority; callers refuse it as unavailable compose artifacts.
         return undefined
@@ -189,7 +189,7 @@ async function composeArtifacts(root: string, references: readonly string[]): Pr
         if (!artifact) return undefined
         artifacts.push(artifact)
     }
-    return artifacts.length > 0 ? Object.freeze(artifacts) : undefined
+    return artifacts.length > 0 ? artifacts : undefined
 }
 
 function sameSource(left: { readonly path: string; readonly byteLength: number; readonly sha256: string }, right: typeof left): boolean {
@@ -294,17 +294,17 @@ export function createReadCommandAdapters(
         if (!confirmedComposeFiles || JSON.stringify(confirmedComposeFiles) !== JSON.stringify(composeFiles)) {
             throw new RefusalError('compose artifacts changed during runtime observation')
         }
-        const ownComposeAuthority = Object.freeze({
+        const ownComposeAuthority = {
             ownComposeFiles: true as const,
             cockpitId: context.cockpitId,
             stackId: context.stackId,
             portLeaseProjection: ports,
-            siblingDirectories: Object.freeze(Object.fromEntries(configuration.config.sibling.map((sibling) => [
+            siblingDirectories: Object.fromEntries(configuration.config.sibling.map((sibling) => [
                 sibling.var,
                 resolve(checkoutRoot, configuration.config.cockpit.siblings_root, sibling.dir),
-            ]))),
-        })
-        return Object.freeze({
+            ])),
+        }
+        return {
             ownComposeAuthority,
             configuration,
             namespace: context.namespace,
@@ -317,7 +317,7 @@ export function createReadCommandAdapters(
             executable,
             composeFiles,
             env,
-        })
+        }
     }
 
     const observeLogs = async (request: { readonly configPath: string; readonly service: string }): Promise<LogObservation> => {
@@ -335,9 +335,9 @@ export function createReadCommandAdapters(
         if (after.kind !== 'complete' || JSON.stringify(after.value) !== JSON.stringify(context.lifecycleRecord)) {
             throw new RefusalError('lifecycle state changed during log observation')
         }
-        return Object.freeze({
+        return {
             ownComposeAuthority: context.ownComposeAuthority,
-            request: Object.freeze({
+            request: {
                 runtime: 'docker-compose' as const,
                 executable: context.executable.value,
                 cwd: context.topology.cwd,
@@ -349,13 +349,13 @@ export function createReadCommandAdapters(
                 composeVersion: context.topology.composeVersion,
                 projectName: context.topology.projectName,
                 composeFiles: context.composeFiles,
-                services: Object.freeze(context.topology.services.map(({ id }) => id)),
+                services: context.topology.services.map(({ id }) => id),
                 service: request.service,
                 timeoutMs: input.timeoutMs,
                 outputLimitBytes: input.outputLimitBytes,
                 env: context.env,
-            }),
-        })
+            },
+        }
     }
 
     const observeEnvironment = async (request: { readonly configPath: string }): Promise<RuntimeEvidenceObservation> => {
@@ -377,11 +377,11 @@ export function createReadCommandAdapters(
             configSha256: context.configuration.runtimeSha256,
             runtimeExecutable: context.executable.value,
             cwd: context.topology.cwd,
-            env: Object.freeze(Object.fromEntries(Object.entries(context.env).filter(([name]) => name === 'PATH'))),
+            env: Object.fromEntries(Object.entries(context.env).filter(([name]) => name === 'PATH')),
             containerId: evidenceSubject.containerId,
             batchId: context.topology.batchId,
-            runtime: Object.freeze({ name: 'docker', version: context.topology.runtimeVersion }),
-            contentPaths: Object.freeze(['/proc/1/exe']),
+            runtime: { name: 'docker', version: context.topology.runtimeVersion },
+            contentPaths: ['/proc/1/exe'],
             timeoutMs: input.timeoutMs,
             outputLimitBytes: STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES,
         })
@@ -411,24 +411,24 @@ export function createReadCommandAdapters(
             creationSource: 'resolved-config',
             intendedState: context.configuration.config as unknown as JsonValue,
         })
-        const ownedSnapshot = Object.freeze({ ...snapshot, intendedState: freezeJson(snapshot.intendedState) })
-        const ownedEvidence = Object.freeze({
+        const ownedSnapshot = { ...snapshot, intendedState: freezeJson(snapshot.intendedState) }
+        const ownedEvidence = {
             ...evidence,
-            runtime: Object.freeze({ ...evidence.runtime }),
-            command: Object.freeze({
+            runtime: { ...evidence.runtime },
+            command: {
                 ...evidence.command,
-                stepIds: Object.freeze([...evidence.command.stepIds]) as unknown as readonly [string, string],
-            }),
-            observedBytes: Object.freeze({ ...evidence.observedBytes }),
-            stability: Object.freeze({ ...evidence.stability }),
-        })
-        return Object.freeze({ snapshot: ownedSnapshot, evidence: ownedEvidence })
+                stepIds: [...evidence.command.stepIds] as unknown as readonly [string, string],
+            },
+            observedBytes: { ...evidence.observedBytes },
+            stability: { ...evidence.stability },
+        }
+        return { snapshot: ownedSnapshot, evidence: ownedEvidence }
     }
 
-    const logs: LogsCommandAdapters = Object.freeze({
+    const logs: LogsCommandAdapters = {
         observe: observeLogs,
         execute: (step: ExecutionStep, options: { readonly signal?: AbortSignal }) => execute(step, options),
         ...(input?.signal ? { signal: input.signal } : {}),
-    })
-    return Object.freeze({ logs, environment: Object.freeze({ observe: observeEnvironment }) })
+    }
+    return { logs, environment: { observe: observeEnvironment } }
 }

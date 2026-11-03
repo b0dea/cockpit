@@ -532,10 +532,6 @@ describe('whole-family port leases', () => {
         if (lease.kind !== 'complete') throw new Error('lease fixture unavailable')
         const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
         if (entrypoints.kind !== 'complete') throw new Error('entrypoint fixture unavailable')
-        expect(Object.isFrozen(lease)).toBe(true)
-        expect(Object.isFrozen(lease.lease)).toBe(true)
-        expect(Object.isFrozen(lease.lease.ports)).toBe(true)
-        expect(Reflect.set(lease.lease.ports, 'WEB', 3999)).toBe(false)
 
         expect(projectPortLeaseResult({ leaseResult: { ...lease }, entrypointResult: entrypoints } as never)).toBeUndefined()
         expect(projectPortLeaseResult({ leaseResult: lease, entrypointResult: { ...entrypoints } } as never)).toBeUndefined()
@@ -1605,9 +1601,7 @@ describe('acquired port-holder compensation', () => {
         expect(compensated).toEqual({
             kind: 'complete', change: 'compensated', recordRevision: 3, remainingHolderIds: [],
         })
-        expect(Object.isFrozen(compensated)).toBe(true)
         if (compensated.kind !== 'complete') throw new Error('expected compensated holder')
-        expect(Object.isFrozen(compensated.remainingHolderIds)).toBe(true)
         const restored = await readState(state.paths.coordination(stackA))
         if (restored.kind !== 'complete') throw new Error('expected a restored record')
         expect(restored.value.value).toEqual(stopped.value.value)

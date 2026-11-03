@@ -73,23 +73,23 @@ export async function inspectSiblingInstructions(
             }
         }
     } catch (error) {
-        return [Object.freeze({
+        return [{
             severity: 'warning' as const,
             code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
             message: `which agent tools load the instructions of sibling ${repository.slug} could not be checked: ${errorCause(error)}`,
             target,
             fix: `make the instruction files at the root of ${repository.root} readable UTF-8 files, then rerun this command`,
-        })]
+        }]
     }
-    if (classified.state === 'agents-only' && claude) findings.push(Object.freeze({
+    if (classified.state === 'agents-only' && claude) findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_AGENTS_ONLY' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_AGENTS_ONLY,
         message: `sibling ${repository.slug} has AGENTS.md but no CLAUDE.md, so Claude Code started there loads none of its instructions`,
         target,
         fix: 'run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
-    }))
-    if (classified.state === 'claude-only' && tools.includes('codexcli')) findings.push(Object.freeze({
+    })
+    if (classified.state === 'claude-only' && tools.includes('codexcli')) findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_CLAUDE_ONLY' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_CLAUDE_ONLY,
@@ -97,32 +97,32 @@ export async function inspectSiblingInstructions(
             + (classified.claudeImports ? '; CLAUDE.md imports other files with @, which only Claude Code follows, so setup proposes no move' : ''),
         target,
         fix: 'run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand',
-    }))
-    if (classified.state === 'unlinked' && claude && agentsReaders) findings.push(Object.freeze({
+    })
+    if (classified.state === 'unlinked' && claude && agentsReaders) findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_UNLINKED' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_UNLINKED,
         message: `sibling ${repository.slug} has both AGENTS.md and CLAUDE.md, but CLAUDE.md does not import AGENTS.md, so Claude Code loads only CLAUDE.md and Codex only AGENTS.md`,
         target,
         fix: 'a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone',
-    }))
-    if (classified.state === 'neither') findings.push(Object.freeze({
+    })
+    if (classified.state === 'neither') findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_MISSING' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_MISSING,
         message: `sibling ${repository.slug} has neither AGENTS.md nor CLAUDE.md, so no agent tool started there loads instructions for it`,
         target,
         fix: 'a person writes AGENTS.md with what an agent must know to work in the repository, then runs npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it',
-    }))
-    if (toolOnly.length > 0) findings.push(Object.freeze({
+    })
+    if (toolOnly.length > 0) findings.push({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_TOOL_ONLY' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_TOOL_ONLY,
         message: `sibling ${repository.slug} keeps instructions in ${toolOnly.join(', ')}, which Claude Code, Codex and OpenCode do not load`,
         target,
         fix: 'a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are',
-    }))
-    return Object.freeze(findings)
+    })
+    return findings
 }
 
 export type SiblingInstructionFilesChange = 'claude-import' | 'move-to-agents'

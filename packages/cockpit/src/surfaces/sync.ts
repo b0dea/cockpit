@@ -50,8 +50,8 @@ function exact(value: JsonSnapshotObject, required: readonly string[]): boolean 
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
 
 function refuse(message: string, target?: string, fix?: string): SurfaceChangePlanResult {
-    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code: 'SURFACE_STATE_CONFLICT', message,
-        ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }) })
+    return { kind: 'refusal', diagnostic: { code: 'SURFACE_STATE_CONFLICT', message,
+        ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) } }
 }
 
 function base(value: JsonSnapshotObject, configured: ReadonlySet<string>): boolean {

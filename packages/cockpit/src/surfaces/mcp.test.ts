@@ -28,7 +28,6 @@ it('collects one sibling server disabled across all targets with a named-env wra
     expect(wrapper.bytes).toContain('SYNTHETIC_TOKEN="${SYNTHETIC_TOKEN?required environment name SYNTHETIC_TOKEN is unset}"')
     expect(wrapper.bytes).toContain('env -i')
     expect(wrapper.sha256).toBe(createHash('sha256').update(wrapper.bytes).digest('hex'))
-    expect(Object.isFrozen(outcome.result.servers[0]?.sources)).toBe(true)
 })
 
 it('deduplicates identical declarations and derives approval exactly once', () => {

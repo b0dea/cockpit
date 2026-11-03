@@ -580,9 +580,6 @@ describe('runtime plan construction', () => {
             env: { TOKEN: 'before', COMPOSE_DISABLE_ENV_FILE: '1' },
             ports: [4100], labels: expect.objectContaining({ owner: 'before' }),
         }))
-        expect(Object.isFrozen(outcome.plan.steps[0])).toBe(true)
-        expect(Object.isFrozen(outcome.plan.steps[0].argv)).toBe(true)
-        expect(Object.isFrozen(outcome.plan.steps[0].filesystemChecks)).toBe(true)
         expect(outcome.plan.steps[0].filesystemChecks.every(Object.isFrozen)).toBe(true)
     })
 
@@ -2351,11 +2348,6 @@ fi
                 { path: secondPath, argvIndexes: [7] },
             ])
             expect(context?.filesystemChecks).toEqual([])
-            expect(Object.isFrozen(context?.composeArgvPrefix)).toBe(true)
-            expect(Object.isFrozen(context?.paths)).toBe(true)
-            expect(Object.isFrozen(context?.consumedFiles)).toBe(true)
-            expect(context?.consumedFiles.every((file) => Object.isFrozen(file) && Object.isFrozen(file.argvIndexes))).toBe(true)
-            expect(Object.isFrozen(context?.filesystemChecks)).toBe(true)
         })
 
         it('does not expose early-log context from a structurally altered service plan', async () => {
@@ -2724,7 +2716,6 @@ fi
             expect(first).toBeDefined()
             expect(second).toBeDefined()
             if (!first || !second) return
-            expect(Object.isFrozen(first)).toBe(true)
             expect(consumeRuntimeLifecycleProjection({ ...first } as never)).toBeUndefined()
 
             const envelope = consumeRuntimeLifecycleProjection(first)
@@ -2753,8 +2744,6 @@ fi
             expect(envelope?.semantics.services.map(({ id }) => id)).toEqual(['db', 'api'])
             expect(envelope?.semantics.services[1]?.healthAcceptance).toEqual({ state: 'running', health: 'healthy' })
             expect(envelope?.semantics.services[0]?.healthAcceptance).toEqual({ state: 'running', health: null })
-            expect(Object.isFrozen(envelope)).toBe(true)
-            expect(Object.isFrozen(envelope?.semantics.services[1]?.inspect.argv)).toBe(true)
         })
 
         it('canonicalizes mount expectations and refuses duplicates at the owning boundary', async () => {
@@ -2842,16 +2831,10 @@ fi
             expect(service.inspect.timeoutCeilingMs).toBe(result.runtime.plan.steps[0]?.timeoutMs)
             expect(healthPlan.step.timeoutMs).toBeLessThanOrEqual(service.inspect.timeoutCeilingMs)
             for (const execution of [service.start, service.status, service.identity, service.inspect]) {
-                expect(Object.isFrozen(execution)).toBe(true)
-                expect(Object.isFrozen(execution.expected)).toBe(true)
-                expect(Object.isFrozen(execution.consumedFiles)).toBe(true)
-                expect(Object.isFrozen(execution.consumedFiles[0]?.argvIndexes)).toBe(true)
                 expect(execution.consumedFiles[0]).toEqual(expect.objectContaining({
                     executable: true,
                     executionMode: result.runtimeExecutable.executionMode,
                 }))
-                expect(Object.isFrozen(execution.filesystemChecks)).toBe(true)
-                expect(Object.isFrozen(execution.compensation)).toBe(true)
             }
         })
 

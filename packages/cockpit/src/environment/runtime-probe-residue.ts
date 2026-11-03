@@ -75,7 +75,7 @@ async function measureDirectories(temporaryDirectory: string, uid: number | unde
             if (!hasErrorCode(error, 'ENOENT')) throw error
         }
         const alive = owner === undefined ? Date.now() - status.mtimeMs < UNOWNED_STALE_MS : !await gone(owner)
-        return Object.freeze({ path, alive })
+        return { path, alive }
     }))
     return judged.filter((directory) => directory !== undefined)
 }

@@ -42,10 +42,10 @@ export function resolveBrowserProxy(input: BrowserProxyInput) {
         || !input.allowedHosts.every((host) => browserProxyAuthorityMatches(host, input.proxyPort))) {
         throw new RefusalError('browser proxy Host allowlist must contain exact hostname:port authorities')
     }
-    return Object.freeze({
-        server: Object.freeze({ bind: '127.0.0.1' as const, port: input.serverPort, publish: false as const }),
-        proxy: Object.freeze({ bind, port: input.proxyPort, allowedHosts: Object.freeze([...input.allowedHosts]), checkHost: true as const }),
-    })
+    return {
+        server: { bind: '127.0.0.1' as const, port: input.serverPort, publish: false as const },
+        proxy: { bind, port: input.proxyPort, allowedHosts: [...input.allowedHosts], checkHost: true as const },
+    }
 }
 
 export type BrowserProxyProjection = ReturnType<typeof resolveBrowserProxy>

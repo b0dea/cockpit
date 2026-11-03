@@ -64,7 +64,7 @@ async function captureRoot(root: string): Promise<RootAuthority> {
         if (dirname(path) === path) break
         if (chain.length >= 64) throw new RefusalError('cockpit root ancestry exceeds the verification bound')
     }
-    return Object.freeze({ root, chain: Object.freeze(chain) })
+    return { root, chain }
 }
 
 async function authenticateRoot(authority: RootAuthority): Promise<void> {
@@ -167,7 +167,7 @@ function packageDependencySlots(manifest: Record<string, unknown>): PackageDepen
         if (dependencies !== undefined && !object(dependencies)) return undefined
         if (object(dependencies) && dependencies[PACKAGE] !== undefined) misplaced.push(section)
     }
-    return { devDependencies, misplaced: Object.freeze(misplaced) }
+    return { devDependencies, misplaced }
 }
 
 function misplacedDependencyMessage(sections: readonly string[]): string {
@@ -350,9 +350,9 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
             { path: packagePath, before: packageBefore, bytes: candidate.bytes },
             { path: ignorePath, before: ignoreBefore, bytes: nextIgnore },
         ]
-        const changes = Object.freeze(files.filter(file => file.before?.bytes !== file.bytes)
-            .map(file => Object.freeze({ operation: 'write' as const, path: relative(root, file.path) })))
-        const prepared = Object.freeze({ changes })
+        const changes = files.filter(file => file.before?.bytes !== file.bytes)
+            .map(file => ({ operation: 'write' as const, path: relative(root, file.path) }))
+        const prepared = { changes }
         issuedMetadata.set(prepared, { authority, configPath: loaded.result.source.path,
             sourceSha256: loaded.result.source.sha256, files })
         return { kind: 'complete', authority: prepared }
@@ -421,7 +421,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             `the cockpit-owned .gitignore block was edited; restore it exactly, or remove the whole ${START} through ${END} region and run npx --no cockpit sync --config <your cockpit.toml> again`, ignorePath)
         if (!ignore || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
             'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run npx --no cockpit sync --config <your cockpit.toml> to rewrite it', ignorePath)
-        return { kind: 'complete', changed: false, changes: Object.freeze([]) }
+        return { kind: 'complete', changed: false, changes: [] }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${errorCause(error)})`, root)
     }
@@ -443,14 +443,14 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
         throw error
     })
     if (!present) {
-        findings.push(Object.freeze({
+        findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
             message: `cockpit is not installed in ${root}, so every npx --no cockpit command the generated instructions print fails there, and the guard hook runs whichever copy last ran sync`,
             target: 'node_modules',
             fix: `in a terminal in ${root}, run npm install (package.json pins the version), then run npx --no cockpit sync --config <your cockpit.toml> so the guard hook runs the installed copy`,
-        }))
+        })
     } else {
         const read = await readBoundedInput(join(root, GUARD_LOCAL_PATHS.identity)).catch((error: unknown) => {
             if (hasErrorCode(error, 'ENOENT')) return undefined
@@ -458,21 +458,21 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
         })
         const identity = read?.kind === 'complete' ? parseGuardLocalIdentity(Buffer.from(read.bytes).toString('utf8')) : undefined
         const own = await realpath(installed)
-        if (identity && relative(own, identity.module).startsWith('..')) findings.push(Object.freeze({
+        if (identity && relative(own, identity.module).startsWith('..')) findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
             message: `the guard hook runs the cockpit copy at ${identity.module}, not the one installed in ${own}, so it stops working when that copy is removed and can differ from the pinned version`,
             target: GUARD_LOCAL_PATHS.identity,
             fix: `in a terminal in ${root}, run npx --no cockpit sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
-        }))
+        })
         // The guard's own proof, run as it runs it from the cockpit root once it runs the installed copy.
         // A root .npmrc, a bin the root package.json declares, or a link that is not npm's leaves every
         // printed npx form asking a person.
         const launcher = join(own, 'bin/cockpit.mjs')
         if (!findings.length && guardLauncherEvidence('npx', ['--no', 'cockpit'], root, root, launcher, '') === undefined) {
             const linked = guardLauncherEvidence('./node_modules/.bin/cockpit', [], root, root, launcher, '') !== undefined
-            findings.push(Object.freeze({
+            findings.push({
                 severity: 'warning' as const,
                 // A literal, so the diagnostic inventory captures the fix beside the code.
                 code: 'COCKPIT_LAUNCHER_UNPROVEN' satisfies typeof ENVIRONMENT_CODES.COCKPIT_LAUNCHER_UNPROVEN,
@@ -481,24 +481,24 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
                         : 'node_modules/.bin/cockpit is not npm\'s link to the installed package either'),
                 target: 'npx --no cockpit',
                 fix: 'run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package',
-            }))
+            })
         }
     }
     const loaded = await loadCockpitConfig(configPath)
-    if (loaded.kind !== 'complete') return Object.freeze(findings)
+    if (loaded.kind !== 'complete') return findings
     const siblings = resolve(root, loaded.result.config.cockpit.siblings_root)
     for (const sibling of loaded.result.config.sibling) {
         const path = resolve(siblings, sibling.dir)
         // The cockpit's own directory is cloned with the cockpit; a plain directory is tracked by it.
         if (sibling.acquire !== 'none' || path === root || !await holdsGitMetadata(path)) continue
-        findings.push(Object.freeze({
+        findings.push({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'SIBLING_REMOTE_UNRECORDED' satisfies typeof ENVIRONMENT_CODES.SIBLING_REMOTE_UNRECORDED,
             message: `sibling ${sibling.slug} is its own Git repository, but cockpit.toml records no remote for it (acquire = "none"), so setup in a teammate's clone of this cockpit leaves ${sibling.dir} absent`,
             target: `sibling:${sibling.slug}`,
             fix: `once the repository is pushed, run npx --no cockpit sibling add ${sibling.slug} --remote <url> --config <your cockpit.toml> and commit cockpit.toml`,
-        }))
+        })
     }
-    return Object.freeze(findings)
+    return findings
 }

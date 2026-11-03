@@ -69,7 +69,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
     const loaded = await loadCockpitConfig(owned.path)
     const failure = loaded.kind === 'refusal' ? loaded.diagnostics[0] : undefined
     const source = loaded.kind === 'complete' ? loaded.result.source.path : failure?.target ?? owned.path
-    return Object.freeze([
+    return [
         issueObservation({
             code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: failure
@@ -86,7 +86,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
             expectation: loaded.kind === 'complete' ? { kind: 'equal', value: loaded.result.source.sha256 } : { kind: 'present' },
             applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'regenerate from the current configuration revision',
         }),
-    ])
+    ]
 }
 
 const STATE_FORMAT = 'cockpit-state/v1'
@@ -343,7 +343,7 @@ export interface StateTransactionAbort<T> {
 }
 
 export function abortStateTransaction<T>(value: T): StateTransactionAbort<T> {
-    const abort = Object.freeze({ aborted: true as const, value })
+    const abort = { aborted: true as const, value }
     stateTransactionAborts.add(abort)
     return abort
 }
@@ -367,7 +367,7 @@ function issueStatePublication<T>(
     const record = snapshotJson(result.value)
     if (!record || typeof record !== 'object' || Array.isArray(record)
         || !StateRecordSchema.safeParse(record).success && !BootstrapStateRecordSchema.safeParse(record).success) return result
-    const issued = Object.freeze({ ...result }) as StateResult<AnyStateRecord>
+    const issued = { ...result } as StateResult<AnyStateRecord>
     issuedStatePublications.set(issued, Object.freeze({
         status: result.kind,
         address: Object.freeze({ ...address }),
@@ -402,7 +402,7 @@ export function authenticateStatePublication(input: {
         if (addressKeys.length !== expectedAddressKeys.length
             || expectedAddressKeys.some((key) => typeof key !== 'string'
                 || ownedAddress[key] !== (expectedAddress as unknown as Record<string, unknown>)[key])) return undefined
-        return Object.freeze({ status: issued.status, record: issued.record })
+        return { status: issued.status, record: issued.record }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -542,7 +542,7 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
         const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
         return address(join(cockpitRoot, 'records', kind, `${identitySegment(subjectId)}.json`), root, cockpitRoot, kind, cockpitId, subjectId)
     }
-    const paths: StateNamespace['paths'] = Object.freeze({
+    const paths: StateNamespace['paths'] = {
         coordination: (stackId) => stackAddress('coordination', stackId),
         lifecycle: (stackId) => stackAddress('lifecycle', stackId),
         dataOutcome: (stackId) => stackAddress('data-outcome', stackId),
@@ -561,8 +561,8 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
                 checksum,
             )
         },
-    })
-    const value: StateNamespace = Object.freeze({ root, cockpitRoot, paths })
+    }
+    const value: StateNamespace = { root, cockpitRoot, paths }
     issuedNamespaces.add(value)
     issuedNamespacePaths.set(paths.coordination, value)
     return value
@@ -573,21 +573,21 @@ function bootstrapNamespace(root: string, checkoutRoot: string, checkoutId: Chec
     const scopedRoot = join(root, 'checkouts', identitySegment(id))
     const bootstrap = (target: SurfaceTarget): BootstrapStateAddress => {
         if (!surfaceTargets.has(target) || target !== selectedTarget) throw new RefusalError('surface target does not match the selected bootstrap target')
-        return Object.freeze({
+        return {
             path: join(scopedRoot, 'records', 'bootstrap', `${target}.json`),
             stateRoot: root,
             checkoutRoot,
             kind: 'bootstrap' as const,
             checkoutId: id,
             target,
-        })
+        }
     }
-    const value: BootstrapStateNamespace = Object.freeze({
+    const value: BootstrapStateNamespace = {
         root,
         checkoutRoot,
         checkoutId: id, target: selectedTarget,
-        paths: Object.freeze({ bootstrap, stateLock: join(scopedRoot, 'locks', 'state.lock') }),
-    })
+        paths: { bootstrap, stateLock: join(scopedRoot, 'locks', 'state.lock') },
+    }
     issuedBootstrapNamespaces.add(value)
     return value
 }
@@ -610,7 +610,7 @@ export function issueStateScopedLock(namespace: StateNamespace, input: Readonly<
     if (!authenticated || !captured || Object.keys(captured).sort().join(',') !== 'identity,owner'
         || typeof captured.owner !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(captured.owner)
         || typeof captured.identity !== 'string' || !digest.test(captured.identity)) return undefined
-    const scope = Object.freeze({ kind: 'state-scoped-lock' as const })
+    const scope = { kind: 'state-scoped-lock' as const }
     issuedScopedLocks.set(scope, Object.freeze({ namespace: authenticated,
         path: join(authenticated.cockpitRoot, 'locks', 'scoped', `${captured.owner}-${captured.identity}`, 'state.lock') }))
     return scope
@@ -621,7 +621,7 @@ export async function withStateRootPortLock<T>(value: StateNamespace,
     operation: () => T | Promise<T>): Promise<StateResult<T>> {
     const authenticated = authenticateStateNamespace(value)
     if (!authenticated) return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'root port lock requires an issued state namespace', 'root port lock')
-    const scope = Object.freeze({ kind: 'state-scoped-lock' as const })
+    const scope = { kind: 'state-scoped-lock' as const }
     issuedScopedLocks.set(scope, Object.freeze({ namespace: authenticated, path: join(authenticated.root, 'locks', 'ports', 'state.lock') }))
     return withStateScopedLock(authenticated, scope, options, operation)
 }
@@ -712,7 +712,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                 } catch (error) {
                     if (name === own || error instanceof InventoryBoundaryError) throw error
                     for (const key of snapshots.keys()) if (!visited.has(key)) snapshots.delete(key)
-                    skipped.push(Object.freeze({ path, reason: errorCause(error) }))
+                    skipped.push({ path, reason: errorCause(error) })
                 }
             }
         }
@@ -721,7 +721,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
             `state namespace inventory could not be read safely: ${errorCause(error)}`, target,
             'inspect the named state entry and retry after all coordination writers finish')
     }
-    const result = await operation(Object.freeze(namespaces), Object.freeze(skipped))
+    const result = await operation(namespaces, skipped)
     try {
         for (const [path, before] of snapshots) {
             target = path
@@ -802,18 +802,18 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             && lifecycle === issued.paths.lifecycle && dataOutcome === issued.paths.dataOutcome
             && stateLock === issued.paths.stateLock && installLock === issued.paths.installLock
             && cache === issued.paths.cache) return issued
-        return Object.freeze({
+        return {
             root,
             cockpitRoot,
-            paths: Object.freeze({
+            paths: {
                 coordination,
                 lifecycle,
                 dataOutcome,
                 stateLock,
                 installLock,
                 cache,
-            }),
-        }) as StateNamespace
+            },
+        } as StateNamespace
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -834,8 +834,8 @@ export function snapshotBootstrapStateNamespace(value: BootstrapStateNamespace):
         const bootstrap = Object.getOwnPropertyDescriptor(paths, 'bootstrap')?.value
         const stateLock = Object.getOwnPropertyDescriptor(paths, 'stateLock')?.value
         if (typeof bootstrap !== 'function' || typeof stateLock !== 'string') return undefined
-        return Object.freeze({ root, checkoutRoot, checkoutId, target,
-            paths: Object.freeze({ bootstrap, stateLock }) }) as BootstrapStateNamespace
+        return { root, checkoutRoot, checkoutId, target,
+            paths: { bootstrap, stateLock } } as BootstrapStateNamespace
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -857,7 +857,7 @@ async function selectStateBase(
         const root = join(input.xdgStateHome, 'cockpit', 'v1')
         const unusable = await usableSelectedBase(input.xdgStateHome, uid)
         if (unusable) return unusableStateRoot<never>(root, unusable) as StateRefusal
-        return { kind: 'complete', value: Object.freeze({ base: input.xdgStateHome, root }) }
+        return { kind: 'complete', value: { base: input.xdgStateHome, root } }
     }
     if (!input.home) return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'the state root is under the home directory, but HOME is not set', '')
     const root = input.platform === 'darwin'
@@ -865,7 +865,7 @@ async function selectStateBase(
         : join(input.home, '.local', 'state', 'cockpit', 'v1')
     const unusable = await usableBase(input.home, uid)
     if (unusable) return unusableStateRoot<never>(root, unusable) as StateRefusal
-    return { kind: 'complete', value: Object.freeze({ base: input.home, root }) }
+    return { kind: 'complete', value: { base: input.home, root } }
 }
 
 /**
@@ -886,8 +886,8 @@ export async function selectMachineStateRoot(input: Readonly<{ platform: 'darwin
 export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootInput): Promise<StateResult<BootstrapStateNamespace>> {
     let stableInput: SelectBootstrapStateRootInput
     try {
-        stableInput = Object.freeze({ platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome,
-            checkoutRoot: input.checkoutRoot, target: input.target, uid: input.uid })
+        stableInput = { platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome,
+            checkoutRoot: input.checkoutRoot, target: input.target, uid: input.uid }
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `bootstrap state root input could not be read safely: ${errorCause(error)}`, 'bootstrap state root input')
     }
@@ -923,15 +923,15 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
         if (checkoutRoots !== undefined && (!Array.isArray(checkoutRoots) || isProxy(checkoutRoots))) {
             throw new RefusalError('checkout roots are malformed')
         }
-        stableInput = Object.freeze({
+        stableInput = {
             platform: input.platform,
             home: input.home,
             xdgStateHome: input.xdgStateHome,
             checkoutRoot: input.checkoutRoot,
-            checkoutRoots: checkoutRoots === undefined ? undefined : Object.freeze([...checkoutRoots]),
+            checkoutRoots: checkoutRoots === undefined ? undefined : [...checkoutRoots],
             cockpitId: input.cockpitId,
             uid: input.uid,
-        })
+        }
     } catch (error) {
         return refusal(
             ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
@@ -1101,13 +1101,13 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
             if (Reflect.ownKeys(address).sort().join(',') !== 'checkoutId,checkoutRoot,kind,path,stateRoot,target') {
                 throw new RefusalError('bootstrap address shape is not closed')
             }
-            stableAddress = Object.freeze({
+            stableAddress = {
                 path: address.path, stateRoot: address.stateRoot, checkoutRoot: address.checkoutRoot,
                 kind: 'bootstrap', checkoutId: address.checkoutId, target: address.target,
-            })
+            }
         } else {
         const qualifier = address.qualifier
-        stableAddress = Object.freeze({
+        stableAddress = {
             path: address.path,
             stateRoot: address.stateRoot,
             cockpitRoot: address.cockpitRoot,
@@ -1115,7 +1115,7 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
             cockpitId: address.cockpitId,
             subjectId: address.subjectId,
             ...(qualifier ? { qualifier } : {}),
-        })
+        }
         }
     } catch (error) {
         return refusal(
@@ -1284,7 +1284,7 @@ export type BootstrapAnswerResetResult =
     | Readonly<{ kind: 'refusal'; code: string; message: string; target: string }>
 
 function answerResetRefusal(code: string, message: string, target: string): BootstrapAnswerResetResult {
-    return Object.freeze({ kind: 'refusal', code, message, target })
+    return { kind: 'refusal', code, message, target }
 }
 
 function bootstrapAnswerResetPreview(record: BootstrapStateRecord | null, field: string, target: string): BootstrapAnswerResetResult {
@@ -1303,14 +1303,14 @@ function bootstrapAnswerResetPreview(record: BootstrapStateRecord | null, field:
             'reset answer field must name exactly one recorded answer', field)
     }
     const index = matches[0]!.index
-    const invalidatedFields = Object.freeze(record.value.greenfield.questions.slice(index).map(question => question.field))
+    const invalidatedFields = record.value.greenfield.questions.slice(index).map(question => question.field)
     const previewSha256 = createHash('sha256').update(JSON.stringify({
         checkoutId: record.checkoutId, target: record.target, revision: record.revision,
         field, questionId: matches[0]!.question.id, invalidatedFields,
     })).digest('hex')
-    return Object.freeze({ kind: 'pending', preview: Object.freeze({
+    return { kind: 'pending', preview: {
         revision: record.revision, field, invalidatedFields, previewSha256,
-    }) })
+    } }
 }
 
 export async function resetBootstrapAnswer(
@@ -1320,8 +1320,8 @@ export async function resetBootstrapAnswer(
 ): Promise<BootstrapAnswerResetResult> {
     let stableInput: typeof input
     try {
-        stableInput = Object.freeze({ ownerId: input.ownerId, field: input.field, updatedAt: input.updatedAt,
-            ...(input.acceptedPreviewSha256 === undefined ? {} : { acceptedPreviewSha256: input.acceptedPreviewSha256 }) })
+        stableInput = { ownerId: input.ownerId, field: input.field, updatedAt: input.updatedAt,
+            ...(input.acceptedPreviewSha256 === undefined ? {} : { acceptedPreviewSha256: input.acceptedPreviewSha256 }) }
     } catch (error) {
         return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_FIELD_INVALID',
             `recorded answer reset input could not be read safely: ${errorCause(error)}`, 'recorded answer reset input')
@@ -1355,7 +1355,7 @@ export async function resetBootstrapAnswer(
         'recorded answer reset durability could not be confirmed', address.path)
     if (!acceptedPreview) return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_STALE',
         'recorded answer reset did not retain its authenticated preview', address.path)
-    return Object.freeze({ kind: 'complete', preview: acceptedPreview, record: outcome.value })
+    return { kind: 'complete', preview: acceptedPreview, record: outcome.value }
 }
 
 type BootstrapObservationRefreshRefusal = Readonly<{
@@ -1370,7 +1370,7 @@ function observationRefreshRefusal(
     reason: BootstrapObservationRefreshRefusal['reason'],
     message: string,
 ): BootstrapObservationRefreshRefusal {
-    return Object.freeze({ kind: 'refusal', reason, message })
+    return { kind: 'refusal', reason, message }
 }
 
 export async function refreshBootstrapObservation(
@@ -1394,9 +1394,9 @@ export async function refreshBootstrapObservation(
             || parsed.data.sourceObservationSha256 === input.expectedSourceObservationSha256) {
             return observationRefreshRefusal('invalid', 'fresh estate observation replacement is malformed')
         }
-        stableInput = Object.freeze({ ownerId: input.ownerId, expectedRevision: input.expectedRevision,
+        stableInput = { ownerId: input.ownerId, expectedRevision: input.expectedRevision,
             expectedSourceObservationSha256: input.expectedSourceObservationSha256,
-            greenfield: Object.freeze(parsed.data), updatedAt: input.updatedAt })
+            greenfield: parsed.data, updatedAt: input.updatedAt }
     } catch (error) {
         return observationRefreshRefusal('invalid', `fresh estate observation replacement could not be read safely: ${errorCause(error)}`)
     }
@@ -1432,7 +1432,7 @@ function publicationRefreshRefusal(
     reason: BootstrapPublicationRefreshRefusal['reason'],
     message: string,
 ): BootstrapPublicationRefreshRefusal {
-    return Object.freeze({ kind: 'refusal', reason, message })
+    return { kind: 'refusal', reason, message }
 }
 
 export async function refreshBootstrapPublication(
@@ -1471,11 +1471,11 @@ export async function refreshBootstrapPublication(
                 && JSON.stringify(expectedPublished.data) === JSON.stringify(published.data)) {
             return publicationRefreshRefusal('invalid', 'bootstrap publication refresh evidence is malformed')
         }
-        stableInput = Object.freeze({ ownerId: input.ownerId, expectedRevision: input.expectedRevision,
+        stableInput = { ownerId: input.ownerId, expectedRevision: input.expectedRevision,
             expectedSources: expectedSources.data, expectedPreviewSha256: input.expectedPreviewSha256,
             expectedCommandSha256: input.expectedCommandSha256,
             expectedPublished: expectedPublished.data, sources: sources.data,
-            previewSha256: input.previewSha256, published: published.data, updatedAt: input.updatedAt })
+            previewSha256: input.previewSha256, published: published.data, updatedAt: input.updatedAt }
     } catch (error) {
         return publicationRefreshRefusal('invalid', `bootstrap publication refresh evidence could not be read safely: ${errorCause(error)}`)
     }
@@ -1510,7 +1510,7 @@ export async function restartBootstrapState(
         value: Readonly<{ commandSha256: string; previewSha256: string; sources: readonly BootstrapStateRecord['value']['sources'][number][] }> }>,
 ): Promise<StateResult<BootstrapStateRecord> | Readonly<{ kind: 'stale' }>> {
     const outcome = await transactState(namespace, address, { ownerId: input.ownerId }, current => {
-        if (current === null || current.revision !== input.expectedRevision) return abortStateTransaction(Object.freeze({ kind: 'stale' as const }))
+        if (current === null || current.revision !== input.expectedRevision) return abortStateTransaction({ kind: 'stale' as const })
         const record: BootstrapStateRecord = { ...current, revision: current.revision + 1, updatedAt: input.updatedAt,
             value: { stage: 'surface-previewed', checkoutRoot: current.value.checkoutRoot, target: current.value.target,
                 sources: [...input.value.sources], commandSha256: input.value.commandSha256, previewSha256: input.value.previewSha256,
@@ -1914,11 +1914,11 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
             || values.contentionTimeoutMs !== undefined && typeof values.contentionTimeoutMs !== 'number'
             || values.beforeRelease !== undefined && typeof values.beforeRelease !== 'function'
             || values.beforeLockMetadata !== undefined && typeof values.beforeLockMetadata !== 'function') throw new RefusalError('invalid options')
-        stableOptions = Object.freeze({ ownerId: values.ownerId as HolderId,
+        stableOptions = { ownerId: values.ownerId as HolderId,
             ...(values.observeHolder ? { observeHolder: values.observeHolder as StateTransactionOptions['observeHolder'] } : {}),
             ...(values.contentionTimeoutMs !== undefined ? { contentionTimeoutMs: values.contentionTimeoutMs } : {}),
             ...(values.beforeRelease ? { beforeRelease: values.beforeRelease as StateTransactionOptions['beforeRelease'] } : {}),
-            ...(values.beforeLockMetadata ? { beforeLockMetadata: values.beforeLockMetadata as StateTransactionOptions['beforeLockMetadata'] } : {}) })
+            ...(values.beforeLockMetadata ? { beforeLockMetadata: values.beforeLockMetadata as StateTransactionOptions['beforeLockMetadata'] } : {}) }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         stableOptions = undefined
@@ -1926,8 +1926,8 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
     if (!authenticated || !binding || binding.namespace !== authenticated || !stableOptions || typeof operation !== 'function') {
         return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'scoped state lock authority is malformed', 'scoped state lock')
     }
-    const stableNamespace = Object.freeze({ root: authenticated.root, cockpitRoot: authenticated.cockpitRoot,
-        paths: Object.freeze({ stateLock: binding.path }) })
+    const stableNamespace = { root: authenticated.root, cockpitRoot: authenticated.cockpitRoot,
+        paths: { stateLock: binding.path } }
     if (!holderIdentity.test(stableOptions.ownerId)
         || stableOptions.contentionTimeoutMs !== undefined && (!Number.isSafeInteger(stableOptions.contentionTimeoutMs)
             || stableOptions.contentionTimeoutMs < 0 || stableOptions.contentionTimeoutMs > 30_000)) {
@@ -2200,20 +2200,20 @@ export async function transactState<T>(
             if (Reflect.ownKeys(address).sort().join(',') !== 'checkoutId,checkoutRoot,kind,path,stateRoot,target') {
                 throw new RefusalError('bootstrap address shape is not closed')
             }
-            stableAddress = Object.freeze({ path: address.path, stateRoot: address.stateRoot,
-                checkoutRoot: address.checkoutRoot, kind: 'bootstrap', checkoutId: address.checkoutId, target: address.target })
-            stableNamespace = Object.freeze({ root: authenticated.root, scope: 'bootstrap' as const,
+            stableAddress = { path: address.path, stateRoot: address.stateRoot,
+                checkoutRoot: address.checkoutRoot, kind: 'bootstrap', checkoutId: address.checkoutId, target: address.target }
+            stableNamespace = { root: authenticated.root, scope: 'bootstrap' as const,
                 checkoutRoot: authenticated.checkoutRoot, checkoutId: authenticated.checkoutId, target: authenticated.target,
-                paths: Object.freeze({ stateLock: authenticated.paths.stateLock }) })
+                paths: { stateLock: authenticated.paths.stateLock } }
         } else {
             const namespacePaths = (namespace as StateNamespace).paths
             const qualifier = address.qualifier
-            stableAddress = Object.freeze({ path: address.path, stateRoot: address.stateRoot, cockpitRoot: address.cockpitRoot,
-                kind: address.kind, cockpitId: address.cockpitId, subjectId: address.subjectId, ...(qualifier ? { qualifier } : {}) })
-            stableNamespace = Object.freeze({ root: namespace.root, scope: 'cockpit' as const,
-                cockpitRoot: (namespace as StateNamespace).cockpitRoot, paths: Object.freeze({ stateLock: namespacePaths.stateLock }) })
+            stableAddress = { path: address.path, stateRoot: address.stateRoot, cockpitRoot: address.cockpitRoot,
+                kind: address.kind, cockpitId: address.cockpitId, subjectId: address.subjectId, ...(qualifier ? { qualifier } : {}) }
+            stableNamespace = { root: namespace.root, scope: 'cockpit' as const,
+                cockpitRoot: (namespace as StateNamespace).cockpitRoot, paths: { stateLock: namespacePaths.stateLock } }
         }
-        stableOptions = Object.freeze({
+        stableOptions = {
             ownerId: options.ownerId,
             contentionTimeoutMs: options.contentionTimeoutMs,
             observeHolder: options.observeHolder,
@@ -2221,7 +2221,7 @@ export async function transactState<T>(
             beforeCommit: options.beforeCommit,
             beforeRelease: options.beforeRelease,
             beforeLockMetadata: options.beforeLockMetadata,
-        })
+        }
     } catch (error) {
         return refusal(
             ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,

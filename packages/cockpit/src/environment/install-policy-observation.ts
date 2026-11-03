@@ -114,7 +114,7 @@ function confined(root: string, candidate: string): boolean {
 }
 
 function identity(stat: BigIntStats): FileIdentity {
-    return Object.freeze({
+    return {
         dev: stat.dev.toString(),
         ino: stat.ino.toString(),
         mode: stat.mode.toString(),
@@ -122,7 +122,7 @@ function identity(stat: BigIntStats): FileIdentity {
         size: stat.size.toString(),
         mtimeNs: stat.mtimeNs.toString(),
         ctimeNs: stat.ctimeNs.toString(),
-    })
+    }
 }
 
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
@@ -202,24 +202,24 @@ async function inspectLockfile(root: string, relativePath: string): Promise<Obse
                 || after.isSymbolicLink() || !sameIdentity(beforeIdentity, afterIdentity)) return 'invalid'
             if (index < parts.length - 1) {
                 if (!after.isDirectory()) return 'invalid'
-                ancestors.push(Object.freeze({ canonicalPath, identity: afterIdentity }))
+                ancestors.push({ canonicalPath, identity: afterIdentity })
                 continue
             }
             if (!after.isFile() || after.nlink !== 1n) return 'invalid'
-            return Object.freeze({
+            return {
                 state: 'available' as const,
                 relativePath,
                 canonicalPath,
                 identity: afterIdentity,
-                ancestors: Object.freeze(ancestors),
-            })
+                ancestors,
+            }
         } catch (error) {
             if (!hasErrorCode(error, 'ENOENT')) return 'invalid'
-            return Object.freeze({
+            return {
                 state: 'missing' as const,
                 relativePath,
-                ancestors: Object.freeze(ancestors),
-            })
+                ancestors,
+            }
         }
     }
     return 'invalid'
@@ -239,14 +239,14 @@ function sameObservation(left: ObservedLockfile, right: ObservedLockfile): boole
 }
 
 function failure(state: 'unavailable' | 'failed', reason: string): InstallPolicyLockfileObservation {
-    return Object.freeze({
+    return {
         state,
         producer: OWNER,
         code: state === 'unavailable'
             ? ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_UNAVAILABLE
             : ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_INVALID,
         reason,
-    })
+    }
 }
 
 export async function observeInstallPolicyLockfiles(input: unknown): Promise<InstallPolicyLockfileObservation> {
@@ -286,19 +286,19 @@ export async function observeInstallPolicyLockfiles(input: unknown): Promise<Ins
         if (observed === 'invalid') return failure('failed', `lockfile path is invalid: ${relativePath}`)
         rows.push(observed)
     }
-    const binding: ObservationBinding = Object.freeze({
-        source: Object.freeze({ ...value.source }),
+    const binding: ObservationBinding = {
+        source: { ...value.source },
         siblingIndex: value.siblingIndex as number,
         siblingSlug: value.siblingSlug,
         checkoutRoot: root.canonicalPath,
         checkoutId: value.checkoutId as CheckoutId,
         rootIdentity: root.identity,
         catalogSha256: catalogSha256(policies),
-        lockfiles: Object.freeze(rows),
+        lockfiles: rows,
         observedAt: value.observedAt,
         validThrough: new Date(observedAt + MAX_VALIDITY_MS).toISOString(),
-    })
-    const observation = Object.freeze({ state: 'available' as const, producer: OWNER, ...binding })
+    }
+    const observation: InstallPolicyLockfileObservation = { state: 'available', producer: OWNER, ...binding }
     issuedObservations.set(observation, binding)
     return observation
 }
@@ -335,7 +335,7 @@ export async function withInstallPolicyProjection<T>(
         const current = await inspectLockfile(binding.checkoutRoot, lockfile.relativePath)
         if (current === 'invalid' || !sameObservation(lockfile, current)) return undefined
     }
-    const projection = Object.freeze({}) as InstallPolicyProjection
+    const projection = {} as InstallPolicyProjection
     issuedProjections.set(projection, binding)
     try {
         const result: unknown = use(projection)

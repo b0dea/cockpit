@@ -127,22 +127,22 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
                 || dockerContext !== 'default' || env.DOCKER_CONTEXT !== undefined)
             || env.DOCKER_TLS_VERIFY !== undefined || env.DOCKER_CERT_PATH !== undefined
             || env.DOCKER_CONTEXT !== undefined && env.DOCKER_CONTEXT !== dockerContext) return undefined
-        return Object.freeze({
+        return {
             configPath: resolve(configPath),
-            env: Object.freeze(env),
+            env,
             sessionId,
             timeoutMs,
             dockerContext,
-            ...(activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...activeProfiles].sort()) }),
+            ...(activeProfiles === undefined ? {} : { activeProfiles: [...activeProfiles].sort() }),
             ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
-        })
+        }
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }
 
 function observationRefusal(diagnostics: readonly EnvironmentDiagnostic[]): DestructiveObservationRefusal {
-    return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics })
+    return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics }
 }
 
 function refusal(
@@ -150,17 +150,17 @@ function refusal(
     message = 'destructive run authority is unavailable or does not match current state',
     code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
 ): EnvironmentCommandOutcome<DestructiveRunContext> {
-    return Object.freeze({
+    return {
         kind: 'refusal' as const,
         status: 2 as const,
         result: null,
-        diagnostics: Object.freeze([Object.freeze({
+        diagnostics: [{
             severity: 'error' as const,
             code,
             message,
             target,
-        })]),
-    })
+        }],
+    }
 }
 
 function sameSource(
@@ -171,13 +171,13 @@ function sameSource(
 }
 
 function executionEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(
+    return Object.fromEntries(
         Object.entries(env)
             .filter((entry): entry is [string, string] => (
                 ['PATH', 'TMPDIR', 'LANG', 'LC_ALL'].includes(entry[0]) && typeof entry[1] === 'string'
             ))
             .sort(([left], [right]) => left.localeCompare(right)),
-    ))
+    )
 }
 
 async function selectionAuthority(
@@ -195,7 +195,7 @@ async function selectionAuthority(
         ...(input.env.DOCKER_HOST === undefined ? {} : { host: input.env.DOCKER_HOST }),
     })
     if (!steps) return undefined
-    const evidence = await Promise.all(steps.map(async (step) => Object.freeze({ step, outcome: await execute(step) })))
+    const evidence = await Promise.all(steps.map(async (step) => ({ step, outcome: await execute(step) })))
     return admitDockerSelection(steps, evidence)
 }
 
@@ -216,8 +216,8 @@ export async function selectDestructiveDaemon(
     const daemon = await selectLocalDockerDaemon(env, timeoutMs, execute,
         { command: 'down and reset', localOnly: 'down and reset never delete from a remote daemon' })
     return daemon.kind === 'refusal'
-        ? Object.freeze({ kind: 'refusal' as const, adapters: refusingAdapters(execute, daemon.diagnostic) })
-        : Object.freeze({ kind: 'complete' as const, dockerContext: daemon.dockerContext })
+        ? { kind: 'refusal' as const, adapters: refusingAdapters(execute, daemon.diagnostic) }
+        : { kind: 'complete' as const, dockerContext: daemon.dockerContext }
 }
 
 async function inspectDiscovery(
@@ -233,7 +233,7 @@ async function inspectDiscovery(
             ? createVolumeInspectionSteps(discovery)
             : createNetworkInspectionSteps(discovery, containerDiscovery)
     if (!steps) return undefined
-    const attempts = await Promise.allSettled(steps.map(async (step) => Object.freeze({ step, outcome: await execute(step) })))
+    const attempts = await Promise.allSettled(steps.map(async (step) => ({ step, outcome: await execute(step) })))
     if (attempts.some(({ status }) => status === 'rejected')) return undefined
     const evidence = attempts.map((attempt) => (attempt as PromiseFulfilledResult<Readonly<{
         step: ExecutionStep
@@ -241,7 +241,7 @@ async function inspectDiscovery(
     }>>).value)
     const overflow = evidence.map(({ step, outcome }) => inspectionOverflow(step, outcome)).find((message) => message !== undefined)
     if (overflow !== undefined) {
-        return observationRefusal([Object.freeze({ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, message: overflow, target: kind })])
+        return observationRefusal([{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, message: overflow, target: kind }])
     }
     return kind === 'image'
         ? admitImageInspections(discovery, evidence)
@@ -295,7 +295,7 @@ async function discoverReclaimRound(
         selectionAuthority: plannedSelection,
     })
     if (!steps) return undefined
-    const outcomes = await Promise.all(steps.map(async (step) => Object.freeze({ step, outcome: await execute(step) })))
+    const outcomes = await Promise.all(steps.map(async (step) => ({ step, outcome: await execute(step) })))
     const currentSelection = await selectionAuthority(input, runtimeExecutable, cwd, execute)
     if (!currentSelection) return undefined
     const kinds = ['container', 'network', 'volume', 'image', 'build-cache'] as const
@@ -319,7 +319,7 @@ async function discoverReclaimRound(
     if (!discovery) return undefined
     const actionSelection = await selectionAuthority(input, runtimeExecutable, cwd, execute)
     if (!actionSelection) return undefined
-    return Object.freeze({ discovery, runtimeExecutable, pathExecutable, selectionAuthority: actionSelection })
+    return { discovery, runtimeExecutable, pathExecutable, selectionAuthority: actionSelection }
 }
 
 type DestructiveAdapters = DownCommandAdapters & ResetCommandAdapters
@@ -327,17 +327,17 @@ type DestructiveAdapters = DownCommandAdapters & ResetCommandAdapters
 // Adapters that load nothing. A cockpit with no runtime has nothing to stop or reset; that
 // outranks any runtime-input problem, so it is reported before `reason` or the generic refusal.
 function refusingAdapters(execute: Executor, reason?: Diagnostic): DestructiveAdapters {
-    return Object.freeze({
+    return {
         load: async (request: { readonly configPath: string }) => {
             const loaded = typeof request?.configPath === 'string' ? await loadCockpitConfig(request.configPath) : undefined
             const diagnostic = loaded?.kind === 'complete' && declaresNothingToRun(loaded.result.config.environment)
                 ? runtimeNotDeclared(loaded.result.source.path) : reason
             return diagnostic === undefined ? refusal(request?.configPath ?? 'destructive')
-                : Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: Object.freeze([diagnostic]) })
+                : { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: [diagnostic] }
         },
         observe: async () => undefined,
         execute,
-    }) as DestructiveAdapters
+    } as DestructiveAdapters
 }
 
 export function createDestructiveCommandAdapters(
@@ -346,14 +346,14 @@ export function createDestructiveCommandAdapters(
 ): DestructiveAdapters {
     const input = captureInput(rawInput)
     if (!input || typeof execute !== 'function') return refusingAdapters(execute)
-    const lifecycleInput = Object.freeze({
+    const lifecycleInput = {
         configPath: input.configPath,
-        env: Object.freeze(input.env.DOCKER_HOST === undefined ? { ...input.env, DOCKER_CONTEXT: input.dockerContext } : input.env),
+        env: input.env.DOCKER_HOST === undefined ? { ...input.env, DOCKER_CONTEXT: input.dockerContext } : input.env,
         sessionId: input.sessionId,
         timeoutMs: input.timeoutMs,
         ...(input.activeProfiles === undefined ? {} : { activeProfiles: input.activeProfiles }),
         ...(input.runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority: input.runtimeMeasurementProbeAuthority }),
-    })
+    }
     const lifecycle = createLifecycleCommandAdapters(lifecycleInput, execute)
     const issued = new WeakMap<DestructiveRunContext, LifecycleRunContext>()
     // The checkout root runtime readiness resolved for each context, so a reclaim-only
@@ -375,9 +375,9 @@ export function createDestructiveCommandAdapters(
         // Policy rows select installers. They do not identify an instantiated cache or
         // its owning root, so treating their logical volume names as cache authority
         // could authorize deletion of unrelated data.
-        const declaredCacheIds = Object.freeze([])
-        const dependencyCaches = Object.freeze([])
-        const common = Object.freeze({
+        const declaredCacheIds: readonly string[] = []
+        const dependencyCaches: readonly never[] = []
+        const common = {
             stackId: context.stackId,
             cockpitId: context.cockpitId,
             configSha256: context.runtimeSha256,
@@ -390,29 +390,29 @@ export function createDestructiveCommandAdapters(
             env: executionEnvironment(input.env),
             timeoutMs: input.timeoutMs,
             selectionAuthority: reclaim.selectionAuthority,
-        })
-        return Object.freeze({
+        }
+        return {
             instance: context.instance,
-            down: Object.freeze({
+            down: {
                 ...common,
                 executable: reclaim.runtimeExecutable.value,
                 dependencyCaches,
                 pathExecutable: reclaim.pathExecutable.value,
-            }),
-            reset: Object.freeze({
+            },
+            reset: {
                 ...common,
                 expectedCoordinationRevision: stored.value.revision,
-                resettableVolumes: Object.freeze([...configuration.config.environment.resettable_volumes]),
+                resettableVolumes: [...configuration.config.environment.resettable_volumes],
                 composeProject: composeProjectName({ cockpitName: configuration.config.cockpit.name, stackId: context.stackId }),
-                generatedHostPaths: Object.freeze(configuration.config.environment.generated_host_paths.map((declaration) => Object.freeze({
+                generatedHostPaths: configuration.config.environment.generated_host_paths.map((declaration) => ({
                     root: cwd,
                     path: resolve(cwd, declaration),
                     declaration,
-                }))),
+                })),
                 runtimeExecutable: reclaim.runtimeExecutable.value,
                 pathExecutable: reclaim.pathExecutable.value,
-            }),
-        })
+            },
+        }
     }
     const currentConfiguration = async (context: DestructiveRunContext) => {
         const loaded = await loadCockpitConfig(context.configPath)
@@ -422,7 +422,7 @@ export function createDestructiveCommandAdapters(
         return configuration && sameSource(context.source, configuration.source) ? configuration : undefined
     }
 
-    return Object.freeze({
+    return {
         async load(request: { readonly configPath: string }) {
             if (request.configPath !== resolve(input.configPath)) return refusal(request.configPath)
             const loaded = await lifecycle.load(request)
@@ -435,7 +435,7 @@ export function createDestructiveCommandAdapters(
                 successor: { holderId: context.holderId, checkoutId: context.checkoutId },
                 now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
             })
-            if (reaped.kind === 'refusal') return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics })
+            if (reaped.kind === 'refusal') return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics }
             // A restore released above leaves data that may be half applied; the warning rides on
             // whatever this load returns.
             let claim: LeasePortFamilyResult | undefined
@@ -469,21 +469,21 @@ export function createDestructiveCommandAdapters(
                     let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
                     claim = await lifecycle.withAcquiredPorts(context, async ({ leaseResult }) => leaseResult,
                         (diagnostics) => { claimRefusal = diagnostics; return undefined })
-                    if (claimRefusal) return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal })
+                    if (claimRefusal) return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal }
                     if (claim?.kind !== 'complete' || claim.change !== 'acquired') return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
                     inventory = await readActiveStackInventory(context.namespace)
                     if (inventory.kind !== 'complete') return refusal(context.stackId)
                 }
-                const claimInventory = Object.freeze(inventory.value.flatMap(({ stackId, record }) => (
-                    record.holders.map(({ checkoutId }) => Object.freeze({ stackId, checkoutId }))
-                )))
-                const current = Object.freeze({ stackId: context.stackId, checkoutId: context.checkoutId })
+                const claimInventory = inventory.value.flatMap(({ stackId, record }) => (
+                    record.holders.map(({ checkoutId }) => ({ stackId, checkoutId }))
+                ))
+                const current = { stackId: context.stackId, checkoutId: context.checkoutId }
                 const destructive = issueDestructiveRunContext({
                     lifecycle: context,
-                    instance: Object.freeze({
+                    instance: {
                         launcher: current,
                         claimInventory,
-                    }),
+                    },
                     ...claim ? { claim } : {},
                 })
                 if (destructive.kind === 'complete') issued.set(destructive.result, context)
@@ -519,7 +519,7 @@ export function createDestructiveCommandAdapters(
             readinessRoots.set(context, readiness.topology.cwd)
             const targets = await observeReclaimTargets(context, configuration, readiness.topology.cwd)
             if (!targets || 'diagnostics' in targets) return targets
-            return Object.freeze({ ...targets, runtime: readiness.lifecycle, ports })
+            return { ...targets, runtime: readiness.lifecycle, ports }
         },
         // Runtime readiness proves the runtime the plan was made for; the steps of a drain that
         // plan already reserved need only fresh reclaim evidence against the same checkout root.
@@ -531,5 +531,5 @@ export function createDestructiveCommandAdapters(
             return observeReclaimTargets(context, configuration, cwd)
         },
         execute,
-    })
+    }
 }

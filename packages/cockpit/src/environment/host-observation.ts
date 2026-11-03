@@ -69,9 +69,9 @@ export function observeHostCapacity(input: {
         throw new RefusalError('host capacity floor must use exact positive integer units')
     }
     const threshold = floor as unknown as HostCapacityFloor
-    return Object.freeze([
+    return [
         metric(stackId as StackId, evidence, ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, 'runtime-memory-bytes', evidence.memoryBytes, { kind: 'minimum', value: threshold.memoryBytes }, 'make the declared runtime memory available'),
         metric(stackId as StackId, evidence, ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR, 'runtime-cpu-millis', evidence.cpuMillis, { kind: 'minimum', value: threshold.cpuMillis }, 'make the declared runtime CPU capacity available'),
         metric(stackId as StackId, evidence, ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR, 'free-disk-bytes', evidence.freeDiskBytes, { kind: 'minimum', value: threshold.freeDiskBytes }, 'free disk space or lower the declared floor deliberately'),
-    ])
+    ]
 }

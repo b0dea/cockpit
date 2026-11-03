@@ -67,5 +67,5 @@ export function classifyRun(input: RunInput): RunClassification {
     if (voided) reasons.push('subject changed or evidence authority is stale; evidence satisfies no gate')
     const partial = input.scope !== 'full' || selected.size !== declared.size
     const verdict: RunVerdict = failed ? 'FAIL' : degraded ? 'DEGRADED' : voided ? 'VOID' : partial ? 'PARTIAL' : 'PASS'
-    return Object.freeze({ verdict, satisfiesGate: verdict === 'PASS', executed, reasons: Object.freeze(reasons) })
+    return { verdict, satisfiesGate: verdict === 'PASS', executed, reasons }
 }

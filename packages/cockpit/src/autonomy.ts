@@ -27,14 +27,14 @@ const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.fr
 export function effectivePolicy(config: Readonly<{ work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
     autonomy: Readonly<CockpitConfig['autonomy']> }>): EffectivePolicy {
     const preset = config.autonomy.preset === 'agent'
-    const pick = <K extends string>(declared: Partial<Record<K, Decider>>, defaults: Readonly<Record<K, Decider>>) => Object.freeze(Object.fromEntries(
-        Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? (preset ? 'agent' : value)])) as Record<K, Decider>)
-    return Object.freeze({
+    const pick = <K extends string>(declared: Partial<Record<K, Decider>>, defaults: Readonly<Record<K, Decider>>) => Object.fromEntries(
+        Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? (preset ? 'agent' : value)])) as Record<K, Decider>
+    return {
         grading: config.work.grading,
         gates: pick<WorkGate>(config.work.gates, GATE_DEFAULTS),
         autonomy: pick<AutonomyDecision>({ sync: config.autonomy.sync, stale_delete: config.autonomy.stale_delete,
             reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve }, AUTONOMY_DEFAULTS),
-    })
+    }
 }
 
 /** cockpit detects CI from the CI variable, as every hosted runner sets it; an agent can set it too. */
@@ -70,7 +70,7 @@ export function policyWeakening(recorded: EffectivePolicy, current: EffectivePol
             if (DECIDER_RANK[now] < DECIDER_RANK[was]) rows.push({ field: `${field}.${key}`, from: was, to: now })
         }
     }
-    return Object.freeze(rows)
+    return rows
 }
 
 /** The digest a person types to accept exactly these weakenings of exactly this recorded policy. */
@@ -144,5 +144,5 @@ export function pinnedPolicyTables(text: string): Readonly<Record<string, unknow
     }
     const autonomy = parsed.autonomy as Record<string, unknown> | undefined
     const mcpByAgent = (autonomy?.mcp_approve ?? (autonomy?.preset === 'agent' ? 'agent' : AUTONOMY_DEFAULTS.mcp_approve)) === 'agent'
-    return Object.freeze({ work: parsed.work, autonomy: parsed.autonomy, ...(mcpByAgent ? {} : { mcp: parsed.mcp }) })
+    return { work: parsed.work, autonomy: parsed.autonomy, ...(mcpByAgent ? {} : { mcp: parsed.mcp }) }
 }

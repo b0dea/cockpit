@@ -123,7 +123,7 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     let connection: Readonly<{ kind: 'remote'; endpoint: string; launchLocal: false }>
         | Readonly<{ kind: 'local-fallback'; reason: 'endpoint-absent'; launchLocal: true }>
     if (!Object.hasOwn(input, 'endpoint')) {
-        connection = Object.freeze({ kind: 'local-fallback', reason: 'endpoint-absent', launchLocal: true })
+        connection = { kind: 'local-fallback', reason: 'endpoint-absent', launchLocal: true }
     } else {
         let endpoint: string
         try {
@@ -135,7 +135,7 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         } catch {
             throw new RefusalError('configured browser endpoint must use ws:// with the exact credential-free checking proxy authority; TLS termination is unavailable')
         }
-        connection = Object.freeze({ kind: 'remote', endpoint, launchLocal: false })
+        connection = { kind: 'remote', endpoint, launchLocal: false }
     }
     if (!Array.isArray(input.resolver) || input.resolver.length > 64
         || (addressing === 'hostname' ? input.resolver.length === 0 : input.resolver.length !== 0)
@@ -174,7 +174,7 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
                 throw new RefusalError('browser storage state must name a worker and a path inside the auth artifact root')
             }
             const path = resolve(root, state.path)
-            storage.push(Object.freeze({ path, identity: storageIdentity(path) }))
+            storage.push({ path, identity: storageIdentity(path) })
         }
     }
     if (!['empty', 'seeded', 'restored'].includes(input.data.mode) || typeof input.data.isolated !== 'boolean'
@@ -184,28 +184,28 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     if (input.requestPreapproval && (input.data.mode === 'restored' || !input.data.isolated || input.data.reachesProduction)) {
         throw new RefusalError('browser preapproval requires isolated empty or seeded data with no production reach')
     }
-    const projection = Object.freeze({
+    const projection = {
         configurationPath: authority.source,
         connection,
-        runner: Object.freeze({ image: input.images.runner.reference, project: Object.freeze({
+        runner: { image: input.images.runner.reference, project: {
             lockfile: input.project.lockfile, sha256: input.project.sha256, driverVersion: input.project.driverVersion,
             ...(input.project.manifest === undefined ? {} : { manifest: input.project.manifest, manifestSha256: input.project.manifestSha256! }),
-        }),
-            ...(connection.kind === 'remote' ? { endpoint: connection.endpoint } : {}) }),
-        mcp: Object.freeze({ image: input.images.mcp.reference, ...(connection.kind === 'remote' ? { endpoint: connection.endpoint } : {}) }),
-        server: Object.freeze({ ...proxy.server, maxClients: browserClientLimit(input.maxClients, input.authentication.policy), engine, headless: true as const }),
+        },
+            ...(connection.kind === 'remote' ? { endpoint: connection.endpoint } : {}) },
+        mcp: { image: input.images.mcp.reference, ...(connection.kind === 'remote' ? { endpoint: connection.endpoint } : {}) },
+        server: { ...proxy.server, maxClients: browserClientLimit(input.maxClients, input.authentication.policy), engine, headless: true as const },
         proxy: proxy.proxy,
-        addressing: Object.freeze({ posture: addressing, resolverRules: addressing === 'hostname' ? Object.freeze(input.resolver.map(({ hostname, address }) => `MAP ${hostname} ${address}`)) : null }),
+        addressing: { posture: addressing, resolverRules: addressing === 'hostname' ? input.resolver.map(({ hostname, address }) => `MAP ${hostname} ${address}`) : null },
         requirements: authority.postureRequirements,
         authentication: signedOut
-            ? Object.freeze({ posture: signedOut, policy: 'none' as const, states: Object.freeze([]) })
-            : Object.freeze({ posture: 'real' as const, policy: input.authentication.policy, states: Object.freeze(states.map((state) => Object.freeze({ ...state }))), claim: input.authentication.policy === 'serialized' ? 'exclusive' as const : 'per-worker' as const }),
-        debugger: input.headed ? Object.freeze({ enabled: true as const, separate: true as const, artifactRoot: input.artifacts.debugger }) : Object.freeze({ enabled: false as const }),
+            ? { posture: signedOut, policy: 'none' as const, states: [] }
+            : { posture: 'real' as const, policy: input.authentication.policy, states: states.map((state) => ({ ...state })), claim: input.authentication.policy === 'serialized' ? 'exclusive' as const : 'per-worker' as const },
+        debugger: input.headed ? { enabled: true as const, separate: true as const, artifactRoot: input.artifacts.debugger } : { enabled: false as const },
         preapproval: input.requestPreapproval ? 'eligible' as const : 'not-requested' as const,
         networkExposure: networkExposure.value,
         ...(networkExposure.reason ? { networkExposureReason: networkExposure.reason } : {}),
-        generatedHostPaths: Object.freeze(paths),
-    })
+        generatedHostPaths: paths,
+    }
     issuedRuntimes.set(projection, Object.freeze({ storage: Object.freeze(storage), stackId: authority.stackId,
         executable: connection.kind === 'local-fallback',
         ...(connection.kind === 'remote' ? { remote: Object.freeze({ configuredEndpoint: connection.endpoint,
@@ -227,16 +227,16 @@ function controlAuthority(value: string, defaultPort: number): string {
 
 export function browserRuntimeControlAuthorities(runtime: BrowserRuntimeProjection): readonly string[] | undefined {
     if (!issuedRuntimes.has(runtime)) return undefined
-    return Object.freeze([...new Set([
+    return [...new Set([
         ...(runtime.connection.kind === 'remote' ? [controlAuthority(runtime.connection.endpoint, 80),
             `127.0.0.1:${runtime.server.port}`, `localhost:${runtime.server.port}`] : []),
         ...runtime.proxy.allowedHosts.map(value => controlAuthority(value, 80)),
-    ])])
+    ])]
 }
 
 export function browserRuntimeControlPorts(runtime: BrowserRuntimeProjection): readonly number[] | undefined {
     if (!issuedRuntimes.has(runtime)) return undefined
-    return Object.freeze(runtime.connection.kind === 'remote' ? [runtime.server.port] : [])
+    return runtime.connection.kind === 'remote' ? [runtime.server.port] : []
 }
 
 export function bindBrowserRuntimePortLease(runtime: BrowserRuntimeProjection,
@@ -256,14 +256,14 @@ export function bindBrowserRuntimePortLease(runtime: BrowserRuntimeProjection,
         const parsed = new URL(`http://${value}`)
         return `${parsed.hostname}:${selected[1]}`
     }
-    const rebound = Object.freeze({
+    const rebound = {
         ...runtime,
-        connection: Object.freeze({ kind: 'remote' as const, endpoint, launchLocal: false as const }),
-        runner: Object.freeze({ ...runtime.runner, endpoint }),
-        mcp: Object.freeze({ ...runtime.mcp, endpoint }),
-        proxy: Object.freeze({ ...runtime.proxy, port: selected[1],
-            allowedHosts: Object.freeze(runtime.proxy.allowedHosts.map(authority)) }),
-    })
+        connection: { kind: 'remote' as const, endpoint, launchLocal: false as const },
+        runner: { ...runtime.runner, endpoint },
+        mcp: { ...runtime.mcp, endpoint },
+        proxy: { ...runtime.proxy, port: selected[1],
+            allowedHosts: runtime.proxy.allowedHosts.map(authority) },
+    }
     issuedRuntimes.set(rebound, Object.freeze({ ...binding, executable: true }))
     return rebound
 }

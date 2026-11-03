@@ -77,8 +77,6 @@ describe('environment evidence authority', () => {
         intendedState.services[0] = 'changed'
         intendedState.nested.posture = 'changed'
         expect(snapshot.intendedState).toEqual({ services: ['api'], nested: { posture: 'isolated' } })
-        expect(Object.isFrozen(snapshot)).toBe(true)
-        expect(Object.isFrozen(snapshot.intendedState)).toBe(true)
         expect(await available()).not.toHaveProperty('intendedState')
     })
 
@@ -163,8 +161,6 @@ describe('environment evidence authority', () => {
         })
         expect(plan.kind).toBe('preview')
         if (plan.kind !== 'preview') return
-        expect(Object.isFrozen(plan)).toBe(true)
-        expect(Object.isFrozen(plan.diagnostics)).toBe(true)
         expect(plan.plan.steps).toHaveLength(2)
         expect(plan.plan.steps[0]).toEqual(expect.objectContaining({
             id: 'evidence:process-identity:synthetic-api-1',
@@ -278,8 +274,6 @@ done
             timeoutMs: 1000, outputLimitBytes: 1024, ...patch,
         })
         expect(result.kind).toBe('refusal')
-        expect(Object.isFrozen(result)).toBe(true)
-        expect(Object.isFrozen(result.diagnostics[0])).toBe(true)
     })
 
     it('rejects output-limit refusal before captured evidence exists', async () => {
@@ -420,8 +414,6 @@ done
         const serialized = JSON.stringify({ before, after })
         const result = compareEnvironmentSnapshot(generated(), before, after)
         expect(result).toEqual(expect.objectContaining({ verdict: 'void' }))
-        expect(Object.isFrozen(result)).toBe(true)
-        expect(Object.isFrozen(result.diagnostics[0])).toBe(true)
         expect(JSON.stringify({ before, after })).toBe(serialized)
     })
 

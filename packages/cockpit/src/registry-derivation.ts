@@ -42,7 +42,7 @@ export type RegistryDerivationResult =
       }>
 
 function refusal(code: Extract<RegistryDerivationResult, { kind: 'refusal' }>['code'], message: string): RegistryDerivationResult {
-    return Object.freeze({ kind: 'refusal', code, message })
+    return { kind: 'refusal', code, message }
 }
 
 function freezeData<T>(value: T): DeepReadonly<T> {

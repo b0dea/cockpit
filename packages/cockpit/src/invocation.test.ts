@@ -9,7 +9,6 @@ describe('invocation record', () => {
             const input = { verb: 'check', durationMs: 41, exitCode, resolvedConfigPath: '/workspace/cockpit.toml' }
             const record = createInvocationRecord(input)
             expect(record).toEqual(input)
-            expect(Object.isFrozen(record)).toBe(true)
             input.verb = 'sync'
             expect(record.verb).toBe('check')
         }

@@ -161,5 +161,5 @@ export function createWorkStore(root: string): WorkStore {
             return { id, lock: 'removed' as const, holder: recorded }
         },
     }
-    return Object.freeze(store)
+    return store
 }

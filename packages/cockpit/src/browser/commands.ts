@@ -53,7 +53,7 @@ const browserFailureCategories = Object.freeze({
     screenshot: 'observation', artifact: 'artifact', cleanup: 'cleanup',
 } as const)
 function refusal(reason: string): BrowserCommandResult {
-    return Object.freeze({ kind: 'refusal', reason })
+    return { kind: 'refusal', reason }
 }
 
 // The reason vocabulary the operation program may report: identifiers only, never page text.
@@ -82,7 +82,7 @@ function parseBrowserFailure(value: Buffer): Readonly<{
     const phase = row.phase as keyof typeof browserFailureCategories
     const category = browserFailureCategories[phase]
     return row.category === category
-        ? Object.freeze({ phase, category, cleanup: row.cleanup, ...(typeof row.reason === 'string' ? { reason: row.reason } : {}) })
+        ? { phase, category, cleanup: row.cleanup, ...(typeof row.reason === 'string' ? { reason: row.reason } : {}) }
         : undefined
 }
 
@@ -156,13 +156,13 @@ function captureBrowserCommandInput(value: unknown): Readonly<BrowserCommandInpu
         const row = ownDataRecord(captured.state, ['namespace', 'stackId', 'ownerId'], [])
         if (!row || row.namespace === null || typeof row.namespace !== 'object' || isProxy(row.namespace)
             || typeof row.stackId !== 'string' || typeof row.ownerId !== 'string') return undefined
-        state = Object.freeze({ namespace: row.namespace as StateNamespace, stackId: row.stackId as StackId, ownerId: row.ownerId as HolderId })
+        state = { namespace: row.namespace as StateNamespace, stackId: row.stackId as StackId, ownerId: row.ownerId as HolderId }
     }
-    return Object.freeze({ runtime: captured.runtime as BrowserRuntimeProjection, client: captured.client as BrowserProjectClient,
+    return { runtime: captured.runtime as BrowserRuntimeProjection, client: captured.client as BrowserProjectClient,
         policy: captured.policy as BrowserRoutePolicy, kind: captured.kind as BrowserCommandKind,
         ...(captured.role !== undefined ? { role: captured.role as string } : {}),
         ...(captured.headed !== undefined ? { headed: captured.headed as boolean } : {}),
-        ...(captured.debugger !== undefined ? { debugger: captured.debugger as BrowserDebuggerPreparation } : {}), ...(state ? { state } : {}) })
+        ...(captured.debugger !== undefined ? { debugger: captured.debugger as BrowserDebuggerPreparation } : {}), ...(state ? { state } : {}) }
 }
 
 export function issueBrowserRoutePolicy(runtime: BrowserRuntimeProjection, input: Readonly<{ origin: string; routes: readonly BrowserRouteDeclaration[] }>): BrowserRoutePolicy {
@@ -201,9 +201,9 @@ export function issueBrowserRoutePolicy(runtime: BrowserRuntimeProjection, input
             throw new RefusalError('browser routes must remain unique and relative to the application origin')
         }
         names.add(row.name); urls.add(url.href)
-        surfaces.push(Object.freeze({ name: row.name, url: url.href }))
+        surfaces.push({ name: row.name, url: url.href })
     }
-    const policy = Object.freeze({ origin: origin.origin, surfaces: Object.freeze(surfaces) })
+    const policy = { origin: origin.origin, surfaces }
     issuedPolicies.set(policy, runtime)
     return policy
 }
@@ -212,16 +212,16 @@ function authentication(input: BrowserCommandInput): Readonly<{ posture: 'bypass
     posture: 'real'; role: string; policy: 'serialized' | 'per-worker'; statePath: string
 }> | undefined {
     const auth = input.runtime.authentication
-    if (auth.posture !== 'real') return input.role === undefined && input.state === undefined ? Object.freeze({ posture: auth.posture }) : undefined
+    if (auth.posture !== 'real') return input.role === undefined && input.state === undefined ? { posture: auth.posture } : undefined
     if (typeof input.role !== 'string' || auth.policy === 'none') return undefined
     const state = auth.states.find(candidate => candidate.worker === input.role)
     if (!state) return undefined
-    return Object.freeze({ posture: 'real' as const, role: input.role, policy: auth.policy, statePath: resolve(input.client.cwd, state.path) })
+    return { posture: 'real' as const, role: input.role, policy: auth.policy, statePath: resolve(input.client.cwd, state.path) }
 }
 
 function publicAuthentication(value: NonNullable<ReturnType<typeof authentication>>): BrowserCommandReceipt['authentication'] {
-    return value.posture !== 'real' ? Object.freeze({ posture: value.posture })
-        : Object.freeze({ posture: 'real' as const, role: value.role, policy: value.policy })
+    return value.posture !== 'real' ? { posture: value.posture }
+        : { posture: 'real' as const, role: value.role, policy: value.policy }
 }
 
 function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: string): Readonly<{ finalUrl: string; evidence?: { sha256: string; byteLength: number } }> | undefined {
@@ -236,13 +236,13 @@ function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: strin
     // A URL error quotes the child-reported address; the caller refuses with its own fixed message.
     try { final = new URL(row.finalUrl) } catch { return undefined }
     if (final.origin !== origin || final.username || final.password || final.hash) return undefined
-    if (kind === 'drive') return Object.freeze({ finalUrl: final.href })
+    if (kind === 'drive') return { finalUrl: final.href }
     if (!row.evidence || typeof row.evidence !== 'object' || Array.isArray(row.evidence)) return undefined
     const evidence = row.evidence as Record<string, unknown>
     if (Object.keys(evidence).sort().join(',') !== 'byteLength,sha256' || typeof evidence.sha256 !== 'string' || !sha256.test(evidence.sha256)
         || !Number.isSafeInteger(evidence.byteLength) || (evidence.byteLength as number) < 0
         || (evidence.byteLength as number) > MAX_SCREENSHOT_BYTES) return undefined
-    return Object.freeze({ finalUrl: final.href, evidence: Object.freeze({ sha256: evidence.sha256, byteLength: evidence.byteLength as number }) })
+    return { finalUrl: final.href, evidence: { sha256: evidence.sha256, byteLength: evidence.byteLength as number } }
 }
 
 // Returns undefined when the file fails a check; a filesystem error is thrown for the caller to name.
@@ -312,9 +312,9 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed before application driving') }
         const output = input.kind === 'screenshot' ? resolve(client.artifactRoot, `screenshot-${randomUUID()}.png`) : undefined
         if (deadline <= Date.now()) return refusal('Browser command exceeded its total 30-second deadline')
-        const authenticated = await executeBrowserProjectOperation(client, input.runtime, Object.freeze({
+        const authenticated = await executeBrowserProjectOperation(client, input.runtime, {
             kind: input.kind, surface, deadline, ...(auth.posture === 'real' ? { role: auth.role } : {}), ...(output ? { output } : {}),
-        }), authorization)
+        }, authorization)
         if (!authenticated || authenticated.kind === 'unadmitted') {
             return refusal(`Browser ${input.kind} operation was not admitted to the bounded executor for ${surface.name}${authenticated ? ` (${authenticated.cause})` : ''}`)
         }
@@ -338,13 +338,13 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
             let cause = ''
             try { path = postcheckScreenshot(client.artifactRoot, client.cwd, output!, observation.evidence!) } catch (error) { cause = ` (${errorCause(error)})` }
             if (!path) return refusal(`Browser screenshot output failed its contained mode-600 postcheck for ${surface.name}${cause}`)
-            receipts.push(Object.freeze({ ...base, screenshot: Object.freeze({ path, ...observation.evidence! }) }))
-        } else receipts.push(Object.freeze(base))
+            receipts.push({ ...base, screenshot: { path, ...observation.evidence! } })
+        } else receipts.push(base)
     }
-    const receipt = Object.freeze({ kind: input.kind, activation: 'application' as const,
-        authentication: publicAuthentication(auth), surfaces: Object.freeze(receipts) })
+    const receipt = { kind: input.kind, activation: 'application' as const,
+        authentication: publicAuthentication(auth), surfaces: receipts }
     issuedReceipts.add(receipt)
-    return Object.freeze({ kind: 'complete', receipt })
+    return { kind: 'complete', receipt }
 }
 
 export async function executeBrowserCommand(value: BrowserCommandInput): Promise<BrowserCommandResult> {
@@ -368,14 +368,14 @@ export async function executeBrowserCommand(value: BrowserCommandInput): Promise
         if (!preparation || preparation.cwd !== client.cwd) {
             return refusal('Headed browser use requires an authenticated foreground debugger preparation for the current runtime')
         }
-        return Object.freeze({ kind: 'debugger-preparation', preparation,
-            reason: 'Run the authenticated foreground command to open a headed browser; preparation does not produce UI evidence' })
+        return { kind: 'debugger-preparation', preparation,
+            reason: 'Run the authenticated foreground command to open a headed browser; preparation does not produce UI evidence' }
     }
     const auth = authentication(input)
     if (!auth) return refusal(input.runtime.authentication.posture === 'real'
         ? 'Browser command requires a declared seeded role and matching coordination authority' : 'Bypassed browser authentication cannot accept role or state input')
-    const admitted = await withBrowserProjectOperationAdmission(client, input.runtime, Object.freeze({
+    const admitted = await withBrowserProjectOperationAdmission(client, input.runtime, {
         origin: input.policy.origin, ...(auth.posture === 'real' ? { role: auth.role } : {}), ...(input.state ? { state: input.state } : {}),
-    }), authorization => run(input, client!, input.policy, auth, deadline, authorization))
+    }, authorization => run(input, client!, input.policy, auth, deadline, authorization))
     return admitted.kind === 'admitted' ? admitted.value : refusal(admitted.reason)
 }

@@ -268,7 +268,6 @@ describe('lifecycle stage authority', () => {
         })
 
         expect(projection).toBeDefined()
-        expect(Object.isFrozen(projection)).toBe(true)
         expect(Reflect.ownKeys(projection!)).toEqual([])
         expect(authenticateLifecycleStageAuthority(
             issued.authority, stackId, cockpitId, earliest, latest, Date.now(),

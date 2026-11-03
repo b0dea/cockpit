@@ -704,7 +704,7 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
     }),
     // Sync writes Cursor no rules file of its own for cockpit's instructions: they reach it only
     // through the root AGENTS.md, and `.cursor/rules/` holds rules overlays alone.
-    ...GENERATED_ONLY_HARNESSES.map(row => Object.freeze({
+    ...GENERATED_ONLY_HARNESSES.map(row => ({
         target: row.target, mechanism: 'rulesync-rules' as const, capability: row.native.state, evidence: 'pending_evidence' as const,
         characterizedOn: row.native.measuredOn, measuredVersion: null,
         provenance: row.target === 'cursor'
@@ -714,7 +714,7 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
 ] as const satisfies readonly ShippedInstructionCapability[])
 
 export function shippedInstructionCapabilities(): readonly ShippedInstructionCapability[] {
-    return Object.freeze(INSTRUCTION_CAPABILITIES.map(row => Object.freeze({ ...row })))
+    return INSTRUCTION_CAPABILITIES.map(row => ({ ...row }))
 }
 
 // `.codex/` sits one level below the cockpit root, so a root-relative path gains one `..`. This is

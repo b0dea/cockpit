@@ -44,7 +44,7 @@ const codexSessionStart = Object.freeze({
     state: 'instructed' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-03', measuredVersion: '0.166.0',
     provenance: 'only after a person trusts the hook, as for the guard: a trusted SessionStart hook in .codex/hooks.json ran under codex exec and the agent quoted its stdout back, while a hook under a misspelled event name never ran',
 })
-const noSessionStart = (reason: string) => Object.freeze({ state: 'unavailable' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-03', measuredVersion: null, provenance: reason })
+const noSessionStart = (reason: string) => ({ state: 'unavailable' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-03', measuredVersion: null, provenance: reason })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -99,7 +99,7 @@ export const DEFAULT_SURFACE_TOOLS = GUARD_SURFACE_TARGETS
 
 /** The listed tools in registry order, so rendering and drift do not depend on how the list is spelled. */
 export function listedSurfaceTargets(tools: readonly string[]): readonly SurfaceTarget[] {
-    return Object.freeze(SURFACE_TARGETS.filter(target => tools.includes(target)))
+    return SURFACE_TARGETS.filter(target => tools.includes(target))
 }
 // Native MCP and permission outputs can select executable programs or relax harness authority.
 // The guard derives its protected files from this owner so a new harness cannot omit the boundary.

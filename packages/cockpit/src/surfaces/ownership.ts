@@ -130,7 +130,7 @@ function exact(value: JsonSnapshotObject, required: readonly string[]): boolean 
 function digest(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex') }
 
 function refusal(code: SurfaceDiagnostic['code'], message: string, target?: string, fix?: string): Extract<SurfaceOwnershipResult, { kind: 'refusal' }> {
-    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }) })
+    return { kind: 'refusal', diagnostic: { code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) } }
 }
 
 function sortedUniqueStrings(value: JsonSnapshot | undefined, allowed?: ReadonlySet<string>): value is JsonSnapshot & readonly string[] {
@@ -539,18 +539,18 @@ export function parseOwnershipManifest(bytes: string, authority: OwnershipAuthor
     if (!object(captured) || typeof captured.root !== "string" || !isAbsolute(captured.root)
         || typeof captured.configPath !== "string" || dirname(captured.configPath) !== captured.root
         || typeof captured.cockpitId !== "string" || captured.cockpitId.length === 0
-        || typeof bytes !== "string" || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return Object.freeze({ kind: "invalid" })
+        || typeof bytes !== "string" || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return { kind: "invalid" }
     const record = ownRecord(tryParseJson(bytes))
     if (typeof record?.format === "string" && /^cockpit-generated-ownership\/v[0-9]+$/.test(record.format)
         && Number(record.format.slice(record.format.lastIndexOf("v") + 1)) > 3) {
-        return Object.freeze({ kind: "unsupported", format: record.format })
+        return { kind: "unsupported", format: record.format }
     }
     const manifest = parseOwnership(bytes, captured as unknown as OwnershipAuthority)
-    return manifest ? Object.freeze({ kind: "complete", manifest }) : Object.freeze({ kind: "invalid" })
+    return manifest ? { kind: "complete", manifest } : { kind: "invalid" }
 }
 function ownershipPayload(prepared: OwnershipManifestInput): OwnershipManifestPayload {
     const entries: OwnershipEntry[] = [
-        ...prepared.owned.map(({ path, sha256: digest }) => Object.freeze({ kind: 'file' as const, path, ownership: 'whole-file' as const, sha256: digest })),
+        ...prepared.owned.map(({ path, sha256: digest }) => ({ kind: 'file' as const, path, ownership: 'whole-file' as const, sha256: digest })),
         ...prepared.surfaces.map((entry): SurfacePriorOwnedEntry => {
             if (entry.kind === 'file') {
                 const { bytes: _bytes, ...prior } = entry
@@ -558,22 +558,22 @@ function ownershipPayload(prepared: OwnershipManifestInput): OwnershipManifestPa
             }
             if (entry.region.format === 'markdown-delimited') {
                 const { bytes: _bytes, ...region } = entry.region
-                return Object.freeze({ ...entry, region })
+                return { ...entry, region }
             }
-            return Object.freeze({ ...entry, region: Object.freeze({
-                format: entry.region.format, keys: Object.freeze(entry.region.members.map(member => member.key)), sha256: entry.region.sha256,
-            }) })
+            return { ...entry, region: {
+                format: entry.region.format, keys: entry.region.members.map(member => member.key), sha256: entry.region.sha256,
+            } }
         }),
     ].sort((left, right) => compareCodeUnits(left.path, right.path))
-    return Object.freeze({
+    return {
         format: 'cockpit-generated-ownership/v3' as const,
         cockpitId: prepared.cockpitId,
         generation: prepared.generation,
-        source: Object.freeze({ path: basename(prepared.configPath), sha256: prepared.sourceSha256 }),
+        source: { path: basename(prepared.configPath), sha256: prepared.sourceSha256 },
         personaSource: prepared.personaSource,
-        producer: Object.freeze({ package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision }),
-        entries: Object.freeze(entries),
-    })
+        producer: { package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision },
+        entries,
+    }
 }
 
 export function encodeOwnershipManifest(prepared: OwnershipManifestInput): Readonly<{ bytes: string; manifest: OwnershipManifest }> {
@@ -581,7 +581,7 @@ export function encodeOwnershipManifest(prepared: OwnershipManifestInput): Reado
     const bytes = `${JSON.stringify({ ...payload, integrity: sha256(JSON.stringify(payload)) }, null, 2)}\n`
     const parsed = parseOwnershipManifest(bytes, { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath })
     if (parsed.kind !== "complete") throw new RefusalError("generated ownership encoder received invalid authority or entries")
-    return Object.freeze({ bytes, manifest: parsed.manifest })
+    return { bytes, manifest: parsed.manifest }
 }
 
 function ownRecord(value: unknown): Record<string, unknown> | undefined {
@@ -643,7 +643,7 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
             if (exactKeys(row, ['kind', 'path', 'ownership', 'sha256'])) {
                 if (row.kind !== 'file' || row.ownership !== 'whole-file'
                     || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
-                entries.push(Object.freeze({ kind: 'file', path: row.path, ownership: 'whole-file', sha256: row.sha256 }))
+                entries.push({ kind: 'file', path: row.path, ownership: 'whole-file', sha256: row.sha256 })
                 continue
             }
             const producerKeys = ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership']
@@ -666,7 +666,7 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
                         || keys.some((key, index) => typeof key !== 'string' || index > 0 && String(keys[index - 1]) >= key)) return undefined
                 } else return undefined
             } else return undefined
-            entries.push(Object.freeze(row) as unknown as SurfacePriorOwnedEntry)
+            entries.push(row as unknown as SurfacePriorOwnedEntry)
         }
         if (new Set(entries.map(({ path }) => path)).size !== entries.length
             || entries.some((file, index) => index > 0
@@ -684,7 +684,7 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
         }
         const manifest = snapshotGeneratedJson({
             ...payload,
-            entries: Object.freeze(entries.map((entry) => Object.freeze(entry))),
+            entries: entries.map((entry) => entry),
             integrity: record.integrity,
         }) as unknown as OwnershipManifest | undefined
         if (!manifest) return undefined
@@ -757,17 +757,17 @@ export function projectGeneratedPathFacts(
         byPath.set(path, row as unknown as GeneratedPathDeclaration)
     }
     // Classification compares the owner markers on disk with the id the ledger recorded them under.
-    const enclosing = Object.freeze({ ...issued, cockpitId: manifest.cockpitId, generation: manifest.generation, source: manifest.source, integrity: manifest.integrity })
-    const facts = Object.freeze(manifest.entries.map(entry => {
+    const enclosing = { ...issued, cockpitId: manifest.cockpitId, generation: manifest.generation, source: manifest.source, integrity: manifest.integrity }
+    const facts = manifest.entries.map(entry => {
         const declaration = byPath.get(entry.path) ?? null
-        const fact = Object.freeze({ path: entry.path, authority: enclosing, entry, declaration,
+        const fact = { path: entry.path, authority: enclosing, entry, declaration,
             allowsMissing: declaration?.applicability === 'declared-before-sync',
-            harnesses: 'harnesses' in entry ? entry.harnesses : Object.freeze([]),
-            scope: 'scope' in entry ? entry.scope : 'always' as const, ownership: entry.ownership })
+            harnesses: 'harnesses' in entry ? entry.harnesses : [],
+            scope: 'scope' in entry ? entry.scope : 'always' as const, ownership: entry.ownership }
         issuedFacts.add(fact)
         return fact
-    }))
-    return Object.freeze({ kind: 'complete', facts })
+    })
+    return { kind: 'complete', facts }
 }
 
 export interface GeneratedPathClassification {
@@ -843,13 +843,13 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
                 }
             }
         }
-        const diagnostics: readonly SurfaceDiagnostic[] = state === 'unchanged' || state === 'missing' && fact.allowsMissing ? Object.freeze([])
-            : Object.freeze([Object.freeze({ code: 'SURFACE_STATE_CONFLICT' as const, target: fact.path,
+        const diagnostics: readonly SurfaceDiagnostic[] = state === 'unchanged' || state === 'missing' && fact.allowsMissing ? []
+            : [{ code: 'SURFACE_STATE_CONFLICT' as const, target: fact.path,
                 message: state === 'unknown' ? 'cockpit could not confirm this generated path is still the plain file or link inside the cockpit root that it last wrote'
                     : state === 'missing' ? 'this generated path is missing and nothing in this sync recreates it'
                         : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits',
-                ...(state === 'modified' ? { fix: SURFACE_HAND_EDIT_FIX } : {}) })])
-        return Object.freeze({ fact, state, ...(rawSha256 ? { rawSha256 } : {}), diagnostics })
+                ...(state === 'modified' ? { fix: SURFACE_HAND_EDIT_FIX } : {}) }]
+        return { fact, state, ...(rawSha256 ? { rawSha256 } : {}), diagnostics }
     })
-    return Object.freeze({ kind: 'complete', paths: Object.freeze(paths) })
+    return { kind: 'complete', paths }
 }

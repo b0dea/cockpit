@@ -11,7 +11,7 @@ export type UiGateResult = Readonly<{ kind: 'satisfied'; activating: BrowserComm
 const satisfyingCommand = 'npx --no cockpit browser drive --config cockpit.toml or npx --no cockpit browser screenshot --config cockpit.toml'
 const activatingKinds = new Set<BrowserCommandKind>(['drive', 'screenshot'])
 
-const refusal = (reason: string): UiGateResult => Object.freeze({ kind: 'refusal', reason, satisfyingCommand })
+const refusal = (reason: string): UiGateResult => ({ kind: 'refusal', reason, satisfyingCommand })
 
 export function evaluateUiGate(input: UiGateInput): UiGateResult {
     if (!Object.hasOwn(input, 'activating') || !activatingKinds.has(input.activating as BrowserCommandKind)) {
@@ -25,5 +25,5 @@ export function evaluateUiGate(input: UiGateInput): UiGateResult {
         && candidate.activation === 'application' && candidate.kind === activating)
     return receipt === undefined
         ? refusal('UI evidence requires an issued receipt bound to the configured activating browser command')
-        : Object.freeze({ kind: 'satisfied', activating, receipt })
+        : { kind: 'satisfied', activating, receipt }
 }

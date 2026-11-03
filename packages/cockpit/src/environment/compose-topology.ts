@@ -82,7 +82,7 @@ const SERVICE_ID = /^[a-z0-9][a-z0-9_.-]*$/
 const PINNED_IMAGE = /@sha256:[a-f0-9]{64}$/
 
 function unavailable(reason: string): ComposeTopologyObservation {
-    return Object.freeze({ kind: 'unavailable', reason })
+    return { kind: 'unavailable', reason }
 }
 
 type ComposeFiles = readonly Readonly<{ path: string; sha256: string }>[]
@@ -141,7 +141,7 @@ export function splitComposeShort(value: string): readonly string[] | undefined 
         } else current += character
     }
     segments.push(current)
-    return depth !== 0 || bracket ? undefined : Object.freeze(segments)
+    return depth !== 0 || bracket ? undefined : segments
 }
 
 // Compose keeps a port it could not interpolate in its short form, and normalises literal ports
@@ -151,10 +151,10 @@ function shortPort(value: string): ComposePublishedPort | undefined {
     if (!split) return undefined
     const segments = [...split.slice(0, -1), split[split.length - 1]!.replace(/\/(?:tcp|udp|sctp)$/, '')]
     if (segments.length > 3 || segments.some((segment, index) => segment === '' && index === segments.length - 1)) return undefined
-    if (segments.length === 1) return Object.freeze({ published: null, hostIp: null, target: segments[0]! })
+    if (segments.length === 1) return { published: null, hostIp: null, target: segments[0]! }
     const published = segments[segments.length - 2]!
     const hostIp = segments.length === 3 && segments[0] !== '' ? segments[0]! : null
-    return Object.freeze({ published: published === '' ? null : published, hostIp, target: segments[segments.length - 1]! })
+    return { published: published === '' ? null : published, hostIp, target: segments[segments.length - 1]! }
 }
 
 function longPort(value: Record<string, unknown>): ComposePublishedPort | undefined {
@@ -164,9 +164,9 @@ function longPort(value: Record<string, unknown>): ComposePublishedPort | undefi
     if (typeof target !== 'number' && typeof target !== 'string') return undefined
     if (hostIp !== undefined && hostIp !== null && typeof hostIp !== 'string') return undefined
     const ip = hostIp === undefined || hostIp === null || hostIp === '' ? null : hostIp
-    if (published === undefined || published === null || published === '') return Object.freeze({ published: null, hostIp: ip, target: String(target) })
+    if (published === undefined || published === null || published === '') return { published: null, hostIp: ip, target: String(target) }
     if (typeof published !== 'number' && typeof published !== 'string') return undefined
-    return Object.freeze({ published: String(published), hostIp: ip, target: String(target) })
+    return { published: String(published), hostIp: ip, target: String(target) }
 }
 
 function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | undefined {
@@ -200,12 +200,12 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
             if (typeof source !== 'string') return undefined
             mountSources.push(source)
         }
-        projected.push(Object.freeze({
-            id, ports: Object.freeze(ports as ComposePublishedPort[]), healthcheck,
-            image: image ?? null, build: service.build !== undefined, mountSources: Object.freeze(mountSources),
-        }))
+        projected.push({
+            id, ports: ports as ComposePublishedPort[], healthcheck,
+            image: image ?? null, build: service.build !== undefined, mountSources,
+        })
     }
-    return Object.freeze(projected)
+    return projected
 }
 
 /** Runs Compose's own resolution of the declared files and projects the services it reports. */
@@ -214,12 +214,12 @@ export async function observeComposeTopology(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): Promise<ComposeTopologyObservation> {
     if (input.references.length === 0) return unavailable('no Compose file is declared')
-    const reads = await readAnchoredBatches(input.root, input.references.map(path => Object.freeze({
+    const reads = await readAnchoredBatches(input.root, input.references.map(path => ({
         path, maxBytes: OUTPUT_LIMIT_BYTES, action: 'read-file' as const,
     })), input.node, { execute })
     const composeFiles = reads?.kind === 'complete' && reads.results.length === input.references.length
         ? reads.results.map((read, index) => read.kind === 'complete'
-            ? Object.freeze({ path: resolve(input.root, input.references[index]!), sha256: read.sha256 }) : undefined)
+            ? { path: resolve(input.root, input.references[index]!), sha256: read.sha256 } : undefined)
         : undefined
     if (!composeFiles || composeFiles.some(file => file === undefined)) {
         return unavailable(`a declared Compose file (${input.references.join(', ')}) is missing, larger than 1 MiB, or crosses a symbolic link`)
@@ -233,7 +233,7 @@ export async function observeComposeTopology(
         return unavailable(`docker compose config failed (${outcome.code})${detail ? `: ${detail}` : ''}`)
     }
     const services = projectServices(outcome.stdout)
-    return services ? Object.freeze({ kind: 'complete', services }) : unavailable('docker compose config returned a topology this probe cannot read')
+    return services ? { kind: 'complete', services } : unavailable('docker compose config returned a topology this probe cannot read')
 }
 
 function variableName(value: string): string | undefined {
@@ -306,11 +306,11 @@ export function compareBindSources(binds: readonly string[], declared: readonly 
         if (owner === undefined) unexpected.push(bind)
         else { used.add(owner); admitted.push(bind) }
     }
-    return Object.freeze({
-        missing: Object.freeze([...new Set(declared)]
-            .filter(source => !used.has(source) && !admitted.some(bind => contains(bind, source))).sort()),
-        unexpected: Object.freeze(unexpected.sort()),
-    })
+    return {
+        missing: [...new Set(declared)]
+            .filter(source => !used.has(source) && !admitted.some(bind => contains(bind, source))).sort(),
+        unexpected: unexpected.sort(),
+    }
 }
 
 async function canonicalPath(path: string): Promise<string> {
@@ -338,9 +338,9 @@ export async function redirectedBindSources(binds: readonly string[], declared: 
         let inside: boolean
         try { inside = contains(await canonicalPath(owner), await canonicalPath(bind)) }
         catch { inside = false } // A bind that cannot be resolved cannot be shown to sit inside its holder, so it is reported redirected and refused.
-        if (!inside) redirected.push(Object.freeze({ bind, holder: owner }))
+        if (!inside) redirected.push({ bind, holder: owner })
     }
-    return Object.freeze(redirected.sort((left, right) => left.bind.localeCompare(right.bind)))
+    return redirected.sort((left, right) => left.bind.localeCompare(right.bind))
 }
 
 export interface ComposeTopologyDeclarations {
@@ -378,20 +378,20 @@ export async function assessComposeTopology(
     const redirected = (await redirectedBindSources(resolved, declared)).map(({ bind }) => bind)
     for (const sibling of always) {
         if (!missing.includes(sibling.path)) continue
-        diagnostics.push(Object.freeze({
+        diagnostics.push({
             severity: 'error' as const, code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: `sibling:${sibling.slug}`,
             message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path} or a directory inside it; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
             fix: `bind-mount it in a service of the Compose file, whole or a directory inside it (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run ${cockpitCommand('sync')}`,
-        }))
+        })
     }
     for (const hostPath of declarations.hostPaths) {
         if (!missing.includes(hostPath.path)) continue
-        diagnostics.push(Object.freeze({
+        diagnostics.push({
             severity: 'error' as const, code: 'GENERATED_HOST_PATH_UNMOUNTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_PATH_UNMOUNTED,
             target: `environment.generated_host_paths:${hostPath.declared}`,
             message: `environment.generated_host_paths lists ${hostPath.declared}, but no Compose service bind-mounts ${hostPath.path}, a path inside it or a directory that holds it; up admits a stack only when every declared host path is mounted, so it would refuse to start`,
             fix: `bind-mount ${hostPath.declared} in a service of the Compose file, or remove "${hostPath.declared}" from environment.generated_host_paths in cockpit.toml; then run ${cockpitCommand('check')}`,
-        }))
+        })
     }
     for (const bind of binds) {
         const why = bind.path === undefined
@@ -399,41 +399,41 @@ export async function assessComposeTopology(
             : unexpected.includes(bind.path) ? 'which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry'
                 : redirected.includes(bind.path) ? 'which resolves through a symbolic link to a path outside the sibling that holds it' : undefined
         if (why === undefined) continue
-        diagnostics.push(Object.freeze({
+        diagnostics.push({
             severity: 'error' as const, code: 'COMPOSE_BIND_UNDECLARED', target: `compose:${bind.service}:${bind.source}`,
             message: `service ${bind.service} bind-mounts ${bind.path ?? bind.source}, ${why}; up hands a container only the checkouts and host paths cockpit.toml declares, so it would refuse to start`,
             fix: `bind a directory inside a mount = "always" sibling (its variable, as in "\${VAR}/path", or a path relative to the first Compose file's directory), list the path under environment.generated_host_paths, or remove the bind mount from service ${bind.service}; then run ${cockpitCommand('check')}`,
-        }))
+        })
     }
     for (const service of services) {
         for (const port of service.ports) {
             // No host interface means Docker binds every one (0.0.0.0 and ::), exposing the service
             // to the network. Writing an interface, even 0.0.0.0, is the declared way to mean it.
-            if (port.hostIp === null) diagnostics.push(Object.freeze({
+            if (port.hostIp === null) diagnostics.push({
                 severity: 'warning' as const, code: 'COMPOSE_PORT_ALL_INTERFACES', target: `compose:${service.id}:${port.target}`,
                 message: `service ${service.id} publishes container port ${port.target} with no host interface, so Docker binds every interface and the service is reachable from the network`,
                 fix: `write the host interface in front of the port, as "127.0.0.1:\${${(port.published === null ? undefined : variableName(port.published)) ?? suggestedVariable(service.id)}}:${port.target}", or write 0.0.0.0 there if you mean the wider exposure`,
-            }))
+            })
             if (port.published === null) continue
             const variable = variableName(port.published)
             if (variable !== undefined && leased.has(variable)) continue
             const name = variable ?? suggestedVariable(service.id)
-            diagnostics.push(Object.freeze({
+            diagnostics.push({
                 severity: 'error' as const, code: 'COMPOSE_PORT_NOT_LEASED', target: `compose:${service.id}:${port.target}`,
                 message: `service ${service.id} publishes host port ${JSON.stringify(port.published)} for container port ${port.target}, which is not taken from a ports.bases variable; the same host port collides across worktrees and parallel stacks`,
                 fix: `publish it as "\${${name}}:${port.target}" in the Compose file and declare ${name} under [ports.bases]`,
-            }))
+            })
         }
-        if (!service.healthcheck) diagnostics.push(Object.freeze({
+        if (!service.healthcheck) diagnostics.push({
             severity: 'warning' as const, code: 'COMPOSE_HEALTHCHECK_MISSING', target: `compose:${service.id}`,
             message: `service ${service.id} declares no Compose healthcheck, so running is treated as ready`,
             fix: `add a healthcheck to service ${service.id} that succeeds only once it serves requests`,
-        }))
-        if (!service.build && service.image !== null && !PINNED_IMAGE.test(service.image)) diagnostics.push(Object.freeze({
+        })
+        if (!service.build && service.image !== null && !PINNED_IMAGE.test(service.image)) diagnostics.push({
             severity: 'warning' as const, code: 'COMPOSE_IMAGE_UNPINNED', target: `compose:${service.id}`,
             message: `service ${service.id} runs image ${JSON.stringify(service.image)} by tag, so a later pull can change what runs`,
             fix: `pin it by digest, for example ${service.image.replace(/:[^/:]*$/, '')}@sha256:<digest> from docker image inspect`,
-        }))
+        })
     }
-    return Object.freeze(diagnostics)
+    return diagnostics
 }

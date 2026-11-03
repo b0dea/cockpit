@@ -176,7 +176,7 @@ function frozen<T>(value: T): T | undefined {
 }
 
 function refusal(code: RestrictionExpansionRefusal['code'], message: string): RestrictionExpansionRefusal {
-    return frozen({ kind: 'refusal', code, message }) ?? Object.freeze({ kind: 'refusal', code, message })
+    return frozen({ kind: 'refusal', code, message }) ?? { kind: 'refusal', code, message }
 }
 
 function safeScalar(value: string, max = 4_096): boolean {
@@ -355,18 +355,18 @@ export function inspectShippedRestrictionCapabilities(input: unknown): ShippedRe
 
     const targets = GUARD_SURFACE_TARGETS.map((target): ShippedRestrictionCapability => {
         const adapter = adapters.get(target)!
-        const row = Object.freeze({
+        const row = {
             target,
             capability: adapter.mechanism === 'unavailable' ? 'unavailable' as const : 'instructed' as const,
             evidenceStatus: adapter.mechanism === 'unavailable' ? 'not_applicable' as const : 'pending_evidence' as const,
             measuredOn: adapter.measuredOn,
             measuredVersion: adapter.measuredVersion,
             provenance: adapter.provenance,
-        })
+        }
         issuedShippedRestrictionCapabilities.add(row)
         return row
     })
-    const result = Object.freeze({ kind: 'complete' as const, targets: Object.freeze(targets) })
+    const result = { kind: 'complete' as const, targets }
     issuedShippedRestrictionCapabilities.add(result)
     shippedRestrictionBindings.set(result, Object.freeze({ adapters }))
     return result

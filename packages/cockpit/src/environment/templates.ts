@@ -324,7 +324,7 @@ export async function observeEnvironmentKeys(input: {
     const source = inspection.kind === 'unreadable' || inspection.kind === 'malformed' ? inspection.path : inspection.instancePath
     const presence = inspection.kind !== 'absent' && !(inspection.kind === 'unreadable' && inspection.file === 'instance')
     const fresh = inspection.kind === 'fresh'
-    return Object.freeze([
+    return [
         issueObservation({
             code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: inspection.kind === 'unreadable' || inspection.kind === 'malformed'
@@ -338,7 +338,7 @@ export async function observeEnvironmentKeys(input: {
             observed: { state: 'available', value: presence, observedAt: owned.observedAt }, expectation: { kind: 'equal', value: true },
             applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
         }),
-    ])
+    ]
 }
 
 /** Health admits one row per code; aggregate here so every declaration retains owner-issued evidence. */
@@ -380,7 +380,7 @@ export async function observeTemplateHealth(input: {
             freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
         }))
     }
-    return Object.freeze([...groups.values()].map(group => {
+    return [...groups.values()].map(group => {
         if (group.length === 1) return group[0]!
         const failures = group.filter(row => row.observed.state !== 'available' || row.observed.value !== true)
         const unreadable = failures.filter(row => row.observed.state !== 'available')
@@ -393,7 +393,7 @@ export async function observeTemplateHealth(input: {
                 ? { state: 'failed', reason: bounded(unreadable.map(row => `${row.source}: ${row.observed.state === 'available' ? '' : row.observed.reason}`).join('; ')), observedAt: input.observedAt }
                 : { state: 'available', value: failures.length === 0, observedAt: input.observedAt },
         })
-    }))
+    })
 }
 
 interface FileIdentity {

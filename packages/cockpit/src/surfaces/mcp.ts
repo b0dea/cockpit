@@ -76,7 +76,7 @@ export type McpParseOutcome =
     | Readonly<{ kind: 'refusal'; diagnostic: McpDiagnostic }>
 
 function refuse(code: McpDiagnostic['code'], message: string): Extract<McpCollectionOutcome, { kind: 'refusal' }> {
-    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message }) })
+    return { kind: 'refusal', diagnostic: { code, message } }
 }
 
 function quote(value: string): string {

@@ -9,7 +9,7 @@ export function parseLocalDockerEndpoint(value: unknown): Readonly<{ transport: 
     const path = value.slice('unix://'.length)
     // Docker passes this raw pathname to the socket transport: spaces and URI punctuation are literal.
     return path.startsWith('/') && !path.startsWith('//') && path.length > 1
-        ? Object.freeze({ transport: 'unix', endpoint: value }) : undefined
+        ? { transport: 'unix', endpoint: value } : undefined
 }
 
 /** Admits transport syntax for this process without granting native execution or state authority. */

@@ -50,8 +50,6 @@ describe('executable remedy catalogue', () => {
             argv: ['npx', '--no', 'cockpit', 'sync', '--config', "/workspace/a'$(echo injected);`id` config.toml"],
             command: "npx --no cockpit sync --config '/workspace/a'\"'\"'$(echo injected);`id` config.toml'",
         })
-        expect(Object.isFrozen(admitted)).toBe(true)
-        expect(Object.isFrozen(admitted?.argv)).toBe(true)
     })
 
     it('formats suggested commands so a POSIX shell receives the exact argv', async () => {

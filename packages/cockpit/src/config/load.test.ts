@@ -315,10 +315,6 @@ cold_start_seconds = 30
             testing: { nativeHookInstall: 'inspect', declarations: { stages: [{ id: 'unit', command: ['npm', 'test'], requiresStack: false }] } },
         })
 
-        expect(Object.isFrozen(consumed?.testing?.declarations)).toBe(true)
-        expect(Object.isFrozen(consumed?.testing?.declarations.stages)).toBe(true)
-        expect(Object.isFrozen(consumed?.testing?.declarations.stages[0]?.command)).toBe(true)
-        expect(Object.isFrozen(consumed?.testing?.declarations.gates)).toBe(true)
         expect(consumed).not.toHaveProperty('staleParkDays')
         expect(consumeWorkEnvironmentConfigProjection(projection!)).toBeUndefined()
         expect(consumeLoadedConfigProjection(loaded.result)).toBeDefined()

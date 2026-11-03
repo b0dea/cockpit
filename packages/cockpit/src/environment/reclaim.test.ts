@@ -1073,8 +1073,6 @@ describe('reset planning', () => {
             expect(envelope).toEqual({
                 purpose: 'down', stackId, configSha256, planDigest: result.discoveryDigest, commitments: [],
             })
-            expect(Object.isFrozen(envelope)).toBe(true)
-            expect(Object.isFrozen(envelope?.commitments)).toBe(true)
             expect(consumeReclaimTargetProjection(projection!)).toBeUndefined()
         } finally { await rm(root, { recursive: true, force: true }) }
     })
@@ -1143,9 +1141,6 @@ describe('reset planning', () => {
                 expect(projected).toMatchObject({
                     purpose: 'down', stackId, configSha256, planDigest: preview.discoveryDigest,
                 })
-                expect(Object.isFrozen(projected)).toBe(true)
-                expect(Object.isFrozen(projected?.commitments)).toBe(true)
-                expect(projected?.commitments.every(Object.isFrozen)).toBe(true)
                 const reclaimCommitments = projected?.commitments
                 const reclaimTargets = reclaimCommitments?.map(({ targetId }) => targetId)
                 expect(reclaimTargets).toEqual(usesCaches
@@ -1782,9 +1777,6 @@ describe('reset planning', () => {
             expect(projected).toMatchObject({
                 purpose: 'reset', stackId, configSha256, planDigest: preview.digest,
             })
-            expect(Object.isFrozen(projected)).toBe(true)
-            expect(Object.isFrozen(projected?.commitments)).toBe(true)
-            expect(projected?.commitments.every(Object.isFrozen)).toBe(true)
             const reclaimCommitments = projected?.commitments
             const reclaimTargets = reclaimCommitments?.map(({ targetId }) => targetId)
             expect(reclaimTargets).toEqual(hasRemainingVolume

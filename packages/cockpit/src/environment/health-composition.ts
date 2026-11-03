@@ -96,7 +96,7 @@ function captureInput(value: HealthCommandCompositionInput): CapturedInput | und
                 || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
-        return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), timeoutMs })
+        return { configPath: resolve(configPath), env, timeoutMs }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -104,14 +104,14 @@ function captureInput(value: HealthCommandCompositionInput): CapturedInput | und
 }
 
 function gitObservationEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(env)
+    return Object.fromEntries(Object.entries(env)
         .filter((entry): entry is [string, string] =>
-            (entry[0] === 'LANG' || entry[0] === 'LC_ALL' || entry[0] === 'TZ') && typeof entry[1] === 'string')))
+            (entry[0] === 'LANG' || entry[0] === 'LC_ALL' || entry[0] === 'TZ') && typeof entry[1] === 'string'))
 }
 
 function checkoutObservationEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
+    return Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
 function commandConfigPath(value: unknown): string | undefined {
@@ -141,23 +141,23 @@ async function sleepingStack(
     const coordination = decodeCoordinationRecord(stored.value, stack)
     if (!coordination || coordination.holders.length > 0) return undefined
     const fix = cockpitCommand('up', { config: configPath })
-    return Object.freeze({
+    return {
         severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
         message: 'the stack is asleep: no session holds it and its services are stopped, so there is nothing running to check; run up to start it, then rerun this command',
         fix,
-    })
+    }
 }
 
 // Before the first `up` doctor still measures the machine, so a missing runtime is named there
 // rather than first at bring-up.
 function runtimeUnavailable(reason: string, target: string): EnvironmentDiagnostic {
-    return Object.freeze({
+    return {
         severity: 'error' as const,
         code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
         message: `the container runtime that runs this stack is not usable on this machine: ${reason}`,
         target,
         fix: 'install or start Docker so that docker info succeeds, then rerun this command',
-    })
+    }
 }
 
 function producers(input: {
@@ -194,10 +194,10 @@ function producers(input: {
         const observed = await observeDockerRuntime({
             executable: docker.value,
             cwd: input.checkout.currentCheckoutPath,
-            env: Object.freeze(Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] =>
+            env: Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] =>
                 ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(entry[0])
                 && typeof entry[1] === 'string',
-            ))),
+            )),
             timeoutMs: input.timeoutMs,
         }, input.execute)
         if (observed.kind !== 'complete') return undefined
@@ -234,8 +234,8 @@ function producers(input: {
         if (!ports) return undefined
         const readiness = await adapters.withRuntimeReadiness<RuntimeReadiness | undefined>(loaded.result, async (value) => value, ports,
             (diagnostics) => input.refuse?.(diagnostics))
-        return readiness ? Object.freeze({ adapters, context: loaded.result, readiness, lifecycle, ports,
-            lifecycleSnapshot: JSON.stringify(stored.value) }) : undefined
+        return readiness ? { adapters, context: loaded.result, readiness, lifecycle, ports,
+            lifecycleSnapshot: JSON.stringify(stored.value) } : undefined
     })() : undefined
     const stableSession = async () => {
         const session = await runtimeSession
@@ -284,16 +284,16 @@ function producers(input: {
         return await stableSession() ? values : undefined
     }
     const currentServices = runningStack ? inspectCurrentServices() : undefined
-    const observations: HealthObservationProducers = Object.freeze({
+    const observations: HealthObservationProducers = {
         surfaces: async () => {
             const application = await checkedApplication
             const observations = application && observeGeneratedApplicationSurfaces(application)
             if (!observations) throw new RefusalError('surface health needs a current checked generated publication; run npx --no cockpit sync --config <your cockpit.toml>')
             return observations
         },
-        claims: async () => Object.freeze([await observeClaimState({
+        claims: async () => [await observeClaimState({
             namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
-        })]),
+        })],
         git: async () => {
             // Git status may refresh its index while checked publication authenticates checkout authority.
             await machineFloor
@@ -325,14 +325,14 @@ function producers(input: {
                 cockpitName: input.config.result.config.cockpit.name, evaluatedAt: Date.parse(time) },
             (projection) => observeRunningCheckout(session.readiness.topology, projection, session.context.runtimeSha256, time))
             if (running?.kind !== 'complete') throw new RefusalError('running checkout identity observation is unavailable')
-            return Object.freeze([...result.observations, running.observation])
+            return [...result.observations, running.observation]
         },
         host: async () => {
             if (input.config.result.config.environment.machine) {
                 if (machineFloor) {
                     const current = await machineFloor
                     // A stopped stack's unusable runtime is already a notice that names why.
-                    if (!current && input.stopped) return Object.freeze([])
+                    if (!current && input.stopped) return []
                     if (!current) throw new RefusalError('configured host capacity needs authenticated machine-floor execution evidence')
                     return current
                 }
@@ -340,48 +340,48 @@ function producers(input: {
                 if (!current) throw new RefusalError('configured host capacity needs authenticated machine-floor execution evidence')
                 return current.readiness.hostObservations
             }
-            return Object.freeze([])
+            return []
         },
-        lifecycle: async () => Object.freeze([await observeStateSeed({
+        lifecycle: async () => [await observeStateSeed({
             namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
-        })]),
+        })],
         ports: async () => {
-            if (!runningStack) return Object.freeze([])
+            if (!runningStack) return []
             const [session, services] = await Promise.all([stableSession(), currentServices])
             if (!session || !services) throw new RefusalError('runtime port health needs current lifecycle, lease and service identities')
             const observation = await observeRuntimePortFamily({ topology: session.readiness.topology,
-                services: Object.freeze([...services.values()]), namespace: session.context.namespace,
+                services: [...services.values()], namespace: session.context.namespace,
                 listenerTimeoutMs: input.timeoutMs,
                 revalidate: async () => {
                     const fresh = await inspectCurrentServices()
                     if (!fresh) throw new RefusalError('runtime services or lifecycle changed during port observation')
-                    return Object.freeze([...fresh.values()])
+                    return [...fresh.values()]
                 } })
-            return Object.freeze([observation])
+            return [observation]
         },
         runtime: async () => {
-            if (!configuredRuntime) return Object.freeze([])
+            if (!configuredRuntime) return []
             if (!runningStack) {
                 const measured = await runtimeMeasurement
                 // A stopped stack's missing runtime is already a notice; its rows are left unobserved.
-                if (!measured && input.stopped) return Object.freeze([])
+                if (!measured && input.stopped) return []
                 if (!measured) throw new RefusalError('configured runtime measurement needs authenticated runtime identity evidence')
-                return Object.freeze([measured])
+                return [measured]
             }
             const [session, services] = await Promise.all([stableSession(), currentServices])
             if (!session || !services) throw new RefusalError('configured runtime health needs current runtime execution evidence')
-            return Object.freeze([...session.readiness.runtimeObservations,
+            return [...session.readiness.runtimeObservations,
                 observeRuntimeMountMaterialization({ topology: session.readiness.topology,
-                    services: Object.freeze([...services.values()]), observedAt: observedAt() })])
+                    services: [...services.values()], observedAt: observedAt() })]
         },
-        envSchema: async () => Object.freeze(await observeEnvSchemas({
+        envSchema: async () => await observeEnvSchemas({
             stackId: input.stack,
             siblings: input.config.result.config.sibling.map((sibling) => ({
                 slug: sibling.slug, dir: sibling.dir, root: resolve(siblingRoot, sibling.dir),
             })),
             env: input.env,
             timeoutMs: input.timeoutMs,
-        }, { execute: input.execute })),
+        }, { execute: input.execute }),
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
         }),
@@ -389,8 +389,8 @@ function producers(input: {
             stackId: input.stack, observedAt: observedAt(), siblingRoot,
             siblings: input.config.result.config.sibling,
         }),
-    })
-    return Object.freeze({ observations, revalidate: async () => !runningStack || await stableSession() !== undefined })
+    }
+    return { observations, revalidate: async () => !runningStack || await stableSession() !== undefined }
 }
 
 async function checkoutProjection(
@@ -408,8 +408,8 @@ async function checkoutProjection(
     })
     // The owner's reason (for example, a cockpit root that is not a Git checkout) says what to do; dropping
     // it left preflight with only "observation source is unavailable".
-    if (observed.state === 'failed') return Object.freeze({ failed: Object.freeze({ severity: 'error' as const,
-        code: observed.code, message: observed.reason, target: loaded.result.source.path }) })
+    if (observed.state === 'failed') return { failed: { severity: 'error' as const,
+        code: observed.code, message: observed.reason, target: loaded.result.source.path } }
     return withSetupCheckoutProjection(observed, {
         source: loaded.result.source,
         cockpitName: loaded.result.config.cockpit.name,
@@ -421,9 +421,9 @@ async function checkoutProjection(
 // tool work.evaluators lists that can run, whichever agent tool did the work; doctor names the case
 // where none is on PATH before a grade fails on it, and says how each closed order closed.
 async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>, evaluators: readonly EvaluatorTool[]): Promise<readonly EnvironmentDiagnostic[]> {
-    try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return Object.freeze([]) }
+    try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return [] }
     catch (error) {
-        if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
+        if (hasErrorCode(error, 'ENOENT')) return []
         throw error
     }
     // The evaluator search looks only in canonical PATH directories, so doctor does too.
@@ -435,13 +435,13 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
             throw error
         }
     }
-    const closed = (await createWorkStore(root).list()).flatMap(record => record.closure ? [Object.freeze({ severity: 'info' as const,
+    const closed = (await createWorkStore(root).list()).flatMap(record => record.closure ? [{ severity: 'info' as const,
         code: ENVIRONMENT_CODES.WORK_ORDER_CLOSED, target: `workorders/${record.id}.md`,
-        message: `${record.id} closed as ${record.closure.how}, signed off by ${record.closure.by}${record.closure.note ? `: ${record.closure.note}` : ''}` })] : [])
+        message: `${record.id} closed as ${record.closure.how}, signed off by ${record.closure.by}${record.closure.note ? `: ${record.closure.note}` : ''}` }] : [])
     const { found, missing } = await findEvaluators(evaluators, directories)
-    if (found.length) return Object.freeze(closed)
-    return Object.freeze([Object.freeze({ severity: 'warning' as const, target: 'workorders',
-        ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator work.evaluators lists is on PATH to run work grade and cockpit grade: ${missing.map(row => row.message).join('; ')}`) }), ...closed])
+    if (found.length) return closed
+    return [{ severity: 'warning' as const, target: 'workorders',
+        ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator work.evaluators lists is on PATH to run work grade and cockpit grade: ${missing.map(row => row.message).join('; ')}`) }, ...closed]
 }
 
 export function createHealthCommandAdapters(
@@ -478,8 +478,8 @@ export function createHealthCommandAdapters(
         })
         // Without the state root's own refusal, doctor reported only that its observation source
         // was unavailable, which named neither the directory nor why it could not be used.
-        if (namespace.kind === 'refusal') return refuse?.([Object.freeze({ severity: 'error' as const,
-            code: namespace.code, message: namespace.message, target: namespace.target })])
+        if (namespace.kind === 'refusal') return refuse?.([{ severity: 'error' as const,
+            code: namespace.code, message: namespace.message, target: namespace.target }])
         if (namespace.kind !== 'complete') return undefined
         selectedNamespace = namespace.value
         const currentStack = stackId({
@@ -516,22 +516,22 @@ export function createHealthCommandAdapters(
                 if (previous === undefined && !notDeclared) {
                     if (stage.authority.stage !== 'steady') {
                         const fix = cockpitCommand('up', { config: loaded.result.source.path })
-                        stopped = Object.freeze({
+                        stopped = {
                             severity: 'error' as const, code: ENVIRONMENT_CODES.STATE_UNSEEDED, target: loaded.result.source.path,
                             message: `lifecycle is still in bootstrap — the stack has never completed a first bring-up, so only the checks that need no running stack ran; fix: ${fix}; then retry the command that stopped`,
                             fix,
-                        })
+                        }
                     } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path) ?? null
                 }
-                return Object.freeze({
-                authorities: Object.freeze([authority]),
-                stages: Object.freeze([stage.authority]),
-            })
+                return {
+                authorities: [authority],
+                stages: [stage.authority],
+            }
             } catch (error) {
-                return refuse?.([Object.freeze({
+                return refuse?.([{
                     severity: 'error' as const, code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                     message: `preflight evidence could not be read: ${errorCause(error)}`, target: loaded.result.source.path,
-                })])
+                }])
             }
         }
         const preflight = await refreshPreflight()
@@ -576,23 +576,23 @@ export function createHealthCommandAdapters(
             producers: sourceProducers.observations,
             refreshPreflight: async (previous) => await sourceProducers.revalidate() ? refreshPreflight(previous) : undefined,
             stopped,
-            notices: () => Object.freeze([...notices]),
+            notices: () => [...notices],
         }))
     }
     const inspectSurfaceOverrides: NonNullable<HealthCommandAdapterComposition['inspectSurfaceOverrides']> = async (configPath) => {
         if (!input) {
-            return Object.freeze({
+            return {
                 kind: 'unavailable',
                 code: 'SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE',
                 reason: 'surface override inspection needs valid command composition input',
-            })
+            }
         }
         if (configPath !== input.configPath) {
-            return Object.freeze({
+            return {
                 kind: 'refusal',
                 code: 'SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH',
                 reason: 'surface override inspection is bound to the configured cockpit source',
-            })
+            }
         }
         try {
             const outcome = await syncGeneratedEnvironment(
@@ -601,33 +601,33 @@ export function createHealthCommandAdapters(
             )
             if (outcome.kind !== 'complete') {
                 const diagnostic = outcome.diagnostics[0]
-                return Object.freeze({
+                return {
                     kind: 'refusal',
                     code: diagnostic?.code || 'SURFACE_OVERRIDE_INSPECTION_REFUSED',
                     reason: diagnostic?.message || 'generated surface override inspection was refused',
-                })
+                }
             }
             const application = generatedApplicationProjection(outcome.result.application)
             if (!application
                 || application.sourceSha256 !== outcome.result.sourceSha256
                 || application.generation !== outcome.result.generation) {
-                return Object.freeze({
+                return {
                     kind: 'refusal',
                     code: 'SURFACE_OVERRIDE_INSPECTION_INVALID',
                     reason: 'generated surface override inspection did not return an authenticated application projection',
-                })
+                }
             }
-            return Object.freeze({
+            return {
                 kind: 'complete',
                 activeOverrides: application.activeSurfaceOverrides,
                 changedOverrideOriginals: application.changedOverrideOriginals,
-            })
+            }
         } catch (error) {
-            return Object.freeze({
+            return {
                 kind: 'unavailable',
                 code: 'SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE',
                 reason: `authenticated generated surface override inspection is unavailable: ${errorCause(error)}`,
-            })
+            }
         }
     }
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
@@ -638,11 +638,11 @@ export function createHealthCommandAdapters(
         checkRoot: false, env: input.env, timeoutMs: input.timeoutMs }, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
-        if (!selectedNamespace) return Object.freeze({ kind: 'complete', skipped: Object.freeze([]) })
+        if (!selectedNamespace) return { kind: 'complete', skipped: [] }
         const inventory = await readRootPortInventory(selectedNamespace)
-        return inventory.kind === 'complete' ? Object.freeze({ kind: 'complete', skipped: inventory.skipped }) : inventory
+        return inventory.kind === 'complete' ? { kind: 'complete', skipped: inventory.skipped } : inventory
     }
-    return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
+    return { load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
         ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState,
-        execute: (step: ExecutionStep) => execute(step) })
+        execute: (step: ExecutionStep) => execute(step) }
 }

@@ -286,15 +286,15 @@ function result(
     greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan;
         cockpitRoot?: CockpitRootQuestion; resetAnswer?: InitResult['resetAnswer']; unconfirmed?: InitResult['unconfirmed'] }>,
 ): InitResult {
-    return Object.freeze({ stage, root: projection.root, target: projection.target,
-        previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]),
+    return { stage, root: projection.root, target: projection.target,
+        previewSha256: projection.previewSha256, files: [...projection.files],
         ...(ownerOutcome === undefined ? {} : { ownerOutcome }),
         ...(greenfield?.question === undefined ? {} : { question: greenfield.question }),
         ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }),
         ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }),
         ...(greenfield?.cockpitRoot === undefined ? {} : { cockpitRoot: greenfield.cockpitRoot }),
         ...(greenfield?.resetAnswer === undefined ? {} : { resetAnswer: greenfield.resetAnswer }),
-        ...(greenfield?.unconfirmed === undefined ? {} : { unconfirmed: greenfield.unconfirmed }) })
+        ...(greenfield?.unconfirmed === undefined ? {} : { unconfirmed: greenfield.unconfirmed }) }
 }
 
 // The repository's directory name becomes the first sibling's slug and the cockpit's name stem.
@@ -304,29 +304,29 @@ function cockpitRootQuestion(root: string): CockpitRootQuestion {
     const dedicated = resolve(dirname(root), `${basename(root)}-cockpit`)
     const unnamed = SIBLING_DIRECTORY.test(basename(root)) ? undefined
         : `the directory name ${JSON.stringify(basename(root))} is not a valid sibling slug (lowercase letters, digits and hyphens, starting with a letter); rename the directory, or create a dedicated cockpit folder yourself and add this repository with cockpit sibling add --from`
-    return Object.freeze({
+    return {
         field: 'cockpit.root',
         why: `${root} is a product repository, and the cockpit root is where init writes cockpit.toml, AGENTS.md, guards and harness settings, so init never chooses it for you; answer cockpit.root = "dedicated" or "in-repo"`,
         recommended: 'dedicated',
-        options: Object.freeze([
-            Object.freeze({ answer: 'dedicated' as const, root: dedicated, creates: Object.freeze([dedicated]), siblingsRoot: '..',
+        options: [
+            { answer: 'dedicated' as const, root: dedicated, creates: [dedicated], siblingsRoot: '..',
                 firstSibling: root,
                 tradeOff: `the product repository stays free of cockpit files, and the cockpit grows to more repositories with cockpit sibling add, each created or found beside ${basename(root)}, without moving`,
-                ...(unnamed === undefined ? {} : { unavailable: unnamed }) }),
-            Object.freeze({ answer: 'in-repo' as const, root, creates: Object.freeze([]), siblingsRoot: '.', firstSibling: root,
+                ...(unnamed === undefined ? {} : { unavailable: unnamed }) },
+            { answer: 'in-repo' as const, root, creates: [], siblingsRoot: '.', firstSibling: root,
                 tradeOff: 'the product repository carries the cockpit files and the cockpit cannot neutrally own several repositories; it can be moved out to a dedicated folder later',
-                ...(unnamed === undefined ? {} : { unavailable: unnamed }) }),
-        ]),
-    })
+                ...(unnamed === undefined ? {} : { unavailable: unnamed }) },
+        ],
+    }
 }
 
 /** Where the estate's repositories are observed: the cockpit root, or the product repository a dedicated cockpit sits beside. */
 function estateInput(input: InitApplicationInput): EstateObservationInput {
-    if (input.cockpitRoot?.kind === 'dedicated') return Object.freeze({ root: dirname(input.cockpitRoot.firstSibling),
-        repositories: Object.freeze([basename(input.cockpitRoot.firstSibling)]) })
+    if (input.cockpitRoot?.kind === 'dedicated') return { root: dirname(input.cockpitRoot.firstSibling),
+        repositories: [basename(input.cockpitRoot.firstSibling)] }
     // Choosing in-repo must not lose the product: its root manifests are observed as the sibling at ".".
-    if (input.cockpitRoot?.kind === 'in-repo') return Object.freeze({ root: input.root, rootIsRepository: true as const })
-    return Object.freeze({ root: input.root })
+    if (input.cockpitRoot?.kind === 'in-repo') return { root: input.root, rootIsRepository: true as const }
+    return { root: input.root }
 }
 
 function documentEstate(input: InitApplicationInput): Pick<DocumentCommandInput, 'estate'> {
@@ -343,22 +343,22 @@ async function interviewPlan(
     const observedRoot = estateInput(input).root
     const inference = await adapters.infer?.({ root: observedRoot, configurationRoot: input.root,
         repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(observedRoot, resolve(observedRoot, row.path)) || '.' })) })
-    return Object.freeze({
-        answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),
-        outstanding: Object.freeze(planned.slice(answered).map(({ field, why }) => Object.freeze({ field, why,
-            inferred: Object.freeze([...field === 'cockpit.name' ? nameProposal(input.root) : [],
+    return {
+        answered: planned.slice(0, answered).map(row => row.field),
+        outstanding: planned.slice(answered).map(({ field, why }) => ({ field, why,
+            inferred: [...field === 'cockpit.name' ? nameProposal(input.root) : [],
                 ...(inference?.facts ?? []).filter(fact => fact.fields.includes(field))
-                    .map(({ target, value, provenance }) => Object.freeze({ target, value, provenance }))]) }))),
+                    .map(({ target, value, provenance }) => ({ target, value, provenance }))] })),
         inferenceSkipped: inference?.skipped ?? [],
         ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
-    })
+    }
 }
 
 // The cockpit root's directory name is the proposed cockpit name when it is a valid one.
 function nameProposal(root: string): readonly InferredItem[] {
     const name = basename(root)
-    return /^[a-z0-9][a-z0-9-]*$/.test(name) ? [Object.freeze({ target: 'cockpit.name', value: name,
-        provenance: Object.freeze({ kind: 'inferred' as const, source: root, reason: 'the cockpit root directory name' }) })] : []
+    return /^[a-z0-9][a-z0-9-]*$/.test(name) ? [{ target: 'cockpit.name', value: name,
+        provenance: { kind: 'inferred' as const, source: root, reason: 'the cockpit root directory name' } }] : []
 }
 
 function commandDigest(input: InitApplicationInput): string {
@@ -376,13 +376,13 @@ function evidenceMatches(record: BootstrapStateRecord, projection: BootstrapProj
 }
 
 function recordedProjection(record: BootstrapStateRecord): BootstrapProjection {
-    return Object.freeze({
+    return {
         root: record.value.checkoutRoot,
         target: record.value.target,
-        sources: Object.freeze([...record.value.sources]),
-        files: Object.freeze([...record.value.published]),
+        sources: [...record.value.sources],
+        files: [...record.value.published],
         previewSha256: record.value.previewSha256,
-    })
+    }
 }
 
 async function persist(
@@ -421,7 +421,7 @@ function greenfieldResult(
     sourceObservationSha256: string,
     answers: NonNullable<BootstrapStateRecord['value']['greenfield']>['answers'],
 ): GreenfieldResult {
-    return Object.freeze({ ...classification, sourceObservationSha256, answers: Object.freeze([...answers]) })
+    return { ...classification, sourceObservationSha256, answers: [...answers] }
 }
 
 function stateFailure(outcome: StateResult<unknown>): InitApplicationOutcome {
@@ -466,19 +466,19 @@ async function withReadiness(
     if (!adapters.inspectReadiness || result === null) return outcome
     const configured = result.stage === 'draft-observed' || result.stage === 'environment-verified'
     const estateRoot = estateInput(input).root
-    const inspected = await adapters.inspectReadiness(Object.freeze({
+    const inspected = await adapters.inspectReadiness({
         root: result.root,
         ...(configured ? { configPath: join(result.root, 'cockpit.toml') } : {}),
-        repositories: Object.freeze(configured ? [] : (result.estate?.runnable ?? [])
-            .map(({ slug, path }) => Object.freeze({ slug, root: resolve(estateRoot, path) }))),
+        repositories: configured ? [] : (result.estate?.runnable ?? [])
+            .map(({ slug, path }) => ({ slug, root: resolve(estateRoot, path) })),
         // A dedicated cockpit folder is created as a Git repository by init itself.
         checkRoot: input.cockpitRoot?.kind !== 'dedicated',
         tools: input.tools,
         ...(result.estate === undefined ? {} : { classification: result.estate.classification }),
-    }))
+    })
     const diagnostics = [...outcome.diagnostics, ...inspected.findings]
-    return Object.freeze({ ...outcome, diagnostics,
-        result: Object.freeze({ ...result, readiness: readinessReport(inspected.state, diagnostics, input.tools) }) }) as InitApplicationOutcome
+    return { ...outcome, diagnostics,
+        result: { ...result, readiness: readinessReport(inspected.state, diagnostics, input.tools) } } as InitApplicationOutcome
 }
 
 async function runInitStages(
@@ -541,7 +541,7 @@ async function runInitStages(
     }
     const outcome = await initStagesFrom(input, adapters, namespace, address, current, discarded)
     return restarted === undefined ? outcome
-        : Object.freeze({ ...outcome, diagnostics: [restarted, ...outcome.diagnostics] }) as InitApplicationOutcome
+        : { ...outcome, diagnostics: [restarted, ...outcome.diagnostics] } as InitApplicationOutcome
 }
 
 async function initStagesFrom(
@@ -568,7 +568,7 @@ async function initStagesFrom(
     }
     if (current === null && input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
-        try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
+        try { observed = await adapters.observeRoot({ root: input.root }) }
         catch (error) {
             return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${errorCause(error)}); fix the named file and rerun ${initCommand({ root: input.root, target: input.tools.join(',') })}`, input.root)
         }
@@ -626,7 +626,7 @@ async function initStagesFrom(
             return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
                 diagnostics: [{ ...diagnostic(code, reset.message, reset.target), ...(fix === undefined ? {} : { fix }) }] }
         }
-        const publicPreview = Object.freeze({ ...reset.preview })
+        const publicPreview = { ...reset.preview }
         if (reset.kind === 'pending') return { kind: 'pending', status: 0, artifact: null, destination: null,
             diagnostics: [], result: result(current!.value.stage, projection, undefined, { resetAnswer: publicPreview }) }
         current = reset.record

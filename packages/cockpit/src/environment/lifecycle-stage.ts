@@ -140,7 +140,7 @@ export function decodeLifecycleRecord(
         const entries = Object.entries(value)
         if (entries.length === 0 || entries.length > 64 || entries.some(([name, digest]) => name.length === 0 || name.length > 1_024
             || name.includes('\0') || typeof digest !== 'string' || !lifecycleDigest.test(digest))) return undefined
-        runtimeInputs = Object.freeze(Object.fromEntries(entries))
+        runtimeInputs = Object.fromEntries(entries)
     }
     const completed = candidate.completedServices.map((item) => {
         if (!item || typeof item !== 'object' || Array.isArray(item)
@@ -149,21 +149,21 @@ export function decodeLifecycleRecord(
         const containerId = (item as Record<string, unknown>).containerId
         return typeof service === 'string' && lifecycleService.test(service)
             && typeof containerId === 'string' && lifecycleDigest.test(containerId)
-            ? Object.freeze({ service, containerId })
+            ? { service, containerId }
             : undefined
     })
     if (completed.some((item) => item === undefined)) return undefined
-    return Object.freeze({
+    return {
         record,
-        value: Object.freeze({
+        value: {
             holderId: candidate.holderId as HolderId,
             ...(teardownComplete ? { teardownComplete: true as const } : {}),
             ...(runtimeInputs ? { runtimeInputs } : {}),
             workBasisSha256: candidate.workBasisSha256,
             operationGeneration: candidate.operationGeneration,
-            completedServices: Object.freeze(completed as LifecycleProgress['completedServices']),
-        }),
-    })
+            completedServices: completed as LifecycleProgress['completedServices'],
+        },
+    }
 }
 
 interface FileIdentity {
@@ -212,16 +212,16 @@ interface StableInput {
 }
 
 function refusal(message: string, target: string): Extract<LifecycleStageResolution, { kind: 'refusal' }> {
-    return Object.freeze({
+    return {
         kind: 'refusal',
-        diagnostics: Object.freeze([{
+        diagnostics: [{
             severity: 'error' as const,
             code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
             message,
             target,
             fix: 'inspect lifecycle state and history before explicit recovery or adoption',
-        }]),
-    })
+        }],
+    }
 }
 
 function stableInput(value: unknown): StableInput | undefined {
@@ -239,7 +239,7 @@ function stableInput(value: unknown): StableInput | undefined {
         const now = Date.now()
         if (!namespace || typeof stackId !== 'string' || !STACK_ID.test(stackId)
             || !isCanonicalTimestamp(observedAt) || observedMillis > now || now - observedMillis > AUTHORITY_LIFETIME_MS) return undefined
-        return Object.freeze({ namespace, stackId: stackId as StackId, observedAt })
+        return { namespace, stackId: stackId as StackId, observedAt }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -251,14 +251,14 @@ function stableTransitionInput(value: unknown): (StableInput & { readonly holder
         if (isProxy(value) || value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(value)
         if (Reflect.ownKeys(descriptors).length !== 4 || !('value' in (descriptors.holderId ?? {}))) return undefined
-        const base = stableInput(Object.freeze({
+        const base = stableInput({
             namespace: descriptors.namespace && 'value' in descriptors.namespace ? descriptors.namespace.value : undefined,
             stackId: descriptors.stackId && 'value' in descriptors.stackId ? descriptors.stackId.value : undefined,
             observedAt: descriptors.observedAt && 'value' in descriptors.observedAt ? descriptors.observedAt.value : undefined,
-        }))
+        })
         const holderId = descriptors.holderId!.value
         return base && typeof holderId === 'string' && HOLDER_ID.test(holderId)
-            ? Object.freeze({ ...base, holderId: holderId as HolderId })
+            ? { ...base, holderId: holderId as HolderId }
             : undefined
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
@@ -284,10 +284,10 @@ function fileIdentity(path: string): FileIdentity | undefined {
         const identity = state === 'directory'
             ? [status.dev, status.ino]
             : [status.dev, status.ino, status.mode, status.size, status.mtimeNs, status.ctimeNs]
-        return Object.freeze({ state, identity: identity.map(String).join(':') })
+        return { state, identity: identity.map(String).join(':') }
     } catch (error) {
         return hasErrorCode(error, 'ENOENT')
-            ? Object.freeze({ state: 'missing' })
+            ? { state: 'missing' }
             : undefined
     }
 }
@@ -314,7 +314,7 @@ function pathIdentity(root: string, path: string): readonly FileIdentity[] | und
         if (!identity) return undefined
         identities.push(identity)
     }
-    return Object.freeze(identities)
+    return identities
 }
 
 function samePathIdentity(left: readonly FileIdentity[], right: readonly FileIdentity[]): boolean {
@@ -330,14 +330,14 @@ function lifecycleBinding(
     const historyIdentity = pathIdentity(namespace.root, historyPath)
     const lifecycleIdentity = pathIdentity(namespace.root, lifecyclePath)
     return historyIdentity && lifecycleIdentity
-        ? Object.freeze({
+        ? {
             cockpitId,
             namespace,
             historyPath,
             historyIdentity,
             lifecyclePath,
             lifecycleIdentity,
-        })
+        }
         : undefined
 }
 
@@ -396,12 +396,12 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
     const stage: ObservationLifecycleStage = status === 'seeded' ? 'steady' : 'bootstrap'
     const seeded = lifecycleBefore.kind === 'complete'
     const issuedAt = Date.now()
-    const authority = Object.freeze({
+    const authority = {
         stackId: input.stackId,
         stage,
         observedAt: input.observedAt,
         validThrough: new Date(issuedAt + AUTHORITY_LIFETIME_MS).toISOString(),
-    })
+    }
     issuedAuthorities.set(authority, bindingAfter)
     const observation = issueObservation({
         code: ENVIRONMENT_CODES.STATE_UNSEEDED,
@@ -414,7 +414,7 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
         freshness: { state: 'current' },
         remedy: 'restore or seed lifecycle state without deleting its durable history',
     })
-    return Object.freeze({ kind: 'complete', authority, observation })
+    return { kind: 'complete', authority, observation }
 }
 
 export async function resolveLifecycleStage(input: {
@@ -502,16 +502,16 @@ export function projectLifecycleStage(input: {
         const keys = ['authority', 'stackId', 'cockpitId', 'earliest', 'latest', 'evaluatedAt'] as const
         if (Reflect.ownKeys(descriptors).length !== keys.length
             || keys.some((key) => !('value' in (descriptors[key] ?? {})))) return undefined
-        const expected = Object.freeze({
+        const expected = {
             stackId: descriptors.stackId!.value as StackId,
             cockpitId: descriptors.cockpitId!.value as string,
             earliest: descriptors.earliest!.value as number,
             latest: descriptors.latest!.value as number,
             evaluatedAt: descriptors.evaluatedAt!.value as number,
-        })
+        }
         const stage = consumeLifecycleStageAuthority(descriptors.authority!.value, expected, trustedCurrentTime)
         if (!stage) return undefined
-        const projection = Object.freeze({}) as LifecycleStageProjection
+        const projection = {} as LifecycleStageProjection
         issuedLifecycleStageProjections.set(projection, Object.freeze({ stackId: expected.stackId, stage }))
         return projection
     } catch {
@@ -552,7 +552,7 @@ async function transition(
         // Seeded history already records its start, so a later `started` (setup acquiring a
         // sibling added after the stack has run) leaves it seeded. Refusing it deadlocked setup.
         if (currentStatus === requested || currentStatus === 'seeded') {
-            return abortStateTransaction(Object.freeze({ kind: 'unchanged' as const, record: current! }))
+            return abortStateTransaction({ kind: 'unchanged' as const, record: current! })
         }
         return {
             format: 'cockpit-state/v1' as const,
@@ -567,7 +567,7 @@ async function transition(
     const aborted = result as StateTransactionAbort<LifecycleHistoryTransition>
     if (aborted.aborted === true) return aborted.value
     const stateResult = result as StateResult<StateRecord>
-    if (stateResult.kind === 'complete') return Object.freeze({ kind: 'complete', record: stateResult.value })
+    if (stateResult.kind === 'complete') return { kind: 'complete', record: stateResult.value }
     const message = stateResult.kind === 'refusal' || stateResult.kind === 'indeterminate'
         ? stateResult.message
         : 'lifecycle history transition failed'

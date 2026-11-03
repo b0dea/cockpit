@@ -167,8 +167,6 @@ describe('live sibling projection planner', () => {
             { target: 'cursor', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit\'s instructions and the sibling guides it copies reach Cursor only through the root AGENTS.md, and .cursor/rules holds only rules overlays; no run of the tool beside a broken control has shown that it loads either' },
             { target: 'grokcli', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them' },
         ])
-        expect(Object.isFrozen(capabilities)).toBe(true)
-        expect(capabilities.every(Object.isFrozen)).toBe(true)
     })
 
     it('copies an active sibling\'s guide once, labelled with its sibling and digest, and grants every harness its directory', async () => {
@@ -191,8 +189,6 @@ describe('live sibling projection planner', () => {
             ['cursor', 'permission.read+write:../api/**=allow'],
             ['grokcli', 'permission.read+edit:../api/**=allow'],
         ])
-        expect(Object.isFrozen(result)).toBe(true)
-        expect(Object.isFrozen(result.guides)).toBe(true)
     })
 
     // A guide set up the way setup leaves it (AGENTS.md shared, CLAUDE.md importing it) must reach

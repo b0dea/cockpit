@@ -70,8 +70,6 @@ describe('install policy lockfile observation', () => {
             checkoutId: expected.checkoutId,
             lockfiles: [{ state: 'available', relativePath: 'package-lock.json', canonicalPath: join(root, 'package-lock.json') }],
         })
-        expect(Object.isFrozen(evidence)).toBe(true)
-        expect(Object.isFrozen(evidence?.lockfiles)).toBe(true)
         expect(consumeInstallPolicyProjection(escaped!)).toBeUndefined()
         expect(await withInstallPolicyProjection(observation, expected, () => 'replayed')).toBeUndefined()
     })

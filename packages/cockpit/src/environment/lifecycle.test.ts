@@ -258,7 +258,6 @@ describe('lifecycle planning', () => {
         const admitted = admitUpProgress(input)
         expect(admitted.kind).toBe('admitted')
         if (admitted.kind !== 'admitted') throw new Error('matching progress was not admitted')
-        expect(Object.isFrozen(admitted.authority)).toBe(true)
         expect(Reflect.ownKeys(admitted.authority)).toEqual([])
         expect(admitUpProgress(input)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         expect(planAdmittedUp({ authority: { ...admitted.authority }, completedServices: [db] }))

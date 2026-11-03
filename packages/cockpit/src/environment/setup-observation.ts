@@ -73,14 +73,14 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 }
 
 function directoryIdentity(stat: BigIntStats): DirectoryIdentity {
-    return Object.freeze({
+    return {
         dev: stat.dev.toString(),
         ino: stat.ino.toString(),
         birthtimeNs: stat.birthtimeNs.toString(),
         mode: stat.mode.toString(),
         mtimeNs: stat.mtimeNs.toString(),
         ctimeNs: stat.ctimeNs.toString(),
-    })
+    }
 }
 
 function sameDirectoryIdentity(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
@@ -103,7 +103,7 @@ async function resolvedDirectory(path: string): Promise<{
         const canonicalPath = await realpath(path)
         const after = await lstat(canonicalPath, { bigint: true })
         if (canonicalPath !== path || !after.isDirectory() || after.isSymbolicLink()) return undefined
-        return Object.freeze({ canonicalPath, beforeIdentity: directoryIdentity(before), afterIdentity: directoryIdentity(after) })
+        return { canonicalPath, beforeIdentity: directoryIdentity(before), afterIdentity: directoryIdentity(after) }
     } catch {
         // Any lstat/realpath failure means the directory identity is not established; callers report the failed observation.
         return undefined
@@ -113,19 +113,19 @@ async function resolvedDirectory(path: string): Promise<{
 async function stableDirectory(path: string): Promise<{ canonicalPath: string; identity: DirectoryIdentity } | undefined> {
     const resolved = await resolvedDirectory(path)
     return resolved && sameDirectoryIdentity(resolved.beforeIdentity, resolved.afterIdentity)
-        ? Object.freeze({ canonicalPath: resolved.canonicalPath, identity: resolved.afterIdentity })
+        ? { canonicalPath: resolved.canonicalPath, identity: resolved.afterIdentity }
         : undefined
 }
 
 async function stableDirectoryNode(path: string): Promise<{ canonicalPath: string; identity: DirectoryIdentity } | undefined> {
     const resolved = await resolvedDirectory(path)
     return resolved && sameDirectoryNode(resolved.beforeIdentity, resolved.afterIdentity)
-        ? Object.freeze({ canonicalPath: resolved.canonicalPath, identity: resolved.afterIdentity })
+        ? { canonicalPath: resolved.canonicalPath, identity: resolved.afterIdentity }
         : undefined
 }
 
 function fileIdentity(stat: BigIntStats): FileIdentity {
-    return Object.freeze({ ...directoryIdentity(stat), size: stat.size.toString(), nlink: stat.nlink.toString() })
+    return { ...directoryIdentity(stat), size: stat.size.toString(), nlink: stat.nlink.toString() }
 }
 
 function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
@@ -152,11 +152,11 @@ async function stableFile(path: string): Promise<StableFile | undefined> {
         if (after.nlink !== 1n || linked.nlink !== 1n || bytes.length !== Number(opened.size)
             || !sameFileIdentity(openedIdentity, afterIdentity)
             || !sameFileIdentity(openedIdentity, linkedIdentity)) return undefined
-        return Object.freeze({
+        return {
             identity: openedIdentity,
             sha256: createHash('sha256').update(bytes).digest('hex'),
             byteLength: bytes.length,
-        })
+        }
     } catch {
         // Any read failure means no file evidence; callers report the unavailable observation.
         return undefined
@@ -223,8 +223,8 @@ function snapshotIgnoreInput(value: unknown): EnvironmentIgnoreInput | undefined
         || !environmentFile.success || !isCanonicalTimestamp(input.observedAt) || executable === undefined
         || environment === null || typeof environment !== 'object' || Array.isArray(environment)
         || Object.values(environment).some((entry) => typeof entry !== 'string')) return undefined
-    return Object.freeze({
-        source: Object.freeze({ ...input.source }),
+    return {
+        source: { ...input.source },
         siblingIndex: input.siblingIndex as number,
         siblingSlug: input.siblingSlug,
         mainCheckoutPath: input.mainCheckoutPath,
@@ -232,11 +232,11 @@ function snapshotIgnoreInput(value: unknown): EnvironmentIgnoreInput | undefined
         siblingRoot: input.siblingRoot,
         checkoutId: input.checkoutId as CheckoutId,
         environmentFileIndex: input.environmentFileIndex as number,
-        environmentFile: Object.freeze({ ...environmentFile.data }),
+        environmentFile: { ...environmentFile.data },
         observedAt: input.observedAt,
-        env: Object.freeze({ ...(environment as Readonly<Record<string, string>>) }),
+        env: { ...(environment as Readonly<Record<string, string>>) },
         gitExecutable: executable,
-    })
+    }
 }
 
 function ignoreProbeStep(
@@ -305,7 +305,7 @@ function ignoreStatusOutput(
             if (ignored === undefined) return undefined
             statuses.push(ignored)
         }
-        return Object.freeze({ instanceIgnored: statuses[0], templateIgnored: statuses[1] })
+        return { instanceIgnored: statuses[0], templateIgnored: statuses[1] }
     } catch {
         // Unparseable ignore output yields no projection; callers report the failed observation.
         return undefined
@@ -355,38 +355,38 @@ async function closedIdentity(path: string, identity: DirectoryIdentity): Promis
             const ancestor = { path: ancestorPath, ...filesystemObjectIdentity(status) }
             if (!status.isDirectory() || status.isSymbolicLink()
                 || !Number.isSafeInteger(ancestor.dev) || !Number.isSafeInteger(ancestor.ino)) return undefined
-            ancestors.push(Object.freeze(ancestor))
+            ancestors.push(ancestor)
         } catch {
             // Any lstat failure means the ancestor identity is not established; callers report the failed observation.
             return undefined
         }
     }
-    return Object.freeze({ dev, ino, birthtimeNs: identity.birthtimeNs, ancestors: Object.freeze(ancestors) })
+    return { dev, ino, birthtimeNs: identity.birthtimeNs, ancestors }
 }
 
 async function directoryCheck(path: string, identity: DirectoryIdentity): Promise<FilesystemCheck | undefined> {
     const value = await closedIdentity(path, identity)
-    return value ? Object.freeze({ path, expected: 'directory' as const, identity: value }) : undefined
+    return value ? { path, expected: 'directory' as const, identity: value } : undefined
 }
 
 async function boundedFileCheck(path: string): Promise<FilesystemCheck | undefined> {
     const file = await stableFile(path)
     if (file) {
         const identity = await closedIdentity(path, file.identity)
-        return identity ? Object.freeze({
+        return identity ? {
             path,
             expected: 'file' as const,
             sha256: file.sha256,
             maxBytes: CONFIGURATION_BYTE_LIMIT,
             identity,
-        }) : undefined
+        } : undefined
     }
     try {
         await lstat(path)
         return undefined
     } catch (error) {
         return hasErrorCode(error, 'ENOENT')
-            ? Object.freeze({ path, expected: 'absent' as const })
+            ? { path, expected: 'absent' as const }
             : undefined
     }
 }
@@ -511,7 +511,7 @@ export async function observeEnvironmentIgnore<T>(
     if (!sibling || sibling.slug !== input.siblingSlug || expectedRoot !== root.canonicalPath
         || resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root) !== siblingsDirectory.canonicalPath
         || JSON.stringify(environmentFile) !== JSON.stringify(input.environmentFile)) return undefined
-    const sanitizedInput = Object.freeze({ ...input, env: gitEnvironment(input.env) })
+    const sanitizedInput = { ...input, env: gitEnvironment(input.env) }
     const repositoryChecks = await ignoreRepositoryChecks(sanitizedInput, root)
     if (!repositoryChecks) return undefined
 
@@ -532,15 +532,15 @@ export async function observeEnvironmentIgnore<T>(
         repositoryChecks,
     ))
     if (!ignoreStatus) return undefined
-    if (!ignoreStatus.instanceIgnored) return Object.freeze({
+    if (!ignoreStatus.instanceIgnored) return {
         kind: 'refusal', code: ENVIRONMENT_CODES.INSTANCE_NOT_IGNORED, path: input.environmentFile.instance,
-    })
-    if (templateTracked !== true) return Object.freeze({
+    }
+    if (templateTracked !== true) return {
         kind: 'refusal', code: ENVIRONMENT_CODES.TEMPLATE_NOT_TRACKED, path: input.environmentFile.template,
-    })
-    if (ignoreStatus.templateIgnored) return Object.freeze({
+    }
+    if (ignoreStatus.templateIgnored) return {
         kind: 'refusal', code: ENVIRONMENT_CODES.TEMPLATE_IGNORED, path: input.environmentFile.template,
-    })
+    }
 
     const validThrough = observedAt + IGNORE_OBSERVATION_LIFETIME_MS
     const finalRoot = await authenticatedProbe(ignoreProbeStep(
@@ -620,12 +620,12 @@ interface SetupCheckoutInput {
 }
 
 function setupCheckoutFailure(reason: string): Extract<SetupCheckoutObservation, { state: 'failed' }> {
-    return Object.freeze({
+    return {
         state: 'failed',
         producer: OWNER,
         code: ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
         reason,
-    })
+    }
 }
 
 function snapshotSetupCheckoutInput(input: unknown): SetupCheckoutInput | undefined {
@@ -642,13 +642,13 @@ function snapshotSetupCheckoutInput(input: unknown): SetupCheckoutInput | undefi
         || value.env === null || typeof value.env !== 'object' || Array.isArray(value.env)
         || Object.entries(value.env).some(([name, entry]) => name.length === 0 || name.includes('\0') || name.includes('=')
             || typeof entry !== 'string' || entry.includes('\0'))) return undefined
-    return Object.freeze({
-        source: Object.freeze({ ...value.source }),
+    return {
+        source: { ...value.source },
         cockpitName: value.cockpitName,
         observedAt: value.observedAt,
-        env: Object.freeze({ ...(value.env as Readonly<Record<string, string>>) }),
+        env: { ...(value.env as Readonly<Record<string, string>>) },
         gitExecutable: executable,
-    })
+    }
 }
 
 function exactLines(bytes: Buffer, count: number): readonly string[] | undefined {
@@ -701,9 +701,9 @@ function worktreeInventory(bytes: Buffer): readonly WorktreeRecord[] | undefined
             if (modeCount !== 1 || (kinds.has('bare') ? kinds.has('HEAD') || kinds.has('branch') || kinds.has('detached') : !kinds.has('HEAD'))) {
                 return undefined
             }
-            result.push(Object.freeze({ path }))
+            result.push({ path })
         }
-        return Object.freeze(result)
+        return result
     } catch {
         // A malformed worktree listing yields no administrative authority; callers report the failed observation.
         return undefined
@@ -886,7 +886,7 @@ async function setupFilesystemChecks(input: {
         if (!check) return undefined
         checks.set(check.path, check)
     }
-    return Object.freeze([...checks.values()])
+    return [...checks.values()]
 }
 
 interface WorktreeAdministrativeAuthority {
@@ -901,7 +901,7 @@ async function worktreeAdministrativeAuthority(commonDirectory: string): Promise
         if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return undefined
     } catch (error) {
         return hasErrorCode(error, 'ENOENT')
-            ? Object.freeze({ paths: Object.freeze([]), optionalFiles: Object.freeze([]) })
+            ? { paths: [], optionalFiles: [] }
             : undefined
     }
     let entries
@@ -915,7 +915,7 @@ async function worktreeAdministrativeAuthority(commonDirectory: string): Promise
     const directories = entries.map((entry) => resolve(root, entry.name)).sort()
     const optionalFiles = directories.flatMap((directory) => ['gitdir', 'HEAD', 'commondir', 'locked']
         .map((name) => resolve(directory, name)))
-    return Object.freeze({ paths: Object.freeze([root, ...directories]), optionalFiles: Object.freeze(optionalFiles) })
+    return { paths: [root, ...directories], optionalFiles }
 }
 
 async function gitIdentity(
@@ -933,7 +933,7 @@ async function gitIdentity(
         try { return await realpath(path) } catch { /* An unresolvable Git path yields no identity; the caller reports the failed observation. */ return undefined }
     }))
     return topLevel && gitDirectory && commonDirectory
-        ? Object.freeze({ topLevel, gitDirectory, commonDirectory })
+        ? { topLevel, gitDirectory, commonDirectory }
         : undefined
 }
 
@@ -948,7 +948,7 @@ function sameGitIdentity(
 export async function observeSetupCheckout(input: unknown): Promise<SetupCheckoutObservation> {
     const supplied = snapshotSetupCheckoutInput(input)
     if (!supplied) return setupCheckoutFailure('setup checkout observation input is malformed')
-    const value = Object.freeze({ ...supplied, env: gitEnvironment(supplied.env) })
+    const value = { ...supplied, env: gitEnvironment(supplied.env) }
     const issuedAt = Date.now()
     const observedAt = Date.parse(value.observedAt)
     if (observedAt > issuedAt || issuedAt - observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
@@ -1106,22 +1106,22 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
             return setupCheckoutFailure('Git administrative entry is unavailable')
         }
     }
-    const directoryIdentities = Object.freeze(Object.fromEntries(
+    const directoryIdentities = Object.fromEntries(
         [...observedDirectories.map((entry) => entry!), ...administrativeDirectories]
             .map((entry) => [entry.canonicalPath, entry.identity]),
-    ))
+    )
     const configurationPaths = [...new Set([
         resolve(current.commonDirectory, 'config'),
         resolve(main.commonDirectory, 'config'),
     ])]
     const configurationFiles = await Promise.all(configurationPaths.map(stableFile))
     if (configurationFiles.some((entry) => !entry)) return setupCheckoutFailure('Git configuration is unavailable')
-    const fileIdentities = Object.freeze(Object.fromEntries([
+    const fileIdentities = Object.fromEntries([
         ...configurationPaths.map((path, index): [string, StableFile] => [path, configurationFiles[index] as StableFile]),
         ...administrativeFiles,
-    ]))
+    ])
     const validThrough = new Date(observedAt + SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS).toISOString()
-    const binding: SetupCheckoutBinding = Object.freeze({
+    const binding: SetupCheckoutBinding = {
         source: value.source,
         cockpitName: value.cockpitName,
         currentCheckoutPath: current.topLevel,
@@ -1133,8 +1133,8 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         sourceIdentity: source.identity,
         directoryIdentities,
         fileIdentities,
-    })
-    const observation = Object.freeze({ state: 'available' as const, producer: OWNER, observedAt: value.observedAt, validThrough })
+    }
+    const observation: SetupCheckoutObservation = { state: 'available', producer: OWNER, observedAt: value.observedAt, validThrough }
     issuedSetupCheckoutObservations.set(observation, binding)
     return observation
 }
@@ -1152,11 +1152,11 @@ function snapshotSetupCheckoutContext(value: unknown): SetupCheckoutObservationC
         && validSource(context.source)
         && typeof context.cockpitName === 'string' && COCKPIT_NAME.test(context.cockpitName)
         && Number.isSafeInteger(context.evaluatedAt)
-        ? Object.freeze({
-            source: Object.freeze({ ...context.source }),
+        ? {
+            source: { ...context.source },
             cockpitName: context.cockpitName,
             evaluatedAt: context.evaluatedAt as number,
-        })
+        }
         : undefined
 }
 
@@ -1175,7 +1175,7 @@ export async function withSetupCheckoutProjection<T>(
         || context.evaluatedAt !== Date.parse(binding.observedAt) || context.evaluatedAt > now
         || now > Date.parse(binding.validThrough)) return undefined
     if (!await checkoutBindingCurrent(binding)) return undefined
-    const consumed: ConsumedSetupCheckoutObservation = Object.freeze({
+    const consumed: ConsumedSetupCheckoutObservation = {
         source: binding.source,
         cockpitName: binding.cockpitName,
         currentCheckoutPath: binding.currentCheckoutPath,
@@ -1184,8 +1184,8 @@ export async function withSetupCheckoutProjection<T>(
         checkoutId: binding.checkoutId,
         observedAt: binding.observedAt,
         validThrough: binding.validThrough,
-    })
-    const projection = Object.freeze({}) as SetupCheckoutProjection
+    }
+    const projection = {} as SetupCheckoutProjection
     issuedSetupCheckoutProjections.set(projection, consumed)
     try {
         const result: unknown = use(projection)
@@ -1285,8 +1285,8 @@ function captureGeneratedCheckoutInput(input: unknown): Readonly<{
                     || descriptor.value.includes('\0') || Buffer.byteLength(descriptor.value) > 65_536)) return undefined
             env[key] = descriptor.value
         }
-        return Object.freeze({ source: Object.freeze({ path: source.path, byteLength: source.byteLength, sha256: source.sha256 }),
-            cockpitName, env: Object.freeze(env) })
+        return { source: { path: source.path, byteLength: source.byteLength, sha256: source.sha256 },
+            cockpitName, env }
     } catch {
         // A throwing accessor or proxy trap means the caller-supplied environment is malformed.
         return undefined
@@ -1354,16 +1354,16 @@ export async function observeGeneratedCheckoutIdentity(input: {
         }, consumeSetupCheckoutProjection)
         if (!checkout || !consumed) return setupCheckoutFailure('generated checkout observation changed before consumption')
     }
-    const identity: GeneratedCheckoutIdentity = Object.freeze({
+    const identity: GeneratedCheckoutIdentity = {
         state: 'available', kind: consumed ? 'checkout' : 'standalone',
         cockpitId: consumed?.cockpitId ?? deriveCockpitId({ name: value.cockpitName, mainCheckoutPath: root }),
         checkoutId: consumed?.checkoutId ?? deriveCheckoutId({ checkoutPath: root }),
         currentCheckoutPath: consumed?.currentCheckoutPath ?? root,
         mainCheckoutPath: consumed?.mainCheckoutPath ?? root,
-    })
-    const binding: GeneratedCheckoutBinding = Object.freeze({ source, sourceIdentity: sourceFile.identity,
-        cockpitName: value.cockpitName, env: searchEnvironment, directories, absentGitEntries: Object.freeze(absentGitEntries),
-        ...(checkout ? { checkout } : {}), observedAt })
+    }
+    const binding: GeneratedCheckoutBinding = { source, sourceIdentity: sourceFile.identity,
+        cockpitName: value.cockpitName, env: searchEnvironment, directories, absentGitEntries,
+        ...(checkout ? { checkout } : {}), observedAt }
     const current = await generatedCheckoutBindingCurrent(binding)
     const completedAt = Date.now()
     if (!current || !Number.isSafeInteger(completedAt) || completedAt < observedAt

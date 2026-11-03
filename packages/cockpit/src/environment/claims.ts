@@ -636,7 +636,7 @@ async function observeLstart(pid: number, host: ProcessHost): Promise<ProcessSta
 
 /** The production `ProcessHost`: signal 0 and ps cross the executor, and /proc is read directly. */
 export function processHost(execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): ProcessHost {
-    return Object.freeze({
+    return {
         platform: process.platform,
         presence: async (pid: number) => {
             const node = await resolveExecutablePath(process.execPath)
@@ -655,7 +655,7 @@ export function processHost(execute: (step: ExecutionStep) => Promise<ExecutePro
             return text === undefined ? { kind: 'failed' as const, reason: `ps did not report when process ${pid} started` } : { kind: 'complete' as const, text }
         },
         readFile: (path: string) => readFile(path, 'utf8'),
-    })
+    }
 }
 
 // Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
@@ -669,15 +669,15 @@ async function runBoundedProbe(
     env: Readonly<Record<string, string>>,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): Promise<string | undefined> {
-    const step = snapshotExecutionPlan({ steps: [Object.freeze({
-        id, argv: Object.freeze([executable.canonicalPath, ...args] as const),
-        argv0: executable.invocationPath, cwd: '/', env: Object.freeze({ ...env }), timeoutMs: 5_000,
-        stdoutLimitBytes: 256, stderrLimitBytes: 1_024, paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ probe: id }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
-            argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode })]),
-        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-    })] })?.steps[0]
+    const step = snapshotExecutionPlan({ steps: [{
+        id, argv: [executable.canonicalPath, ...args] as const,
+        argv0: executable.invocationPath, cwd: '/', env: { ...env }, timeoutMs: 5_000,
+        stdoutLimitBytes: 256, stderrLimitBytes: 1_024, paths: [], ports: [],
+        labels: { probe: id }, expected: [],
+        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
+        filesystemChecks: [], compensation: [],
+    }] })?.steps[0]
     if (!step) return undefined
     const outcome = authenticatedExecutionOutcome(await execute(step), step)
     return outcome?.kind === 'complete' && outcome.execution.exitCode === 0 ? Buffer.from(outcome.stdout).toString('utf8') : undefined
@@ -760,7 +760,7 @@ export async function releaseDeadSessionHolders(input: {
     if ('diagnostics' in result || 'released' in result) return result
     if (result.kind !== 'complete') return result.kind === 'missing'
         ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
-    return { kind: 'complete', released: Object.freeze(committed) }
+    return { kind: 'complete', released: committed }
 }
 
 export type ActiveStackInventoryResult =
@@ -946,13 +946,13 @@ export async function readRootPortInventory(
                 const diagnostic = inventory.diagnostics[0]
                 if (candidate.cockpitRoot === namespace.cockpitRoot || diagnostic?.code === ENVIRONMENT_CODES.STATE_LOCKED
                     || budget.entries > STRUCTURED_INPUT_ENTRY_LIMIT || budget.bytes > SERIALIZED_RECORD_BYTE_LIMIT) return inventory
-                skipped.push(Object.freeze({ path: candidate.cockpitRoot, reason: diagnostic?.message ?? 'coordination records are unreadable' }))
+                skipped.push({ path: candidate.cockpitRoot, reason: diagnostic?.message ?? 'coordination records are unreadable' })
                 continue
             }
             const cockpitId = candidate.paths.coordination(`stack:${'0'.repeat(64)}` as StackId).cockpitId
             records.push(...inventory.value.map((record) => ({ cockpitId, ...record })))
         }
-        return { kind: 'complete' as const, value: records, skipped: Object.freeze(skipped) }
+        return { kind: 'complete' as const, value: records, skipped }
     })
     if (result.kind === 'complete') return result.value
     if (result.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory disappeared during observation', result.path)
@@ -1119,13 +1119,13 @@ function snapshotDrainRequest(value: unknown): DrainReservationRequest | undefin
             || !Number.isSafeInteger(request.expectedCoordinationRevision)
             || request.expectedCoordinationRevision < 0
             || request.expectedCoordinationRevision >= Number.MAX_SAFE_INTEGER) return undefined
-        return Object.freeze({
+        return {
             purpose: request.purpose, stackId: request.stackId, holderId: request.holderId,
             requesterId: request.requesterId, configSha256: request.configSha256,
             planDigest: request.planDigest, operationBasis: request.operationBasis,
             generation: request.generation, targetIds, actions,
             expectedCoordinationRevision: request.expectedCoordinationRevision,
-        })
+        }
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -1156,21 +1156,21 @@ function sameDrainAttempt(left: DrainAttempt, right: DrainAttempt): boolean {
 }
 
 function snapshotDrainReservation(reservation: DrainReservation): DrainReservation {
-    return Object.freeze({
+    return {
         ...reservation,
-        targetIds: Object.freeze([...reservation.targetIds]),
-        actions: Object.freeze(reservation.actions.map(snapshotDrainAction)),
-        attempt: reservation.attempt === null ? null : Object.freeze({
+        targetIds: [...reservation.targetIds],
+        actions: reservation.actions.map(snapshotDrainAction),
+        attempt: reservation.attempt === null ? null : {
             ...reservation.attempt,
-            targetIds: Object.freeze([...reservation.attempt.targetIds]),
-        }),
-    })
+            targetIds: [...reservation.attempt.targetIds],
+        },
+    }
 }
 
 function snapshotDrainAction(action: DrainAction): DrainAction {
     return action.stage === 'runtime-stop'
-        ? Object.freeze({ ...action })
-        : Object.freeze({ ...action, targetCommitment: Object.freeze({ ...action.targetCommitment }) })
+        ? { ...action }
+        : { ...action, targetCommitment: { ...action.targetCommitment } }
 }
 
 function snapshotDrainTargets(value: unknown): readonly string[] | undefined {
@@ -1189,7 +1189,7 @@ function snapshotDrainTargets(value: unknown): readonly string[] | undefined {
         if (new Set(targets).size !== targets.length
             || targets.some((target, index) => target.length === 0 || Buffer.byteLength(target, 'utf8') > 512
                 || target.includes('\0') || index > 0 && targets[index - 1]! >= target)) return undefined
-        return Object.freeze(targets)
+        return targets
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -1253,7 +1253,7 @@ function snapshotDrainActions(value: unknown): readonly DrainAction[] | undefine
             if (!parsed.success) return undefined
             actions.push(snapshotDrainAction(parsed.data))
         }
-        return Object.freeze(actions)
+        return actions
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -1287,7 +1287,7 @@ function sameTargets(left: readonly string[], right: readonly string[]): boolean
 }
 
 function issueDrainAuthority(reservation: DrainReservation, record: StateRecord, address: StateAddress): DrainReservationAuthority {
-    const authority = Object.freeze({ reservation: snapshotDrainReservation(reservation) }) as DrainReservationAuthority
+    const authority = { reservation: snapshotDrainReservation(reservation) } as DrainReservationAuthority
     const recordFingerprint = exactRecordFingerprint(record)
     const ownedAddress = snapshotCoordinationAddress(address)
     if (recordFingerprint === undefined || ownedAddress === undefined) throw new RefusalError('drain authority provenance is malformed')
@@ -1370,7 +1370,7 @@ export async function reserveDrain(input: {
     if (!namespace || !request) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'drain reservation input is malformed', 'drain reservation')
     const reservedAt = new Date().toISOString()
     const reservationId = randomBytes(32).toString('hex')
-    const reservation = Object.freeze({
+    const reservation = {
         ...request,
         coordinationRevision: request.expectedCoordinationRevision + 1,
         completedActionCount: 0,
@@ -1378,7 +1378,7 @@ export async function reserveDrain(input: {
         reservedAt,
         reservationId,
         attempt: null,
-    }) satisfies DrainReservation
+    } satisfies DrainReservation
     const result = await transactClaim<DrainReservationResult>(namespace, request.stackId, request.requesterId, (current) => {
         const value = decodeCoordinationRecord(current, request.stackId)
         if (!value || current === null || current.revision !== request.expectedCoordinationRevision) {
@@ -1418,7 +1418,7 @@ function snapshotCoordinationAddress(address: StateAddress): StateAddress | unde
     return owned && owned.kind === 'coordination' && typeof owned.path === 'string'
         && typeof owned.stateRoot === 'string' && typeof owned.cockpitRoot === 'string'
         && typeof owned.cockpitId === 'string' && typeof owned.subjectId === 'string'
-        ? Object.freeze(owned) as unknown as StateAddress
+        ? owned as unknown as StateAddress
         : undefined
 }
 
@@ -1433,7 +1433,7 @@ function issueDrainAttemptAuthority(reservation: DrainReservation, record: State
     const ownedAddress = snapshotCoordinationAddress(address)
     if (!ownedAddress) throw new RefusalError('drain attempt address is malformed')
     const owned = snapshotDrainReservation(reservation)
-    const authority = Object.freeze({ reservation: owned, attempt: owned.attempt! }) as DrainAttemptAuthority
+    const authority = { reservation: owned, attempt: owned.attempt! } as DrainAttemptAuthority
     drainAttemptAuthorities.set(authority, {
         reservation: owned,
         attempt: owned.attempt!,
@@ -1472,7 +1472,7 @@ function reduceDrainAttemptState(input: unknown, retry: boolean): CoordinationRe
             || !sameDrainAttempt(value.drain.attempt, prior)
             || prior.failedAt === null || Date.parse(attempt.committedAt) < Date.parse(prior.failedAt)) return undefined
     } else if (prior !== null || value.drain.attempt !== null) return undefined
-    const proposed = Object.freeze({ ...value, drain: Object.freeze({ ...value.drain, attempt }) })
+    const proposed = { ...value, drain: { ...value.drain, attempt } }
     return CoordinationValueSchema.safeParse(proposed).success ? proposed : undefined
 }
 
@@ -1531,13 +1531,13 @@ export async function reserveDrainAttempt(input: {
         ? reservation.attempt.failedRevision!
         : reservation.progressRevision
     const validThrough = new Date(Date.parse(committedAt) + currentAction.validForMs).toISOString()
-    const attempt = Object.freeze({
+    const attempt = {
         attemptId: randomBytes(32).toString('hex'), reservationId: reservation.reservationId,
         purpose: reservation.purpose, targetIds: reservation.targetIds, generation: reservation.generation,
         actionIndex: reservation.completedActionCount, currentTarget: currentAction.targetId, currentStage: currentAction.stage,
         committedRevision: priorRevision + 1, committedAt, validThrough,
         status: 'active' as const, failedRevision: null, failedAt: null,
-    }) satisfies DrainAttempt
+    } satisfies DrainAttempt
     const transaction = await transactClaim<DrainAttemptResult>(namespace, reservation.stackId, reservation.requesterId, (current) => {
         const reduced = current === null ? undefined : reservation!.attempt === null
             ? reduceDrainAttemptStart({ record: current, reservation: reservation!, attempt })
@@ -1579,7 +1579,7 @@ export function inspectDrainAttemptAuthority(authority: DrainAttemptAuthority): 
     if (!authority || typeof authority !== 'object') return undefined
     const issued = drainAttemptAuthorities.get(authority)
     if (!issued) return undefined
-    const candidate = Object.freeze({ reservation: issued.reservation, attempt: issued.attempt }) as DrainAttemptCandidate
+    const candidate = { reservation: issued.reservation, attempt: issued.attempt } as DrainAttemptCandidate
     drainAttemptCandidates.set(candidate, { authority, ...issued })
     return candidate
 }
@@ -1605,7 +1605,7 @@ function redeemDrainAttempt<Success extends RuntimeStopped | ReclaimCompleted>(
         const snapshot = snapshotDataOnly(success) as Success | undefined
         if (!available || !snapshot || !isExactDrainSuccess(issued.reservation, snapshot)) return undefined
         available = false
-        const result = Object.freeze({}) as DrainAttemptSuccessAuthority
+        const result = {} as DrainAttemptSuccessAuthority
         drainAttemptSuccessAuthorities.set(result, Object.freeze({
             reservation: issued.reservation, fact: Object.freeze(snapshot), provenance: issued.provenance,
         }))
@@ -1620,7 +1620,7 @@ function redeemDrainAttempt<Success extends RuntimeStopped | ReclaimCompleted>(
             || !isCanonicalTimestamp(snapshot.failedAt) || Date.parse(snapshot.failedAt) < Date.parse(issued.attempt.committedAt)
             || Date.parse(snapshot.failedAt) > Date.now()) return undefined
         available = false
-        const result = Object.freeze({}) as DrainAttemptFailureAuthority
+        const result = {} as DrainAttemptFailureAuthority
         drainAttemptFailureAuthorities.set(result, Object.freeze({
             reservation: issued.reservation, fact: Object.freeze(snapshot), provenance: issued.provenance,
         }))
@@ -1634,7 +1634,7 @@ function redeemDrainAttempt<Success extends RuntimeStopped | ReclaimCompleted>(
         }
         return result
     }
-    return Object.freeze({ ...issued, sealSuccess, sealFailure })
+    return { ...issued, sealSuccess, sealFailure }
 }
 
 function redeemRuntimeStopAttempt(authority: DrainAttemptAuthority, candidate: DrainAttemptCandidate): DrainAttemptPermit<RuntimeStopped> | undefined {
@@ -1686,13 +1686,13 @@ function redeemReclaimAttempt(
     if (!issued || predecessor === undefined) return undefined
     const permit = redeemDrainAttempt<ReclaimCompleted>(authority, candidate, 'reclaim', predecessor)
     if (!permit) return undefined
-    const progressAuthority = Object.freeze({}) as DrainProgressAuthority
+    const progressAuthority = {} as DrainProgressAuthority
     drainProgressAuthorities.set(progressAuthority, Object.freeze({
         planningRecord: predecessor,
         reservation: permit.reservation,
         attempt: permit.attempt,
     }))
-    return Object.freeze({ ...permit, progressAuthority })
+    return { ...permit, progressAuthority }
 }
 
 function exactDataProperties(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
@@ -1700,7 +1700,7 @@ function exactDataProperties(value: unknown, keys: readonly string[]): Readonly<
         if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, keys)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(value)
         if (keys.some((key) => !('value' in descriptors[key]!))) return undefined
-        return Object.freeze(Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value])))
+        return Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value]))
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -1718,7 +1718,7 @@ export function openRuntimeDrainExecution(input: {
     if (!permit) return undefined
     const fence = drainExecutionFence({ attempt: permit.attempt, address: permit.provenance.address })
     if (!fence) return undefined
-    const execution = Object.freeze({}) as RuntimeDrainExecutionAuthority
+    const execution = {} as RuntimeDrainExecutionAuthority
     drainExecutions.set(execution, Object.freeze({ kind: 'runtime-stop', permit, fence }))
     return execution
 }
@@ -1730,7 +1730,7 @@ function drainExecutionFence(input: { readonly attempt: DrainAttempt; readonly a
     const socketPath = join(socketRoot, `${attemptId.slice(0, 24)}.sock`)
     return /^[a-f0-9]{64}$/.test(attemptId) && isAbsolute(markerPath) && normalize(markerPath) === markerPath
         && isAbsolute(socketPath) && normalize(socketPath) === socketPath && Buffer.byteLength(socketPath) <= 103
-        ? Object.freeze({ attemptId, markerPath, socketPath }) : undefined
+        ? { attemptId, markerPath, socketPath } : undefined
 }
 
 export function inspectDrainExecutionFence(
@@ -1738,7 +1738,7 @@ export function inspectDrainExecutionFence(
 ): ExecutionFence | undefined {
     if (!authority || typeof authority !== 'object') return undefined
     const execution = drainExecutions.get(authority)
-    return execution ? Object.freeze({ ...execution.fence }) : undefined
+    return execution ? { ...execution.fence } : undefined
 }
 
 export function openReclaimDrainExecution(input: {
@@ -1756,7 +1756,7 @@ export function openReclaimDrainExecution(input: {
     if (!permit) return undefined
     const fence = drainExecutionFence({ attempt: permit.attempt, address: permit.provenance.address })
     if (!fence) return undefined
-    const execution = Object.freeze({}) as ReclaimDrainExecutionAuthority
+    const execution = {} as ReclaimDrainExecutionAuthority
     drainExecutions.set(execution, Object.freeze({ kind: 'reclaim', permit, continuation, fence }))
     drainContinuationEvidence.set(continuation, Object.freeze({
         kind: 'progress', authority: permit.progressAuthority,
@@ -1776,7 +1776,7 @@ function settleOwnedDrainExecution(input: unknown, executionKind: 'runtime-stop'
         : execution.permit.sealFailure(owned.fact as DrainAttemptFailure)
     if (!sealed) return undefined
     drainExecutions.delete(executionAuthority)
-    const outcome = Object.freeze({}) as DrainOutcomeAuthority
+    const outcome = {} as DrainOutcomeAuthority
     if (outcomeKind === 'success') {
         drainOutcomes.set(outcome, Object.freeze({
             kind: 'success', authority: sealed as DrainAttemptSuccessAuthority, provenance: execution.permit.provenance,
@@ -2039,12 +2039,12 @@ function matchesDrainProgress(authority: DrainProgressAuthority, record: StateRe
         || !sameSnapshot(value.holders, predecessor.holders)
         || !sameSnapshot(value.lease, predecessor.lease)
         || value.lastReleasedHolder !== predecessor.lastReleasedHolder) return false
-    const expectedDrain = Object.freeze({
+    const expectedDrain = {
         ...issued.reservation,
         completedActionCount: issued.attempt.actionIndex + 1,
         progressRevision: issued.attempt.committedRevision + 1,
         attempt: null,
-    })
+    }
     return sameSnapshot(value.drain, expectedDrain)
 }
 
@@ -2065,15 +2065,15 @@ function matchesDrainFailure(authority: DrainAttemptFailureAuthority, record: St
         || !sameSnapshot(value.holders, predecessor.holders)
         || !sameSnapshot(value.lease, predecessor.lease)
         || value.lastReleasedHolder !== predecessor.lastReleasedHolder) return false
-    const expectedDrain = Object.freeze({
+    const expectedDrain = {
         ...issued.reservation,
-        attempt: Object.freeze({
+        attempt: {
             ...issued.attempt,
             status: 'failed' as const,
             failedRevision: issued.attempt.committedRevision + 1,
             failedAt: issued.failure.failedAt,
-        }),
-    })
+        },
+    }
     return sameSnapshot(value.drain, expectedDrain)
 }
 
@@ -2105,14 +2105,14 @@ function reduceDrainAttemptFailure(input: {
         || value.drain.reservationId !== reservation.reservationId
         || !sameDrainAttempt(attempt, reservation.attempt)
         || !sameDrainAttemptBinding(failure, attempt)) return undefined
-    return Object.freeze({
+    return {
         ...value,
-        drain: Object.freeze({
+        drain: {
             ...value.drain,
-            attempt: Object.freeze({ ...attempt, status: 'failed' as const,
-                failedRevision: attempt.committedRevision + 1, failedAt: failure.failedAt }),
-        }),
-    })
+            attempt: { ...attempt, status: 'failed' as const,
+                failedRevision: attempt.committedRevision + 1, failedAt: failure.failedAt },
+        },
+    }
 }
 
 export type SleepDrainRecoveryInspection =
@@ -2148,10 +2148,10 @@ function issueDrainRepair(namespace: StateNamespace, address: StateAddress, reco
     const fence = drainExecutionFence({ attempt: reservation.attempt, address })
     const recordFingerprint = exactRecordFingerprint(record)
     if (!fence || !recordFingerprint) return undefined
-    const authority = Object.freeze({}) as DrainRepairAuthority
+    const authority = {} as DrainRepairAuthority
     drainRepairs.set(authority, { namespace, address: Object.freeze({ ...address }), recordFingerprint,
         reservation: snapshotDrainReservation(reservation), fence })
-    return Object.freeze({ kind: 'repairable', fence, authority })
+    return { kind: 'repairable', fence, authority }
 }
 
 export async function settleInterruptedDrainRepair(input: {
@@ -2174,11 +2174,11 @@ export async function settleInterruptedDrainRepair(input: {
             return abortStateTransaction(refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
                 'interrupted drain changed before executor termination could be recorded', repair.reservation.stackId))
         }
-        return coordinationStateRecord(repair.namespace, repair.reservation.stackId, current, failedAt, Object.freeze({
+        return coordinationStateRecord(repair.namespace, repair.reservation.stackId, current, failedAt, {
             ...value,
-            drain: Object.freeze({ ...value.drain, attempt: Object.freeze({ ...attempt, status: 'failed' as const,
-                failedRevision: current.revision + 1, failedAt }) }),
-        }))
+            drain: { ...value.drain, attempt: { ...attempt, status: 'failed' as const,
+                failedRevision: current.revision + 1, failedAt } },
+        })
     })
 }
 
@@ -2233,7 +2233,7 @@ export async function inspectDestructiveDrainRecovery(input: {
             || value.lease === null || value.lease.released) {
             return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'destructive recovery requires exact retained holder and lease ownership', stackId)
         }
-        return Object.freeze({ kind: 'none' })
+        return { kind: 'none' }
     }
     const reservation = value.drain
     if (reservation.holderId !== holderId || reservation.requesterId !== holderId) {
@@ -2260,7 +2260,7 @@ export async function inspectDestructiveDrainRecovery(input: {
         actions: reservation.actions,
         expectedCoordinationRevision: reservation.expectedCoordinationRevision,
     })
-    return request ? Object.freeze({ kind: 'recoverable', request })
+    return request ? { kind: 'recoverable', request }
         : refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'persisted destructive drain is malformed', address.path)
 }
 
@@ -2294,12 +2294,12 @@ export async function inspectSleepDrainRecovery(input: {
     }
     const address = namespace.paths.coordination(stackId)
     const stored = await readState(address)
-    if (stored.kind === 'missing') return Object.freeze({ kind: 'none' })
+    if (stored.kind === 'missing') return { kind: 'none' }
     if (stored.kind !== 'complete') return stateRefusal(stored)
     const record = stored.value
     const value = decodeCoordinationRecord(record, stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', address.path)
-    if (value.drain == null) return Object.freeze({ kind: 'none' })
+    if (value.drain == null) return { kind: 'none' }
     const reservation = value.drain
     if (reservation.holderId !== holderId || reservation.requesterId !== holderId) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain belongs to another holder', stackId)
@@ -2320,19 +2320,19 @@ export async function inspectSleepDrainRecovery(input: {
     if (drainAuthorityEpochs.get(reservation.reservationId) === drainAuthorityEpoch(reservation)) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain already has authority for its current state', stackId)
     }
-    const authority = Object.freeze({}) as SleepDrainRecoveryAuthority
+    const authority = {} as SleepDrainRecoveryAuthority
     sleepDrainRecoveries.set(authority, {
         namespace,
         address: Object.freeze({ ...address }),
         recordFingerprint: fingerprint,
         reservation: snapshotDrainReservation(reservation),
     })
-    return Object.freeze({
+    return {
         kind: 'recoverable',
         generation: reservation.generation,
         runtimeStopValidForMs: runtimeStop.validForMs,
         authority,
-    })
+    }
 }
 
 export async function recoverSleepDrainReservation(input: {
@@ -2387,10 +2387,10 @@ export async function recoverSleepDrainReservation(input: {
             issued.address.path,
         )
     }
-    const persistedRequest = Object.freeze({
+    const persistedRequest = {
         ...request,
         expectedCoordinationRevision: issued.reservation.expectedCoordinationRevision,
-    })
+    }
     if (request.purpose !== 'sleep' || !sameDrainRequest(issued.reservation, persistedRequest)) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted sleep drain does not match fresh planning evidence', issued.reservation.stackId)
     }
@@ -2398,11 +2398,11 @@ export async function recoverSleepDrainReservation(input: {
     if (drainAuthorityEpochs.get(issued.reservation.reservationId) === epoch) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain already has authority for its current state', issued.reservation.stackId)
     }
-    return Object.freeze({
+    return {
         kind: 'complete',
         reservation: issued.reservation,
         authority: issueDrainAuthority(issued.reservation, stored.value, issued.address),
-    })
+    }
 }
 
 export async function recoverDrainReservation(input: {
@@ -2448,10 +2448,10 @@ export async function recoverDrainReservation(input: {
 }
 
 function failedReclaimRecoveryTarget(action: Extract<DrainAction, { readonly stage: 'reclaim' }>): FailedReclaimRecoveryTarget {
-    return Object.freeze({
+    return {
         targetId: action.targetId,
-        targetCommitment: Object.freeze({ ...action.targetCommitment }),
-    })
+        targetCommitment: { ...action.targetCommitment },
+    }
 }
 
 export function inspectFailedReclaimRecovery(input: {
@@ -2489,17 +2489,17 @@ export function inspectFailedReclaimRecovery(input: {
         const reclaimActions = reservation.actions.filter((candidate): candidate is Extract<DrainAction, { readonly stage: 'reclaim' }> => candidate.stage === 'reclaim')
         const currentIndex = attempt.actionIndex - 1
         if (currentIndex < 0 || reclaimActions[currentIndex] !== action) return undefined
-        const recovery = Object.freeze({
+        const recovery = {
             purpose: reservation.purpose,
             stackId: reservation.stackId,
             configSha256: reservation.configSha256,
             planDigest: reservation.planDigest,
             freshAfter: record.updatedAt,
-            completed: Object.freeze(reclaimActions.slice(0, currentIndex).map(failedReclaimRecoveryTarget)),
+            completed: reclaimActions.slice(0, currentIndex).map(failedReclaimRecoveryTarget),
             current: failedReclaimRecoveryTarget(action),
-            pending: Object.freeze(reclaimActions.slice(currentIndex + 1).map(failedReclaimRecoveryTarget)),
-        }) satisfies FailedReclaimRecovery
-        const candidateAuthority = Object.freeze({}) as FailedReclaimRecoveryAuthority
+            pending: reclaimActions.slice(currentIndex + 1).map(failedReclaimRecoveryTarget),
+        } satisfies FailedReclaimRecovery
+        const candidateAuthority = {} as FailedReclaimRecoveryAuthority
         failedReclaimRecoveries.set(candidateAuthority, recovery)
         return candidateAuthority
     } catch {
@@ -2554,7 +2554,7 @@ function isExactDrainSuccess(reservation: DrainReservation, fact: unknown): fact
 }
 
 function snapshotDrainTargetsAllowEmpty(value: unknown): readonly string[] | undefined {
-    if (Array.isArray(value) && value.length === 0) return Object.freeze([])
+    if (Array.isArray(value) && value.length === 0) return []
     return snapshotDrainTargets(value)
 }
 
@@ -2577,15 +2577,15 @@ function reduceDrainAttemptSuccess(input: {
     if (!value?.drain?.attempt || !sameDrainRequest(value.drain, reservation)
         || value.drain.reservationId !== reservation.reservationId
         || !sameDrainAttempt(value.drain.attempt, reservation.attempt)) return undefined
-    return Object.freeze({
+    return {
         ...value,
-        drain: Object.freeze({
+        drain: {
             ...value.drain,
             completedActionCount: value.drain.completedActionCount + 1,
             progressRevision: value.drain.attempt.committedRevision + 1,
             attempt: null,
-        }),
-    })
+        },
+    }
 }
 
 function snapshotExactReducerInput(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
@@ -2599,7 +2599,7 @@ function snapshotExactReducerInput(value: unknown, keys: readonly string[]): Rea
             if (snapshot === undefined) return undefined
             result[key] = snapshot
         }
-        return Object.freeze(result)
+        return result
     } catch {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
@@ -2636,12 +2636,12 @@ function reduceDrain(input: {
         || value.drain.reservedAt !== reservation.reservedAt
         || !value.drain.attempt || !sameDrainAttempt(value.drain.attempt, reservation.attempt)
         || value.drain.attempt.status !== 'active') return undefined
-    return Object.freeze({
-        holders: Object.freeze([]),
-        lease: value.lease === null ? null : Object.freeze({ ...value.lease, released: true }),
+    return {
+        holders: [],
+        lease: value.lease === null ? null : { ...value.lease, released: true },
         lastReleasedHolder: value.drain.holderId,
         drain: null,
-    })
+    }
 }
 
 function stateRefusal(result: Exclude<StateResult<StateRecord>, { kind: 'complete' | 'missing' }>): ClaimMutationRefusal {
@@ -2689,13 +2689,13 @@ export async function releaseClaim(input: {
         if (!namespaceProperty || !('value' in namespaceProperty)) throw new RefusalError('invalid namespace property')
         const stableNamespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
         if (!stableNamespace) throw new RefusalError('invalid namespace')
-        request = Object.freeze({
+        request = {
             namespace: stableNamespace,
             stackId: input.stackId,
             requesterId: input.requesterId,
             holderId: input.holderId,
             now: input.now,
-        })
+        }
     } catch (error) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `claim release input could not be read safely: ${errorCause(error)}`, 'claim release input')
     }

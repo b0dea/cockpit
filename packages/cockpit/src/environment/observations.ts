@@ -78,7 +78,7 @@ function boundedDenseArray(value: unknown): readonly unknown[] | undefined {
             if (!descriptor || !('value' in descriptor)) return undefined
             items.push(descriptor.value)
         }
-        return Object.freeze(items)
+        return items
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
@@ -95,12 +95,12 @@ function stageDeclarationSnapshot(value: unknown): ObservationStageDeclaration |
         if ((stage !== 'bootstrap' && stage !== 'steady') || (disposition !== 'required' && disposition !== 'not-applicable')) return undefined
         if (disposition === 'required') {
             return keys.length === 2 && reason === undefined
-                ? Object.freeze({ stage, disposition })
+                ? { stage, disposition }
                 : undefined
         }
         return keys.length === 3 && typeof reason === 'string' && reason.length > 0 && !reason.includes('\0')
             && Buffer.byteLength(reason, 'utf8') <= 1_024
-            ? Object.freeze({ stage, disposition, reason })
+            ? { stage, disposition, reason }
             : undefined
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
@@ -125,15 +125,15 @@ function declarationSnapshot(value: unknown): ObservationDeclaration | undefined
         if (stages.some((stage) => stage === undefined)) return undefined
         const issuedAtDescriptor = descriptors.issuedAt
         if (issuedAtDescriptor && !('value' in issuedAtDescriptor)) return undefined
-        return Object.freeze({
+        return {
             id: descriptors.id!.value as string,
             owner: descriptors.owner!.value as string,
-            postures: Object.freeze(postures as string[]),
-            stages: Object.freeze(stages as ObservationStageDeclaration[]),
+            postures: postures as string[],
+            stages: stages as ObservationStageDeclaration[],
             code: descriptors.code!.value as EnvironmentObservation['code'],
             isIssued: descriptors.isIssued!.value as ObservationDeclaration['isIssued'],
             ...(issuedAtDescriptor ? { issuedAt: issuedAtDescriptor.value as ObservationDeclaration['issuedAt'] } : {}),
-        })
+        }
     } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
@@ -197,7 +197,7 @@ export function validateObservationDeclarations(
         }
         owned.push(declaration)
     }
-    return { kind: 'valid', declarations: Object.freeze(owned.sort((left, right) => compareCodeUnits(left.id, right.id))) }
+    return { kind: 'valid', declarations: owned.sort((left, right) => compareCodeUnits(left.id, right.id)) }
 }
 
 const productionDeclarations = validateObservationDeclarations(allObservationDeclarations)
@@ -295,7 +295,7 @@ function evaluate(observation: EnvironmentObservation): EvaluatedObservation {
     else if (observation.freshness.state !== 'current') verdict = 'fail'
     else if (observation.observed.state === 'failed') verdict = 'fail'
     else verdict = observationSatisfiesExpectation(observation) ? 'pass' : 'fail'
-    return Object.freeze({
+    return {
         code: observation.code,
         owner: observation.owner,
         stackId: observation.stackId,
@@ -306,7 +306,7 @@ function evaluate(observation: EnvironmentObservation): EvaluatedObservation {
         observedAt: observation.observed.observedAt,
         ...(observation.observed.state === 'available' ? { measured: observation.observed.value } : {}),
         expected: observation.expectation,
-    })
+    }
 }
 
 function declaredApplicability(
@@ -403,7 +403,7 @@ function evaluatePreflight(
     const checks = [...observations
         .sort((left, right) => compareCodeUnits(`${left.stackId}\0${left.code}\0${left.owner}\0${left.source}`, `${right.stackId}\0${right.code}\0${right.owner}\0${right.source}`))
         .map(evaluate), ...postureReason === undefined ? postureChecks
-        : postureChecks.map((check) => Object.freeze({ ...check, verdict: 'not-applicable' as const, reason: postureReason }))]
+        : postureChecks.map((check) => ({ ...check, verdict: 'not-applicable' as const, reason: postureReason }))]
         .sort((left, right) => compareCodeUnits(`${left.stackId}\0${left.code}\0${left.owner}\0${left.source}`, `${right.stackId}\0${right.code}\0${right.owner}\0${right.source}`))
     const verdict = stackIds.length === 0 && checks.length === 0 ? 'unavailable'
         : checks.some((check) => check.verdict === 'fail')
@@ -416,7 +416,7 @@ function evaluatePreflight(
     const revision = distinctRevisions.size === 1
         ? [...distinctRevisions][0]!
         : createHash('sha256').update(revisionEntries.join('\0')).digest('hex')
-    const result = Object.freeze({ verdict, revision, checks: Object.freeze(checks) })
+    const result: PreflightEvaluation = { verdict, revision, checks }
     issuedPreflights.add(result)
     return result
 }
@@ -427,13 +427,13 @@ function evidenceValue(value: JsonSnapshot | undefined): string {
 
 export function projectDoctor(preflight: PreflightEvaluation): DoctorProjection {
     if (!issuedPreflights.has(preflight)) throw new RefusalError('preflight evaluation is not authentic')
-    return Object.freeze({
+    return {
         verdict: preflight.verdict,
-        checks: Object.freeze(preflight.checks.map((check) => Object.freeze({
+        checks: preflight.checks.map((check) => ({
             ...check,
             evidence: `source=${check.source} observedAt=${check.observedAt} measured=${evidenceValue(check.measured)} expected=${JSON.stringify(check.expected)}`,
-        }))),
-    })
+        })),
+    }
 }
 
 export function aggregateObservations(

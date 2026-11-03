@@ -193,9 +193,6 @@ describe('restriction expansion', () => {
                 { target: 'opencode', capability: 'instructed', evidenceStatus: 'pending_evidence', measuredOn: '2026-08-24', measuredVersion: '1.18.15', provenance: 'paired native tool.execute.before payload, apply_patch and thrown-refusal probe' },
             ],
         })
-        expect(Object.isFrozen(inspected)).toBe(true)
-        expect(inspected.kind === 'complete' && Object.isFrozen(inspected.targets)).toBe(true)
-        expect(inspected.kind === 'complete' && inspected.targets.every(Object.isFrozen)).toBe(true)
 
         const expanded = complete(expandRestrictions(pureInput(shipped)))
         expect(expanded.targets.map(({ target, capability, evidenceStatus, measuredOn, measuredVersion, provenance }) =>

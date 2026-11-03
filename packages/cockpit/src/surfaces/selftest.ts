@@ -178,10 +178,10 @@ function customRef(
         || capability.mechanism.module !== input.module || capability.mechanism.export !== input.export
         || capability.measured_on !== input.measuredOn || capability.state !== input.state
         || !SHA256.test(input.sourceSha256) || !SHA256.test(input.resultSha256)) return undefined
-    return Object.freeze({
+    return {
         kind: 'custom', id: declaration.name, declarationSha256,
         module: input.module, sourceSha256: input.sourceSha256, export: input.export,
-    })
+    }
 }
 
 function shippedSkills(entries: readonly SurfaceDesiredEntry[]): readonly string[] | undefined {
@@ -192,7 +192,7 @@ function shippedSkills(entries: readonly SurfaceDesiredEntry[]): readonly string
         if (!SKILL_NAME.test(match[1]!)) return undefined
         names.add(match[1]!)
     }
-    return Object.freeze([...names].sort(compareCodeUnits))
+    return [...names].sort(compareCodeUnits)
 }
 
 export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestProjection): SelftestExpectation | undefined {
@@ -232,8 +232,8 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
         if (!configured.has(target)) continue
         for (const capability of CAPABILITIES) {
             if (capability === 'skill-parity') {
-                for (const skill of skills) cells.push(Object.freeze({ harness: BUILTINS[target]!, capability, skill }))
-            } else cells.push(Object.freeze({ harness: BUILTINS[target]!, capability }))
+                for (const skill of skills) cells.push({ harness: BUILTINS[target]!, capability, skill })
+            } else cells.push({ harness: BUILTINS[target]!, capability })
         }
     }
     for (const declaration of captured.declarations) {
@@ -255,9 +255,9 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
                 const key = `${declaration.name}\0${evidenceCapability}\0${skill ?? ''}`
                 const existing = customCells.get(key)
                 if (existing) return undefined
-                customCells.set(key, Object.freeze(evidenceCapability === 'skill-parity'
+                customCells.set(key, evidenceCapability === 'skill-parity'
                     ? { harness, capability: evidenceCapability, skill: skill! }
-                    : { harness, capability: evidenceCapability }))
+                    : { harness, capability: evidenceCapability })
             }
         }
     }
@@ -265,16 +265,16 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     if (inputs.size !== captured.custom.length || usedInputs.size !== inputs.size || cells.length === 0 || cells.length > 256) return undefined
     const uniqueCells = new Map(cells.map((cell) => [cellKey(cell), cell]))
     if (uniqueCells.size !== cells.length) return undefined
-    return Object.freeze({
+    return {
         schema: 'cockpit-harness-selftest-expectation/v1',
         generatedManifestSha256: captured.manifestSha256,
-        cells: Object.freeze([...uniqueCells.values()].sort((left, right) => compareCodeUnits(cellKey(left), cellKey(right)))),
+        cells: [...uniqueCells.values()].sort((left, right) => compareCodeUnits(cellKey(left), cellKey(right))),
         shippedSkills: skills,
-        reviewHarnesses: Object.freeze([
-            Object.freeze({ name: 'Claude Code', nativeDiagnostics: false }),
-            Object.freeze({ name: 'Codex', nativeDiagnostics: true }),
-        ] as const),
-    })
+        reviewHarnesses: [
+            { name: 'Claude Code', nativeDiagnostics: false },
+            { name: 'Codex', nativeDiagnostics: true },
+        ] as const,
+    }
     } catch { /* a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses. */ return undefined }
 }
 
@@ -371,23 +371,23 @@ export function draftSurfaceSelftestSpecifications(
             carried += 1
             return kept
         }
-        return Object.freeze({
+        return {
             harness: cell.harness,
             capability: cell.capability,
             invocation: null,
-            versionCommand: Object.freeze(['{executable}', '--version'] as const),
-            helpCommand: Object.freeze(['{executable}', '--help'] as const),
+            versionCommand: ['{executable}', '--version'] as const,
+            helpCommand: ['{executable}', '--help'] as const,
             candidateCode: null,
             brokenCode: null,
             unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
-            sample: cell.capability === 'skill-parity' ? Object.freeze({ skill: cell.skill, features: null }) : null,
-        })
+            sample: cell.capability === 'skill-parity' ? { skill: cell.skill, features: null } : null,
+        }
     })
-    return Object.freeze({
-        specifications: Object.freeze(specifications),
-        unprobeable: Object.freeze(expectation.cells.filter((cell) => !builtinCell(cell))),
+    return {
+        specifications,
+        unprobeable: expectation.cells.filter((cell) => !builtinCell(cell)),
         carried,
-    })
+    }
 }
 
 /** Names each row whose person-supplied fields are still null, as `<harness> <capability>[ <skill>]: <fields>`. */
@@ -405,7 +405,7 @@ export function unfilledSurfaceSelftestSpecifications(specifications: readonly u
         const skill = sample !== null && typeof sample === 'object' && typeof sample.skill === 'string' ? ` ${sample.skill}` : ''
         rows.push(`${label} ${String(row.capability)}${skill}: ${fields.join(', ')}`)
     }
-    return Object.freeze(rows)
+    return rows
 }
 
 export function planSurfaceSelftest(
@@ -414,48 +414,48 @@ export function planSurfaceSelftest(
 ): SurfaceSelftestPlanResult {
     const capturedProjection = snapshotGeneratedJson(projection) as unknown as GeneratedSurfaceSelftestProjection | undefined
     const expectation = capturedProjection ? surfaceSelftestExpectation(capturedProjection) : undefined
-    if (!expectation) return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'generated selftest projection is invalid' })
+    if (!expectation) return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'generated selftest projection is invalid' }
     const capturedSpecifications = snapshotGeneratedJson(specifications) as unknown as readonly SelftestProbeSpecification[] | undefined
-    if (!capturedSpecifications) return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications are malformed' })
+    if (!capturedSpecifications) return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications are malformed' }
     const customRows = capturedSpecifications.flatMap((row) => {
         const harness = (row as { harness?: unknown } | null)?.harness as SelftestHarnessRef | null | undefined
         return harness !== null && typeof harness === 'object' && harness.kind === 'custom'
             ? [`${typeof harness.id === 'string' ? harness.id : 'unknown harness'} ${String(row.capability)}`] : []
     })
-    if (customRows.length > 0) return Object.freeze({
+    if (customRows.length > 0) return {
         kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
         reason: `probe specification rows for custom harnesses cannot run and would be ignored, so they are refused: ${customRows.slice(0, 5).join('; ')}${customRows.length > 5 ? `; and ${customRows.length - 5} more` : ''}; selftest records custom cells human_needed without a row, so delete these rows`,
-    })
+    }
     const probeCells = expectation.cells.filter(builtinCell)
     if (capturedSpecifications.length !== probeCells.length || capturedSpecifications.length > 256) {
-        return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications do not exactly cover expected cells' })
+        return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications do not exactly cover expected cells' }
     }
     const byCell = new Map<string, SelftestProbeSpecification>()
     for (const specification of capturedSpecifications) {
         const key = specificationCellKey(specification)
-        if (!key) return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specification is malformed' })
-        if (byCell.has(key)) return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications contain duplicate cells' })
+        if (!key) return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specification is malformed' }
+        if (byCell.has(key)) return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specifications contain duplicate cells' }
         byCell.set(key, specification)
     }
     const probes: PlannedSelftestProbe[] = []
     for (const cell of probeCells) {
         const specification = byCell.get(cellKey(cell))
         if (!specification || !validProbe(specification, cell)) {
-            return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specification is malformed or does not match source authority' })
+            return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'probe specification is malformed or does not match source authority' }
         }
         if (specification.sample && !expectation.shippedSkills.includes(specification.sample.skill)) {
-            return Object.freeze({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'skill parity sample is not a shipped skill' })
+            return { kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID', reason: 'skill parity sample is not a shipped skill' }
         }
-        probes.push(Object.freeze({
+        probes.push({
             ...specification,
             cell,
-            entries: Object.freeze(capturedProjection!.entries.filter((entry) => entry.harnesses.includes(cell.harness.target))),
-        }))
+            entries: capturedProjection!.entries.filter((entry) => entry.harnesses.includes(cell.harness.target)),
+        })
     }
-    return Object.freeze({
-        kind: 'complete', expectation, probes: Object.freeze(probes),
-        unprobeable: Object.freeze(expectation.cells.filter((cell) => !builtinCell(cell))),
-    })
+    return {
+        kind: 'complete', expectation, probes,
+        unprobeable: expectation.cells.filter((cell) => !builtinCell(cell)),
+    }
 }
 
 export function surfaceSelftestHumanNeeded(
@@ -468,14 +468,14 @@ export function surfaceSelftestHumanNeeded(
     if (!expectation.cells.some((candidate) => cellKey(candidate) === cellKey(cell))
         || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(observedAt)
         || operatorAction.length === 0 || Buffer.byteLength(operatorAction) > 4096 || operatorAction.includes('\0')) return undefined
-    if (cell.capability === 'skill-parity') return Object.freeze({
+    if (cell.capability === 'skill-parity') return {
         kind: 'human_needed', harness: cell.harness, capability: cell.capability, skill: cell.skill,
         generatedManifestSha256: expectation.generatedManifestSha256, observedAt, reason, operatorAction,
-    })
-    return Object.freeze({
+    }
+    return {
         kind: 'human_needed', harness: cell.harness, capability: cell.capability,
         generatedManifestSha256: expectation.generatedManifestSha256, observedAt, reason, operatorAction,
-    })
+    }
 }
 
 export function surfaceSelftestReviews(
@@ -493,20 +493,20 @@ export function surfaceSelftestReviews(
     const reviews: SelftestSkillReviewRecord[] = []
     for (const skill of expectation.shippedSkills) for (const harness of expectation.reviewHarnesses) {
         const row = rows.get(`${skill}\0${harness.name}`)
-        if (row) reviews.push(Object.freeze({
+        if (row) reviews.push({
             skill, harness: harness.name, status: 'evidenced', reviewedOn: row.reviewedOn,
             evidenceRunId: row.evidenceRunId,
-            reviewers: Object.freeze(harness.nativeDiagnostics
+            reviewers: harness.nativeDiagnostics
                 ? ['official-authoring', 'harness-diagnostics'] as const
-                : ['official-authoring'] as const),
-            checks: Object.freeze({ trigger: 'pass', silence: 'pass', bodyLoad: 'pass', tools: 'pass', nonGoals: 'pass' }),
+                : ['official-authoring'] as const,
+            checks: { trigger: 'pass', silence: 'pass', bodyLoad: 'pass', tools: 'pass', nonGoals: 'pass' },
             operatorAction: null,
-        }))
-        else reviews.push(Object.freeze({
+        })
+        else reviews.push({
             skill, harness: harness.name, status: 'human_needed', reviewedOn: null, evidenceRunId: null,
-            reviewers: Object.freeze([]), checks: null,
+            reviewers: [], checks: null,
             operatorAction: `Review ${skill} with ${harness.name} and record the five authoring checks`,
-        }))
+        })
     }
-    return Object.freeze(reviews)
+    return reviews
 }

@@ -800,9 +800,6 @@ describe('destructive drain recovery inspection', () => {
         const inspected = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
         expect(inspected).toEqual({ kind: 'recoverable', request })
         if (inspected.kind !== 'recoverable') throw new Error('expected destructive recovery basis')
-        expect(Object.isFrozen(inspected.request)).toBe(true)
-        expect(Object.isFrozen(inspected.request.targetIds)).toBe(true)
-        expect(Object.isFrozen(inspected.request.actions)).toBe(true)
 
         const changed = await transactState(state, state.paths.coordination(stackId), { ownerId: holderA }, (current) => ({
             ...current!, revision: current!.revision + 1, updatedAt: after(failedAt, 1),
@@ -1449,14 +1446,12 @@ describe('session-aware claims', () => {
         } as never)).toBeUndefined()
         const execution = openRuntimeDrainExecution({ authority: attempted.authority, candidate })
         if (!execution) throw new Error('expected drain execution authority')
-        expect(Object.isFrozen(execution)).toBe(true)
         expect(settleRuntimeDrainSuccess({ authority: { ...execution } as never, fact: stoppedFact(attempted.reservation),
         })).toBeUndefined()
         expect(settleRuntimeDrainSuccess({ authority: execution, fact: { ...stoppedFact(attempted.reservation), extra: true } as never,
         })).toBeUndefined()
         const outcome = settleRuntimeDrainSuccess({ authority: execution, fact: stoppedFact(attempted.reservation) })
         if (!outcome) throw new Error('expected drain outcome authority')
-        expect(Object.isFrozen(outcome)).toBe(true)
         expect(outcome).not.toBe(execution)
         expect(settleRuntimeDrainSuccess({ authority: execution, fact: stoppedFact(attempted.reservation) })).toBeUndefined()
         const record = await readState(state.paths.coordination(stackId))
@@ -1842,7 +1837,7 @@ describe('session-aware claims', () => {
         expect(reduceDrainOutcome({ authority: outcome, record: record.value }))
             .toMatchObject({ holders: [], lease: { released: true }, drain: null })
     })
-    it('deeply freezes reclaim commitments in issued and parsed drain snapshots', async () => {
+    it('parses persisted reclaim commitments back to the issued drain actions', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const actions = drainActions(stackId, ['volume:data'])
@@ -1854,22 +1849,12 @@ describe('session-aware claims', () => {
         }
         const reserved = await reserveDrain({ namespace: state, request })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        const issuedAction = reserved.authority.reservation.actions[1]
-        if (issuedAction?.stage !== 'reclaim') throw new Error('expected issued reclaim action')
-        const originalBody = issuedAction.targetCommitment.body
-        expect(Object.isFrozen(issuedAction.targetCommitment)).toBe(true)
-        expect(Reflect.set(issuedAction.targetCommitment, 'body', '{"targetId":"volume:changed"}')).toBe(false)
-        expect(issuedAction.targetCommitment.body).toBe(originalBody)
 
         const stored = await readState(state.paths.coordination(stackId))
         if (stored.kind !== 'complete') throw new Error('expected persisted drain')
         const decoded = decodeCoordinationRecord(stored.value, stackId)
         if (!decoded?.drain) throw new Error('expected parsed drain')
-        const parsedAction = decoded.drain.actions[1]
-        if (parsedAction?.stage !== 'reclaim') throw new Error('expected parsed reclaim action')
-        expect(Object.isFrozen(parsedAction.targetCommitment)).toBe(true)
-        expect(Reflect.set(parsedAction.targetCommitment, 'body', '{"targetId":"volume:changed"}')).toBe(false)
-        expect(parsedAction.targetCommitment.body).toBe(originalBody)
+        expect(decoded.drain.actions[1]?.stage).toBe('reclaim')
         expect(reserved.authority.reservation.actions).toEqual(decoded.drain?.actions)
     })
 
@@ -2350,10 +2335,6 @@ describe('session-aware claims', () => {
         if (retryReservation.kind !== 'complete') throw new Error('expected failed reclaim recovery')
         const recoveredAction = retryReservation.authority.reservation.actions[1]
         if (recoveredAction?.stage !== 'reclaim') throw new Error('expected recovered reclaim action')
-        const recoveredBody = recoveredAction.targetCommitment.body
-        expect(Object.isFrozen(recoveredAction.targetCommitment)).toBe(true)
-        expect(Reflect.set(recoveredAction.targetCommitment, 'body', '{"targetId":"volume:changed"}')).toBe(false)
-        expect(recoveredAction.targetCommitment.body).toBe(recoveredBody)
         expect(inspectFailedReclaimRecovery({ authority: committed.value as never, record: committed.value })).toBeUndefined()
         expect(inspectFailedReclaimRecovery({ authority: { ...retryReservation.authority } as never, record: committed.value })).toBeUndefined()
         const changedRecords = [
@@ -2415,9 +2396,6 @@ describe('session-aware claims', () => {
             freshAfter: committed.value.updatedAt,
             completed: [], current: { targetId: 'volume:first' }, pending: [{ targetId: 'volume:second' }],
         })
-        expect(Object.isFrozen(projection)).toBe(true)
-        expect(Object.isFrozen(projection?.current)).toBe(true)
-        expect(Object.isFrozen(projection?.current.targetCommitment)).toBe(true)
         expect(consumeFailedReclaimRecovery(recovery)).toBeUndefined()
         const retry = await reserveDrainAttempt({ namespace: state, authority: retryReservation.authority })
         if (retry.kind !== 'complete') throw new Error('expected reclaim retry')

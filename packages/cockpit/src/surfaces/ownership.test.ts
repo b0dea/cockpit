@@ -64,11 +64,6 @@ describe('generated ownership manifest', () => {
         const projected = projectGeneratedPathFacts(encoded.manifest, authority, declarations)
         expect(projected).toMatchObject({ kind: 'complete', facts: [{ path: entry.path, declaration: declarations[0], allowsMissing: true }] })
         if (projected.kind !== 'complete') throw new Error('expected producer facts')
-        expect(Object.isFrozen(projected.facts)).toBe(true)
-        expect(Object.isFrozen(projected.facts[0])).toBe(true)
-        expect(Object.isFrozen(projected.facts[0]!.authority)).toBe(true)
-        expect(Object.isFrozen(projected.facts[0]!.declaration)).toBe(true)
-        expect(Object.isFrozen(projected.facts[0]!.entry)).toBe(true)
         expect(projectGeneratedPathFacts({ ...encoded.manifest }, authority, declarations)).toMatchObject({ kind: 'refusal' })
         expect(projectGeneratedPathFacts(encoded.manifest, { ...authority, root: '/foreign' }, declarations)).toMatchObject({ kind: 'refusal' })
         expect(projectGeneratedPathFacts(encoded.manifest, authority, [...declarations, ...declarations])).toMatchObject({ kind: 'refusal' })
@@ -92,7 +87,6 @@ describe('generated ownership manifest', () => {
             if (result.kind !== 'complete') throw new Error('expected surface facts')
             const fact = result.facts.find(fact => fact.path === entry.path)!
             expect(fact.allowsMissing).toBe(true)
-            expect('harnesses' in fact.entry && Object.isFrozen(fact.entry.harnesses)).toBe(true)
             const changed = entry.kind === 'shared-region' ? [{ ...entry, region: { ...entry.region, sha256: digest('wrong') } }] : []
             for (const tampered of changed) expect(projectGeneratedPathFacts(encoded.manifest, authority, [{ ...declaration, entry: tampered }])).toMatchObject({ kind: 'refusal' })
         }

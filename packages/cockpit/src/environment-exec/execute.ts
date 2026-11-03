@@ -97,7 +97,7 @@ async function pathAbsent(path: string): Promise<boolean> {
 }
 
 function issueFencedTermination(fence: ExecutionFence): FencedExecutionTermination {
-    const evidence = Object.freeze({ kind: 'fenced-execution-termination' as const })
+    const evidence = { kind: 'fenced-execution-termination' as const }
     fencedTerminations.set(evidence, Object.freeze({ ...fence }))
     return evidence
 }
@@ -114,10 +114,10 @@ async function publishFenceMarker(
         if (!parent.isDirectory() || parent.isSymbolicLink()) return undefined
         handle = await open(prepared, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
         const markerIdentity = await handle.stat({ bigint: true })
-        const marker = Object.freeze({ format: 'cockpit-executor/v1' as const, attemptId: fence.attemptId,
+        const marker = { format: 'cockpit-executor/v1' as const, attemptId: fence.attemptId,
             ...(status === 'active' ? { supervisorPid } : {}),
             markerDev: String(markerIdentity.dev), markerIno: String(markerIdentity.ino),
-            parentDev: String(parent.dev), parentIno: String(parent.ino), status })
+            parentDev: String(parent.dev), parentIno: String(parent.ino), status }
         await handle.writeFile(`${JSON.stringify(marker)}\n`)
         await handle.sync(); await handle.close(); handle = undefined
         await link(prepared, fence.markerPath)
@@ -332,7 +332,7 @@ function stepFingerprint(step: ExecutionStep): string {
 }
 
 function executionReceipt(stepId: string, fingerprint: string, consumedFingerprint: string, startedAt: string, finishedAt: string): ExecutionReceipt {
-    const receipt = Object.freeze({
+    const receipt = {
         stepId,
         startedAt,
         finishedAt,
@@ -340,7 +340,7 @@ function executionReceipt(stepId: string, fingerprint: string, consumedFingerpri
             const owned = snapshotExecutionStep(candidate)
             return owned !== undefined && stepFingerprint(owned) === fingerprint
         },
-    })
+    }
     issuedReceipts.set(receipt, { stepFingerprint: fingerprint, consumedFingerprint })
     return receipt
 }
@@ -541,12 +541,12 @@ async function prepareExecutionPlan(plan: ExecutionPlan): Promise<PreparationRes
             for (const index of file.argvIndexes) argv[index] = snapshot
             consumed.push({ ...file, sha256: digest })
         }
-        prepared.set(step, Object.freeze({
+        prepared.set(step, {
             logical: step,
-            argv: Object.freeze(argv) as readonly [string, ...string[]],
+            argv: argv as [string, ...string[]],
             consumedFingerprint: createHash('sha256').update(JSON.stringify(consumed)).digest('hex'),
-            verifiedPathExecutables: Object.freeze(verifiedPathExecutables),
-        }))
+            verifiedPathExecutables,
+        })
         for (const compensation of step.compensation) if (!await prepare(compensation)) return false
         return true
     }
@@ -803,23 +803,23 @@ function failedStepStderr(stderr: Buffer): string | undefined {
 }
 
 function immutablePlanOutcome(outcome: ExecutePlanOutcome): ExecutePlanOutcome {
-    const diagnostics = Object.freeze(outcome.diagnostics.map((item) => Object.freeze({ ...item })))
-    if (outcome.kind === 'complete') return Object.freeze({
+    const diagnostics = outcome.diagnostics.map((item) => ({ ...item }))
+    if (outcome.kind === 'complete') return {
         ...outcome, diagnostics,
-        result: Object.freeze({ steps: Object.freeze(outcome.result.steps.map((step) => Object.freeze({ ...step }))) }),
-    })
-    return Object.freeze({
+        result: { steps: outcome.result.steps.map((step) => ({ ...step })) },
+    }
+    return {
         ...outcome, diagnostics,
-        execution: Object.freeze({
-            completedStepIds: Object.freeze([...outcome.execution.completedStepIds]),
-            failedStep: Object.freeze({ ...outcome.execution.failedStep }),
-            compensation: Object.freeze({
-                attemptedStepIds: Object.freeze([...outcome.execution.compensation.attemptedStepIds]),
-                completedStepIds: Object.freeze([...outcome.execution.compensation.completedStepIds]),
-                failed: Object.freeze(outcome.execution.compensation.failed.map((failure) => Object.freeze({ ...failure }))),
-            }),
-        }),
-    })
+        execution: {
+            completedStepIds: [...outcome.execution.completedStepIds],
+            failedStep: { ...outcome.execution.failedStep },
+            compensation: {
+                attemptedStepIds: [...outcome.execution.compensation.attemptedStepIds],
+                completedStepIds: [...outcome.execution.compensation.completedStepIds],
+                failed: outcome.execution.compensation.failed.map((failure) => ({ ...failure })),
+            },
+        },
+    }
 }
 
 function probeOutcomeFingerprint(outcome: ExecuteProbeOutcome, consumedFingerprint: string): string {
@@ -838,10 +838,10 @@ function probeOutcomeFingerprint(outcome: ExecuteProbeOutcome, consumedFingerpri
 }
 
 function immutableProbeOutput<Value extends object>(value: Value, stdout: Buffer, stderr: Buffer): Value & { stdout: Buffer; stderr: Buffer } {
-    return Object.freeze(Object.defineProperties(value, {
+    return Object.defineProperties(value, {
         stdout: { enumerable: true, get: () => Buffer.from(stdout) },
         stderr: { enumerable: true, get: () => Buffer.from(stderr) },
-    })) as Value & { stdout: Buffer; stderr: Buffer }
+    }) as Value & { stdout: Buffer; stderr: Buffer }
 }
 
 interface CapturedProbeOutcome { readonly outcome: ExecuteProbeOutcome; readonly sourceReceipt?: ExecutionReceipt }
@@ -892,20 +892,20 @@ function captureProbeOutcome(value: unknown): CapturedProbeOutcome | undefined {
             if (receiptKeys.length !== expectedReceiptKeys.length || !receiptKeys.every((key, index) => key === expectedReceiptKeys[index])
                 || typeof stepId !== 'string' || typeof startedAt !== 'string'
                 || typeof finishedAt !== 'string' || typeof receiptMatches !== 'function') return undefined
-            ownedReceipt = Object.freeze({ stepId, startedAt, finishedAt, receiptMatches })
+            ownedReceipt = { stepId, startedAt, finishedAt, receiptMatches }
         } else if (kind === 'complete') return undefined
-        const ownedExecution = Object.freeze({
+        const ownedExecution = {
             id: observed.id, exitCode: observed.exitCode, signal: observed.signal,
             stdoutBytes: observed.stdoutBytes, stderrBytes: observed.stderrBytes, started: observed.started,
             stdoutObservedBytes: observed.stdoutObservedBytes, stderrObservedBytes: observed.stderrObservedBytes,
             stdoutRetainedBytes: observed.stdoutRetainedBytes, stderrRetainedBytes: observed.stderrRetainedBytes,
-        })
+        }
         const owned = kind === 'complete'
             ? { kind, execution: ownedExecution, receipt: ownedReceipt as ExecutionReceipt, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
             : ownedReceipt === undefined
                 ? { kind, code: code as ExecutionFailureCode, execution: ownedExecution, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
                 : { kind, code: code as ExecutionFailureCode, execution: ownedExecution, receipt: ownedReceipt, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
-        return { outcome: Object.freeze(owned), sourceReceipt: receipt }
+        return { outcome: owned, sourceReceipt: receipt }
     } catch {
         // A throwing accessor or proxy trap means the outcome is not authentic; the caller refuses it.
         return undefined
@@ -968,12 +968,12 @@ function captureForegroundInput(input: ForegroundProcessInput): ForegroundProces
             if (environmentBytes > 1_048_576) return undefined
             Object.defineProperty(environment, key, { enumerable: true, value: descriptor.value })
         }
-        return Object.freeze({
-            executable: Object.freeze({ ...executable }),
-            argv: Object.freeze([...argv]),
+        return {
+            executable: { ...executable },
+            argv: [...argv],
             cwd,
-            env: Object.freeze(environment),
-        })
+            env: environment,
+        }
     } catch {
         // A throwing accessor or proxy trap means the step is malformed; the caller refuses it.
         return undefined
@@ -992,29 +992,29 @@ export async function executeForegroundProcess(
         if (signal !== undefined && Object.getPrototypeOf(signal) !== AbortSignal.prototype) throw new TypeError('invalid signal')
     } catch {
         // A throwing accessor or proxy trap on the options means they are malformed, which is refused.
-        return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            exitCode: 1, signal: null, started: false, terminationConfirmed: true })
+        return { kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+            exitCode: 1, signal: null, started: false, terminationConfirmed: true }
     }
-    if (!captured || signal?.aborted) return Object.freeze({
+    if (!captured || signal?.aborted) return {
         kind: 'refusal',
         code: signal?.aborted ? ENVIRONMENT_CODES.EXECUTION_ABORTED : ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         exitCode: 1, signal: null, started: false, terminationConfirmed: true,
-    })
+    }
     const executable = captured.executable
     const consumed: ConsumedFile = {
         path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
-        argvIndexes: Object.freeze([0]), executable: true, executionMode: 'verified-path',
+        argvIndexes: [0], executable: true, executionMode: 'verified-path',
     }
-    if (!await consumedFileMatches(consumed)) return Object.freeze({
+    if (!await consumedFileMatches(consumed)) return {
         kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         exitCode: 1, signal: null, started: false, terminationConfirmed: true,
-    })
+    }
     try {
         if (await realpath(executable.invocationPath) !== executable.canonicalPath) throw new Error('identity changed')
     } catch {
         // A changed or unresolvable executable path is reported by the precondition-changed refusal.
-        return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            exitCode: 1, signal: null, started: false, terminationConfirmed: true })
+        return { kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+            exitCode: 1, signal: null, started: false, terminationConfirmed: true }
     }
 
     let child: ReturnType<typeof spawn>
@@ -1028,8 +1028,8 @@ export async function executeForegroundProcess(
         })
     } catch {
         // The refusal carries the spawn-failed code; spawn errors echo argv and environment details.
-        return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED,
-            exitCode: 1, signal: null, started: false, terminationConfirmed: true })
+        return { kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED,
+            exitCode: 1, signal: null, started: false, terminationConfirmed: true }
     }
 
     return await new Promise(resolveProcess => {
@@ -1062,9 +1062,9 @@ export async function executeForegroundProcess(
             const processSignal = closed?.signal ?? null
             const exitCode = closed?.code ?? (failure === undefined ? 0 : 1)
             resolveProcess(failure === undefined
-                ? Object.freeze({ kind: 'complete', exitCode, signal: processSignal, terminationConfirmed: true })
-                : Object.freeze({ kind: 'refusal', code: failure, exitCode: exitCode === 0 ? 1 : exitCode,
-                    signal: processSignal, started: child.pid !== undefined, terminationConfirmed }))
+                ? { kind: 'complete', exitCode, signal: processSignal, terminationConfirmed: true }
+                : { kind: 'refusal', code: failure, exitCode: exitCode === 0 ? 1 : exitCode,
+                    signal: processSignal, started: child.pid !== undefined, terminationConfirmed })
         }
         const confirmGone = (): void => {
             if (settled) return
@@ -1134,7 +1134,7 @@ export async function executeProbe(
     }
     if (observation.failure !== undefined && observation.exitCode === 0) observation.exitCode = 1
     const { failure, stdout, stderr, receipt, resolvedStep: _resolvedStep, ...executionValue } = observation
-    const execution = Object.freeze(executionValue)
+    const execution = executionValue
     if (failure) return issueProbeOutcome(receipt === undefined
         ? immutableProbeOutput({ kind: 'refusal', code: failure, execution } as const, stdout, stderr)
         : immutableProbeOutput({ kind: 'refusal', code: failure, execution, receipt } as const, stdout, stderr), resolved)

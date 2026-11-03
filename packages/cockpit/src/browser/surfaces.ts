@@ -99,7 +99,7 @@ const MEASURED = {
 
 /** The harness version each target's browser transport spelling was measured at, for diagnostics. */
 export function measuredBrowserHarnessVersions(): Readonly<Record<GuardSurfaceTarget, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(MEASURED).map(([target, row]) => [target, row.version])) as Record<GuardSurfaceTarget, string>)
+    return Object.fromEntries(Object.entries(MEASURED).map(([target, row]) => [target, row.version])) as Record<GuardSurfaceTarget, string>
 }
 
 const Sha256 = z.string().regex(/^[a-f0-9]{64}$/)
@@ -177,7 +177,7 @@ function projectPackagePaths(root: string, runtime: BrowserRuntimeProjection): R
             throw new RefusalError('browser declared project manifest differs from its issued identity')
         }
     }
-    return Object.freeze({ projectManifestPath, packageRoot: resolve(dirname(projectManifestPath), 'node_modules/@playwright/test') })
+    return { projectManifestPath, packageRoot: resolve(dirname(projectManifestPath), 'node_modules/@playwright/test') }
 }
 
 export function observeBrowserProjectPackage(input: Readonly<{
@@ -205,14 +205,14 @@ export function observeBrowserProjectPackage(input: Readonly<{
     if (!isPackageDescendant(packageRoot, moduleAbsolute)) throw new RefusalError('browser project module escaped its package root')
     const cliBytes = observedBytes(cliAbsolute, 65_536)
     const moduleBytes = observedBytes(moduleAbsolute, 65_536)
-    return Object.freeze({ directory, artifactRoot: parsed.data.artifactRoot,
-        manifest: Object.freeze({ bytes: manifestBytes, sha256: digest(manifestBytes) }),
-        cli: Object.freeze({ path: relative(packageRoot, cliAbsolute), bytes: cliBytes, sha256: digest(cliBytes) }),
-        module: Object.freeze({ path: relative(packageRoot, moduleAbsolute), bytes: moduleBytes, sha256: digest(moduleBytes) }) })
+    return { directory, artifactRoot: parsed.data.artifactRoot,
+        manifest: { bytes: manifestBytes, sha256: digest(manifestBytes) },
+        cli: { path: relative(packageRoot, cliAbsolute), bytes: cliBytes, sha256: digest(cliBytes) },
+        module: { path: relative(packageRoot, moduleAbsolute), bytes: moduleBytes, sha256: digest(moduleBytes) } }
 }
 
 function file(target: GuardSurfaceTarget, path: string, bytes: string): RenderedSurfaceFile {
-    return Object.freeze({ target, path, bytes, sha256: digest(bytes) })
+    return { target, path, bytes, sha256: digest(bytes) }
 }
 
 function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntimeProjection, root: string): BrowserTransportRow['cli'] {
@@ -234,8 +234,8 @@ function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntim
     if (digest(lockBytes) !== runtime.runner.project.sha256 || !entry?.success || entry.data.version !== parsed.data.version) {
         throw new RefusalError('browser test package differs from the issued project lock identity')
     }
-    return Object.freeze({ package: '@playwright/test', version: parsed.data.version,
-        argv: Object.freeze(['node', resolve(packageRoot, value.cli.path)]), sha256: value.cli.sha256 })
+    return { package: '@playwright/test', version: parsed.data.version,
+        argv: ['node', resolve(packageRoot, value.cli.path)], sha256: value.cli.sha256 }
 }
 
 function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserTransportRow, 'target' | 'version'>,
@@ -255,14 +255,14 @@ function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserT
     const lockPath = resolve(root, runtime.runner.project.lockfile)
     const nodePath = realpathSync(process.execPath)
     const nodeBytes = observedFile(nodePath, 536_870_912)
-    const client = Object.freeze({
+    const client = {
         package: '@playwright/test' as const, target: row.target, version: row.version, cwd: root,
         artifactRoot: resolve(root, value.artifactRoot),
-        node: Object.freeze({ path: nodePath, sha256: createHash('sha256').update(nodeBytes).digest('hex'), maxBytes: nodeBytes.byteLength }),
-        module: Object.freeze({ path: resolvedModule, sha256: value.module.sha256, maxBytes: 1_048_576 }),
-        manifest: Object.freeze({ path: manifestPath, sha256: value.manifest.sha256, maxBytes: 65_536 }),
-        lock: Object.freeze({ path: lockPath, sha256: runtime.runner.project.sha256, maxBytes: 1_048_576 }),
-    })
+        node: { path: nodePath, sha256: createHash('sha256').update(nodeBytes).digest('hex'), maxBytes: nodeBytes.byteLength },
+        module: { path: resolvedModule, sha256: value.module.sha256, maxBytes: 1_048_576 },
+        manifest: { path: manifestPath, sha256: value.manifest.sha256, maxBytes: 65_536 },
+        lock: { path: lockPath, sha256: runtime.runner.project.sha256, maxBytes: 1_048_576 },
+    }
     issuedClients.set(client, runtime)
     return client
 }
@@ -279,8 +279,8 @@ function artifactDirectoryIdentity(path: string): FilesystemIdentity | undefined
     const parent = lstatSync(parentPath, { bigint: true })
     if (!directory.isDirectory() || directory.isSymbolicLink() || !parent.isDirectory() || parent.isSymbolicLink()
         || realpathSync(path) !== path || realpathSync(parentPath) !== parentPath) return undefined
-    return Object.freeze({ ...filesystemObjectIdentity(directory),
-        ancestors: Object.freeze([Object.freeze({ path: parentPath, ...filesystemObjectIdentity(parent) })]) })
+    return { ...filesystemObjectIdentity(directory),
+        ancestors: [{ path: parentPath, ...filesystemObjectIdentity(parent) }] }
 }
 
 function operationStatePath(runtime: BrowserRuntimeProjection, client: BrowserProjectClient, role: string | undefined): string | null | undefined {
@@ -316,24 +316,24 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
             '--artifact-birthtime-ns', artifactIdentity.birthtimeNs] : [])] as [string, ...string[]]
     const index = (value: string): number => argv.indexOf(value)
     const env: Readonly<Record<string, string>> = statePath ? { COCKPIT_BROWSER_STORAGE_STATE: statePath } : {}
-    return Object.freeze({
-        id: `browser-${operation.kind}-${operation.surface.name}`, argv: Object.freeze(argv), argv0: client.node.path,
-        cwd: client.cwd, env: Object.freeze(env),
+    return {
+        id: `browser-${operation.kind}-${operation.surface.name}`, argv, argv0: client.node.path,
+        cwd: client.cwd, env,
         timeoutMs: remaining, spawnNotAfter: new Date(operation.deadline).toISOString(), stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-        paths: Object.freeze(operation.output ? [operation.output] : []), ports: Object.freeze([]),
-        labels: Object.freeze({ browser: operation.kind }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([
-            { path: client.node.path, sha256: client.node.sha256, maxBytes: client.node.maxBytes, argvIndexes: Object.freeze([0]), executable: true as const, executionMode: 'verified-path' as const },
-            { path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: Object.freeze([2]), executable: false as const },
-            { path: client.module.path, sha256: client.module.sha256, maxBytes: client.module.maxBytes, argvIndexes: Object.freeze([index(client.module.path)]), executable: false as const },
-            { path: client.manifest.path, sha256: client.manifest.sha256, maxBytes: client.manifest.maxBytes, argvIndexes: Object.freeze([index(client.manifest.path)]), executable: false as const },
-            { path: client.lock.path, sha256: client.lock.sha256, maxBytes: client.lock.maxBytes, argvIndexes: Object.freeze([index(client.lock.path)]), executable: false as const },
+        paths: operation.output ? [operation.output] : [], ports: [],
+        labels: { browser: operation.kind }, expected: [],
+        consumedFiles: [
+            { path: client.node.path, sha256: client.node.sha256, maxBytes: client.node.maxBytes, argvIndexes: [0], executable: true as const, executionMode: 'verified-path' as const },
+            { path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: [2], executable: false as const },
+            { path: client.module.path, sha256: client.module.sha256, maxBytes: client.module.maxBytes, argvIndexes: [index(client.module.path)], executable: false as const },
+            { path: client.manifest.path, sha256: client.manifest.sha256, maxBytes: client.manifest.maxBytes, argvIndexes: [index(client.manifest.path)], executable: false as const },
+            { path: client.lock.path, sha256: client.lock.sha256, maxBytes: client.lock.maxBytes, argvIndexes: [index(client.lock.path)], executable: false as const },
             ...(statePath && stateBytes ? [{ path: statePath, sha256: digest(stateBytes), maxBytes: 1_048_576,
-                argvIndexes: Object.freeze([index(statePath)]), executable: false as const }] : []),
-        ]),
-        filesystemChecks: Object.freeze([{ path: client.artifactRoot, expected: 'directory' as const,
-            ...(artifactIdentity ? { identity: artifactIdentity } : {}) }]), compensation: Object.freeze([]),
-    })
+                argvIndexes: [index(statePath)], executable: false as const }] : []),
+        ],
+        filesystemChecks: [{ path: client.artifactRoot, expected: 'directory' as const,
+            ...(artifactIdentity ? { identity: artifactIdentity } : {}) }], compensation: [],
+    }
 }
 
 // A prerequisite the operation could not inspect; errorCause keeps the operation and path of a system
@@ -341,7 +341,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
 export type BrowserProjectOperationNotAdmitted = Readonly<{ kind: 'unadmitted'; cause: string }>
 
 function notAdmitted(what: string, error: unknown): BrowserProjectOperationNotAdmitted {
-    return Object.freeze({ kind: 'unadmitted', cause: `${what}: ${errorCause(error)}` })
+    return { kind: 'unadmitted', cause: `${what}: ${errorCause(error)}` }
 }
 
 export async function executeBrowserProjectOperation(client: BrowserProjectClient, runtime: BrowserRuntimeProjection,
@@ -396,14 +396,14 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
     input: BrowserProjectOperationAdmissionInput,
     operation: (authorization: BrowserProjectOperationAuthorization) => Promise<T>): Promise<BrowserProjectOperationAdmissionResult<T>> {
     if (issuedClients.get(client) !== runtime || typeof operation !== 'function' || !input || typeof input !== 'object' || isProxy(input)) {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires an issued project client and closed authority' })
+        return { kind: 'refusal', reason: 'Browser operation admission requires an issued project client and closed authority' }
     }
     const descriptors = Object.getOwnPropertyDescriptors(input)
     const allowed = new Set(['origin', 'role', 'state'])
     if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !allowed.has(key))
         || !descriptors.origin || !('value' in descriptors.origin)
         || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires an issued project client and closed authority' })
+        return { kind: 'refusal', reason: 'Browser operation admission requires an issued project client and closed authority' }
     }
     const captured = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value])) as {
         origin: unknown
@@ -413,34 +413,34 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
     let state: BrowserProjectOperationAdmissionInput['state']
     if (captured.state !== undefined) {
         if (!captured.state || typeof captured.state !== 'object' || isProxy(captured.state)) {
-            return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' })
+            return { kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' }
         }
         const stateDescriptors = Object.getOwnPropertyDescriptors(captured.state)
         if (Object.keys(stateDescriptors).sort().join(',') !== 'namespace,ownerId,stackId'
             || Object.values(stateDescriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) {
-            return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' })
+            return { kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' }
         }
         const values = Object.fromEntries(Object.entries(stateDescriptors).map(([key, descriptor]) => [key, descriptor.value]))
         if (!values.namespace || typeof values.namespace !== 'object' || isProxy(values.namespace)
             || typeof values.stackId !== 'string' || typeof values.ownerId !== 'string') {
-            return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' })
+            return { kind: 'refusal', reason: 'Browser operation admission requires closed coordination authority' }
         }
-        state = Object.freeze({ namespace: values.namespace as StateNamespace, stackId: values.stackId as StackId, ownerId: values.ownerId as HolderId })
+        state = { namespace: values.namespace as StateNamespace, stackId: values.stackId as StackId, ownerId: values.ownerId as HolderId }
     }
     let origin: URL
     // The URL error quotes the caller's origin; the refusal below names the expected shape instead.
     try { origin = new URL(captured.origin as string) } catch {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires an issued HTTP application origin' })
+        return { kind: 'refusal', reason: 'Browser operation admission requires an issued HTTP application origin' }
     }
     if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/'
         || origin.search || origin.hash || origin.origin !== captured.origin) {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires an issued HTTP application origin' })
+        return { kind: 'refusal', reason: 'Browser operation admission requires an issued HTTP application origin' }
     }
     const controlAuthorities = browserRuntimeControlAuthorities(runtime)
     const controlPorts = browserRuntimeControlPorts(runtime)
     const originPort = Number(origin.port || (origin.protocol === 'http:' ? '80' : '443'))
     if (!controlAuthorities || !controlPorts || controlAuthorities.includes(origin.host) || controlPorts.includes(originPort)) {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission refuses the browser-control proxy authority' })
+        return { kind: 'refusal', reason: 'Browser operation admission refuses the browser-control proxy authority' }
     }
     const auth = runtime.authentication
     const role = typeof captured.role === 'string' ? captured.role : undefined
@@ -449,20 +449,20 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
         || auth.posture !== 'real' && (role !== undefined || state !== undefined)
         || auth.posture === 'real' && (role === undefined || auth.policy === 'none')
         || auth.posture === 'real' && state === undefined) {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires current declared authentication authority' })
+        return { kind: 'refusal', reason: 'Browser operation admission requires current declared authentication authority' }
     }
     const invoke = async (): Promise<BrowserProjectOperationAdmissionResult<T>> => {
         // Only the runtime's fixed-text TypeError escapes the revalidation; the refusal names the condition.
         try { assertBrowserStorageStateCurrent(runtime) } catch {
-            return Object.freeze({ kind: 'refusal', reason: 'Browser seeded state changed before operation dispatch' })
+            return { kind: 'refusal', reason: 'Browser seeded state changed before operation dispatch' }
         }
-        const authorization = Object.freeze({ kind: 'browser-project-operation-authorization' as const })
+        const authorization = { kind: 'browser-project-operation-authorization' as const }
         const authorizationState = { client, runtime, origin: origin.origin, ...(role ? { role } : {}),
             ...(statePath ? { statePath } : {}), active: false, pending: new Set<Promise<unknown>>() }
         issuedOperationAuthorizations.set(authorization, authorizationState)
         try {
             const value = await operation(authorization)
-            return Object.freeze({ kind: 'admitted' as const, value })
+            return { kind: 'admitted' as const, value }
         } finally {
             issuedOperationAuthorizations.delete(authorization)
             await Promise.allSettled([...authorizationState.pending])
@@ -472,40 +472,40 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
     const binding = browserRuntimeCoordination(runtime)
     const namespace = authenticateStateNamespace(state?.namespace)
     if (!binding || !namespace || !state || namespace !== binding.namespace || state.stackId !== binding.stackId) {
-        return Object.freeze({ kind: 'refusal', reason: 'Browser authentication refuses coordination authority from a different runtime stack' })
+        return { kind: 'refusal', reason: 'Browser authentication refuses coordination authority from a different runtime stack' }
     }
     const address = binding.namespace.paths.coordination(binding.stackId)
     if (auth.policy === 'per-worker') {
         const scope = issueStateScopedLock(namespace, { owner: 'browser-worker', identity: digest(`${binding.stackId}\0${role!}`) })
-        if (!scope) return Object.freeze({ kind: 'refusal', reason: 'Per-worker browser authentication could not issue its canonical worker claim' })
+        if (!scope) return { kind: 'refusal', reason: 'Per-worker browser authentication could not issue its canonical worker claim' }
         const locked = await withStateScopedLock(namespace, scope, { ownerId: state.ownerId, contentionTimeoutMs: 0 }, async () => {
             const before = await readState(address)
             if (before.kind !== 'complete' || !currentCoordination(before.value, binding.stackId, state.ownerId)) {
-                return Object.freeze({ kind: 'refusal' as const, reason: 'Per-worker browser authentication requires the current coordination record and owner' })
+                return { kind: 'refusal' as const, reason: 'Per-worker browser authentication requires the current coordination record and owner' }
             }
             const admitted = await invoke()
             const after = await readState(address)
             return after.kind === 'complete' && after.value.revision === before.value.revision
                 && currentCoordination(after.value, binding.stackId, state.ownerId)
                 ? admitted
-                : Object.freeze({ kind: 'refusal' as const, reason: 'Per-worker browser coordination changed during the operation' })
+                : { kind: 'refusal' as const, reason: 'Per-worker browser coordination changed during the operation' }
         })
         const detail = locked.kind === 'refusal' ? `: ${locked.message} [${locked.target}]${locked.recovery ? `; ${locked.recovery}` : ''}` : ''
-        return locked.kind === 'complete' ? locked.value : Object.freeze({ kind: 'refusal', reason: (locked.kind === 'refusal' && locked.code.endsWith('LOCKED')
+        return locked.kind === 'complete' ? locked.value : { kind: 'refusal', reason: (locked.kind === 'refusal' && locked.code.endsWith('LOCKED')
             ? 'Per-worker browser authentication refused because its canonical worker claim is contended'
-            : 'Per-worker browser authentication could not authenticate its canonical worker claim') + detail })
+            : 'Per-worker browser authentication could not authenticate its canonical worker claim') + detail }
     }
     const locked = await transactState<BrowserProjectOperationAdmissionResult<T>>(namespace, address,
         { ownerId: state.ownerId, contentionTimeoutMs: 0 }, async current => abortStateTransaction(
             currentCoordination(current, binding.stackId, state!.ownerId)
                 ? await invoke()
-                : Object.freeze({ kind: 'refusal' as const, reason: 'Serialized browser authentication requires the current coordination record and owner' }),
+                : { kind: 'refusal' as const, reason: 'Serialized browser authentication requires the current coordination record and owner' },
         ))
     if ('aborted' in locked) return locked.value
     const detail = locked.kind === 'refusal' ? `: ${locked.message} [${locked.target}]${locked.recovery ? `; ${locked.recovery}` : ''}` : ''
-    return Object.freeze({ kind: 'refusal', reason: (locked.kind === 'refusal' && locked.code.endsWith('LOCKED')
+    return { kind: 'refusal', reason: (locked.kind === 'refusal' && locked.code.endsWith('LOCKED')
         ? 'Serialized browser authentication refused because the canonical state lock is contended'
-        : 'Serialized browser authentication could not authenticate the canonical coordination state') + detail })
+        : 'Serialized browser authentication could not authenticate the canonical coordination state') + detail }
 }
 
 function nativeMcp(target: GuardSurfaceTarget, command: string, args: readonly string[]): RenderedSurfaceFile {
@@ -579,10 +579,10 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
             else if (transport === 'mcp' && harness.target === 'codexcli' && runtime.preapproval !== 'eligible') {
                 available = false; reason = 'Measured MCP transport requires approval that this data posture does not authorize.'
             }
-            rows.push(Object.freeze({ target: harness.target, version: harness.version, transport,
+            rows.push({ target: harness.target, version: harness.version, transport,
                 measuredOn: measured.date, measuredVersion: measured.version, declaration: available ? 'instructed' : 'unavailable',
                 callable: available ? 'human_needed' : 'unavailable', productState: 'instructed', reason,
-                tool: available && transport === 'mcp' ? measured.tool : null, cli: available && transport === 'cli' ? cli : null }))
+                tool: available && transport === 'mcp' ? measured.tool : null, cli: available && transport === 'cli' ? cli : null })
         }
         const ownRows = rows.filter(row => row.target === harness.target)
         if (ownRows.every(row => row.declaration === 'unavailable')) continue
@@ -601,7 +601,7 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const clients = projectPackage === null || cli === null ? [] : data.harnesses
         .filter(harness => harness.version === MEASURED[harness.target].version)
         .map(harness => projectClient(projectPackage, harness, runtime, data.cockpitDirectory))
-    return Object.freeze({ rows: Object.freeze(rows), files: Object.freeze(files), mcp,
-        clients: Object.freeze(clients), graderBrowserAccess: 'retained' as const })
+    return { rows, files, mcp,
+        clients, graderBrowserAccess: 'retained' as const }
 }
 

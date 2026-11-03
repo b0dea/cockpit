@@ -220,47 +220,47 @@ function diagnostic(
     target?: string,
     stderr?: string,
 ): SurfaceGenerationDiagnostic {
-    return Object.freeze({
+    return {
         severity: 'error' as const,
         code,
         message,
         cause,
         ...(target === undefined ? {} : { target }),
         ...(stderr === undefined ? {} : { stderr }),
-    })
+    }
 }
 
 function refuse(item: SurfaceGenerationDiagnostic): Extract<SurfaceGenerationOutcome, { kind: 'refusal' }> {
-    return Object.freeze({ kind: 'refusal', status: 2, diagnostics: Object.freeze([item]), files: EMPTY_FILES })
+    return { kind: 'refusal', status: 2, diagnostics: [item], files: EMPTY_FILES }
 }
 
 function unavailable(item: SurfaceGenerationDiagnostic): Extract<SurfaceGenerationOutcome, { kind: 'unavailable' }> {
-    return Object.freeze({ kind: 'unavailable', status: 3, diagnostics: Object.freeze([item]), files: EMPTY_FILES })
+    return { kind: 'unavailable', status: 3, diagnostics: [item], files: EMPTY_FILES }
 }
 
 function complete(files: readonly RenderedSurfaceFile[], warnings: readonly SurfaceGenerationWarning[]): Extract<SurfaceGenerationOutcome, { kind: 'complete' }> {
-    return Object.freeze({
+    return {
         kind: 'complete',
         status: 0,
         diagnostics: EMPTY_DIAGNOSTICS,
-        mechanism: Object.freeze({ package: 'rulesync' as const, version: PINNED_VERSION, role: 'spelling' as const }),
-        files: Object.freeze(files.map(file => Object.freeze({ ...file }))),
-        warnings: warnings.length === 0 ? EMPTY_WARNINGS : Object.freeze(warnings.map(warning => Object.freeze({ ...warning }))),
-    })
+        mechanism: { package: 'rulesync' as const, version: PINNED_VERSION, role: 'spelling' as const },
+        files: files.map(file => ({ ...file })),
+        warnings: warnings.length === 0 ? EMPTY_WARNINGS : warnings.map(warning => ({ ...warning })),
+    }
 }
 
 function completeBundle(
     format: SurfaceBundleFormat,
     files: readonly RenderedSurfaceFile[],
 ): Extract<SurfaceBundleGenerationOutcome, { kind: 'complete' }> {
-    return Object.freeze({
+    return {
         kind: 'complete',
         status: 0,
         diagnostics: EMPTY_DIAGNOSTICS,
         format,
-        mechanism: Object.freeze({ package: 'rulesync' as const, version: PINNED_VERSION, role: 'packaging' as const }),
-        files: Object.freeze(files.map(({ path, bytes, sha256 }) => Object.freeze({ path, bytes, sha256 }))),
-    })
+        mechanism: { package: 'rulesync' as const, version: PINNED_VERSION, role: 'packaging' as const },
+        files: files.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 })),
+    }
 }
 
 function sha256(bytes: string | Uint8Array): string {
@@ -303,7 +303,7 @@ async function digestFile(path: string, maxBytes: number, executable = false): P
 
 async function nodeAuthority(): Promise<NodeAuthority> {
     const path = await realpath(process.execPath)
-    return Object.freeze({ path, sha256: await digestFile(path, MAX_NODE_BYTES, true) })
+    return { path, sha256: await digestFile(path, MAX_NODE_BYTES, true) }
 }
 
 async function bundleAuthority(): Promise<BundleAuthority> {
@@ -311,15 +311,15 @@ async function bundleAuthority(): Promise<BundleAuthority> {
     if (await realpath(path) !== path) throw new RefusalError(`${path} is reached through a symbolic link`)
     const digest = await digestFile(path, MAX_GENERATOR_BUNDLE_BYTES)
     if (digest !== PINNED_GENERATOR_BUNDLE_SHA256) throw new RefusalError(`${path} differs from the pinned bundle digest`)
-    return Object.freeze({ path, sha256: digest, maxBytes: MAX_GENERATOR_BUNDLE_BYTES })
+    return { path, sha256: digest, maxBytes: MAX_GENERATOR_BUNDLE_BYTES }
 }
 
 function surfacePrograms(): SurfacePrograms {
-    return Object.freeze({
+    return {
         generate: libexecProgram('surface-generator-worker.cjs'),
         read: libexecProgram('surface-output-reader.cjs'),
         cleanup: libexecProgram('surface-scratch-cleanup.cjs'),
-    })
+    }
 }
 
 function step(
@@ -428,7 +428,7 @@ function workerFile(value: unknown): WorkerFile | undefined {
     return record && keys.join(',') === 'bytes,path,sha256'
         && typeof record.path === 'string' && typeof record.bytes === 'number' && Number.isSafeInteger(record.bytes)
         && record.bytes >= 0 && record.bytes <= SURFACE_FILE_MAX_BYTES && typeof record.sha256 === 'string' && SHA256.test(record.sha256)
-        ? Object.freeze({ path: record.path, bytes: record.bytes, sha256: record.sha256 }) : undefined
+        ? { path: record.path, bytes: record.bytes, sha256: record.sha256 } : undefined
 }
 
 function workerWarnings(value: unknown, target: GeneratorTarget): readonly SurfaceGenerationWarning[] | undefined {
@@ -444,15 +444,15 @@ function workerWarnings(value: unknown, target: GeneratorTarget): readonly Surfa
         const bytes = Buffer.byteLength(record.message)
         total += bytes
         if (bytes > MAX_WARNING_BYTES || total > MAX_WARNING_TOTAL_BYTES) return undefined
-        warnings.push(Object.freeze({
+        warnings.push({
             severity: 'warning',
             code: 'SURFACE_GENERATOR_TRUST_WARNING',
             target,
             path: '.claude/settings.json',
             message: record.message,
-        }))
+        })
     }
-    return Object.freeze(warnings)
+    return warnings
 }
 
 function parseWorkerReceipt(bytes: Buffer, target: GeneratorTarget, requested: readonly SurfaceFeature[]): WorkerReceipt | undefined {
@@ -472,16 +472,16 @@ function parseWorkerReceipt(bytes: Buffer, target: GeneratorTarget, requested: r
             || !FEATURES.has(feature.feature as SurfaceFeature) || !Number.isSafeInteger(feature.count) || (feature.count as number) < 0) return undefined
         const paths = stringArray(feature.paths)
         if (!paths || new Set(paths).size !== paths.length) return undefined
-        features.push(Object.freeze({ feature: feature.feature as SurfaceFeature, count: feature.count as number, paths }))
+        features.push({ feature: feature.feature as SurfaceFeature, count: feature.count as number, paths })
     }
-    return Object.freeze({
+    return {
         version: 1,
         target,
-        features: Object.freeze(features),
-        reportedPaths: Object.freeze([...reportedPaths]),
-        actualFiles: Object.freeze(actualFiles as WorkerFile[]),
+        features,
+        reportedPaths: [...reportedPaths],
+        actualFiles: actualFiles as WorkerFile[],
         warnings,
-    })
+    }
 }
 
 function parseReadReceipt(bytes: Buffer): readonly ReadFileReceipt[] | undefined {
@@ -499,9 +499,9 @@ function parseReadReceipt(bytes: Buffer): readonly ReadFileReceipt[] | undefined
         const decoded = Buffer.from(item.bytesBase64, 'base64')
         total += decoded.byteLength
         if (decoded.byteLength !== file.bytes || total > SURFACE_OUTPUT_MAX_BYTES || sha256(decoded) !== file.sha256) return undefined
-        files.push(Object.freeze({ ...file, bytesBase64: item.bytesBase64 }))
+        files.push({ ...file, bytesBase64: item.bytesBase64 })
     }
-    return Object.freeze(files)
+    return files
 }
 
 function samePaths(actual: readonly string[], expected: readonly string[]): boolean {
@@ -545,7 +545,7 @@ async function directoryIdentity(path: string): Promise<DirectoryIdentity | unde
     try {
         const status = await lstat(path)
         return status.isDirectory() && !status.isSymbolicLink()
-            ? Object.freeze({ dev: status.dev, ino: status.ino }) : undefined
+            ? { dev: status.dev, ino: status.ino } : undefined
     } catch {
         // an unobservable directory has no identity; the caller refuses.
         return undefined
@@ -617,12 +617,12 @@ function receiptSummaries(
         if (Object.keys(row).sort().join(',') !== 'bytes,id,kind,sha256,target'
             || !Number.isSafeInteger(row.bytes) || (row.bytes as number) < 1 || (row.bytes as number) > MAX_WORKER_STDOUT_BYTES
             || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
-        summaries.set(expected.id, Object.freeze({
+        summaries.set(expected.id, {
             id: expected.id,
             target: expected.generatorTarget,
             bytes: row.bytes as number,
             sha256: row.sha256,
-        }))
+        })
     }
     return summaries
 }
@@ -640,7 +640,7 @@ async function stageEstatePass(root: string, jobs: readonly EstateJob[]): Promis
         await writeSources(inputRoot, job.batch)
         const outputIdentity = await directoryIdentity(outputRoot)
         if (!outputIdentity) return undefined
-        staged.push(Object.freeze({
+        staged.push({
             ...job,
             cwd,
             inputRoot,
@@ -648,9 +648,9 @@ async function stageEstatePass(root: string, jobs: readonly EstateJob[]): Promis
             outputIdentity,
             generatorReceipt: join(cwd, 'generator-receipt.json'),
             readerReceipt: join(cwd, 'reader-receipt.json'),
-        }))
+        })
     }
-    return Object.freeze(staged)
+    return staged
 }
 
 
@@ -663,13 +663,13 @@ async function runEstatePass(
     programs: SurfacePrograms,
     deadline: number,
 ): Promise<EstatePassResult> {
-    const failures = (item: SurfaceGenerationDiagnostic): EstatePassResult => Object.freeze({
+    const failures = (item: SurfaceGenerationDiagnostic): EstatePassResult => ({
         ...(item.code === ENVIRONMENT_CODES.EXECUTION_TERMINATION_UNCONFIRMED ? { preserveScratch: true as const } : {}),
-        jobs: new Map(jobs.map(job => [job.id, Object.freeze({ ...item, target: job.generatorTarget })])),
+        jobs: new Map(jobs.map(job => [job.id, { ...item, target: job.generatorTarget }])),
     })
     const identity = await directoryIdentity(root)
     if (!identity) return failures(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface pass root is not a regular directory', 'artifact', pass))
-    const generatorJobs = await Promise.all(jobs.map(async job => Object.freeze({ ...job, cwdIdentity: await directoryIdentity(job.cwd) })))
+    const generatorJobs = await Promise.all(jobs.map(async job => ({ ...job, cwdIdentity: await directoryIdentity(job.cwd) })))
     if (generatorJobs.some(job => !job.cwdIdentity)) {
         return failures(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface job root is not a regular directory', 'artifact', pass))
     }
@@ -736,17 +736,17 @@ async function runEstatePass(
         } else generatedReceipts.set(job.id, receipt)
     }
     const readerJobs = jobs.filter(job => !generatedFailures.has(job.id))
-    if (readerJobs.length === 0) return Object.freeze({ jobs: generatedFailures })
+    if (readerJobs.length === 0) return { jobs: generatedFailures }
     const readRequest = JSON.stringify({ version: 1, passRoot: root, identity, limits: WORKER_OUTPUT_LIMITS,
         jobs: readerJobs.map(job => ({ id: job.id, target: job.generatorTarget,
             outputRoot: job.outputRoot, identity: job.outputIdentity,
             expected: job.expected, receiptOutput: job.readerReceipt })),
     })
-    const readFailures = (item: SurfaceGenerationDiagnostic): EstatePassResult => Object.freeze({
+    const readFailures = (item: SurfaceGenerationDiagnostic): EstatePassResult => ({
         ...(item.code === ENVIRONMENT_CODES.EXECUTION_TERMINATION_UNCONFIRMED ? { preserveScratch: true as const } : {}),
         jobs: new Map<string, TargetGeneration | SurfaceGenerationDiagnostic>([
             ...generatedFailures,
-            ...readerJobs.map(job => [job.id, Object.freeze({ ...item, target: job.generatorTarget })] as const),
+            ...readerJobs.map(job => [job.id, { ...item, target: job.generatorTarget }] as const),
         ]),
     })
     const readStep = step(node, `surface-estate-read-${pass}-${randomBytes(8).toString('hex')}`, root,
@@ -795,11 +795,11 @@ async function runEstatePass(
                 failure = diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output is not valid UTF-8', 'artifact', `${job.generatorTarget}:${path}`)
                 break
             }
-            rendered.push(Object.freeze({ target: job.target, path, bytes: content, sha256: file.sha256 }))
+            rendered.push({ target: job.target, path, bytes: content, sha256: file.sha256 })
         }
-        results.set(job.id, failure ?? Object.freeze({ files: Object.freeze(rendered), warnings: receipt.warnings }))
+        results.set(job.id, failure ?? { files: rendered, warnings: receipt.warnings })
     }
-    return Object.freeze({ jobs: results })
+    return { jobs: results }
 }
 
 async function cleanupScratch(scratch: string, node: NodeAuthority, program: LibexecProgram): Promise<boolean> {
@@ -847,7 +847,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
         return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface bundle input could not be bound to the neutral contract', 'input', bundleRequest.format))
     }
     const jobs: EstateJob[] = [
-        ...batch ? batch.targets.map(target => Object.freeze({
+        ...batch ? batch.targets.map(target => ({
             id: `batch-${target}`,
             kind: 'batch' as const,
             target,
@@ -859,7 +859,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
                     || permissionRulesForTarget(batch.sources, target))),
             expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
         })) : [],
-        ...bundleRequest && bundleBatch ? [Object.freeze({
+        ...bundleRequest && bundleBatch ? [{
             id: `bundle-${bundleRequest.format}`,
             kind: 'bundle' as const,
             target: 'claudecode' as const,
@@ -867,7 +867,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             batch: bundleBatch,
             features: bundleBatch.features,
             expected: bundleRequest.expectedOutputs,
-        })] : [],
+        }] : [],
     ]
     let node: NodeAuthority
     try { node = await nodeAuthority() } catch (error) {
@@ -958,11 +958,11 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
                 outcome = refuse(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output failed final bundle admission', 'artifact', 'surface-batch'))
             } else if (pluginFiles && !bundleSurfaceFiles(pluginFiles)) {
                 outcome = refuse(diagnostic('SURFACE_ARTIFACT_INVALID', 'surface bundle failed final admission', 'artifact', plugin!.generatorTarget))
-            } else outcome = Object.freeze({
+            } else outcome = {
                 kind: 'complete' as const,
                 ...(batch ? { batch: complete(coreFiles, warnings) } : {}),
                 ...(bundleRequest && pluginFiles ? { bundle: completeBundle(bundleRequest.format, pluginFiles) } : {}),
-            })
+            }
         }
     } catch (error) {
         outcome = refuse(diagnostic(

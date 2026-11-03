@@ -163,7 +163,7 @@ export function expectedPackageFiles(root: string): readonly string[] {
         const stem = path.slice(0, -'.ts'.length)
         return [`dist/${stem}.d.ts`, `dist/${stem}.js`]
     })
-    return Object.freeze([...STATIC_PACKAGE_FILES, ...packagedDocumentationPages(root), ...generated].sort(compareCodeUnits))
+    return [...STATIC_PACKAGE_FILES, ...packagedDocumentationPages(root), ...generated].sort(compareCodeUnits)
 }
 
 function executableLockNodes(lock: Json): LockNode[] {
@@ -359,7 +359,7 @@ export function inspectSupplyChain(root: string, packFiles: unknown): Readonly<{
         if (packed.size !== packFiles.length) diagnostics.push(diagnostic('PACK_METADATA_INVALID', 'packages/cockpit', 'pack metadata contains duplicate paths'))
     }
     diagnostics.push(...workflowDiagnostics(root, rootManifest), ...releaseDiagnostics(root))
-    return Object.freeze({ diagnostics: Object.freeze(diagnostics), operatorGaps: OPERATOR_GAPS })
+    return { diagnostics, operatorGaps: OPERATOR_GAPS }
 }
 
 export function runSupplyChainCheck(root: string): number {

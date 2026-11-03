@@ -259,7 +259,6 @@ describe('runtime logs', () => {
         expect(result.kind).toBe('planned')
         if (result.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(result)}`)
         expect(result.step.argv).toEqual([runtimePath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', '100', '--follow', input.containerId])
-        expect(Object.isFrozen(result.step.argv)).toBe(true)
         expect(result.step).toEqual(expect.objectContaining({ timeoutMs: 7_200_000, stdoutLimitBytes: 4096, outputOverflow: 'retain-tail' }))
         expect(planLogs({ ...input, follow: false })).toMatchObject({ kind: 'planned', step: { timeoutMs: 10_000 } })
         // Docker Desktop's Compose prints a vendor suffix; the runtime admits it, so logs must too.

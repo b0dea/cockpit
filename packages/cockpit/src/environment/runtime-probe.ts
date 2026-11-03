@@ -112,17 +112,17 @@ function unavailable(
     evidence: RuntimeProbeEvidence | null = null,
     brokenControl: RuntimeProbeVerdict['brokenControl'] = 'inconclusive',
 ): RuntimeProbeVerdict {
-    return Object.freeze({
+    return {
         status: 'unavailable', runtime: null, composeVersion: null,
         composeFloor: typeof input.composeFloor === 'string' ? input.composeFloor : '',
         measuredOn: typeof input.measuredOn === 'string' ? input.measuredOn : '',
         candidate: 'failed', brokenControl, evidence,
-        operatorAction: Object.freeze({
+        operatorAction: {
             required: true,
             code: timedOut ? ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT : ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             reason,
-        }),
-    })
+        },
+    }
 }
 
 function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
@@ -151,14 +151,14 @@ function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
             || normalize(input.installedModule.canonicalPath) !== input.installedModule.canonicalPath
             || typeof input.installedModule.sha256 !== 'string' || !SHA256.test(input.installedModule.sha256)) return undefined
         const captured = input as RuntimeProbeRequest
-        return Object.freeze({
+        return {
             ...captured,
-            executable: Object.freeze({ ...captured.executable }),
-            gitExecutable: Object.freeze({ ...captured.gitExecutable }),
-            env: Object.freeze({ ...captured.env }),
-            image: Object.freeze({ ...captured.image }),
-            installedModule: Object.freeze({ ...captured.installedModule }),
-        })
+            executable: { ...captured.executable },
+            gitExecutable: { ...captured.gitExecutable },
+            env: { ...captured.env },
+            image: { ...captured.image },
+            installedModule: { ...captured.installedModule },
+        }
     } catch {
         // A throwing accessor or proxy trap makes the request malformed, which the caller refuses.
         return undefined
@@ -238,27 +238,27 @@ function runner(input: RuntimeProbeRequest, batchId: string, deadline: number): 
             }
             const argv = [selectedExecutable.canonicalPath, ...args] as [string, ...string[]]
             const artifactIndexes = artifact === undefined ? [] : argv.flatMap((part, index) => part === artifact.path ? [index] : [])
-            const step: ExecutionStep = Object.freeze({
+            const step: ExecutionStep = {
                 id: `runtime:capability:${id}`,
-                argv: Object.freeze(argv), argv0: selectedExecutable.invocationPath,
+                argv, argv0: selectedExecutable.invocationPath,
                 cwd: input.cwd, env: input.env, timeoutMs: Math.min(input.timeoutMs, remainingMs),
                 stdoutLimitBytes: OUTPUT_LIMIT, stderrLimitBytes: OUTPUT_LIMIT,
-                paths: Object.freeze(artifact === undefined ? [] : [artifact.path]), ports: Object.freeze([]),
-                labels: Object.freeze({ batchId, subject: id }),
-                expected: Object.freeze([]),
-                consumedFiles: Object.freeze([
-                    Object.freeze({
+                paths: artifact === undefined ? [] : [artifact.path], ports: [],
+                labels: { batchId, subject: id },
+                expected: [],
+                consumedFiles: [
+                    {
                         path: selectedExecutable.canonicalPath, sha256: selectedExecutable.sha256,
-                        maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true,
+                        maxBytes: 536_870_912, argvIndexes: [0], executable: true,
                         executionMode: selectedExecutable.executionMode,
-                    }),
-                    ...(artifact === undefined ? [] : [Object.freeze({
+                    },
+                    ...(artifact === undefined ? [] : [{
                         path: artifact.path, sha256: artifact.sha256, maxBytes: 1_048_576,
-                        argvIndexes: Object.freeze(artifactIndexes), executable: false,
-                    })]),
-                ]),
-                filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-            })
+                        argvIndexes: artifactIndexes, executable: false as const,
+                    }]),
+                ],
+                filesystemChecks: [], compensation: [],
+            }
             const outcome = await executeProbe(step)
             if (!executionOutcomeMatches(outcome, step)) throw new RefusalError('runtime probe execution outcome is unauthenticated')
             if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) sawTimeout = true
@@ -291,7 +291,7 @@ async function inventory(run: ProbeRunner['run'], scope: string, labels: readonl
         if (text === undefined) return undefined
         for (const id of text.split('\n').filter(Boolean)) found[kind]!.add(id)
     }
-    return Object.freeze(Object.fromEntries(Object.entries(found).map(([kind, ids]) => [kind, Object.freeze([...ids].sort())])))
+    return Object.fromEntries(Object.entries(found).map(([kind, ids]) => [kind, [...ids].sort()]))
 }
 
 async function exactCleanup(run: ProbeRunner['run'], owned: Readonly<Record<string, readonly string[]>>): Promise<boolean> {
@@ -326,11 +326,11 @@ export function currentCoordinationCleanupVerdict(
     const beforeSnapshot = currentLeaseSnapshot(beforeLease, stackId)
     const afterSnapshot = currentLeaseSnapshot(afterLease, stackId)
     const inactive = stateSnapshot(null)
-    return Object.freeze({
+    return {
         claimsEqual: beforeClaims.kind === 'complete' && afterClaims.kind === 'complete'
             && stateSnapshot(beforeClaims.value) === stateSnapshot(afterClaims.value),
         leasesEqual: beforeSnapshot === inactive && afterSnapshot === inactive,
-    })
+    }
 }
 
 function inventoriesEqual(left: Readonly<Record<string, readonly string[]>>, right: Readonly<Record<string, readonly string[]>>): boolean {
@@ -338,8 +338,8 @@ function inventoriesEqual(left: Readonly<Record<string, readonly string[]>>, rig
 }
 
 function inventoryDifferences(left: Readonly<Record<string, readonly string[]>>, right: Readonly<Record<string, readonly string[]>>): readonly string[] {
-    return Object.freeze(['containers', 'volumes', 'networks', 'images']
-        .filter((kind) => JSON.stringify(left[kind]) !== JSON.stringify(right[kind])))
+    return ['containers', 'volumes', 'networks', 'images']
+        .filter((kind) => JSON.stringify(left[kind]) !== JSON.stringify(right[kind]))
 }
 
 async function emptyDirectory(path: string): Promise<boolean> {
@@ -382,7 +382,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const projectName = `${input.projectPrefix}-probe-${batchId}`
     const ownerLabel = `dev.b0dea.cockpit.probe=${batchId}`
     const ownerLabelName = 'dev.b0dea.cockpit.probe'
-    const probeScope = Object.freeze([ownerLabel, `com.docker.compose.project=${projectName}`])
+    const probeScope = [ownerLabel, `com.docker.compose.project=${projectName}`]
     const siblingsRoot = join(input.cwd, 'siblings')
     const siblingPath = join(siblingsRoot, 'probe')
     const homePath = join(dirname(input.cwd), `runtime-home-${batchId}`)
@@ -423,8 +423,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     let resourcesEqual = false
     let claimsEqual = false
     let leasesEqual = false
-    let changedResourceKinds: readonly string[] = Object.freeze([])
-    let ownedSurvivors: readonly string[] = Object.freeze([])
+    let changedResourceKinds: readonly string[] = []
+    let ownedSurvivors: readonly string[] = []
     let failureReason: string | undefined
     let preClaims: ActiveStackInventoryResult | undefined
     let preLease: StateResult<StateRecord> | undefined
@@ -474,9 +474,9 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const git = await execute.run('git-init', ['init', '--quiet', '.'], undefined, input.gitExecutable)
         if (git.kind !== 'complete') fail('the disposable installed-child checkout could not be initialized')
 
-        const runtimeEnvironment = Object.freeze(Object.fromEntries(Object.entries(input.env).filter(([name]) =>
+        const runtimeEnvironment = Object.fromEntries(Object.entries(input.env).filter(([name]) =>
             ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT'].includes(name),
-        )))
+        ))
         dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
         const endpoint = dockerContext === '' ? undefined
             : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
@@ -516,8 +516,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         await writeExclusive(configPath, configSource)
         // The lifecycle owners address the context checked above by name, so a `docker context use`
         // during the probe cannot move its stack to another daemon.
-        lifecycleEnvironment = Object.freeze({ PATH: input.env.PATH ?? '', HOME: homePath,
-            ...(dockerHost === undefined ? { DOCKER_CONTEXT: dockerContext } : { DOCKER_HOST: dockerHost }) })
+        lifecycleEnvironment = { PATH: input.env.PATH ?? '', HOME: homePath,
+            ...(dockerHost === undefined ? { DOCKER_CONTEXT: dockerContext } : { DOCKER_HOST: dockerHost }) }
         const operationEnvironment = lifecycleEnvironment
         const freshLifecycle = () => createLifecycleCommandAdapters({
             configPath, env: operationEnvironment, sessionId: `runtime-probe-${batchId}`, timeoutMs: Math.min(input.timeoutMs, 30_000),
@@ -722,15 +722,15 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                     await exactCleanup(cleanupExecute.run, survivors)
                     survivors = await inventory(cleanupExecute.run, `post-fallback-${attempt + 1}`, probeScope)
                 }
-                ownedSurvivors = Object.freeze(survivors === undefined ? ['inventory-unavailable']
+                ownedSurvivors = (survivors === undefined ? ['inventory-unavailable']
                     : Object.entries(survivors).flatMap(([kind, ids]) => kind === 'images' ? [] : ids.map((id) => `${kind}:${id}`)).sort())
                 const post = pre === undefined ? undefined : await inventory(cleanupExecute.run, 'post', probeScope)
                 resourcesEqual = pre !== undefined && post !== undefined && inventoriesEqual(pre, post)
-                changedResourceKinds = pre !== undefined && post !== undefined ? inventoryDifferences(pre, post) : Object.freeze(['inventory-unavailable'])
+                changedResourceKinds = pre !== undefined && post !== undefined ? inventoryDifferences(pre, post) : ['inventory-unavailable']
             } catch {
                 // Cleanup is best effort; the teardown verdict and survivor list report the failure.
                 checks.teardown = false
-                ownedSurvivors = Object.freeze(['cleanup-unavailable'])
+                ownedSurvivors = ['cleanup-unavailable']
             }
         }
         for (const path of [configPath, candidatePath, controlPath, defaultEnvironmentPath, ownershipPath,
@@ -740,15 +740,15 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     }
 
     const finishedAt = new Date().toISOString()
-    const evidence: RuntimeProbeEvidence = Object.freeze({
+    const evidence: RuntimeProbeEvidence = {
         batchId,
         installedModuleSha256: input.installedModule.sha256, runtimeExecutableSha256: input.executable.sha256,
         candidateSha256: candidateArtifact.sha256, brokenControlSha256: controlArtifact.sha256,
         projectName, runtimePath: input.executable.canonicalPath, runtimeVersion: runtimeVersion ?? null, composeVersion: composeVersion ?? null,
         operatingSystem: platform(), architecture: arch(), startedAt, finishedAt, expiresAt,
-        candidateChecks: Object.freeze({ ...checks }), brokenControlRejected: brokenControl === 'rejected',
-        cleanup: Object.freeze({ ownedSurvivors, resourcesEqual, claimsEqual, leasesEqual }),
-    })
+        candidateChecks: { ...checks }, brokenControlRejected: brokenControl === 'rejected',
+        cleanup: { ownedSurvivors, resourcesEqual, claimsEqual, leasesEqual },
+    }
     const complete = runtimeVersion !== undefined && composeVersion !== undefined && brokenControl === 'rejected'
         && failureReason === undefined && Date.parse(finishedAt) <= Date.parse(expiresAt) && Object.values(checks).every(Boolean)
         && ownedSurvivors.length === 0 && resourcesEqual && claimsEqual && leasesEqual
@@ -760,8 +760,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const supportedRuntimeVersion = runtimeVersion
     const supportedComposeVersion = composeVersion
     if (supportedRuntimeVersion === undefined || supportedComposeVersion === undefined) return unavailable(input, 'runtime identity was not retained', execute.timedOut() || cleanupExecute.timedOut() || ownerTimedOut, evidence, brokenControl)
-    return Object.freeze({
-        status: 'supported', runtime: Object.freeze({ name: 'Docker Engine', version: supportedRuntimeVersion }), composeVersion: supportedComposeVersion,
+    return {
+        status: 'supported', runtime: { name: 'Docker Engine', version: supportedRuntimeVersion }, composeVersion: supportedComposeVersion,
         composeFloor: input.composeFloor, measuredOn: input.measuredOn, candidate: 'passed', brokenControl: 'rejected', evidence, operatorAction: null,
-    })
+    }
 }

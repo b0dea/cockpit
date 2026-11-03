@@ -121,13 +121,6 @@ describe('repository identity', () => {
         expect(JSON.stringify(result)).not.toContain('a'.repeat(100))
     })
 
-    it('returns immutable identity data', () => {
-        const result = repositoryIdentity('https://code.invalid/owner/service.git')
-        expect(Object.isFrozen(result)).toBe(true)
-        expect(result.kind).toBe('known')
-        if (result.kind === 'known') expect(Object.isFrozen(result.identity)).toBe(true)
-    })
-
     it('classifies non-string values without coercion or disclosure', () => {
         for (const value of [null, undefined, 1, {}, { toString: () => 'https://code.invalid/owner/service.git' }]) {
             expect(repositoryIdentity(value)).toEqual({ kind: 'unknown', reason: 'malformed' })

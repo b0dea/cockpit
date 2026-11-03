@@ -63,7 +63,7 @@ function destructiveCandidate(value: InstanceCandidate, field: string): Readonly
     if (value === null || typeof value !== 'object') return candidate(value, field, 'selectDestructiveInstance')
     const stackId = value.stackId
     const checkoutId = value.checkoutId
-    return Object.freeze(candidate({ stackId, checkoutId }, field, 'selectDestructiveInstance'))
+    return candidate({ stackId, checkoutId }, field, 'selectDestructiveInstance')
 }
 
 function candidateKey(value: InstanceCandidate): string {
@@ -73,10 +73,10 @@ function candidateKey(value: InstanceCandidate): string {
 function canonicalCandidates(values: readonly InstanceCandidate[]): readonly InstanceCandidate[] {
     const unique = new Map<string, InstanceCandidate>()
     for (const value of values) unique.set(candidateKey(value), value)
-    return Object.freeze(Array.from(unique.values(), (value) => Object.freeze({ ...value })).sort((left, right) => {
+    return Array.from(unique.values(), (value) => ({ ...value })).sort((left, right) => {
         if (left.stackId !== right.stackId) return left.stackId < right.stackId ? -1 : 1
         return left.checkoutId < right.checkoutId ? -1 : left.checkoutId === right.checkoutId ? 0 : 1
-    }))
+    })
 }
 
 function conflictingStackIds(values: readonly InstanceCandidate[]): ReadonlySet<StackId> {
@@ -97,7 +97,7 @@ function destructiveRefusal(
     reason: Exclude<DestructiveInstanceSelection, { kind: 'selected' }>['reason'],
     candidates: readonly InstanceCandidate[],
 ): DestructiveInstanceSelection {
-    return Object.freeze({ kind: 'refusal', reason, candidates: canonicalCandidates(candidates) })
+    return { kind: 'refusal', reason, candidates: canonicalCandidates(candidates) }
 }
 
 export function selectDestructiveInstance(input: SelectDestructiveInstanceInput): DestructiveInstanceSelection {
@@ -126,7 +126,7 @@ export function selectDestructiveInstance(input: SelectDestructiveInstanceInput)
             )
         }
         return inventoryKeys.has(candidateKey(explicit))
-            ? Object.freeze({ kind: 'selected', source: 'explicit', ...explicit })
+            ? { kind: 'selected', source: 'explicit', ...explicit }
             : destructiveRefusal('identity-mismatch', inventory)
     }
 
@@ -159,7 +159,7 @@ export function selectDestructiveInstance(input: SelectDestructiveInstanceInput)
     if (distinct.length > 1) return destructiveRefusal('ambiguous', distinct)
 
     const selected = relevant[0]!
-    return Object.freeze({ kind: 'selected', source: selected.source, ...selected.value })
+    return { kind: 'selected', source: selected.source, ...selected.value }
 }
 
 export function resolveInstance(input: ResolveInstanceInput): InstanceResolution {
@@ -183,10 +183,10 @@ export function resolveInstance(input: ResolveInstanceInput): InstanceResolution
             : { source: 'launcher' as const, value: launcher }
         : { source: 'explicit' as const, value: explicit }
 
-    return Object.freeze({
+    return {
         kind: mounted.has(selected.value.checkoutId) ? 'attach' : 'isolate',
         source: selected.source,
         stackId: selected.value.stackId,
         checkoutId: selected.value.checkoutId,
-    })
+    }
 }
