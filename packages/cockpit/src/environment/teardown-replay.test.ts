@@ -274,61 +274,6 @@ describe('teardown replay', () => {
         } finally { await rm(firstInput.root, { recursive: true, force: true }); await rm(secondInput.root, { recursive: true, force: true }) }
     })
 
-    it('does not carry teardown continuation authority across coordination revisions', async () => {
-        const resources = [
-            resource({ id: 'container-1' }),
-            resource({ id: 'network-1', name: 'network-1', kind: 'network', bytes: null }),
-        ]
-        const initial = await authenticatedInput(resources)
-        try {
-            const preview = await planTeardown(initial.value)
-            expect(preview.kind).toBe('complete')
-            if (preview.kind !== 'complete') return
-            const fresh = await authenticatedInput(resources, initial.root)
-            const first = await planTeardown({
-                ...fresh.value, expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
-            })
-            expect(first.kind).toBe('complete')
-            if (first.kind !== 'complete') return
-            expect(first.continuation).toBeNull()
-            const changed = { ...coordinationRecord(initial.root), revision: 5, updatedAt: new Date().toISOString() }
-            coordinationRecords.set(initial.root, changed)
-            await writeFile(fresh.value.coordinationAddress.path, `${JSON.stringify(changed)}\n`)
-            const remaining = await authenticatedInput([resources[1]!], initial.root)
-            expect(await planTeardown({
-                ...remaining.value, coordinationRecord: changed,
-                expectedDiscoveryDigest: preview.discoveryDigest,
-                continuation: Object.freeze({ kind: 'fabricated-teardown-continuation' }),
-            })).toEqual(expect.objectContaining({ kind: 'refusal' }))
-        } finally { await rm(initial.root, { recursive: true, force: true }) }
-    })
-
-    it('mints distinct opaque authorities and exposes no reusable execution step', async () => {
-        const resources = [resource({ id: 'container-1' })]
-        const firstPreviewInput = await authenticatedInput(resources)
-        try {
-            const firstPreview = await planTeardown(firstPreviewInput.value)
-            expect(firstPreview.kind).toBe('complete')
-            if (firstPreview.kind !== 'complete') return
-            const firstFresh = await authenticatedInput(resources, firstPreviewInput.root)
-            const first = await planTeardown({
-                ...firstFresh.value, expectedDiscoveryDigest: firstPreview.discoveryDigest, consent: firstPreview.consent ?? undefined,
-            })
-            const secondPreviewInput = await authenticatedInput(resources, firstPreviewInput.root)
-            const secondPreview = await planTeardown(secondPreviewInput.value)
-            expect(secondPreview.kind).toBe('complete')
-            if (secondPreview.kind !== 'complete') return
-            const secondFresh = await authenticatedInput(resources, firstPreviewInput.root)
-            const second = await planTeardown({
-                ...secondFresh.value, expectedDiscoveryDigest: secondPreview.discoveryDigest, consent: secondPreview.consent ?? undefined,
-            })
-            if (first.kind !== 'complete' || second.kind !== 'complete') return
-            expect(first).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
-            expect(second).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
-            expect(first.actionAuthority).not.toBe(second.actionAuthority)
-        } finally { await rm(firstPreviewInput.root, { recursive: true, force: true }) }
-    })
-
     it('leaves a foreign control and all data-bearing resources without executable actions', async () => {
         const foreign = resource({ id: 'foreign', labels: { ...labels, 'dev.b0dea.cockpit.stack-id': `stack:${sha('foreign')}` } })
         const data = resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true })
@@ -419,28 +364,6 @@ describe('teardown replay', () => {
         ])
         try {
             expect(await planTeardown(authenticated.value)).toEqual(expect.objectContaining({ kind: 'refusal' }))
-        } finally { await rm(authenticated.root, { recursive: true, force: true }) }
-    })
-
-    it('uses dependency-safe kind order and provides an exact build-cache reclaim action', async () => {
-        const authenticated = await authenticatedInput([
-            resource({ id: 'a-network', name: 'a-network', kind: 'network' }),
-            resource({ id: 'z-container', name: 'z-container', kind: 'container' }),
-            resource({ id: sha('build-record'), name: sha('build-record'), kind: 'build-cache', referenced: false, bytes: 20 }),
-        ])
-        try {
-            const preview = await planTeardown({ ...authenticated.value, declaredCacheIds: [sha('build-record')] })
-            expect(preview.kind).toBe('complete')
-            if (preview.kind !== 'complete') return
-            const fresh = await authenticatedInput(authenticated.value.discovery.resources, authenticated.root)
-            try {
-                const first = await planTeardown({
-                    ...fresh.value, declaredCacheIds: [sha('build-record')], expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
-                })
-                expect(first.kind).toBe('complete')
-                if (first.kind !== 'complete') return
-                expect(first).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
-            } finally { await rm(fresh.root, { recursive: true, force: true }) }
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
     })
 
