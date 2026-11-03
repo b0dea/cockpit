@@ -152,6 +152,8 @@ export interface GeneratedEnvironmentSyncInput extends GeneratedEnvironmentComma
 export interface SelectedBootstrapSurfaceInput {
     readonly root: string
     readonly target: SurfaceTarget
+    /** Every tool in `[surfaces] tools`, `target` first; each gets the setup skill before the interview. */
+    readonly tools: readonly SurfaceTarget[]
 }
 
 export interface SelectedBootstrapPublicationAuthority {
@@ -808,10 +810,13 @@ export async function prepareWorkApplicationAuthorities(
 
 function selectedBootstrapInput(input: unknown): SelectedBootstrapSurfaceInput | undefined {
     const record = ownRecord(input)
-    if (!record || !exactKeys(record, ['root', 'target']) || typeof record.root !== 'string'
+    if (!record || !exactKeys(record, ['root', 'target', 'tools']) || typeof record.root !== 'string'
         || !isAbsolute(record.root) || resolve(record.root) !== record.root
-        || !SURFACE_TARGETS.includes(record.target as SurfaceTarget)) return undefined
-    return { root: record.root, target: record.target as SurfaceTarget }
+        || !SURFACE_TARGETS.includes(record.target as SurfaceTarget)
+        || !Array.isArray(record.tools) || record.tools[0] !== record.target
+        || new Set(record.tools).size !== record.tools.length
+        || record.tools.some(tool => !SURFACE_TARGETS.includes(tool as SurfaceTarget))) return undefined
+    return { root: record.root, target: record.target as SurfaceTarget, tools: [...record.tools] as SurfaceTarget[] }
 }
 
 type AuthenticatedAsset = Readonly<{ path: string; bytes: string; sha256: string }>
@@ -887,7 +892,7 @@ export async function prepareSelectedBootstrapSurface(
     const { sources } = skillInput
     const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
+    const inspected = projectInspectedSkillOutputs(inspection, captured.tools, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'selected bootstrap output set was refused', captured.target)
     const reads = await readAnchoredBatches(root, inspected.files.map(file => ({
         path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
@@ -935,7 +940,7 @@ export async function resumeSelectedBootstrapSurface(
     input: SelectedBootstrapResumeInput,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
 ): Promise<SelectedBootstrapResumeOutcome> {
-    const captured = selectedBootstrapInput({ root: input.root, target: input.target })
+    const captured = selectedBootstrapInput({ root: input.root, target: input.target, tools: input.tools })
     const durable = await readState(input.address)
     if (!captured || durable.kind !== 'complete' || durable.value.kind !== 'bootstrap'
         || durable.value.value.checkoutRoot !== captured.root || durable.value.target !== captured.target
@@ -965,7 +970,7 @@ export async function resumeSelectedBootstrapSurface(
     const { sources } = skillInput
     const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
+    const inspected = projectInspectedSkillOutputs(inspection, captured.tools, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume output projection was refused', captured.target)
     const sourceRows = sources.map(source => ({ path: source.path, sha256: sha256(source.bytes) }))
     const files = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
@@ -1104,17 +1109,20 @@ async function bootstrapPublishedSurfaces(
     if (JSON.stringify(sourceRows) !== JSON.stringify(record.value.sources)) return undefined
     const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return undefined
-    const inspected = projectInspectedSkillOutputs(inspection, record.target, SHIPPED_SETUP_SKILL)
+    // The record names no tools, so the targets are the ones whose setup skill it published.
+    const publishedPaths = new Set(record.value.published.map(row => row.path))
+    const inspected = projectInspectedSkillOutputs(inspection, SURFACE_TARGETS, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return undefined
-    const published = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
+    const files = inspected.files.filter(file => publishedPaths.has(file.path))
+    const published = files.map(file => ({ path: file.path, sha256: file.sha256 }))
     if (JSON.stringify(published) !== JSON.stringify(record.value.published)) return undefined
-    const reads = await readAnchoredBatches(root, inspected.files.map(file => ({
+    const reads = await readAnchoredBatches(root, files.map(file => ({
         path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
     })), node, adapters)
-    if (!reads || reads.kind !== 'complete' || reads.results.length !== inspected.files.length
-        || reads.results.some((read, index) => read.kind !== 'file' || read.sha256 !== inspected.files[index]!.sha256)) return undefined
-    return inspected.files.map(file => ({
-        kind: 'file' as const, path: file.path, harnesses: [record.target] as [SurfaceTarget], scope: 'always' as const,
+    if (!reads || reads.kind !== 'complete' || reads.results.length !== files.length
+        || reads.results.some((read, index) => read.kind !== 'file' || read.sha256 !== files[index]!.sha256)) return undefined
+    return files.map(file => ({
+        kind: 'file' as const, path: file.path, harnesses: [file.target] as [SurfaceTarget], scope: 'always' as const,
         capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,
         ownership: 'whole-file' as const, sha256: file.sha256,
     }))

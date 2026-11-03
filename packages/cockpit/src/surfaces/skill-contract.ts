@@ -84,6 +84,7 @@ export type SkillStandingExtensionResult = Readonly<{
 
 export type InspectedBootstrapOutputs = Readonly<{
     kind: 'complete'
+    /** The first projected target: the one the durable bootstrap state is keyed by. */
     target: SurfaceTarget
     skill: typeof SHIPPED_SETUP_SKILL
     files: readonly RenderedSurfaceFile[]
@@ -499,29 +500,32 @@ export function extendInspectedSkillStandingCosts(
 
 export function projectInspectedSkillOutputs(
     result: SkillContractResult,
-    target: SurfaceTarget,
+    targets: readonly SurfaceTarget[],
     skill: typeof SHIPPED_SETUP_SKILL,
 ): InspectedSkillOutputProjection {
     const expected = typeof result === 'object' && result !== null ? inspectedSkillResults.get(result) : undefined
-    const targetPaths = expected?.[target]
-    if (!expected || !targetPaths || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== SHIPPED_SETUP_SKILL) {
-        return refusal('SKILL_PROJECTION_INVALID', 'skill output projection requires the exact issued inspection result and target')
+    if (!expected || result.kind !== 'complete' || skill !== SHIPPED_SETUP_SKILL || targets.length === 0
+        || new Set(targets).size !== targets.length || targets.some(target => !SURFACE_TARGETS.includes(target) || !expected[target])) {
+        return refusal('SKILL_PROJECTION_INVALID', 'skill output projection requires the exact issued inspection result and distinct targets')
     }
-    const prefix = `${TARGET_PATH_PREFIX[target]}/${skill}/`
-    const paths = targetPaths.filter(path => path.startsWith(prefix)).sort()
-    const files = result.files.filter(file => file.target === target && paths.includes(file.path))
-        .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
-    if (files.length !== paths.length || files.some((file, index) => file.path !== paths[index]
-        || createHash('sha256').update(file.bytes).digest('hex') !== file.sha256)) {
-        return refusal('SKILL_PROJECTION_INVALID', 'inspected skill output set is incomplete or changed', target)
+    const files: RenderedSurfaceFile[] = []
+    for (const target of targets) {
+        const prefix = `${TARGET_PATH_PREFIX[target]}/${skill}/`
+        const paths = expected[target]!.filter(path => path.startsWith(prefix)).sort()
+        const targetFiles = result.files.filter(file => file.target === target && paths.includes(file.path))
+            .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+        if (targetFiles.length !== paths.length || targetFiles.some((file, index) => file.path !== paths[index]
+            || createHash('sha256').update(file.bytes).digest('hex') !== file.sha256)) {
+            return refusal('SKILL_PROJECTION_INVALID', 'inspected skill output set is incomplete or changed', target)
+        }
+        // These bytes land in the consumer's checkout, and the first sync adopts them as already owned, so
+        // they must be exactly what the full render publishes there: without its development markers.
+        files.push(...targetFiles.map(file => {
+            const bytes = stripDevelopmentMarkers(file.bytes)
+            return bytes === file.bytes ? file : { ...file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
+        }))
     }
-    // These bytes land in the consumer's checkout, and the first sync adopts them as already owned, so
-    // they must be exactly what the full render publishes there: without its development markers.
-    const published = files.map(file => {
-        const bytes = stripDevelopmentMarkers(file.bytes)
-        return bytes === file.bytes ? file : { ...file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
-    })
-    const projection = { kind: 'complete' as const, target, skill, files: published }
+    const projection = { kind: 'complete' as const, target: targets[0]!, skill, files }
     inspectedBootstrapOutputs.add(projection)
     return projection
 }

@@ -210,7 +210,7 @@ describe('shipped skill contract', () => {
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
 
-        const projections = SURFACE_TARGETS.map(target => projectInspectedSkillOutputs(result, target, 'cockpit-setup'))
+        const projections = SURFACE_TARGETS.map(target => projectInspectedSkillOutputs(result, [target], 'cockpit-setup'))
         expect(projections.map(projection => projection.kind === 'complete' ? projection.files.length : 0)).toEqual([2, 3, 2, 2, 2])
         expect(projections.flatMap(projection => projection.kind === 'complete' ? projection.files : [])
             .every(file => !file.bytes.includes('cockpit:verified'))).toBe(true)
@@ -219,8 +219,13 @@ describe('shipped skill contract', () => {
             { path: '.agents/skills/cockpit-setup/agents/openai.yaml' },
             { path: '.agents/skills/cockpit-setup/procedures/setup.md' },
         ] })
-        expect(projectInspectedSkillOutputs({ ...result }, 'codexcli', 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
-        expect(projectInspectedSkillOutputs(result, 'codexcli', 'explain' as 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
+        // Every listed tool gets its own setup skill in one projection, keyed by the first.
+        expect(projectInspectedSkillOutputs(result, ['codexcli', 'claudecode'], 'cockpit-setup')).toMatchObject({
+            kind: 'complete', target: 'codexcli', files: expect.arrayContaining([
+                expect.objectContaining({ target: 'codexcli' }), expect.objectContaining({ target: 'claudecode' })]) })
+        expect(projectInspectedSkillOutputs(result, [], 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
+        expect(projectInspectedSkillOutputs({ ...result }, ['codexcli'], 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
+        expect(projectInspectedSkillOutputs(result, ['codexcli'], 'explain' as 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
     }, 120_000)
 
     it('ships a direct fix procedure that proves the change with the declared gate and needs no work order', async () => {

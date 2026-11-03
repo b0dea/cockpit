@@ -15,7 +15,7 @@ import type { ResolvedExecutable } from '../environment/executable.js'
 import { readState, type BootstrapStateAddress } from '../environment/state.js'
 import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPaths, removeSharedOwnership, renderSharedPostimage,
     type OwnershipAuthority, type OwnershipManifest, type GeneratedPathFact, type SurfaceDesiredEntry } from '../surfaces/ownership.js'
-import { reservedPathSegment } from '../surfaces/contract.js'
+import { reservedPathSegment, type SurfaceTarget } from '../surfaces/contract.js'
 import { isInspectedBootstrapOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import type { SurfaceChange } from '../surfaces/sync.js'
 import { exactKeys } from '../exact-keys.js'
@@ -1579,7 +1579,7 @@ async function admitBootstrapPlan(
     const { node } = serializable
     const inspected = supplied.inspected as InspectedBootstrapOutputs
     const desired: readonly SurfaceDesiredEntry[] = inspected.files.map(file => ({
-        kind: 'file' as const, path: file.path, harnesses: [inspected.target] as [typeof inspected.target], scope: 'always' as const,
+        kind: 'file' as const, path: file.path, harnesses: [file.target] as [SurfaceTarget], scope: 'always' as const,
         capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,
         ownership: 'whole-file' as const, bytes: file.bytes, sha256: file.sha256,
     }))

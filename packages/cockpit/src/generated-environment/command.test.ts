@@ -85,7 +85,7 @@ describe('selected bootstrap target', () => {
     ] as const)('publishes only the exact %s bootstrap set through one issued authority', async (target, count) => {
         const root = await realpath(await mkdtemp(join(tmpdir(), `cockpit-setup-${target}-`)))
         roots.push(root)
-        const prepared = await prepareSelectedBootstrapSurface({ root, target })
+        const prepared = await prepareSelectedBootstrapSurface({ root, target, tools: [target] })
         expect(prepared).toMatchObject({ kind: 'complete', result: { root, target } })
         if (prepared.kind !== 'complete') return
         expect(prepared.result.files).toHaveLength(count)
@@ -100,16 +100,27 @@ describe('selected bootstrap target', () => {
         await expect(readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
         expect(await applySelectedBootstrapSurface(prepared.authority)).toMatchObject({ kind: 'refusal' })
 
-        const repeated = await prepareSelectedBootstrapSurface({ root, target })
+        const repeated = await prepareSelectedBootstrapSurface({ root, target, tools: [target] })
         expect(repeated).toMatchObject({ kind: 'complete', result: { changes: [] } })
         if (repeated.kind === 'complete') expect(await applySelectedBootstrapSurface(repeated.authority))
             .toMatchObject({ kind: 'complete', result: { changes: [] } })
     }, 120_000)
 
+    it('prepares the setup skill for every listed tool', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-tools-')))
+        roots.push(root)
+        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli', 'claudecode'] })
+        if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
+        expect(prepared.result.files.map(file => file.path)).toEqual(expect.arrayContaining([
+            '.agents/skills/cockpit-setup/SKILL.md', '.claude/skills/cockpit-setup/SKILL.md']))
+        expect(await applySelectedBootstrapSurface(prepared.authority)).toMatchObject({ kind: 'complete' })
+        await expect(readFile(join(root, '.claude/skills/cockpit-setup/SKILL.md'), 'utf8')).resolves.toContain('cockpit-setup')
+    }, 120_000)
+
     it('refuses changed destination preimages and copied preparation data', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-preimage-')))
         roots.push(root)
-        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
+        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'] })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         await mkdir(dirname(join(root, prepared.result.files[0]!.path)), { recursive: true })
         await writeFile(join(root, prepared.result.files[0]!.path), 'changed\n')

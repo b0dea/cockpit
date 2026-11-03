@@ -310,7 +310,7 @@ async function bootstrapPublication() {
             return { path: `skills/procedures/${part}.md`, bytes: body, sha256: digest(body) }
         }) })
     if (inspected.kind !== 'complete') throw new Error(JSON.stringify(inspected))
-    const projection = projectInspectedSkillOutputs(inspected, 'codexcli', 'cockpit-setup')
+    const projection = projectInspectedSkillOutputs(inspected, ['codexcli'], 'cockpit-setup')
     if (projection.kind !== 'complete') throw new Error(JSON.stringify(projection))
     const desired = projection.files.map(file => ({ kind: 'file' as const, path: file.path, harnesses: ['codexcli'] as ['codexcli'],
         scope: 'always' as const, capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,

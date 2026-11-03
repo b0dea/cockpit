@@ -166,7 +166,7 @@ describe('selected bootstrap target', () => {
     it('refreshes exact surface-published bootstrap bytes through one fresh authority', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-refresh-')))
         roots.push(root)
-        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
+        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'] })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
         if (applied.kind !== 'complete') throw new Error('bootstrap publication was refused')
@@ -209,15 +209,15 @@ describe('selected bootstrap target', () => {
             ownerId: bootstrapHolderId({ checkoutId: malformedAddress.checkoutId, sessionId: 'malformed-refresh' }),
         }, () => malformedRecord)
         if (malformedPublication.kind !== 'complete') throw new Error('malformed bootstrap state publication was refused')
-        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address: malformedAddress,
+        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address: malformedAddress,
             expectedRevision: malformedPublication.value.revision, expectedCommandSha256: record.value.commandSha256 }))
             .resolves.toMatchObject({ kind: 'refusal' })
         expect(await readFile(join(root, priorPath), 'utf8')).toBe(priorBytes)
 
         let currentRevision = publication.value.revision
-        const resume = () => generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address,
+        const resume = () => generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address,
             expectedRevision: currentRevision, expectedCommandSha256: record.value.commandSha256 })
-        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address,
+        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address,
             expectedRevision: currentRevision, expectedCommandSha256: digest('wrong command') }))
             .resolves.toMatchObject({ kind: 'refusal' })
         const refreshed = await resume()
@@ -245,7 +245,7 @@ describe('selected bootstrap target', () => {
         expect(await applySelectedBootstrapSurface(publishable.authority)).toMatchObject({ kind: 'complete' })
         expect(await applySelectedBootstrapSurface(publishable.authority)).toMatchObject({ kind: 'refusal' })
 
-        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address,
+        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address,
             expectedRevision: currentRevision + 1, expectedCommandSha256: record.value.commandSha256 }))
             .resolves.toMatchObject({ kind: 'refusal' })
         await writeFile(join(root, 'cockpit.toml'), 'name = "not-yet-owned"\n')
@@ -266,7 +266,7 @@ describe('selected bootstrap target', () => {
 
     it('adopts only the exact state publication and anchored bootstrap outputs during first sync', async () => {
         const { root, configPath } = await composeConsumer('bootstrap-adoption')
-        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
+        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'] })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
         if (applied.kind !== 'complete') throw new Error('bootstrap publication was refused')
@@ -302,7 +302,7 @@ describe('selected bootstrap target', () => {
             fix: expect.stringContaining('restore the setup skill files init published') }] })
         await writeFile(first, bytes)
 
-        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address }))
+        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address }))
             .toMatchObject({ kind: 'pending', canonicalOwnership: false })
         const adopted = await syncGeneratedEnvironment({ configPath, bootstrapState: { publication, address } })
         expect(adopted, JSON.stringify(adopted.diagnostics)).toMatchObject({ kind: 'complete' })
@@ -315,20 +315,20 @@ describe('selected bootstrap target', () => {
         await expect(readFile(join(root, 'compose.cockpit.yml'), 'utf8')).resolves.toContain('services:')
         expect(await syncGeneratedEnvironment({ configPath,
             bootstrapState: { publication, address } })).toMatchObject({ kind: 'refusal' })
-        const resumed = await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address })
+        const resumed = await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address })
         expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', canonicalOwnership: true,
             result: { previewSha256: prepared.result.previewSha256, files: prepared.result.files } })
         if (!resumed || resumed.kind !== 'complete') throw new Error('canonical bootstrap resume was refused')
         expect('authority' in resumed).toBe(false)
-        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli',
+        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'],
             address: { ...address, checkoutRoot: root + '-other' } })).toMatchObject({ kind: 'refusal' })
         await writeFile(join(root, 'compose.cockpit.yml'), 'drift after initial sync\n')
-        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address }))
+        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address }))
             .toMatchObject({ kind: 'complete', canonicalOwnership: true })
         expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), '{}')
-        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address })).toMatchObject({ kind: 'refusal' })
+        expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', tools: ['codexcli'], address })).toMatchObject({ kind: 'refusal' })
     }, 120_000)
 })
 

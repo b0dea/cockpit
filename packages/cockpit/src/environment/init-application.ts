@@ -128,10 +128,11 @@ export type DestinationObservation =
 
 export interface InitApplicationAdapters {
     readonly now: () => string
-    readonly prepareBootstrap: (input: Readonly<{ root: string; target: SurfaceTarget }>) => Promise<PreparedBootstrapOutcome>
+    readonly prepareBootstrap: (input: Readonly<{ root: string; target: SurfaceTarget; tools: readonly SurfaceTarget[] }>) => Promise<PreparedBootstrapOutcome>
     readonly resumeBootstrap: (input: Readonly<{
         root: string
         target: SurfaceTarget
+        tools: readonly SurfaceTarget[]
         address: BootstrapStateAddress
         expectedRevision?: number
         expectedCommandSha256?: string
@@ -583,12 +584,12 @@ async function initStagesFrom(
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'
         || current?.value.stage === 'environment-verified') {
-        resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, address,
+        resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, tools: input.tools, address,
             expectedRevision: current.revision, expectedCommandSha256: current.value.commandSha256 })
         if (resumed.kind === 'refusal') return ownerRefusal(resumed, current.value.stage, recordedProjection(current))
     }
     if (resumed?.kind !== 'complete' && resumed?.kind !== 'refresh') {
-        prepared = await adapters.prepareBootstrap({ root: input.root, target: input.target })
+        prepared = await adapters.prepareBootstrap({ root: input.root, target: input.target, tools: input.tools })
         if (prepared.kind !== 'complete') {
             return ownerRefusal(prepared, current?.value.stage ?? 'surface-previewed', current === null ? {
                 root: input.root, target: input.target, sources: [], files: [], previewSha256: sha256('unavailable'),
@@ -900,7 +901,7 @@ async function initStagesFrom(
     }
 
     if (resumed === undefined) {
-        resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, address })
+        resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, tools: input.tools, address })
         if (resumed.kind === 'refusal') return ownerRefusal(resumed, current.value.stage, projection)
         if (resumed.kind === 'complete') {
             projection = resumed.result
