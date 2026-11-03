@@ -224,8 +224,8 @@ that knows about them. To clear one cockpit's state:
 When this cockpit's own state cannot be read, runtime commands refuse with
 `STATE_RECORD_MALFORMED` or `STATE_FORMAT_UNSUPPORTED` until you clear it. Unreadable state of
 another cockpit, such as a directory left by an earlier cockpit build, does not stop you: `up` and
-`sleep` warn with `STATE_RECORD_MALFORMED`, name that directory and the `rm -rf` command, and
-ignore its port leases. Remove it with the same steps once no cockpit uses it.
+`sleep` ignore its port leases, and only `doctor` warns with `STATE_RECORD_MALFORMED`, naming that
+directory and the `rm -rf` command. Remove it with the same steps once no cockpit uses it.
 
 <!-- cockpit:diagnostic-index:begin -->
 Each diagnostic message names what failed and how to fix it. Where every place that raises a code gives the same fix, the table repeats it; where they give different fixes it says "depends on what failed; see the message", and otherwise "see the message". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.

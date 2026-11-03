@@ -814,9 +814,11 @@ What the checks compare:
 - **Git remotes.** A declared sibling remote is compared with the remote selected by that
   checkout's branch upstream; cockpit does not rewrite Git remotes. A checkout with no upstream has
   nothing to compare, and the result says so. Once an upstream is selected, it must be available
-  and match; a missing or diverged upstream blocks the gate. A `remote` that is a relative local path
-  (not a URL or `host:path`) is resolved against the siblings root, the directory `setup` clones
-  from, so `setup` accepts the absolute origin Git records for the clone.
+  and match; a missing or diverged upstream blocks the gate. Only an https or ssh `remote` has a
+  repository identity to compare. A `remote` that is a local path (not a URL or `host:path`) is
+  still cloned by `setup`, resolved against the siblings root, but `preflight` refuses it with a
+  reason: declare the hosted https or ssh remote, or remove `remote` and set `acquire = "none"`.
+  `init` never proposes a local-path remote.
 - **Surfaces.** Generated files must match the ownership manifest and stay within the guide line
   cap and the built-in harness skill caps. Custom outputs and plugin bundle copies are checked for
   being current, but no harness-side cap on their always-loaded size applies to them. Whether each
@@ -878,12 +880,14 @@ the acquired checkout does not match the setup plan; inspect it before retrying.
 
 ### State, lifecycle, and execution
 
-For `STATE_ROOT_UNAVAILABLE`, inspect the target path and restore a canonical, writable state path
+`STATE_ROOT_UNAVAILABLE` names the state directory and the check that failed, with the errno. When
+the failure is a permission error it is usually a sandbox that keeps the directory read-only: run
+the command outside the sandbox or let the sandbox write there. Otherwise inspect the target path and restore a canonical, writable state path
 that is not a symbolic link and is owned by the current user. Existing path components must not be
 writable by group or other users; fix their ownership and permissions instead of loosening them.
 `STATE_FORMAT_UNSUPPORTED` and `STATE_RECORD_MALFORMED` mean cockpit cannot read a state record;
 do not edit it by hand, [clear that cockpit's state](troubleshooting.md#clear-cockpit-state)
-instead. As a warning, `STATE_RECORD_MALFORMED` names another cockpit's state that was skipped.
+instead. As a warning, reported only by `doctor`, `STATE_RECORD_MALFORMED` names another cockpit's state that was skipped.
 `STATE_LOCKED` means a state write is in progress or cockpit could not verify who holds the lock;
 inspect the named holder. `STATE_DURABILITY_INDETERMINATE` means cockpit could not confirm that a
 state write reached disk, so do not assume it was saved.

@@ -150,7 +150,6 @@ gates = [
   { id = "changed", tier = "targeted", stages = ["changed"], changes = "Isolated behaviour" },
   { id = "all", tier = "full", stages = ["all"], changes = "Shared or cross-project behaviour" },
 ]
-native_hooks = { install = "inspect" }
 ```
 
 ## `[guards]`

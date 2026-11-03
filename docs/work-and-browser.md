@@ -306,7 +306,6 @@ gates = [
   { id = "affected", tier = "targeted", stages = ["affected"], changes = "Isolated behavior; Nx selects the affected projects" },
   { id = "all", tier = "full", stages = ["all"], changes = "Shared or cross-project behavior" },
 ]
-native_hooks = { install = "inspect" }
 ```
 
 Nx compares the base with the current working tree, so uncommitted edits count. For other tools, keep the stage shape and change the command:
@@ -317,6 +316,6 @@ Nx compares the base with the current working tree, so uncommitted edits count. 
 
 <!-- cockpit:ref path=packages/cockpit/src/testing/verdict.ts --> Only a complete, stable declared gate whose checks all pass can report PASS. If a check ran and failed, the result is FAIL. If results are unavailable or malformed, it is DEGRADED. Otherwise, if the listed files changed or are stale, it is VOID. Otherwise, a subset or staged run is PARTIAL. A target selector passes your selection to the product's own tool and never substitutes a made-up pass. Every verdict returns the same result, with each stage's observation; any verdict but PASS also exits non-zero with `TEST_GATE_UNSATISFIED`.
 
-<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default. Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A person must install it and check separately that it works.
+<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default. Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A person must install it and check separately that it works. Leave `native_hooks` out to keep that default; declare `native_hooks = { install = "explicit-native" }` only together with `native_hook_policy`.
 
 See the generated [CLI reference](cli-reference.md), [configuration reference](configuration-reference.md), [capability matrix](capability-matrix.md) and [diagnostic index](troubleshooting.md) for the current declared surfaces and how far each is confirmed.

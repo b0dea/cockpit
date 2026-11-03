@@ -49,8 +49,8 @@ fails closed on input it cannot read; what differs is whether the tool runs it. 
   cover secrets there.
 - OpenCode: `enforced`. Its plugin refused a protected push and a native read of a secrets file.
 - Codex CLI: `enforced` only after a person trusts the hook on that machine. Codex silently skips
-  an untrusted hook, and `cockpit doctor` and `cockpit check` report `CODEX_HOOK_UNTRUSTED` until it
-  is trusted; see [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
+  an untrusted hook, and `cockpit doctor` and `cockpit check` report `CODEX_HOOK_UNTRUSTED` once Codex
+  has run on the machine (a Codex home exists) and until the hook is trusted; see [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
 - Cursor and Grok Build: no guard. cockpit writes their files but installs no hook, and nobody has
   confirmed those tools load them.
 

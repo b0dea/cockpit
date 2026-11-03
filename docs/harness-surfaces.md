@@ -122,7 +122,8 @@ Start the interactive CLI (not `codex exec`) in the cockpit root, trust the fold
 and choose **Trust all and continue** when Codex shows **Hooks need review**; the `/hooks` view
 inside a session does the same per hook. `cockpit doctor` and `cockpit check` read Codex's
 configuration without changing it and report `CODEX_HOOK_UNTRUSTED` until every generated hook is
-trusted, or when they cannot verify it.
+trusted, or when they cannot verify it. They report it only once Codex has run on the machine (a
+Codex home exists); before that, no Codex session can skip the hook.
 
 ### Run cockpit outside the Codex sandbox
 

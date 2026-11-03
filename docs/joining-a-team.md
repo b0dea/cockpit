@@ -44,7 +44,7 @@ sibling declarations to regenerate the list.
 Two things stay per machine:
 
 - **Codex hook trust.** Codex silently skips a project hook nobody has trusted on that machine,
-  and `check` reports `CODEX_HOOK_UNTRUSTED` until you
+  and `check` reports `CODEX_HOOK_UNTRUSTED`, once Codex has run on the machine, until you
   [trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
 - **Runtime measurements.** Each machine measures its own container runtime once before its first
   `up`; see [Measure the container runtime](environment.md#measure-the-container-runtime).

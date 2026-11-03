@@ -20,7 +20,7 @@ Follow these rules for the whole adoption:
    - `cockpit sync --adopt`, which moves the team's own agent settings;
    - accepting an `init` digest (`--accept-preview`, `--accept-defaults`).
 
-   The person commits the cockpit repository: hand them the command instead of running it.
+   A person approves or runs staging and the commit of the cockpit repository: hand them the command instead of running it.
 2. **Show the exact preview before you ask:** the `sync --dry-run` listing, the `init` preview
    with its `previewSha256`, the answers file, or the defaults digest. Consent binds to those
    bytes; a digest from anything but the latest pending run is refused.
@@ -286,8 +286,9 @@ several: instructions, guards and settings. Each step stops for the human.
    Clear them, then rerun the same command:
    - The cockpit repository must be committed and clean
      ([Preflight observations](environment.md#preflight-observations)). A new one reports
-     `GIT_STATE_UNHEALTHY` (no commits yet). The person commits, not you: the first commit
-     stages the guard's own files, which the guard does not let an agent stage. Show them
+     `GIT_STATE_UNHEALTHY` (no commits yet). A person approves or runs the staging and the
+     commit, not you: the guard asks on `git add <paths>` and denies a broad `git add -A` that
+     covers a secrets directory, and the first commit stages the guard's own files. Show them
      `git status --short` and hand them the row's fix to run in a terminal:
      `git -C <cockpit root> add -A && git -C <cockpit root> commit -m 'Add the cockpit'`.
    - The runtime must be measured ([Measure the runtime](#measure-the-runtime)), and then the stack

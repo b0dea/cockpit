@@ -267,6 +267,12 @@ then repeat with `--accept-reset <previewSha256>`; the resumed interview asks fo
 and defaults acceptance again. A field the interview never asked for is reported as
 `INIT_ANSWER_UNUSED`.
 
+Once `cockpit.toml` is written, recorded answers can no longer be reset. If `init` stops while
+verifying it (`INIT_VERIFICATION_INCOMPLETE`), edit the value in `cockpit.toml` itself, then rerun
+`npx --no cockpit init <root> --target <tool> --accept-preview <sha256>`. If the published files and
+`cockpit.toml` are all gone because the root was deleted and recreated, `init` starts again from the
+preview and discards the recorded answers (`INIT_STATE_RESTARTED`).
+
 Proposals come only from exact sources: a Dockerfile's `EXPOSE`, `CMD`, `ENTRYPOINT` and
 `HEALTHCHECK`, a `package.json` `start`, `serve` or `dev` script, the `node` toolchain a Node
 lockfile names, each repository's `origin` remote in `.git/config` (a URL carrying credentials is

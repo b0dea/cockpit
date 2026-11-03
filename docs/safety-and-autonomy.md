@@ -122,9 +122,9 @@ instance, a guard control or the installed cockpit is a hard denial, because the
 it under a name the guard does not protect. A symbolic link's target is checked from both the
 working directory and the link's own directory.
 
-These are `unavailable`: every unsupported `tar` or `ln` mode or option, and an unclassified
-non-read-only command whose visible operand names a control, a protected plugin subtree or a
-directory containing either. These checks run before declared allows. They do not inspect archive
+These are `unavailable`: every unsupported `tar` or `ln` mode or option, and a command whose
+visible operand names a control, a protected plugin subtree or a directory containing either
+and that the guard cannot classify. These checks run before declared allows. They do not inspect archive
 member paths or the bodies of approved scripts, and classifying an extraction directory does not
 prove that an archive cannot traverse outside it. An exact command rule permits that command; it is
 not a filesystem sandbox. To restore or intentionally replace generated controls, stop the guarded
@@ -138,12 +138,15 @@ unresolved destinations, including ambiguous source-only revisions, symbolic ali
 need a human decision. An exact grant cannot override either boundary.
 
 These produce `ask`: unresolved Git execution context, destructive Git reset or clean forms,
-staging without explicit paths, wrapped or environment-modifying commands, unmatched invocation
+staging by explicit path (a person approves or runs it), staging without explicit paths, wrapped or environment-modifying commands, unmatched invocation
 profiles, and any removal without a grant. An explicit removal outside configured roots stays at
 `ask` even when a declared allow matches, because cockpit cannot verify a target outside the roots
-it manages; review the exact path and approve it, or move the work under a configured root. Broad
-staging can still be a hard denial if it includes an environment instance. Unsupported staging
-options or unproven pathspec grammar produce `unavailable`.
+it manages; review the exact path and approve it, or move the work under a configured root. `git add -A`, `git add .` or a
+directory operand that covers a secrets directory or an environment instance is a hard denial:
+stage the changed files by name. Unsupported staging options or unproven pathspec grammar produce
+`unavailable`. Any other refused command gets an `ask` that names the command and gives three ways
+forward: a person approves it, a person runs it in a terminal, or a person admits it under
+`[guards] allow`; for tests it points to `cockpit test-run`.
 
 ### Declared rules
 
@@ -166,8 +169,9 @@ once; the evaluator accepts only input that parser produced, so a hand-built loo
 
 A built-in read-only profile lets agents inspect the checkout without a prompt, which matters most
 on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument shapes of `ls`,
-`pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `fd`, `find`, `git status`, `git diff`,
-`git log`, `git show`, `git branch` with no argument or `--list`, and the cockpit commands in
+`pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `fd`, `find`, `echo`, `printf`, `sed`,
+`git status`, `git diff`, `git log`, `git show`, `git rev-parse`, `git branch` listing flags, and the
+cockpit commands in
 [Cockpit commands an agent can run](#cockpit-commands-an-agent-can-run). The
 [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option.
 
@@ -176,6 +180,19 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
   `git --ext-diff` and `git diff --no-index`.
 - Options whose value is optional, such as `grep --context` on macOS, are accepted only in their
   attached `--option=value` form, so the next word can never be misread.
+- `printf` is read-only only without options, because `printf -v` assigns a variable. `sed` only
+  prints: `sed -n '5p'` or `sed -n '1,$p'` with numeric or `$` addresses and the `p` command, since
+  other commands can write or run programs. `git rev-parse` is read-only except `--git-path`,
+  `--resolve-git-dir`, `--parseopt` and `--sq-quote`. `git branch` is read-only with no argument or
+  with `--list`, `-a`, `-r`, `-v`, `-vv` or `--show-current` (and their long forms), never with a
+  branch name.
+- `$?` is allowed as an argument only to a read-only command, where it cannot name a path.
+- A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
+  directory then judged as the command's working directory. A bare `cd name` is refused, because
+  `CDPATH` can send it elsewhere the guard cannot see: write `cd ./name`, or use `git -C name` for
+  Git. After `;` or `||` the `cd` may have failed, so the next command is judged from both
+  directories. A `cd` in a pipeline is refused, and a list ending in `&` runs in a subshell, so
+  its `cd` moves no later command.
 - Git runs read-only only in a directory with its own `.git`, because Git otherwise treats a
   directory holding `HEAD`, `objects` and `refs` as a repository and honours its configuration.
   Git operands are inspected as files whose content may be printed.
