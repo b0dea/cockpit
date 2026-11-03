@@ -284,7 +284,7 @@ cold_start_seconds = 30
         expect(consumeLoadedConfigProjection(loaded.result)).toBeDefined()
     })
 
-    it('projects one immutable source-bound work environment before independently consuming its parent', async () => {
+    it('projects one source-bound copy of the work environment before independently consuming its parent', async () => {
         const loaded = await loadCockpitConfig(fixture(workEnvironmentConfig))
         if (loaded.kind === 'refusal') throw new Error(`fixture configuration did not load: ${JSON.stringify(loaded.diagnostics)}`)
         const projection = projectWorkEnvironmentConfig(loaded.result)

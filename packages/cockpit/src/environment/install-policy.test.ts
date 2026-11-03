@@ -157,7 +157,7 @@ describe('install policy resolution', () => {
             expect(renderGuardProjectCommand(argv)).toMatchObject({ kind: 'unavailable' })
         }
     })
-    it('freezes only explicitly declared exact build/test argv from matching source and catalog authority', async () => {
+    it('copies only explicitly declared exact build/test argv from matching source and catalog authority', async () => {
         const root = await checkout(['package-lock.json'])
         const catalog = [policy({ build: ['npm', 'run', 'build'], test: ['npm', 'test', '--', 'unit.test.ts'] })]
         const result = await resolveObserved(root, 0, { ...baseSibling, toolchain: 'node' }, catalog)
@@ -185,7 +185,7 @@ describe('install policy resolution', () => {
             .toEqual({ kind: 'complete', bindings: [] })
     })
 
-    it('resolves one policy for multiple independently sequenced siblings with immutable provenance', async () => {
+    it('resolves one policy for multiple independently sequenced siblings with their own provenance', async () => {
         const catalog = [policy()]
         const firstRoot = await checkout(['package-lock.json'])
         const secondRoot = await checkout(['package-lock.json'])

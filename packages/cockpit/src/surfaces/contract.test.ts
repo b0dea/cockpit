@@ -43,7 +43,7 @@ const rulesBatch = (sources = [{ path: 'rules/base.md', bytes: '# Shared rules\n
     expectedOutputs: { codexcli: ['AGENTS.md'] },
 })
 
-it('captures one exact complete batch as immutable caller-independent data', () => {
+it('captures one exact complete batch as a caller-independent copy', () => {
     const input = completeBatch()
     const captured = captureSurfaceBatch(input)
 

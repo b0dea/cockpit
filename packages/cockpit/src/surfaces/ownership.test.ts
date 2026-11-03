@@ -56,7 +56,7 @@ describe('generated ownership manifest', () => {
         for (const bytes of ['{', '{"format":"another/v3"}']) expect(parseOwnershipManifest(bytes, authority)).toMatchObject({ kind: 'invalid' })
     })
 
-    it('joins immutable producer facts by exact identity and never authorizes historical absence', () => {
+    it('joins producer facts by exact identity and never authorizes historical absence', () => {
         const encoded = encodeOwnershipManifest(manifestInput())
         const entry = encoded.manifest.entries[0]!
         const declarations = [{ producer: 'generated-environment' as const, applicability: 'declared-before-sync' as const, entry }]

@@ -155,7 +155,7 @@ async function validInput(options: { override?: string } = {}): Promise<Projecti
 }
 
 describe('live sibling projection planner', () => {
-    it('issues the exact frozen instruction facts the capability matrix publishes', () => {
+    it('issues the exact instruction facts the capability matrix publishes', () => {
         const capabilities = shippedInstructionCapabilities()
         expect(capabilities).toEqual([
             { target: 'claudecode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-03', measuredVersion: '2.1.317',
@@ -290,7 +290,7 @@ describe('live sibling projection planner', () => {
         })).toMatchObject({ kind: 'refusal', diagnostic: { code: 'PROJECTION_GUIDE_ESCAPE' } })
     })
 
-    it('refuses aggregate guide observations beyond the immutable snapshot bound', async () => {
+    it('refuses aggregate guide observations beyond the snapshot bound', async () => {
         const root = await mkdtemp(join(tmpdir(), 'cockpit-projection-aggregate-'))
         roots.push(root)
         const requests = await Promise.all(Array.from({ length: 256 }, async (_, index) => {
@@ -448,7 +448,7 @@ describe('live sibling projection planner', () => {
         expect(reads).toBe(0)
     })
 
-    it('refuses planner output amplification before immutable capture is exhausted', async () => {
+    it('refuses planner output amplification before capture is exhausted', async () => {
         const input = await validInput()
         const template = input.guideObservations[0]!
         input.siblings = []
