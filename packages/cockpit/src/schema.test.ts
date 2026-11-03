@@ -407,7 +407,6 @@ describe('work and browser declarations', () => {
     const browser = {
         harnesses: [{ target: 'codexcli', version: '0.149.0' }],
         images: {
-            runner: { reference: `synthetic.invalid/runner@sha256:${'a'.repeat(64)}`, driver_version: '1.2.3' },
             mcp: { reference: `synthetic.invalid/mcp@sha256:${'b'.repeat(64)}`, driver_version: '1.2.3' },
         },
         project: { lockfile: 'package-lock.json', sha256: 'c'.repeat(64), driver_version: '1.2.3' },
@@ -419,8 +418,8 @@ describe('work and browser declarations', () => {
             { worker: 'second', path: '.browser/auth/second.json' },
         ] },
         data: { mode: 'seeded', isolated: true, reaches_production: false },
-        request_preapproval: true, headed: false,
-        artifacts: { runner: '.browser/runner', mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth', debugger: '.browser/debugger' },
+        request_preapproval: true,
+        artifacts: { mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth' },
     }
 
     // The runner these described was a service cockpit rendered into its own Compose file.
@@ -434,7 +433,9 @@ describe('work and browser declarations', () => {
         for (const declaration of [
             { ...browser, resources: { memory_mb: 768, cpus: 0.5, provenance } },
             { ...browser, runner_health_measurement: { duration_seconds: 15, provenance: { ...provenance, kind: 'measured' } } },
-            { ...browser, images: { ...browser.images, runner: { ...browser.images.runner, architectures: ['arm64'] } } },
+            { ...browser, images: { ...browser.images, runner: browser.images.mcp } },
+            { ...browser, headed: true },
+            { ...browser, artifacts: { ...browser.artifacts, runner: '.browser/runner' } },
         ]) {
             const candidate = { ...config, browser: declaration }
             expect(CockpitConfig.safeParse(candidate).success).toBe(false)
@@ -473,16 +474,15 @@ describe('work and browser declarations', () => {
         expect(Autonomy.safeParse({ commit: 'agent' }).success).toBe(false)
     })
 
-    it('pins the runner to the project driver exactly and lets an MCP pre-release share its major.minor', () => {
-        const drivers = (runner: string, mcp: string, project: string) => Browser.safeParse({ ...browser,
-            images: { runner: { ...browser.images.runner, driver_version: runner }, mcp: { ...browser.images.mcp, driver_version: mcp } },
+    it('lets an MCP pre-release share the project driver\'s major.minor', () => {
+        const drivers = (mcp: string, project: string) => Browser.safeParse({ ...browser,
+            images: { mcp: { ...browser.images.mcp, driver_version: mcp } },
             project: { ...browser.project, driver_version: project } }).success
-        expect(drivers('1.64.0', '1.64.0-alpha-2026-10-20', '1.64.0')).toBe(true)
-        expect(drivers('1.64.0-beta.1', '1.64.0-beta.1', '1.64.0-beta.1')).toBe(true)
-        expect(drivers('1.64.0', '1.65.0-alpha', '1.64.0')).toBe(false)
-        expect(drivers('1.64.1', '1.64.0', '1.64.0')).toBe(false)
+        expect(drivers('1.64.0-alpha-2026-10-20', '1.64.0')).toBe(true)
+        expect(drivers('1.64.0-beta.1', '1.64.0-beta.1')).toBe(true)
+        expect(drivers('1.65.0-alpha', '1.64.0')).toBe(false)
         for (const malformed of ['1.64', '1.64.0-', '1.64.0-alpha..1', '01.64.0', '1.64.0-01', '^1.64.0', '1.64.0+build'])
-            expect(drivers('1.64.0', malformed, '1.64.0'), malformed).toBe(false)
+            expect(drivers(malformed, '1.64.0'), malformed).toBe(false)
     })
 
     it('selects supported browser engines and refuses TLS endpoints without TLS termination', () => {

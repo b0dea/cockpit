@@ -85,10 +85,7 @@ function projectBrowserConfig(declaredBrowser: NonNullable<CockpitConfig['browse
         networkExposure: declaredBrowser.network_exposure,
         ...(declaredBrowser.network_exposure_reason === undefined ? {} : { networkExposureReason: declaredBrowser.network_exposure_reason }),
         harnesses: declaredBrowser.harnesses.map((row) => ({ ...row })),
-        images: {
-            runner: { reference: declaredBrowser.images.runner.reference, driverVersion: declaredBrowser.images.runner.driver_version },
-            mcp: { reference: declaredBrowser.images.mcp.reference, driverVersion: declaredBrowser.images.mcp.driver_version },
-        },
+        images: { mcp: { reference: declaredBrowser.images.mcp.reference, driverVersion: declaredBrowser.images.mcp.driver_version } },
         project: { lockfile: declaredBrowser.project.lockfile, sha256: declaredBrowser.project.sha256, driverVersion: declaredBrowser.project.driver_version,
             ...(declaredBrowser.project.manifest === undefined ? {} : { manifest: declaredBrowser.project.manifest, manifestSha256: declaredBrowser.project.manifest_sha256! }) },
         ...(declaredBrowser.endpoint === undefined ? {} : { endpoint: declaredBrowser.endpoint }),
@@ -111,7 +108,6 @@ function projectBrowserConfig(declaredBrowser: NonNullable<CockpitConfig['browse
             reachesProduction: declaredBrowser.data.reaches_production,
         },
         requestPreapproval: declaredBrowser.request_preapproval,
-        headed: declaredBrowser.headed,
         artifacts: { ...declaredBrowser.artifacts },
     }
 }

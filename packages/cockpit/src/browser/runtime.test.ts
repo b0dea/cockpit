@@ -34,15 +34,15 @@ async function fixture(addressing = 'hostname', authentication = 'real', tags?: 
     const image = (name: string) => ({ reference: `synthetic.invalid/${name}@sha256:${'a'.repeat(64)}`, driverVersion: '1.2.3' })
     const input: BrowserRuntimeInput = {
         postures: { authorities: [authority], stages: [stage.authority] },
-        images: { runner: image('runner'), mcp: image('mcp') },
+        images: { mcp: image('mcp') },
         project: { lockfile: 'package-lock.json', sha256: 'b'.repeat(64), driverVersion: '1.2.3' },
         endpoint: 'ws://localhost:3001/', maxClients: 2,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] },
         resolver: addressing === 'hostname' ? [{ hostname: 'app.example.invalid', address: '127.0.0.1' }] : [],
         authentication: authentication === 'real' ? { policy: 'serialized', states: [{ worker: 'shared', path: '.browser/auth/worker.json' }] } : { policy: 'none', states: [] },
         data: { mode: 'seeded', isolated: true, reachesProduction: false },
-        requestPreapproval: false, headed: false,
-        artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },
+        requestPreapproval: false,
+        artifacts: { mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth' },
     }
     return { input, root, configPath, namespace: selected.value, stack, checkout }
 }
@@ -63,7 +63,7 @@ describe('shared browser runtime', () => {
         const runtime = await attempt(input)
         expect(runtime.configurationPath).toBe(configPath)
         expect(runtime.connection).toEqual({ kind: 'remote', endpoint: input.endpoint, launchLocal: false })
-        expect(runtime.runner).toEqual({ image: input.images.runner.reference, project: input.project, endpoint: input.endpoint })
+        expect(runtime.project).toEqual(input.project)
         expect(runtime.mcp).toEqual({ image: input.images.mcp.reference, endpoint: input.endpoint })
         expect(runtime.server).toMatchObject({ maxClients: 1, bind: '127.0.0.1', publish: false })
         expect(runtime.addressing).toEqual({ posture: 'hostname', resolverRules: ['MAP app.example.invalid 127.0.0.1'] })
@@ -84,7 +84,6 @@ describe('shared browser runtime', () => {
         const { endpoint: _endpoint, ...withoutEndpoint } = input
         const local = await attempt(withoutEndpoint)
         expect(local.connection).toEqual({ kind: 'local-fallback', reason: 'endpoint-absent', launchLocal: true })
-        expect(local.runner).not.toHaveProperty('endpoint')
         expect(local.mcp).not.toHaveProperty('endpoint')
         expect((await attempt(input)).addressing).toEqual({ posture: 'port', resolverRules: null })
         for (const endpoint of ['', 'undefined', 'ws://undefined:3001/', 'http://localhost:3001/', 'ws://user:pass@localhost:3001/', 'ws://localhost:3001/?token=x', 'ws://attacker.invalid:3001/', 'ws://localhost:3002/', 'wss://localhost:3001/']) {
@@ -172,8 +171,7 @@ describe('shared browser runtime', () => {
 
     it('rejects unpinned images, drifted drivers and invalid client caps', async () => {
         const { input } = await fixture()
-        await expect(attempt({ ...input, images: { ...input.images, runner: { ...input.images.runner, reference: 'synthetic.invalid/runner:latest' } } })).rejects.toThrow('pinned')
-        await expect(attempt({ ...input, images: { ...input.images, runner: { ...input.images.runner, driverVersion: '1.2.4' } } })).rejects.toThrow('driver')
+        await expect(attempt({ ...input, images: { mcp: { ...input.images.mcp, reference: 'synthetic.invalid/mcp:latest' } } })).rejects.toThrow('pinned')
         await expect(attempt({ ...input, images: { ...input.images, mcp: { ...input.images.mcp, driverVersion: '1.3.0-alpha' } } })).rejects.toThrow('driver')
         await expect(attempt({ ...input, images: { ...input.images, mcp: { ...input.images.mcp, driverVersion: '1.2.0-alpha-1760000000000' } } })).resolves.toBeDefined()
         await expect(attempt({ ...input, project: { ...input.project, sha256: '' } })).rejects.toThrow('lock')
@@ -214,11 +212,9 @@ describe('shared browser runtime', () => {
         await expect(attempt(input)).rejects.toThrow('600')
     })
 
-    it('emits no persona or login path for bypassed auth and keeps headed debugging separate', async () => {
+    it('emits no persona or login path for bypassed auth', async () => {
         const { input } = await fixture('port', 'bypassed')
         expect((await attempt(input)).authentication).toEqual({ posture: 'bypassed', policy: 'none', states: [] })
-        expect((await attempt(input)).debugger).toEqual({ enabled: false })
-        expect((await attempt({ ...input, headed: true })).debugger).toEqual({ enabled: true, separate: true, artifactRoot: '.browser/debugger' })
         await expect(attempt({ ...input, authentication: { policy: 'serialized', states: [] } })).rejects.toThrow('bypassed')
         // A product with no sign-in drives the browser signed out, like a bypassed one, and says which it is.
         const open = await fixture('port', 'none', '[{ requirement = "synthetic-browser", addressing = "port" }]')
@@ -245,7 +241,7 @@ describe('shared browser runtime', () => {
     it('refuses accessor-backed inputs before executing the accessor', async () => {
         const { input } = await fixture()
         let calls = 0
-        const images = { ...input.images, get runner() { calls += 1; return input.images.runner } }
+        const images = { get mcp() { calls += 1; return input.images.mcp } }
         await expect(attempt({ ...input, images })).rejects.toThrow('data')
         expect(calls).toBe(0)
     })

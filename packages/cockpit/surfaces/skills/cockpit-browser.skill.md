@@ -28,8 +28,7 @@ yourself has nobody left to check it, so hand it to whoever owns the repository.
 4. **Every finding carries evidence:** the route, the action you took, the result you observed (quoted,
    not paraphrased), and a screenshot or log line. A finding without them cannot be reproduced and gets
    discarded. Say what you expected and why, and mark anything you could not reach as not run.
-5. **Never edit code.** Report findings in order of user impact and stop. A headed debugger is an explicit
-   separate request, and it gives no acceptance result.
+5. **Never edit code.** Report findings in order of user impact and stop.
 
 If `check` or the session-start report names drift, follow *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, first.
 

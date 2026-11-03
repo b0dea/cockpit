@@ -503,11 +503,9 @@ const BrowserImage = z.object({
 }).strict()
 
 const BrowserArtifactRoots = z.object({
-    runner: GeneratedHostPath.describe('Generated host path for the browser runner\'s files.'),
     mcp: GeneratedHostPath.describe('Generated host path for the browser MCP server\'s files.'),
     cli: GeneratedHostPath.describe('Generated host path for command-line browser output.'),
     auth: GeneratedHostPath.describe('Generated host path for saved sign-in state.'),
-    debugger: GeneratedHostPath.describe('Generated host path for debugger sessions.'),
 }).strict().superRefine((artifacts, ctx) => {
     const paths = Object.values(artifacts)
     for (const [index, path] of paths.entries()) {
@@ -532,14 +530,14 @@ export const Browser = z.object({
         (rows) => !hasDuplicate(rows.map((row) => row.target)),
         'browser harness targets must be unique',
     ).describe('Agent tools, with versions, that are wired to the browser.'),
-    images: z.object({ runner: BrowserImage.describe('Image that runs the browser.'), mcp: BrowserImage.describe('Image that serves the browser MCP server.') }).strict().describe('Pinned container images for the browser.'),
+    images: z.object({ mcp: BrowserImage.describe('Image that serves the browser MCP server.') }).strict().describe('Pinned container images for the browser.'),
     project: z.object({
         manifest: GeneratedHostPath.optional().describe('package.json for the project; omit to use the one beside the lockfile.'),
         manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('SHA-256 of the manifest; required when manifest is set.'),
-        lockfile: GeneratedHostPath.describe('Lockfile the runner installs from.'),
+        lockfile: GeneratedHostPath.describe('Lockfile that pins the Playwright driver the browser commands load.'),
         sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the lockfile.'),
         driver_version: BrowserDriverVersion.describe('Playwright driver version the lockfile pins.'),
-    }).strict().describe('Node project the runner installs its driver from.'),
+    }).strict().describe('Node project the browser commands load their Playwright driver from.'),
     endpoint: z.string().url().optional().describe('WebSocket address of the browser server, using an allowed host.'),
     max_clients: z.number().int().min(1).max(64).describe('Most browser clients that may connect at once.'),
     proxy: z.object({
@@ -570,7 +568,6 @@ export const Browser = z.object({
         reaches_production: z.boolean().describe('True when browser actions can affect production.'),
     }).strict().describe('Statement about the data the browser touches; cockpit cannot observe it.'),
     request_preapproval: z.boolean().default(false).describe('Run browser tools without prompts; allowed only on isolated, non-production, non-restored data.'),
-    headed: z.boolean().default(false).describe('Show the browser window instead of running it headless.'),
     artifacts: BrowserArtifactRoots.describe('Generated host paths for browser output.'),
 }).strict().superRefine((browser, ctx) => {
     try {
@@ -580,10 +577,6 @@ export const Browser = z.object({
     }
     if ((browser.project.manifest === undefined) !== (browser.project.manifest_sha256 === undefined)) {
         ctx.addIssue({ code: 'custom', path: ['project'], message: 'browser project manifest path and digest must be declared together' })
-    }
-    // The runner installs the project's lockfile, so the two pin one driver exactly.
-    if (browser.images.runner.driver_version !== browser.project.driver_version) {
-        ctx.addIssue({ code: 'custom', path: ['images', 'runner', 'driver_version'], message: 'browser runner image and project driver versions must match exactly' })
     }
     if (!browserDriversCompatible(browser.images.mcp.driver_version, browser.project.driver_version)) {
         ctx.addIssue({ code: 'custom', path: ['images', 'mcp', 'driver_version'], message: 'browser MCP image driver must share major.minor with the project driver' })

@@ -50,7 +50,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
     const image = `synthetic.invalid/browser@sha256:${'a'.repeat(64)}`
     const unresolved = resolveBrowserRuntime({
         postures: { authorities: [authority], stages: [stage.authority] },
-        images: { runner: { reference: image, driverVersion: '1.2.3' }, mcp: { reference: image, driverVersion: '1.2.3' } },
+        images: { mcp: { reference: image, driverVersion: '1.2.3' } },
         project: { lockfile: nestedProject ? 'app/package-lock.json' : 'package-lock.json', sha256: digest(lockBytes), driverVersion: '1.2.3',
             ...(nestedProject ? { manifest: 'app/package.json', manifestSha256: digest(projectManifest) } : {}) },
         ...(localHostname ? {} : { endpoint: 'ws://localhost:3001/' }), maxClients: policy === 'per-worker' ? 2 : 1,
@@ -61,8 +61,8 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
             ? [{ worker: 'shared', path: '.browser/auth/shared.json' }]
             : [{ worker: 'shared', path: '.browser/auth/shared.json' }, { worker: 'auditor', path: '.browser/auth/auditor.json' }] } : { policy: 'none', states: [] },
         data: { mode: preapprove ? 'seeded' : 'restored', isolated: true, reachesProduction: false },
-        requestPreapproval: preapprove, headed: false,
-        artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },
+        requestPreapproval: preapprove,
+        artifacts: { mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth' },
     }, authentication === 'real' ? namespace.value : undefined)
     const owner = holderId({ stackId: stack, checkoutId: checkout, sessionId: 'browser-surface-fixture' })
     const lease = await leasePortFamilyFixture({ namespace: namespace.value, stackId: stack,
@@ -284,7 +284,7 @@ describe('browser transport surfaces', () => {
             artifactRoot: join(input.cockpitDirectory, '.playwright-cli'),
             module: { path: join(input.cockpitDirectory, 'node_modules/@playwright/test/index.js'), sha256: input.testPackage!.module!.sha256 },
             manifest: { path: join(input.cockpitDirectory, 'node_modules/@playwright/test/package.json') },
-            lock: { path: join(input.cockpitDirectory, 'package-lock.json'), sha256: input.runtime.runner.project.sha256 },
+            lock: { path: join(input.cockpitDirectory, 'package-lock.json'), sha256: input.runtime.project.sha256 },
         })
         expect(renderBrowserSurfaces({ ...input, testPackage: null }).clients).toEqual([])
         expect(() => renderBrowserSurfaces({ ...input, testPackage: { ...testPackage, artifactRoot: '.playwright-mcp' } })).toThrow('artifact root')
@@ -345,10 +345,8 @@ describe('browser transport surfaces', () => {
         // The runner's traffic resolves on the host, so its agent is not told to apply rules it cannot.
         const named = renderBrowserSurfaces(await fixture('bypassed', true, false, false, 'serialized', 'index.js', true))
         const namedSkill = named.files.find(file => file.target === 'claudecode' && file.path.endsWith('/SKILL.md'))!.bytes
-        expect(namedSkill).toContain('The generated runner resolves application names on the host, so its browser opens the same URLs a person does; '
-            + 'the resolver rules (MAP app.example.localhost 127.0.0.1) apply only to the headed debugger.')
+        expect(namedSkill).toContain('The remote browser resolves application names on the host, so it opens the same URLs a person does.')
         expect(namedSkill).not.toContain('Apply browser resolver rules')
-        expect(realSkill).toContain('headed')
         expect(realSkill).toContain('mcp: instructed; callable: human_needed')
     })
 

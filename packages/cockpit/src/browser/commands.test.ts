@@ -111,7 +111,7 @@ exports.webkit = browserType('webkit')
 `
 }
 
-async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 'chromium' | 'firefox' | 'webkit'; local?: boolean; artifactRoot?: string; absentArtifactRoot?: boolean } = {}) {
+async function fixture(options: { mode?: ModuleMode; engine?: 'chromium' | 'firefox' | 'webkit'; local?: boolean; artifactRoot?: string; absentArtifactRoot?: boolean } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-command-')))
     roots.push(root)
     const id = cockpitId({ name: 'fixture', mainCheckoutPath: root })
@@ -144,12 +144,12 @@ async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 
     await writeFile(join(root, 'node_modules/@playwright/test/index.js'), moduleBytes)
     const image = `synthetic.invalid/browser@sha256:${'a'.repeat(64)}`
     let runtime = resolveBrowserRuntime({
-        postures: { authorities: [authority], stages: [stage.authority] }, images: { runner: { reference: image, driverVersion: '1.2.3' }, mcp: { reference: image, driverVersion: '1.2.3' } },
+        postures: { authorities: [authority], stages: [stage.authority] }, images: { mcp: { reference: image, driverVersion: '1.2.3' } },
         project: { lockfile: 'package-lock.json', sha256: digest(lock), driverVersion: '1.2.3' },
         ...(!options.local ? { endpoint: 'ws://localhost:3001/' } : {}), ...(options.engine ? { engine: options.engine } : {}), maxClients: 1,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [], authentication: { policy: 'none', states: [] },
-        data: { mode: 'empty', isolated: true, reachesProduction: false }, requestPreapproval: true, headed: options.headed ?? false,
-        artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: artifactRelative, auth: '.browser/auth', debugger: '.browser/debugger' },
+        data: { mode: 'empty', isolated: true, reachesProduction: false }, requestPreapproval: true,
+        artifacts: { mcp: '.playwright-mcp', cli: artifactRelative, auth: '.browser/auth' },
     })
     if (runtime.connection.kind === 'remote') {
         const lease = await leasePortFamilyFixture({ namespace: selected.value, stackId: stack,
@@ -479,16 +479,5 @@ describe('browser driving commands', () => {
             + 'nothing answered at http://app.localhost:4000/ (ERR_SOCKS_CONNECTION_FAILED); check that the application is up with '
             + `npx --no cockpit doctor --config ${config}` })
         expect(JSON.stringify(result)).not.toContain('synthetic page text')
-    })
-
-    it('refuses headed use without an authenticated persistent debugger endpoint', async () => {
-        const { runtime, client, policy } = await fixture({ headed: true })
-        expect(await executeBrowserCommand({ runtime, client, policy, kind: 'drive', headed: true }))
-            .toEqual({ kind: 'refusal', reason: 'Headed browser use requires an authenticated foreground debugger preparation for the current runtime' })
-        expect(await executeBrowserCommand({ runtime, client, policy, kind: 'drive', headed: true,
-            debugger: Object.freeze({ kind: 'foreground-browser-debugger', cwd: client.cwd,
-                launcher: Object.freeze({ path: `${client.cwd}/.cockpit/browser/runner.sh`, sha256: 'a'.repeat(64) }),
-                argv: Object.freeze(['forged']), deadlineSeconds: 3600, foreground: true }) as never }))
-            .toEqual({ kind: 'refusal', reason: 'Headed browser use requires an authenticated foreground debugger preparation for the current runtime' })
     })
 })

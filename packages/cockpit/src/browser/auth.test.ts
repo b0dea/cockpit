@@ -81,14 +81,14 @@ async function fixture(authentication: 'real' | 'bypassed', mutateState: false |
     await writeFile(join(root, 'node_modules/@playwright/test/index.js'), module)
     const image = `synthetic.invalid/browser@sha256:${'a'.repeat(64)}`
     const unresolved = resolveBrowserRuntime({
-        postures: { authorities: [authority], stages: [stage.authority] }, images: { runner: { reference: image, driverVersion: '1.2.3' }, mcp: { reference: image, driverVersion: '1.2.3' } },
+        postures: { authorities: [authority], stages: [stage.authority] }, images: { mcp: { reference: image, driverVersion: '1.2.3' } },
         project: { lockfile: 'package-lock.json', sha256: digest(lock), driverVersion: '1.2.3' }, endpoint: 'ws://localhost:3001/', maxClients: policy === 'per-worker' ? 2 : 1,
         proxy: { serverPort: webPort, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [],
         authentication: authentication === 'real' ? { policy, states: policy === 'serialized'
             ? [{ worker: 'operator', path: '.browser/auth/operator.json' }]
             : [{ worker: 'operator', path: '.browser/auth/operator.json' }, { worker: 'auditor', path: '.browser/auth/auditor.json' }] } : { policy: 'none', states: [] },
-        data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: true, headed: false,
-        artifacts: { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' },
+        data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: true,
+        artifacts: { mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth' },
     }, authentication === 'real' ? selected.value : undefined)
     const lease = await leasePortFamilyFixture({ namespace: selected.value, stackId: stack, holderId: owner, checkoutId: checkout,
         config: { step: 100, count: 1, bases: { WEB: webPort, BROWSER_PROXY: 3001 } }, now, listenerTimeoutMs: 100,

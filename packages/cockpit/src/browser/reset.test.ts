@@ -26,7 +26,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     const stateHome = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-home-')))
     roots.push(root, stateHome)
     await run('git', ['init', '--quiet', root])
-    const artifacts = { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' }
+    const artifacts = { mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth' }
     const declarations = Object.values(artifacts)
     const configPath = join(root, 'cockpit.toml')
     await recordSyntheticMeasurement(stateHome)
@@ -90,11 +90,11 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     const image = (name: string) => ({ reference: `synthetic.invalid/${name}@sha256:${'a'.repeat(64)}`, driverVersion: '1.2.3' })
     const runtime = resolveBrowserRuntime({
         postures: { authorities: [authority], stages: [stage.authority] },
-        images: { runner: image('runner'), mcp: image('mcp') }, project: { lockfile: 'package-lock.json', sha256: 'b'.repeat(64), driverVersion: '1.2.3' },
+        images: { mcp: image('mcp') }, project: { lockfile: 'package-lock.json', sha256: 'b'.repeat(64), driverVersion: '1.2.3' },
         endpoint: 'ws://localhost:3001/', maxClients: 1,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] }, resolver: [],
         authentication: { policy: 'serialized', states: [{ worker: 'shared', path: `${artifacts.auth}/output.json` }] },
-        data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: false, headed: false, artifacts,
+        data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: false, artifacts,
     })
     expect(runtime.generatedHostPaths).toEqual(declarations)
     const control = 'unregistered-output.json'

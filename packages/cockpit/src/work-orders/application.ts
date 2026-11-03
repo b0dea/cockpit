@@ -88,9 +88,14 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
     if (!isWorkApplicationComposition(composition)) return refusal('invalid', 'An issued work application composition is required')
     const operation = captured.operation
     try {
-        if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot' || captured.operation === 'browser-debugger') {
+        // The headed debugger was launched through the browser runner cockpit rendered into its own
+        // Compose file, which it no longer writes, so nothing can prepare one.
+        if (captured.operation === 'browser-debugger') {
+            return refusal(operation, 'the headed browser debugger needs the browser runner cockpit no longer renders; use browser drive or browser screenshot')
+        }
+        if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
             const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
-            const result = await executeBrowserCommand(await composition.browser(kind, captured.operation === 'browser-debugger', captured.role))
+            const result = await executeBrowserCommand(await composition.browser(kind, captured.role))
             if (result.kind === 'refusal') return refusal(operation, result.reason)
             if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) }
             return complete(operation, result)

@@ -253,7 +253,6 @@ describe('generated application authenticated read batching', () => {
             'skills/cockpit-browser.skill.md',
             'references/browser.md',
             'references/testing-tiers.md',
-            'scripts/browser-runner.sh',
         ])
         const individualSurfaceAssets: string[] = []
         const ownershipReadOffsets: number[] = []

@@ -14,22 +14,17 @@ pinned MCP image connects to the checking proxy endpoint. The optional CLI comes
 `@playwright/test` package named in the project's lock file, after cockpit checks the installed
 manifest, the entry-point bytes and the npm lock bytes. Other lock formats currently make this
 transport unavailable here. Never substitute a standalone CLI package. Prefer the CLI, when it is
-eligible, for work that depends on identity or runs concurrently. Use a headed browser only as a
-separate debugger.
+eligible, for work that depends on identity or runs concurrently.
 
 For real sign-in, use mode-600 saved state minted from seeded users and the declared serialized or
 per-worker policy. Sign in through a channel that keeps credentials out of transcripts. Keep
 credentials, state contents, page content and production data out of transcripts and tracked
 files. With bypassed authentication, sign-in and persona selection do not apply. With hostname
-addressing a local browser or the headed debugger needs resolver rules; with port addressing it
-does not.
+addressing a local browser needs resolver rules; with port addressing it does not.
 
-A generated runner's browser runs in a container but opens the same URLs a person opens: the
-commands connect with the declared network exposure (default `<loopback>`), so requests for
-`127.0.0.1`, `localhost` and `.localhost` names travel back through the command's own process on
-the host. An origin outside that exposure is refused before the browser starts. For that runner,
-resolver rules only restate what the host resolver does for `.localhost` names, and an `https`
-origin needs the development CA built into the runner image. A refusal that says nothing answered
+A remote browser connects with the declared network exposure (default `<loopback>`), so requests
+for `127.0.0.1`, `localhost` and `.localhost` names travel back through the command's own process
+on the host. An origin outside that exposure is refused before the browser starts. A refusal that says nothing answered
 at a URL is the stack, not the product: check `doctor` before reporting it.
 
 Approving an MCP server enables it; letting its browser tools run without prompts is a separate
@@ -55,8 +50,8 @@ harness config flag. Tie the reset and the filesystem readback to the cockpit di
 both observations are done. No cockpit command reads or checks this record, and none changes a
 transport from `human_needed`: a person keeps it and decides whether it supports the claim.
 
-Every transport root comes from the current runtime's reset inventory, including the sign-in and
-debugger roots. After recording fixture files for every root, replay the public reset and confirm the
+Every transport root comes from the current runtime's reset inventory, including the sign-in
+root. After recording fixture files for every root, replay the public reset and confirm the
 files are gone while the unregistered negative control remains. Reject the negative control as
 unregistered. A cleanup flag in the output is not proof about the filesystem. Do not run any native
 probe or accept its result until a person who is allowed to run them does so.

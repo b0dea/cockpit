@@ -31,7 +31,6 @@ function input() {
         browser: null,
         browserReference: null,
         skillReferences: [],
-        browserRunner: null,
         testing: null,
         instructions: null,
         customHarnesses: [], customReceipts: [], sourceEvidence: [],
@@ -81,19 +80,6 @@ describe('surface rendering', () => {
         for (const bad of [{ ...reference, path: '../escape.md' }, { ...reference, skill: 'Bad Skill' }, { ...reference, bytes: '' }]) {
             expect(renderSurfaceSet({ ...value, skillReferences: [bad] })).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
         }
-    })
-
-    it('publishes the authenticated browser runner through the sole surface transaction', () => {
-        const value = input()
-        const bytes = '#!/bin/sh\nexec node runner.js\n'
-        const result = renderSurfaceSet({ ...value, browserRunner: {
-            path: 'scripts/browser-runner.sh', bytes, sha256: digest(bytes),
-        } })
-        expect(result).toMatchObject({ kind: 'complete' })
-        if (result.kind !== 'complete') return
-        expect(result.entries.find(entry => entry.path === '.cockpit/browser/runner.sh')).toMatchObject({
-            kind: 'file', ownership: 'whole-file', bytes, sha256: digest(bytes), writer: 'cockpit',
-        })
     })
 
     it('retains bounded generator trust warnings and rejects malformed warning records', () => {

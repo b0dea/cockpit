@@ -38,7 +38,6 @@ type BrowserAuthority = Readonly<{
     client: BrowserProjectClient
     policy: BrowserRoutePolicy
     state?: BrowserCommandInput['state']
-    debugger?: BrowserCommandInput['debugger']
 }>
 
 type EvaluatorAuthority = Readonly<{
@@ -87,7 +86,7 @@ export interface WorkApplicationComposition {
     readonly runCheck: (criterion: string, check: WorkOrderCheck) => Promise<CheckResult>
     readonly changes: (base: Readonly<Record<string, string>>) => Promise<readonly ChangedFile[]>
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
-    readonly browser: (kind: BrowserCommandKind, headed: boolean, role?: string) => Promise<BrowserCommandInput>
+    readonly browser: (kind: BrowserCommandKind, role?: string) => Promise<BrowserCommandInput>
     readonly gate: (request: WorkApplicationGateRequest) => Promise<Readonly<{ registry: GateRegistry; request: GateRequest; dependencies: GateDependencies }>>
 }
 export interface WorkApplicationGateRequest {
@@ -644,12 +643,11 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         try { return await browserAuthority }
         catch (error) { browserAuthority = undefined; throw error }
     }
-    const browser = async (kind: BrowserCommandKind, headed: boolean, role?: string): Promise<BrowserCommandInput> => {
+    const browser = async (kind: BrowserCommandKind, role?: string): Promise<BrowserCommandInput> => {
         if (!config.browser) throw new RefusalError('browser application projection is unavailable')
         const authority = await resolveBrowser()
         return { runtime: authority.runtime, client: authority.client, policy: authority.policy, kind,
-            ...(authority.state ? { state: authority.state } : {}), ...(headed ? { headed: true, ...(authority.debugger ? { debugger: authority.debugger } : {}) } : {}),
-            ...(role ? { role } : {}) }
+            ...(authority.state ? { state: authority.state } : {}), ...(role ? { role } : {}) }
     }
     const gate = async (request: WorkApplicationGateRequest) => {
         if (!authorities.testing || !config.testing) throw new RefusalError('testing gate projection is unavailable')
@@ -901,22 +899,11 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             if (entrypoints.kind !== 'complete') throw new RefusalError('declared application routes are unavailable')
             const runtime = browserAuthority.runtime
             const mcp = browserAuthority.mcp
-            if (runtime.connection.kind === 'remote') {
-                const runner = browserAuthority.runner
-                if (!runner || runner.serviceId !== 'cockpit-browser-runner'
-                    || !record.value.completedServices.some(service => service.service === runner.serviceId)) {
-                    throw new RefusalError('browser runner has no current healthy lifecycle evidence')
-                }
-                const selectedPort = retained.lease.ports[runner.hostVariable]
-                if (!browserRuntimeExecutionReady(runtime) || selectedPort === undefined
-                    || runtime.proxy.port !== selectedPort) {
-                    throw new RefusalError('browser runtime does not match its current retained port authority')
-                }
-                const endpoint = runtime.connection.endpoint
-                if (mcp.args.filter(argument => argument === endpoint).length !== 1) {
-                    throw new RefusalError('browser MCP declaration does not uniquely bind its current endpoint')
-                }
-            } else if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('local browser runtime authority is unavailable')
+            if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('browser runtime authority is unavailable')
+            const connection = runtime.connection
+            if (connection.kind === 'remote' && mcp.args.filter(argument => argument === connection.endpoint).length !== 1) {
+                throw new RefusalError('browser MCP declaration does not uniquely bind its current endpoint')
+            }
             const origins = entrypoints.values.filter(row => row.kind === 'origin')
             if (origins.length !== 1) throw new RefusalError('browser application requires exactly one declared HTTP origin')
             const originUrl = new URL(origins[0]!.value)
@@ -943,7 +930,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: config.cockpitRoot,
                 harnesses: harnessRows, mcp, approved: true,
                 testPackage: observeBrowserProjectPackage({ runtime, cockpitDirectory: config.cockpitRoot,
-                    artifactRoot: runtime.generatedHostPaths[2]! }), skillTemplate: skillBytes })
+                    artifactRoot: runtime.cliArtifactRoot }), skillTemplate: skillBytes })
             const client = [...rendered.clients].sort((left, right) => left.target.localeCompare(right.target))[0]
             if (!client) {
                 const measured = measuredBrowserHarnessVersions()
@@ -956,7 +943,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
                 policy: issueBrowserRoutePolicy(runtime, { origin: originUrl.origin, routes }),
                 ...(runtime.authentication.posture === 'real' ? { state: {
                     namespace: browserAuthority.namespace, stackId: loaded.result.stackId, ownerId: record.value.holderId,
-                } } : {}), ...(browserAuthority.runner?.debugger ? { debugger: browserAuthority.runner.debugger } : {}) }
+                } } : {}) }
         }
         const configuredSiblingsRoot = resolve(config.cockpitRoot, config.siblingsRoot)
         const gateBrowserAuthenticationTargets = new Set((config.browser?.authentication.states ?? []).map(row => resolve(config.cockpitRoot, row.path)))

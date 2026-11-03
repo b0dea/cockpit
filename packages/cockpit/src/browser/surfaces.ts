@@ -156,12 +156,12 @@ function projectPackagePaths(root: string, runtime: BrowserRuntimeProjection): R
     packageRoot: string
 }> {
     if (!browserRuntimeExecutionReady(runtime)) throw new RefusalError('browser project package requires an issued executable runtime')
-    const declaredManifest = runtime.runner.project.manifest
+    const declaredManifest = runtime.project.manifest
     const projectManifestPath = resolve(root, declaredManifest ?? 'package.json')
     if (!isPackageDescendant(root, projectManifestPath)) throw new RefusalError('browser project manifest escaped its cockpit root')
     if (declaredManifest !== undefined) {
         const manifestBytes = observedBytes(projectManifestPath, 1_048_576)
-        if (digest(manifestBytes) !== runtime.runner.project.manifestSha256) {
+        if (digest(manifestBytes) !== runtime.project.manifestSha256) {
             throw new RefusalError('browser declared project manifest differs from its issued identity')
         }
     }
@@ -208,18 +208,18 @@ function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntim
     let manifest: unknown
     try { manifest = JSON.parse(value.manifest.bytes) } catch { throw new RefusalError('browser test package manifest is invalid JSON') }
     const parsed = Manifest.safeParse(manifest)
-    if (!parsed.success || parsed.data.version !== runtime.runner.project.driverVersion
+    if (!parsed.success || parsed.data.version !== runtime.project.driverVersion
         || value.cli.path !== parsed.data.bin.playwright || value.manifest.sha256 !== digest(value.manifest.bytes)
         || value.cli.sha256 !== digest(value.cli.bytes)) throw new RefusalError('browser test package does not match the pinned project driver and CLI bytes')
     const { packageRoot } = projectPackagePaths(root, runtime)
     if (observedBytes(resolve(packageRoot, 'package.json'), 65_536) !== value.manifest.bytes
         || observedBytes(resolve(packageRoot, value.cli.path), 65_536) !== value.cli.bytes) throw new RefusalError('browser test package differs from installed bytes')
-    const lockBytes = observedBytes(resolve(root, runtime.runner.project.lockfile), 1_048_576)
+    const lockBytes = observedBytes(resolve(root, runtime.project.lockfile), 1_048_576)
     let lock: unknown
     try { lock = JSON.parse(lockBytes) } catch { throw new RefusalError('browser test package needs an authenticated npm lockfile') }
     const locked = z.object({ packages: z.record(z.string(), z.unknown()) }).safeParse(lock)
     const entry = locked.success ? z.object({ version: Version }).safeParse(locked.data.packages[value.directory]) : null
-    if (digest(lockBytes) !== runtime.runner.project.sha256 || !entry?.success || entry.data.version !== parsed.data.version) {
+    if (digest(lockBytes) !== runtime.project.sha256 || !entry?.success || entry.data.version !== parsed.data.version) {
         throw new RefusalError('browser test package differs from the issued project lock identity')
     }
     return { package: '@playwright/test', version: parsed.data.version,
@@ -228,7 +228,7 @@ function pinnedCli(value: z.infer<typeof Package> | null, runtime: BrowserRuntim
 
 function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserTransportRow, 'target' | 'version'>,
     runtime: BrowserRuntimeProjection, root: string): BrowserProjectClient {
-    if (value.artifactRoot !== runtime.generatedHostPaths[2]) throw new RefusalError('browser project client artifact root must be the registered CLI artifact root')
+    if (value.artifactRoot !== runtime.cliArtifactRoot) throw new RefusalError('browser project client artifact root must be the registered CLI artifact root')
     const { projectManifestPath, packageRoot } = projectPackagePaths(root, runtime)
     let resolvedModule: string
     try { resolvedModule = realpathSync(createRequire(projectManifestPath).resolve('@playwright/test')) }
@@ -240,7 +240,7 @@ function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserT
         throw new RefusalError('browser project module entry differs from the installed resolved entry')
     }
     const manifestPath = resolve(packageRoot, 'package.json')
-    const lockPath = resolve(root, runtime.runner.project.lockfile)
+    const lockPath = resolve(root, runtime.project.lockfile)
     const nodePath = realpathSync(process.execPath)
     const nodeBytes = observedFile(nodePath, 536_870_912)
     const client = {
@@ -249,7 +249,7 @@ function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserT
         node: { path: nodePath, sha256: createHash('sha256').update(nodeBytes).digest('hex'), maxBytes: nodeBytes.byteLength },
         module: { path: resolvedModule, sha256: value.module.sha256, maxBytes: 1_048_576 },
         manifest: { path: manifestPath, sha256: value.manifest.sha256, maxBytes: 65_536 },
-        lock: { path: lockPath, sha256: runtime.runner.project.sha256, maxBytes: 1_048_576 },
+        lock: { path: lockPath, sha256: runtime.project.sha256, maxBytes: 1_048_576 },
     }
     issuedClients.set(client, runtime)
     return client
@@ -512,12 +512,12 @@ function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonl
         : `Use mode-600 stored state from seeded users with transcript-safe sign-in; never print credentials or state contents. The active state policy is ${runtime.authentication.policy}.`
     const addressing = runtime.addressing.posture === 'port' ? 'Browser resolver rules: inapplicable for port addressing.'
         : runtime.connection.kind === 'remote'
-            ? `The generated runner resolves application names on the host, so its browser opens the same URLs a person does; the resolver rules (${runtime.addressing.resolverRules!.join('; ')}) apply only to the headed debugger.`
+            ? 'The remote browser resolves application names on the host, so it opens the same URLs a person does.'
             : `Apply browser resolver rules: ${runtime.addressing.resolverRules!.join('; ')}.`
     const transports = rows.map(row => `${row.transport}: ${row.declaration}; callable: ${row.callable}; harness: ${target} ${row.version}; historical measurement: ${row.measuredVersion} on ${row.measuredOn}. ${row.reason}${row.tool ? ` Tool: ${row.tool}.` : ''}${row.cli ? ` Pinned CLI argv: ${JSON.stringify(row.cli.argv)}; package: ${row.cli.package} ${row.cli.version}.` : ''}`)
     const guidance = [
         '# Drive the application', ...transports, auth, addressing,
-        'Use the declared shared headless browser connection. A headed debugger is an explicit separate escape hatch.',
+        'Use the declared shared headless browser connection.',
         'Prefer the eligible pinned CLI for identity-sensitive or concurrent work; keep the declared per-worker or serialized state policy.',
         'Retain browser access for the independent grader. File read-only controls do not restrain product state; product-state restraint remains instructed.',
         'Read the browser reference before sign-in, artifact cleanup, or a paired native probe. Current callable rows remain held for operator measurement.',

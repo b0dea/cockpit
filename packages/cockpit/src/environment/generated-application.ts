@@ -463,27 +463,8 @@ export interface ConsumedWorkApplicationAuthorities {
             readonly sha256: string
             readonly identity: PersonaSourceIdentity
         }>
-        readonly runner?: BrowserRunnerAuthority
     }>
     readonly testing: Readonly<{ readonly registry: GateRegistry }>
-}
-
-export interface BrowserRunnerAuthority {
-    readonly serviceId: 'cockpit-browser-runner'
-    readonly hostVariable: string
-    readonly proxyPort: number
-    readonly manifest: Readonly<{ path: string; sha256: string; identity: string; provenance: 'declared'; reason: string }>
-    readonly lockfile: Readonly<{ path: string; sha256: string; identity: string }>
-    readonly debugger?: BrowserDebuggerPreparation
-}
-
-export interface BrowserDebuggerPreparation {
-    readonly kind: 'foreground-browser-debugger'
-    readonly cwd: string
-    readonly launcher: Readonly<{ path: string; sha256: string }>
-    readonly argv: readonly string[]
-    readonly deadlineSeconds: number
-    readonly foreground: true
 }
 
 export interface GeneratedCustomSurfaceSelftestInput {
@@ -579,7 +560,6 @@ const WORK_ASSETS = Object.freeze([
     'skills/cockpit-browser.skill.md',
     'references/browser.md',
     'references/testing-tiers.md',
-    'scripts/browser-runner.sh',
 ] as const)
 type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof REFERENCE_ASSETS[number] | typeof WORK_ASSETS[number]
 interface GeneratedApplicationRecord {
@@ -598,7 +578,6 @@ type WorkApplicationAuthorityRecord = ConsumedWorkApplicationAuthorities
 const issuedApplicationProjections = new WeakMap<object, GeneratedApplicationRecord>()
 const projectedWorkApplicationAuthorities = new WeakSet<object>()
 const issuedWorkApplicationAuthorities = new WeakMap<object, WorkApplicationAuthorityRecord>()
-const issuedBrowserDebuggerPreparations = new WeakMap<object, BrowserRuntimeProjection>()
 
 interface SelectedBootstrapRecord {
     readonly root: string
@@ -615,11 +594,6 @@ interface SelectedBootstrapRecord {
 
 const issuedSelectedBootstrapAuthorities = new WeakMap<object, SelectedBootstrapRecord>()
 const consumedBootstrapStatePublications = new WeakSet<object>()
-
-export function inspectBrowserDebuggerPreparation(value: unknown, runtime: BrowserRuntimeProjection): BrowserDebuggerPreparation | undefined {
-    return value !== null && typeof value === 'object' && issuedBrowserDebuggerPreparations.get(value) === runtime
-        ? value as BrowserDebuggerPreparation : undefined
-}
 
 function skillDescription(bytes: string): string | undefined {
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(bytes)?.[1]
@@ -2489,7 +2463,6 @@ async function prepareSurfaces(
         openCodeReadDenials(siblingDirectories, prepared.registry.secretPaths))
     const nativeMcp = generatedNativeMcp && nativeGrants ? bindNativeGrantsToMcp(generatedNativeMcp, nativeGrants) : undefined
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
-    const runnerAsset = asset('scripts/browser-runner.sh')
     const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) === true
     const instructions = renderConsumerInstructions({
         name: config.cockpit.name,
@@ -2529,8 +2502,6 @@ async function prepareSurfaces(
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions: listedRestrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
         skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
-        browserRunner: browser && prepared.workEnvironment.browser && Object.hasOwn(prepared.workEnvironment.browser, 'endpoint')
-            ? { path: runnerAsset.path, bytes: runnerAsset.bytes, sha256: runnerAsset.sha256 } : null,
         testing: { tierGuide, nativeHooks },
         customHarnesses: config.surfaces.harnesses, customReceipts, sourceEvidence: evidence })
     if (rendered.kind !== 'complete') return refuse(rendered.diagnostic.code, rendered.diagnostic.message, rendered.diagnostic.target)

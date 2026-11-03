@@ -105,7 +105,6 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'surfaces/references/browser.md',
     'surfaces/references/test-data-and-personas.md',
     'surfaces/references/testing-tiers.md',
-    'surfaces/scripts/browser-runner.sh',
     'surfaces/skills/cockpit-setup.skill.md',
     'surfaces/skills/cockpit-browser.skill.md',
     'surfaces/skills/collection.json',

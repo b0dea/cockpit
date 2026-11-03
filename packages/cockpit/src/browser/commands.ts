@@ -4,7 +4,6 @@ import { isIP } from 'node:net'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { errorCause, snapshotJson, type HolderId, type StackId, RefusalError, hasErrorCode } from '../environment/contract.js'
-import { inspectBrowserDebuggerPreparation, type BrowserDebuggerPreparation } from '../environment/generated-application.js'
 import { type StateNamespace } from '../environment/state.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, type BrowserRuntimeProjection } from './runtime.js'
@@ -23,8 +22,6 @@ export interface BrowserCommandInput {
     readonly policy: BrowserRoutePolicy
     readonly kind: BrowserCommandKind
     readonly role?: string
-    readonly headed?: boolean
-    readonly debugger?: BrowserDebuggerPreparation
     readonly state?: Readonly<{ namespace: StateNamespace; stackId: StackId; ownerId: HolderId }>
 }
 export interface BrowserCommandSurfaceReceipt {
@@ -39,7 +36,6 @@ export interface BrowserCommandReceipt {
     readonly surfaces: readonly Readonly<BrowserCommandSurfaceReceipt>[]
 }
 export type BrowserCommandResult = Readonly<{ kind: 'complete'; receipt: BrowserCommandReceipt }>
-    | Readonly<{ kind: 'debugger-preparation'; preparation: BrowserDebuggerPreparation; reason: string }>
     | Readonly<{ kind: 'refusal'; reason: string }>
 
 const issuedPolicies = new WeakMap<BrowserRoutePolicy, BrowserRuntimeProjection>()
@@ -94,7 +90,7 @@ function failureHint(reason: string | undefined, url: string, runtime: BrowserRu
     }
     if (reason === 'ERR_NAME_NOT_RESOLVED') return `: ${new URL(url).hostname} did not resolve (${reason}); use the declared .localhost hostname or 127.0.0.1`
     if (reason.startsWith('ERR_CERT_')) {
-        return `: the browser does not trust the certificate at ${url} (${reason}); add the issuing CA to the ${runtime.connection.kind === 'remote' ? 'browser runner image' : 'host trust store'}`
+        return `: the browser does not trust the certificate at ${url} (${reason}); add the issuing CA to the ${runtime.connection.kind === 'remote' ? 'remote browser\'s image' : 'host trust store'}`
     }
     if (reason.startsWith('HTTP_')) return `: ${url} answered HTTP ${reason.slice(5)}, and a surface must answer 2xx`
     if (reason === 'TIMEOUT') return `: ${url} did not finish loading within the 30-second command deadline`
@@ -143,14 +139,12 @@ function ownDataRecord(value: unknown, required: readonly string[], optional: re
 }
 
 function captureBrowserCommandInput(value: unknown): Readonly<BrowserCommandInput> | undefined {
-    const captured = ownDataRecord(value, ['runtime', 'client', 'policy', 'kind'], ['role', 'headed', 'debugger', 'state'])
+    const captured = ownDataRecord(value, ['runtime', 'client', 'policy', 'kind'], ['role', 'state'])
     if (!captured || captured.runtime === null || typeof captured.runtime !== 'object' || isProxy(captured.runtime)
         || captured.client === null || typeof captured.client !== 'object' || isProxy(captured.client)
         || captured.policy === null || typeof captured.policy !== 'object' || isProxy(captured.policy)
         || typeof captured.kind !== 'string'
-        || (captured.role !== undefined && typeof captured.role !== 'string')
-        || (captured.headed !== undefined && typeof captured.headed !== 'boolean')
-        || (captured.debugger !== undefined && (captured.debugger === null || typeof captured.debugger !== 'object' || isProxy(captured.debugger)))) return undefined
+        || (captured.role !== undefined && typeof captured.role !== 'string')) return undefined
     let state: BrowserCommandInput['state']
     if (captured.state !== undefined) {
         const row = ownDataRecord(captured.state, ['namespace', 'stackId', 'ownerId'], [])
@@ -160,9 +154,7 @@ function captureBrowserCommandInput(value: unknown): Readonly<BrowserCommandInpu
     }
     return { runtime: captured.runtime as BrowserRuntimeProjection, client: captured.client as BrowserProjectClient,
         policy: captured.policy as BrowserRoutePolicy, kind: captured.kind as BrowserCommandKind,
-        ...(captured.role !== undefined ? { role: captured.role as string } : {}),
-        ...(captured.headed !== undefined ? { headed: captured.headed as boolean } : {}),
-        ...(captured.debugger !== undefined ? { debugger: captured.debugger as BrowserDebuggerPreparation } : {}), ...(state ? { state } : {}) }
+        ...(captured.role !== undefined ? { role: captured.role as string } : {}), ...(state ? { state } : {}) }
 }
 
 export function issueBrowserRoutePolicy(runtime: BrowserRuntimeProjection, input: Readonly<{ origin: string; routes: readonly BrowserRouteDeclaration[] }>): BrowserRoutePolicy {
@@ -359,17 +351,8 @@ export async function executeBrowserCommand(value: BrowserCommandInput): Promise
     if (issuedPolicies.get(input.policy) !== input.runtime) return refusal('Browser command requires an issued route policy for the current runtime')
     if (input.runtime.connection.kind === 'remote' && !networkExposureCovers(input.runtime.networkExposure, new URL(input.policy.origin))) {
         return refusal(`Browser application origin ${input.policy.origin} is outside browser.network_exposure (${input.runtime.networkExposure}): `
-            + 'the generated runner reaches host addresses only through that exposure, so the browser would look for the application inside its own container. '
+            + 'a remote browser reaches host addresses only through that exposure, so it would look for the application inside its own container. '
             + 'Use a 127.0.0.1, localhost or .localhost origin (an IPv6 literal is never tunnelled), or widen network_exposure with a network_exposure_reason')
-    }
-    if (input.headed === true) {
-        if (!input.runtime.debugger.enabled) return refusal('Headed browser use was not enabled by the runtime')
-        const preparation = inspectBrowserDebuggerPreparation(input.debugger, input.runtime)
-        if (!preparation || preparation.cwd !== client.cwd) {
-            return refusal('Headed browser use requires an authenticated foreground debugger preparation for the current runtime')
-        }
-        return { kind: 'debugger-preparation', preparation,
-            reason: 'Run the authenticated foreground command to open a headed browser; preparation does not produce UI evidence' }
     }
     const auth = authentication(input)
     if (!auth) return refusal(input.runtime.authentication.posture === 'real'

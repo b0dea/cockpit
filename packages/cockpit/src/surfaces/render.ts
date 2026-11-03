@@ -288,7 +288,7 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
 
 export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const captured = snapshotGeneratedJson(input)
-    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'skillReferences', 'browserRunner', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
+    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'skillReferences', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
     if (!object(captured) || !exactKeys(captured, required) || !Array.isArray(captured.configuredHarnesses)
         || !Array.isArray(captured.customHarnesses) || !Array.isArray(captured.sourceEvidence)
         || !object(captured.merge) || captured.merge.kind !== 'complete' || !Array.isArray(captured.merge.surfaces)
@@ -350,9 +350,6 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         && new Set(captured.skillReferences.map(row => JSON.stringify([(row as JsonSnapshotObject).skill, (row as JsonSnapshotObject).path]))).size === captured.skillReferences.length
         ? captured.skillReferences as unknown as SkillReference[] : undefined
     if (!skillReferences) return refuse('SURFACE_INPUT_INVALID', 'skill references must be unique bounded references/<name>.md files owned by a named skill')
-    const browserRunner = captured.browserRunner === null ? null : validFile(captured.browserRunner)
-        && captured.browserRunner.path === 'scripts/browser-runner.sh' ? captured.browserRunner : undefined
-    if (browserRunner === undefined) return refuse('SURFACE_INPUT_INVALID', 'browser runner asset must be a bounded authenticated input')
     if (browser) {
         const browserMcp = browser.mcp
         const browserServers = object(browserMcp) && browserMcp.kind === 'complete' && object(browserMcp.result)
@@ -449,9 +446,6 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const browserMcp = new Map<string, Contribution>()
     const readonly = new Map<string, string>()
     const add = (map: Map<string, Contribution[]>, path: string, contribution: Contribution) => map.set(path, [...map.get(path) ?? [], contribution])
-    if (browserRunner) add(whole, '.cockpit/browser/runner.sh', {
-        harnesses: [...configuredSet], scope: 'always', capability: 'instructed', bytes: browserRunner.bytes as string,
-    })
     for (const target of BUILT_INS) if (configuredSet.has(target)) for (const reference of skillReferences) {
         add(whole, `${harnessFact(target).outputs.skills}/${reference.skill}/${reference.path}`, {
             harnesses: [target], scope: 'always', capability: 'instructed', bytes: stripDevelopmentMarkers(reference.bytes),

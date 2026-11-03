@@ -21,7 +21,7 @@ interface BrowserStorageState {
 
 export interface BrowserRuntimeInput {
     readonly postures: PreflightContext
-    readonly images: Readonly<{ runner: BrowserImage; mcp: BrowserImage }>
+    readonly images: Readonly<{ mcp: BrowserImage }>
     readonly project: Readonly<{ lockfile: string; sha256: string; driverVersion: string; manifest?: string; manifestSha256?: string }>
     readonly engine?: 'chromium' | 'firefox' | 'webkit'
     readonly hostVariable?: string
@@ -34,8 +34,7 @@ export interface BrowserRuntimeInput {
     readonly authentication: Readonly<{ policy: 'none' | 'serialized' | 'per-worker'; states: readonly BrowserStorageState[] }>
     readonly data: Readonly<{ mode: 'empty' | 'seeded' | 'restored'; isolated: boolean; reachesProduction: boolean }>
     readonly requestPreapproval: boolean
-    readonly headed: boolean
-    readonly artifacts: Readonly<Record<'runner' | 'mcp' | 'cli' | 'auth' | 'debugger', string>>
+    readonly artifacts: Readonly<Record<'mcp' | 'cli' | 'auth', string>>
 }
 
 interface BrowserRuntimeBinding {
@@ -106,10 +105,7 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         throw new RefusalError('browser project lockfile identity is invalid')
     }
     if (!BROWSER_DRIVER_VERSION.test(input.project.driverVersion)) throw new RefusalError('browser project driver version must be exact')
-    for (const image of [input.images.runner, input.images.mcp]) {
-        if (!/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(image.reference)) throw new RefusalError('browser images must be digest-pinned')
-    }
-    if (input.images.runner.driverVersion !== input.project.driverVersion) throw new RefusalError('browser runner image driver differs from project lock identity')
+    if (!/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(input.images.mcp.reference)) throw new RefusalError('browser images must be digest-pinned')
     if (typeof input.images.mcp.driverVersion !== 'string' || !BROWSER_DRIVER_VERSION.test(input.images.mcp.driverVersion)
         || !browserDriversCompatible(input.images.mcp.driverVersion, input.project.driverVersion)) {
         throw new RefusalError('browser MCP image driver does not share major.minor with the project driver')
@@ -146,7 +142,7 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     if (connection.kind === 'local-fallback' && addressing === 'hostname' && engine !== 'chromium') {
         throw new RefusalError('local hostname resolver rules require chromium')
     }
-    const artifactKeys = ['runner', 'mcp', 'cli', 'auth', 'debugger'] as const
+    const artifactKeys = ['mcp', 'cli', 'auth'] as const
     const paths = artifactKeys.map((key) => input.artifacts[key])
     if (Object.keys(input.artifacts).length !== artifactKeys.length
         || paths.some((path) => !GeneratedHostPath.safeParse(path).success)
@@ -178,8 +174,8 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         }
     }
     if (!['empty', 'seeded', 'restored'].includes(input.data.mode) || typeof input.data.isolated !== 'boolean'
-        || typeof input.data.reachesProduction !== 'boolean' || typeof input.requestPreapproval !== 'boolean' || typeof input.headed !== 'boolean') {
-        throw new RefusalError('browser data and debugger posture must be explicit')
+        || typeof input.data.reachesProduction !== 'boolean' || typeof input.requestPreapproval !== 'boolean') {
+        throw new RefusalError('browser data posture must be explicit')
     }
     if (input.requestPreapproval && (input.data.mode === 'restored' || !input.data.isolated || input.data.reachesProduction)) {
         throw new RefusalError('browser preapproval requires isolated empty or seeded data with no production reach')
@@ -187,11 +183,10 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     const projection = {
         configurationPath: authority.source,
         connection,
-        runner: { image: input.images.runner.reference, project: {
+        project: {
             lockfile: input.project.lockfile, sha256: input.project.sha256, driverVersion: input.project.driverVersion,
             ...(input.project.manifest === undefined ? {} : { manifest: input.project.manifest, manifestSha256: input.project.manifestSha256! }),
         },
-            ...(connection.kind === 'remote' ? { endpoint: connection.endpoint } : {}) },
         mcp: { image: input.images.mcp.reference, ...(connection.kind === 'remote' ? { endpoint: connection.endpoint } : {}) },
         server: { ...proxy.server, maxClients: browserClientLimit(input.maxClients, input.authentication.policy), engine, headless: true as const },
         proxy: proxy.proxy,
@@ -200,11 +195,11 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         authentication: signedOut
             ? { posture: signedOut, policy: 'none' as const, states: [] }
             : { posture: 'real' as const, policy: input.authentication.policy, states: states.map((state) => ({ ...state })), claim: input.authentication.policy === 'serialized' ? 'exclusive' as const : 'per-worker' as const },
-        debugger: input.headed ? { enabled: true as const, separate: true as const, artifactRoot: input.artifacts.debugger } : { enabled: false as const },
         preapproval: input.requestPreapproval ? 'eligible' as const : 'not-requested' as const,
         networkExposure: networkExposure.value,
         ...(networkExposure.reason ? { networkExposureReason: networkExposure.reason } : {}),
         generatedHostPaths: paths,
+        cliArtifactRoot: input.artifacts.cli,
     }
     issuedRuntimes.set(projection, Object.freeze({ storage: Object.freeze(storage), stackId: authority.stackId,
         executable: connection.kind === 'local-fallback',
@@ -259,7 +254,6 @@ export function bindBrowserRuntimePortLease(runtime: BrowserRuntimeProjection,
     const rebound = {
         ...runtime,
         connection: { kind: 'remote' as const, endpoint, launchLocal: false as const },
-        runner: { ...runtime.runner, endpoint },
         mcp: { ...runtime.mcp, endpoint },
         proxy: { ...runtime.proxy, port: selected[1],
             allowedHosts: runtime.proxy.allowedHosts.map(authority) },

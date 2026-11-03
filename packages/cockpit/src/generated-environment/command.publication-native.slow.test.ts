@@ -233,9 +233,8 @@ describe('public surface publication transaction', () => {
             } }) + '\n'
             const manifestBytes = JSON.stringify({ dependencies: { '@playwright/test': '1.2.3' } })
             const projectSha256 = digest(lockBytes)
-            const runnerImage = `synthetic.invalid/browser-runner@sha256:${'a'.repeat(64)}`
             const mcpImage = `synthetic.invalid/browser-mcp@sha256:${'b'.repeat(64)}`
-            const artifactPaths = ['.browser/runner', '.browser/mcp', '.browser/cli', '.browser/auth', '.browser/debugger']
+            const artifactPaths = ['.browser/mcp', '.browser/cli', '.browser/auth']
             await writeFile(join(fixture.root, 'app/package-lock.json'), lockBytes)
             await writeFile(join(fixture.root, 'app/package.json'), manifestBytes)
             await writeFile(join(fixture.root, 'browser.mcp.json'), JSON.stringify({ mcpServers: {
@@ -268,7 +267,7 @@ playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i
 [browser]
 engine = "chromium"
 harnesses = [{ target = "claudecode", version = "2.1.220" }, { target = "codexcli", version = "0.149.0" }${variant.openCode ? ', { target = "opencode", version = "1.18.15" }' : ''}]
-images = { runner = { reference = ${JSON.stringify(runnerImage)}, driver_version = "1.2.3" }, mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
+images = { driver_version = "1.2.3" }, mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
 project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(digest(manifestBytes))}, lockfile = "app/package-lock.json", sha256 = ${JSON.stringify(projectSha256)}, driver_version = "1.2.3" }
 max_clients = 4
 proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
@@ -276,8 +275,7 @@ resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
 authentication = ${variant.serialized ? '{ policy = "serialized", states = [{ worker = "shared", path = ".browser/auth/shared.json" }] }' : '{ policy = "none", states = [] }'}
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
-headed = true
-artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth", debugger = ".browser/debugger" }
+artifacts = { mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth" }
 
 [testing]
 stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]

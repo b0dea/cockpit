@@ -42,7 +42,7 @@ const validConfig = [
     '',
 ].join('\n')
 
-const browserArtifactPaths = ['.browser/runner', '.browser/mcp', '.browser/cli', '.browser/auth', '.browser/debugger']
+const browserArtifactPaths = ['.browser/mcp', '.browser/cli', '.browser/auth']
 const workEnvironmentConfig = `${validConfig.replace(
     'purpose = "Synthetic API"',
     'purpose = "Synthetic API"\nenvironment_files = [{ template = ".env.example", instance = ".env" }]',
@@ -66,7 +66,7 @@ generated_host_paths = ${JSON.stringify(browserArtifactPaths)}
 
 [browser]
 harnesses = [{ target = "codexcli", version = "0.149.0" }]
-images = { runner = { reference = "synthetic.invalid/runner@sha256:${'a'.repeat(64)}", driver_version = "1.2.3" }, mcp = { reference = "synthetic.invalid/mcp@sha256:${'b'.repeat(64)}", driver_version = "1.2.3" } }
+images = { mcp = { reference = "synthetic.invalid/mcp@sha256:${'b'.repeat(64)}", driver_version = "1.2.3" } }
 project = { lockfile = "package-lock.json", sha256 = "${'c'.repeat(64)}", driver_version = "1.2.3" }
 max_clients = 1
 proxy = { server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
@@ -74,8 +74,7 @@ resolver = []
 authentication = { policy = "none", states = [] }
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
-headed = false
-artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth", debugger = ".browser/debugger" }
+artifacts = { mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth" }
 
 [testing]
 stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]
@@ -310,7 +309,7 @@ cold_start_seconds = 30
                 networkExposure: '<loopback>',
                 maxClients: 1,
                 data: { mode: 'empty', isolated: true, reachesProduction: false },
-                artifacts: { runner: '.browser/runner', mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth', debugger: '.browser/debugger' },
+                artifacts: { mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth' },
             },
             testing: { nativeHookInstall: 'inspect', declarations: { stages: [{ id: 'unit', command: ['npm', 'test'], requiresStack: false }] } },
         })
