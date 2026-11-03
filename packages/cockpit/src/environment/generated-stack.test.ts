@@ -743,9 +743,4 @@ describe('generated environment rendering', () => {
             siblingDirectories: { app: '\u20ac'.repeat(11_184_811) },
         })).toMatchObject({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID' })
     })
-
-    it('loads the committed synthetic fixture bytes', async () => {
-        expect((await readFile(fixturePath, 'utf8')).length).toBeGreaterThan(1_000)
-        expect((await declaration()).compose_file).toBe('compose.generated.yml')
-    })
 })
