@@ -10,7 +10,7 @@ import { realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { readAnchoredBatches } from '../generated-environment/transaction.js'
-import { snapshotExecutionStep, type Diagnostic, type ExecutionStep, hasErrorCode } from './contract.js'
+import { snapshotExecutionStep, type Diagnostic, type ENVIRONMENT_CODES, type ExecutionStep, hasErrorCode } from './contract.js'
 import type { ResolvedExecutable } from './executable.js'
 import { redactSensitiveText } from './sensitive.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -349,8 +349,8 @@ export interface ComposeTopologyDeclarations {
     readonly projectDirectory: string
     readonly portVariables: readonly string[]
     readonly siblings: readonly ComposeSiblingMount[]
-    /** The absolute `environment.generated_host_paths`, which `up` hands to containers beside the checkouts. */
-    readonly hostPaths: readonly string[]
+    /** The `environment.generated_host_paths`, as declared and absolute, which `up` hands to containers beside the checkouts. */
+    readonly hostPaths: readonly Readonly<{ declared: string; path: string }>[]
 }
 
 /**
@@ -369,7 +369,7 @@ export async function assessComposeTopology(
     // generated host path, and every such checkout is mounted; check judges the same binds the same
     // way, or a configuration check accepts refuses every runtime command.
     const always = declarations.siblings.filter(sibling => sibling.mount === 'always')
-    const declared = [...always.map(sibling => sibling.path), ...declarations.hostPaths]
+    const declared = [...always.map(sibling => sibling.path), ...declarations.hostPaths.map(({ path }) => path)]
     const variables = Object.fromEntries(declarations.siblings.map(sibling => [sibling.var, sibling.path]))
     const binds = services.flatMap(service => service.mountSources.map(source => ({
         service: service.id, source, path: composeBindPath(source, declarations.projectDirectory, variables) })))
@@ -383,6 +383,15 @@ export async function assessComposeTopology(
             severity: 'error' as const, code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: `sibling:${sibling.slug}`,
             message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path} or a directory inside it; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
             fix: `bind-mount it in a service of the Compose file, whole or a directory inside it (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run ${cockpitCommand('sync')}`,
+        }))
+    }
+    for (const hostPath of declarations.hostPaths) {
+        if (!missing.includes(hostPath.path)) continue
+        diagnostics.push(Object.freeze({
+            severity: 'error' as const, code: 'GENERATED_HOST_PATH_UNMOUNTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_PATH_UNMOUNTED,
+            target: `environment.generated_host_paths:${hostPath.declared}`,
+            message: `environment.generated_host_paths lists ${hostPath.declared}, but no Compose service bind-mounts ${hostPath.path} or a path inside it; up admits a stack only when every declared host path is mounted, so it would refuse to start`,
+            fix: `bind-mount ${hostPath.declared} in a service of the Compose file, or remove "${hostPath.declared}" from environment.generated_host_paths in cockpit.toml; then run ${cockpitCommand('check')}`,
         }))
     }
     for (const bind of binds) {

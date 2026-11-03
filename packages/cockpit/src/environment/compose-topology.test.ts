@@ -51,11 +51,14 @@ describe('compose topology mount posture', () => {
         expect(await mountCodes(root, [join(root, 'api'), '${CACHE_DIR:-../elsewhere}'])).toEqual([undeclared('${CACHE_DIR:-../elsewhere}')])
         // A mount = "none" sibling is not handed to containers, so a bind inside it is undeclared too.
         expect(await mountCodes(root, [join(root, 'api')], 'none')).toEqual([undeclared(join(root, 'api'))])
-        // A declared generated host path is admitted exactly where up admits it.
-        expect((await assessComposeTopology([service([join(root, 'api'), join(outside, 'seed.sql')])], {
-            projectDirectory: root, portVariables: [], hostPaths: [join(outside, 'seed.sql')],
+        // A declared generated host path (here relative to a cockpit at `outside`) is admitted exactly
+        // where up admits it, and refused, as up refuses it, when no service binds it.
+        const withHostPath = async (mountSources: readonly string[]) => (await assessComposeTopology([service(mountSources)], {
+            projectDirectory: root, portVariables: [], hostPaths: [{ declared: 'seed.sql', path: join(outside, 'seed.sql') }],
             siblings: [{ slug: 'shop', var: 'SHOP_DIR', mount: 'always', path: root }],
-        })).map(row => row.code)).toEqual([])
+        })).map(row => [row.code, row.target])
+        expect(await withHostPath([join(root, 'api'), join(outside, 'seed.sql')])).toEqual([])
+        expect(await withHostPath([join(root, 'api')])).toEqual([['GENERATED_HOST_PATH_UNMOUNTED', 'environment.generated_host_paths:seed.sql']])
     })
 })
 

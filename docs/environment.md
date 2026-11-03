@@ -97,6 +97,9 @@ Mounts must match the declaration in both directions:
   `"${WORKER_DIR}/src:/app"`, through a path relative to the first Compose file's directory, as in
   `"./worker:/srv/worker"` from a `compose.yml` in the cockpit root, or set `mount = "none"` on the
   row.
+- Each `environment.generated_host_paths` entry must be bind-mounted the same way, or `check` fails
+  with `GENERATED_HOST_PATH_UNMOUNTED`. A generated stack is held to this too: an entry that no
+  generated service mounts and that is not a `[browser]` artifact root hands nothing to a container.
 - A container gets only what `cockpit.toml` declares. A bind outside every `mount = "always"`
   sibling and every `environment.generated_host_paths` entry, or one that leaves its sibling
   through a symbolic link, fails `check` with `COMPOSE_BIND_UNDECLARED`, and `up` refuses it.
