@@ -270,16 +270,17 @@ applied silently. `npm update` does not move the exact pin, so install the new r
 
 `npx --no cockpit upgrade --config cockpit.toml` does steps 1 and 3 in one go: it installs the latest
 release (or `upgrade <version>`) with the package manager the lockfile names, runs `sync` in a new
-process and prints the `Upgrade:` lines. An agent may run it (`--dry-run` previews); if sync reports
-stale removals needing approval, a human runs `sync --interactive` in a terminal. The steps below are the same path by hand.
+process and prints the `Upgrade:` lines. An agent may run it where `[autonomy] sync = "agent"`, the
+default; otherwise the guard asks, and `--dry-run` previews either way. If sync reports stale removals
+needing approval, a human runs `sync --interactive` in a terminal. The steps below are the same path by hand.
 
 1. Run `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
 2. Preview the generated changes without writing:
    `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run`.
-3. A human runs `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal and approves the exact
-   stale-removal digest when the upgrade renamed or retired an owned surface. The guard blocks an agent from
-   regenerating its own guard, so do not try to route around it; ask the human to run it.
+3. Under `[autonomy] sync = "agent"` run `./node_modules/.bin/cockpit sync --config cockpit.toml`. Otherwise, or when it
+   asks to approve a stale-removal digest, a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a
+   terminal and types that digest. Do not try to route around the guard; ask the human to run it.
 4. Review the diff. A hand edit to a skill, agent settings file or cockpit-owned region stops sync with a conflict (`SURFACE_STATE_CONFLICT`):
    move that change into a `[surfaces].overlays` entry instead of editing the generated file. An upgrade that
    changes something you overrode reports `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your

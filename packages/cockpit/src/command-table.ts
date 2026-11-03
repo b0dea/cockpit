@@ -282,10 +282,10 @@ export const commands: readonly CommandDefinition[] = [
         usage: '[<version>] [options]',
         handler: 'upgrade',
         visibility: 'public',
-        // The install is exact and sync keeps its own refusals (stale removals need a digest), so an agent
-        // may run the real upgrade; the version is the one positional.
+        // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
+        // exactly where [autonomy] sync lets it sync; the version is the one positional.
         ordinary: ordinary('upgrade', { config: configured.config, 'dry-run': flag }, {
-            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }) }),
+            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }), requires: 'autonomy-sync' }),
         options: {
             config: { type: 'string' },
             'dry-run': { type: 'boolean', default: false },
@@ -600,7 +600,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     const available: OrdinaryCommandMetadata | undefined = definition?.ordinary
     if (!definition || definition.visibility !== 'public' || available?.availability !== 'available') return undefined
     const grammar = available
-    if (grammar.requires !== undefined && !source.grants.includes(grammar.requires)) return undefined
     const paths = new Set<string>()
     const confined = (path: string) => {
         if (!path || path.includes('\\') || path.split('/').includes('..') || /[*?\[\]]/.test(path)) return false
@@ -654,6 +653,8 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : grammar.positional.roles[index] === 'version' ? !EXACT_VERSION.test(word)
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
+        // A dry run writes nothing, so no grant gates it.
+        || grammar.requires !== undefined && !options.has('dry-run') && !source.grants.includes(grammar.requires)
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
     return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]),
         ...(reads.length ? { reads: Object.freeze(reads) } : {}) })

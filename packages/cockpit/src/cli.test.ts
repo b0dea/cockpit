@@ -210,7 +210,7 @@ describe('closed ordinary invocation metadata', () => {
         }
     })
 
-    // The install is exact and sync keeps its own stale-removal refusal, so an agent may run the real upgrade.
+    // The install is exact and its sync child decides as sync does, so an agent with the sync grant may run the real upgrade.
     it('admits the real upgrade, with or without one exact version', () => {
         for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run']]) {
             expect(ordinary(['upgrade', ...extra, '--config', authority.configPath]), extra.join(' ')).toBeDefined()
@@ -262,13 +262,19 @@ describe('closed ordinary invocation metadata', () => {
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
             }
         }
-        // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync
-        // or an applied reset only where [autonomy] gives the decision to the agent.
-        for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset']] as const) {
+        // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync, an
+        // upgrade (whose sync child writes) or an applied reset only where [autonomy] gives the decision to
+        // the agent. A dry run writes nothing, so no grant gates it.
+        const resolve = (argv: readonly string[], source: Parameters<typeof resolveOrdinaryInvocation>[1]) => resolveOrdinaryInvocation({ executable: authority.executable,
+            cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, source, () => true)
+        for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['upgrade'], 'autonomy-sync'],
+            [['upgrade', '1.2.3'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset']] as const) {
             const without = { ...authority, grants: authority.grants.filter(row => row !== grant) }
-            expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, authority, () => true), argv.join(' ')).toBeDefined()
-            expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, without, () => true), argv.join(' ')).toBeUndefined()
+            expect(resolve(argv, authority), argv.join(' ')).toBeDefined()
+            expect(resolve(argv, without), argv.join(' ')).toBeUndefined()
         }
+        const noSync = { ...authority, grants: authority.grants.filter(row => row !== 'autonomy-sync') }
+        for (const argv of [['sync', '--dry-run'], ['upgrade', '--dry-run'], ['upgrade', '1.2.3', '--dry-run']]) expect(resolve(argv, noSync), argv.join(' ')).toBeDefined()
         for (const executable of ['cockpit', '/other/cockpit', 'bash']) expect(ordinary(['check', '--config', authority.configPath], { executable })).toBeUndefined()
         expect(ordinary(['check', '--config', authority.configPath], { cwd: '/workspace/app' })).toBeUndefined()
         expect(ordinary(['sh', '-c', 'cockpit check', '--config', authority.configPath])).toBeUndefined()

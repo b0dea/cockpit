@@ -2119,7 +2119,7 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 const AGENT_COCKPIT_COMMANDS = [
     'check *', 'doctor *', 'preflight *', 'logs *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'runtime measure *', 'test-run *',
     'work status *', 'work accept *', 'work check *', 'work note *', 'work answer *', 'work grade *', 'work signoff *', 'work recover *',
-    'work verify *', 'grade *',
+    'work verify *', 'grade *', 'upgrade *',
     'browser drive *', 'browser screenshot *',
 ] as const
 

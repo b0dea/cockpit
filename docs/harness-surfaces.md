@@ -410,14 +410,15 @@ npx --no cockpit upgrade --config cockpit.toml --dry-run  # resolve the target, 
 than the installed version unless you name it, detects the package manager from the one lockfile at
 the cockpit root (`package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`), installs the exact version as
 a dev dependency, then runs `npx --no cockpit sync --config <path>` in a new process so the new
-version renders. Sync's output and exit code pass through, so its own refusals stand: when it asks to
-approve stale removals, run `sync --interactive` in a terminal. It ends by printing the `Upgrade:`
+version renders. Sync's output and exit code pass through, so its own decisions stand: it removes
+stale generated files under `[autonomy] stale_delete = "agent"`, and otherwise asks for the digest a
+person types with `sync --interactive` in a terminal. It ends by printing the `Upgrade:`
 lines from the installed `CHANGELOG.md` between the two versions (a line there names a step `sync`
 does not do), or the npm page when the package has no changelog.
 
-An agent may run `upgrade`, with or without `--dry-run`: it installs an exact version and its `sync`
-child keeps its own refusals, so removing stale generated files still needs the digest a person
-approves with `sync --interactive`. Until `sync` finishes, the guard holds every agent tool call,
+An agent may run `upgrade` exactly where it may run a writing `sync`: under `[autonomy] sync =
+"agent"`, the default. Under `person` or `ci` the guard asks, as it does for `sync`, and the sync child
+refuses outside CI under `ci`. `upgrade --dry-run` writes nothing, so it is never gated. Until `sync` finishes, the guard holds every agent tool call,
 because it trusts only the cockpit it was generated for. A built-in that one of your overlays replaces and that the new release
 changed is reported as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override
 before updating its recorded hash. Then review `git diff` and commit `package.json`, the lockfile and
