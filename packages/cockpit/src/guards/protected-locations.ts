@@ -5,6 +5,7 @@
 // the filesystem and asks Git, and decides nothing; the guard application filters these facts into the
 // policy and the evaluator turns them into hard denials.
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { readBoundedFile } from '../bounded-read.js'
 import { basename, dirname, join, posix, relative } from 'node:path'
 
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
@@ -301,12 +302,17 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
     }
     for (const entry of [...listed, ...ignored]) if (foldGuardSpelling(basename(entry)) === '.gitignore') ignoreFiles.add(join(repository, entry))
     for (const file of ignoreFiles) {
-        let status
-        try { status = lstatSync(file) } catch (error) { if (missing(error)) continue; throw error }
-        if (!status.isFile() || status.size > IGNORE_FILE_BYTES) return undefined
+        // A symbolic link or non-regular file is not proven to say the same to Git and ripgrep, and an oversized one is not read.
+        let read
+        try { read = readBoundedFile(file, IGNORE_FILE_BYTES) } catch (error) {
+            if (missing(error)) continue
+            if (['ELOOP', 'EISDIR', 'ENXIO'].includes((error as NodeJS.ErrnoException).code ?? '')) return undefined
+            throw error
+        }
+        if (read.kind === 'too-large') return undefined
         // ripgrep stops reading an ignore file at its first line that is not UTF-8; Git reads on.
         let text: string
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(file)) } catch (error) {
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch (error) {
             if (error instanceof TypeError && (error as NodeJS.ErrnoException).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') return undefined
             throw error
         }

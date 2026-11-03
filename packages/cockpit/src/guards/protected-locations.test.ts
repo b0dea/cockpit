@@ -124,6 +124,10 @@ describe('guard protected locations', () => {
         }
         rmSync(join(root, 'config/.gitignore'))
         write('.gitignore', '.env\nnode_modules\n')
+        // An ignore file past the read bound is not read, so nothing is proven about what it hides.
+        write('.gitignore', `.env\nnode_modules\n${'#'.repeat(1_048_576)}\n`)
+        expect(await unignored('.')).toBeUndefined()
+        write('.gitignore', '.env\nnode_modules\n')
         // So below such a directory ripgrep reads one Git ignores whole, whatever it holds.
         write('lib/node_modules/pkg/.env')
         mkdirSync(join(root, 'lib/.jj'))
