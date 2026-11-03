@@ -139,14 +139,10 @@ vi.mock('./executable.js', async (importOriginal) => ({
 
 vi.mock('node:fs/promises', () => ({
     realpath: vi.fn(async (path: string) => path),
-    lstat: vi.fn(async () => ({ isFile: () => true, isSymbolicLink: () => false,
-        size: Buffer.byteLength(controls.composeSource ?? 'services: {}'), dev: 1, ino: 2 })),
-    open: vi.fn(async () => ({
-        stat: vi.fn(async () => ({ isFile: () => true,
-            size: Buffer.byteLength(controls.composeSource ?? 'services: {}'), dev: 1, ino: 2, mtimeMs: 1 })),
-        readFile: vi.fn(async () => Buffer.from(controls.composeSource ?? 'services: {}')),
-        close: vi.fn(async () => undefined),
-    })),
+}))
+
+vi.mock('../bounded-read.js', () => ({
+    readBoundedFile: vi.fn(() => ({ kind: 'complete', bytes: Buffer.from(controls.composeSource ?? 'services: {}') })),
 }))
 
 vi.mock('./state.js', async (importOriginal) => ({

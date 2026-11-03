@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
+import { lstatSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
@@ -15,6 +15,7 @@ import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harn
 import { collectMcpDeclarations, mcpApprovalDigest, type McpDeclaration } from '../surfaces/mcp.js'
 import { isPackageDescendant } from './package-paths.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
+import { readBoundedFile } from '../bounded-read.js'
 
 export type BrowserTestPackage = Readonly<{
     directory: string
@@ -138,25 +139,12 @@ const digest = (bytes: string | Uint8Array): string => createHash('sha256').upda
 const MAX_SCREENSHOT_BYTES = 8_388_608
 const COMMAND_TIMEOUT_MS = 30_000
 function observedFile(path: string, maxBytes: number): Buffer {
-    let descriptor: number | undefined
     try {
-        if (realpathSync(path) !== path) throw new RefusalError('noncanonical path')
-        descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-        const before = fstatSync(descriptor)
-        if (!before.isFile() || before.nlink !== 1 || before.size > maxBytes) throw new RefusalError('unbounded file')
-        const buffer = Buffer.alloc(maxBytes + 1)
-        let length = 0
-        while (length < buffer.length) {
-            const read = readSync(descriptor, buffer, length, buffer.length - length, null)
-            if (read === 0) break
-            length += read
-        }
-        const bytes = buffer.subarray(0, length)
-        const after = fstatSync(descriptor)
-        if (bytes.length > maxBytes || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new RefusalError('changed file')
-        return bytes
+        if (realpathSync(path) !== path || lstatSync(path).nlink !== 1) throw new RefusalError('noncanonical path')
+        const read = readBoundedFile(path, maxBytes)
+        if (read.kind !== 'complete') throw new RefusalError('unbounded file')
+        return read.bytes
     } catch { throw new RefusalError('browser test package file is missing, changed, noncanonical or exceeds its read bound') }
-    finally { if (descriptor !== undefined) closeSync(descriptor) }
 }
 
 function observedBytes(path: string, maxBytes: number): string {

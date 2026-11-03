@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
-import { lstat, open, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'smol-toml'
 import {
@@ -16,41 +15,14 @@ import {
 import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
 import { CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 import { formatShellCommand } from '../fix-catalogue.js'
+import { readBoundedFile, type BoundedRead } from '../bounded-read.js'
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
 
-export type BoundedInputRead =
-    | Readonly<{ kind: 'complete'; bytes: Buffer }>
-    | Readonly<{ kind: 'too-large' }>
+export type BoundedInputRead = BoundedRead
 
 export async function readBoundedInput(path: string): Promise<BoundedInputRead> {
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    try {
-        const opened = await file.stat()
-        if (!opened.isFile()) throw Object.assign(new RefusalError('structured input is not a regular file'), { code: 'EISDIR' })
-        if (opened.size > STRUCTURED_INPUT_BYTE_LIMIT) return { kind: 'too-large' }
-        const buffer = Buffer.allocUnsafe(STRUCTURED_INPUT_BYTE_LIMIT + 1)
-        let offset = 0
-        while (offset < buffer.length) {
-            const read = await file.read(buffer, offset, buffer.length - offset, offset)
-            if (read.bytesRead === 0) break
-            offset += read.bytesRead
-        }
-        if (offset > STRUCTURED_INPUT_BYTE_LIMIT) return { kind: 'too-large' }
-        const openedAfter = await file.stat()
-        const namedAfter = await lstat(path)
-        if (
-            openedAfter.dev !== opened.dev || openedAfter.ino !== opened.ino
-            || openedAfter.size !== opened.size || openedAfter.mtimeMs !== opened.mtimeMs || openedAfter.ctimeMs !== opened.ctimeMs
-            || namedAfter.isSymbolicLink() || !namedAfter.isFile()
-            || namedAfter.dev !== opened.dev || namedAfter.ino !== opened.ino
-            || namedAfter.size !== opened.size || namedAfter.mtimeMs !== opened.mtimeMs || namedAfter.ctimeMs !== opened.ctimeMs
-            || offset !== opened.size
-        ) throw Object.assign(new RefusalError('structured input changed while reading'), { code: 'EIO' })
-        return { kind: 'complete', bytes: Buffer.from(buffer.subarray(0, offset)) }
-    } finally {
-        await file.close()
-    }
+    return readBoundedFile(path, STRUCTURED_INPUT_BYTE_LIMIT)
 }
 
 declare const loadedConfigProjectionBrand: unique symbol

@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
-import { lstat, open, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, consumeLoadedConfigProjection, type ConsumedLoadedConfig } from '../config/load.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -37,6 +36,7 @@ import {
     type JsonValue,
 } from './evidence.js'
 import { readState, type StateNamespace, type StateRecord } from './state.js'
+import { readBoundedFile } from '../bounded-read.js'
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const DEFAULT_OUTPUT_LIMIT = 1_048_576
@@ -155,18 +155,12 @@ async function composeArtifact(root: string, reference: string): Promise<Compose
     if (typeof reference !== 'string' || reference.length === 0 || reference.includes('\0')) return undefined
     const expected = resolve(root, reference)
     if (!confined(root, expected)) return undefined
-    let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
         const canonicalPath = await realpath(expected)
         if (canonicalPath !== expected) return undefined
-        const before = await lstat(canonicalPath)
-        if (!before.isFile() || before.isSymbolicLink() || before.size > COMPOSE_BYTE_LIMIT) return undefined
-        handle = await open(canonicalPath, constants.O_RDONLY | constants.O_NOFOLLOW)
-        const opened = await handle.stat()
-        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > COMPOSE_BYTE_LIMIT) return undefined
-        const bytes = await handle.readFile()
-        const after = await handle.stat()
-        if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return undefined
+        const read = readBoundedFile(canonicalPath, COMPOSE_BYTE_LIMIT)
+        if (read.kind !== 'complete') return undefined
+        const bytes = read.bytes
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
         return {
             reference,
@@ -177,8 +171,6 @@ async function composeArtifact(root: string, reference: string): Promise<Compose
     } catch {
         // An artifact that cannot be read carries no authority; callers refuse it as unavailable compose artifacts.
         return undefined
-    } finally {
-        try { await handle?.close() } catch { /* An unreadable artifact carries no authority. */ }
     }
 }
 

@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { constants } from 'node:fs'
-import { lstat, open, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
@@ -72,6 +71,7 @@ import {
     withSetupCheckoutProjection,
 } from './setup-observation.js'
 import { selectStateRoot } from './state.js'
+import { readBoundedFile } from '../bounded-read.js'
 
 const OWNER = 'lifecycle-adapter-composition'
 
@@ -265,18 +265,12 @@ async function composeArtifact(root: string, reference: string, expectedSha256?:
     if (typeof reference !== 'string' || reference.length === 0 || reference.includes('\0')) return undefined
     const expected = resolve(root, reference)
     if (!confined(root, expected)) return undefined
-    let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
         const canonicalPath = await realpath(expected)
         if (canonicalPath !== expected) return undefined
-        const before = await lstat(canonicalPath)
-        if (!before.isFile() || before.isSymbolicLink() || before.size > COMPOSE_BYTE_LIMIT) return undefined
-        handle = await open(canonicalPath, constants.O_RDONLY | constants.O_NOFOLLOW)
-        const opened = await handle.stat()
-        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > COMPOSE_BYTE_LIMIT) return undefined
-        const bytes = await handle.readFile()
-        const after = await handle.stat()
-        if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return undefined
+        const read = readBoundedFile(canonicalPath, COMPOSE_BYTE_LIMIT)
+        if (read.kind !== 'complete') return undefined
+        const bytes = read.bytes
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
         const sha256 = createHash('sha256').update(bytes).digest('hex')
         if (expectedSha256 !== undefined && sha256 !== expectedSha256) return undefined
@@ -284,8 +278,6 @@ async function composeArtifact(root: string, reference: string, expectedSha256?:
     } catch {
         // Callers treat any unreadable or changed artifact as no file authority and refuse or report unavailable.
         return undefined
-    } finally {
-        try { await handle?.close() } catch { /* No file authority survives an unavailable artifact. */ }
     }
 }
 
