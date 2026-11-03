@@ -101,8 +101,7 @@ inspects; a process outside the guard can still replace a record.
 ## Who passes each gate
 
 <!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each step: `accept`, `amend` (accepting a changed
-contract), `answer` and `signoff`. The defaults are `person`, `person`, `person` and `agent`;
-`[autonomy] preset = "agent"` defaults every unset gate to `agent`.
+contract), `answer` and `signoff`. The defaults are all `agent`.
 
 | Value | What happens |
 | --- | --- |

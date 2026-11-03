@@ -319,7 +319,7 @@ shell commands only.
 ## Who decides
 
 `[autonomy]` and `[work.gates]` in `cockpit.toml` say who takes each decision cockpit gates: `agent`,
-`person` or `ci`. `[autonomy] preset = "agent"` defaults every field they leave unset to `agent`.
+`person` or `ci`. Every field defaults to `agent` except `reset`, which defaults to `person`.
 `[work] grading` says how a work order earns done; the work-order fields are described in
 [Who passes each gate](work-and-browser.md#who-passes-each-gate).
 

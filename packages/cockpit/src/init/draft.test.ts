@@ -578,6 +578,9 @@ describe('document source classification', () => {
         expect(artifact.match(/no profile and no make target in purpose/g)).toHaveLength(2)
         expect(artifact.indexOf('sibling.first.mount')).toBeLessThan(artifact.indexOf('sibling.second.mount'))
         expect(artifact.indexOf('slug = "first"')).toBeLessThan(artifact.indexOf('slug = "second"'))
+        // Every decision shows its default as a comment, reset being the one a person keeps by default.
+        expect(artifact).toContain('# [work.gates]\n# accept = "agent"')
+        expect(artifact).toContain('# reset = "person"')
     })
 
     it('never exposes a skipped source row or lets the command module write files', async () => {

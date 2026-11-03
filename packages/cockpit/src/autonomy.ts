@@ -20,16 +20,15 @@ export interface EffectivePolicy {
     readonly autonomy: Readonly<Record<AutonomyDecision, Decider>>
 }
 
-// The owner's defaults: an agent runs cockpit end to end except where stack data is lost or a work
-// contract is set, and a team opts into person or CI gates field by field.
-const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'person', amend: 'person', answer: 'person', signoff: 'agent' })
-const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'agent' })
+// The owner's defaults: an agent runs cockpit end to end except where stack data is lost, and a team
+// opts into person or CI gates field by field.
+export const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' })
+export const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'agent' })
 
 export function effectivePolicy(config: Readonly<{ work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
     autonomy: Readonly<CockpitConfig['autonomy']> }>): EffectivePolicy {
-    const preset = config.autonomy.preset === 'agent'
     const pick = <K extends string>(declared: Partial<Record<K, Decider>>, defaults: Readonly<Record<K, Decider>>) => Object.fromEntries(
-        Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? (preset ? 'agent' : value)])) as Record<K, Decider>
+        Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? value])) as Record<K, Decider>
     return {
         grading: config.work.grading,
         gates: pick<WorkGate>(config.work.gates, GATE_DEFAULTS),
@@ -145,6 +144,6 @@ export function pinnedPolicyTables(text: string): Readonly<Record<string, unknow
         throw error
     }
     const autonomy = parsed.autonomy as Record<string, unknown> | undefined
-    const mcpByAgent = (autonomy?.mcp_approve ?? (autonomy?.preset === 'agent' ? 'agent' : AUTONOMY_DEFAULTS.mcp_approve)) === 'agent'
+    const mcpByAgent = (autonomy?.mcp_approve ?? AUTONOMY_DEFAULTS.mcp_approve) === 'agent'
     return { work: parsed.work, autonomy: parsed.autonomy, ...(mcpByAgent ? {} : { mcp: parsed.mcp }) }
 }

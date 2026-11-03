@@ -468,7 +468,7 @@ describe('work and browser declarations', () => {
         expect(Work.safeParse({ gates: { accept: 'ci', signoff: 'person' } }).success).toBe(true)
         expect(Work.safeParse({ gates: { accept: 'anyone' } }).success).toBe(false)
         expect(Work.safeParse({ gates: { merge: 'agent' } }).success).toBe(false)
-        expect(Autonomy.safeParse({ preset: 'agent', reset: 'ci', sync: 'person' }).success).toBe(true)
+        expect(Autonomy.safeParse({ reset: 'ci', sync: 'person' }).success).toBe(true)
         // An MCP approval is a digest a person records, which CI cannot add to.
         expect(Autonomy.safeParse({ mcp_approve: 'ci' }).success).toBe(false)
         expect(Autonomy.safeParse({ commit: 'agent' }).success).toBe(false)

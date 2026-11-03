@@ -366,7 +366,7 @@ describe('restriction expansion', () => {
         const lines = readFileSync(config, 'utf8').split('\n')
         const anchor = lines.find(line => line.trim() && lines.filter(other => other === line).length === 1)!
         expect(call('edit', { filePath: config, oldString: anchor, newString: `${anchor}\n` })).toMatchObject({ status: 0, stderr: '' })
-        expect(call('edit', { filePath: config, oldString: anchor, newString: `[autonomy]\npreset = "agent"\n\n${anchor}` }))
+        expect(call('edit', { filePath: config, oldString: anchor, newString: `[autonomy]\nreset = "agent"\n\n${anchor}` }))
             .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change [work], [work.gates] and [autonomy]') })
     }, 60_000)
 

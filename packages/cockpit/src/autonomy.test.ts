@@ -8,10 +8,10 @@ import { Autonomy, Work } from './schema.js'
 const policy = (autonomy: Record<string, string> = {}, work: Record<string, unknown> = {}) => effectivePolicy({ work: Work.parse(work), autonomy: Autonomy.parse(autonomy) })
 
 describe('autonomy policy', () => {
-    it('defaults to an agent everywhere but reset and setting a contract, and the agent preset fills every unset field', () => {
-        expect(policy()).toEqual({ grading: 'independent', gates: { accept: 'person', amend: 'person', answer: 'person', signoff: 'agent' },
+    it('defaults every decision to an agent but reset, and a declared field overrides its default', () => {
+        expect(policy()).toEqual({ grading: 'independent', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' },
             autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'agent' } })
-        expect(policy({ preset: 'agent', reset: 'ci' }, { gates: { signoff: 'person' } })).toEqual({ grading: 'independent',
+        expect(policy({ reset: 'ci' }, { gates: { signoff: 'person' } })).toEqual({ grading: 'independent',
             gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'person' },
             autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'agent' } })
     })
@@ -22,7 +22,7 @@ describe('autonomy policy', () => {
     })
 
     it('names every field moved toward the agent, and none moved away from it', () => {
-        const strict = policy({ sync: 'ci' }, { grading: 'independent', gates: { signoff: 'person' } })
+        const strict = policy({ sync: 'ci' }, { grading: 'independent', gates: { signoff: 'person', accept: 'person' } })
         const loose = policy({ sync: 'person' }, { grading: 'self', gates: { signoff: 'agent', accept: 'ci' } })
         expect(policyWeakening(strict, loose)).toEqual([
             { field: 'work.grading', from: 'independent', to: 'self' },

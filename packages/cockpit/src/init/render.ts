@@ -1,3 +1,4 @@
+import { AUTONOMY_DEFAULTS, GATE_DEFAULTS } from '../autonomy.js'
 import type { CockpitConfig, configurationDefaults, UNCONFIRMABLE_ANSWERS } from '../schema.js'
 import { emitGaps, emitToml, toSiblingRows } from '../emit.js'
 import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
@@ -23,6 +24,16 @@ export const UNCONFIRMED_FIX = 'confirm the value with whoever owns the product 
 function renderUnconfirmed(rows: readonly UnconfirmedAnswer[] = []): string {
     if (rows.length === 0) return ''
     return `${rows.map(row => `# Unconfirmed: ${unconfirmedReason(row)}.\n`).join('')}# To confirm: ${UNCONFIRMED_FIX}; until then doctor warns.\n`
+}
+
+/** Every decision with its default, commented out: flip one to "person" to take that decision yourself. */
+function renderDecisionDefaults(): string {
+    const table = (name: string, defaults: Readonly<Record<string, string>>) =>
+        [`# [${name}]`, ...Object.entries(defaults).map(([key, value]) => `# ${key} = "${value}"`)]
+    return `\n${[
+        '# Who takes each decision. All default to "agent" except reset; set one to "person" to take it yourself.',
+        ...table('work.gates', GATE_DEFAULTS), ...table('autonomy', AUTONOMY_DEFAULTS),
+    ].join('\n')}\n`
 }
 
 export interface Attribution {
@@ -94,6 +105,7 @@ export function renderIncompleteDocument(
         renderUnconfirmed(model.unconfirmed),
         emitGaps(model.gaps),
         emitToml(config as CockpitConfig),
+        renderDecisionDefaults(),
     ].join('')
 }
 
@@ -101,5 +113,5 @@ export function renderIncompleteDocument(
 export function renderCompleteDocument(
     config: CockpitConfig, schemaDirective: string, decisions: readonly string[] = [], unconfirmed: readonly UnconfirmedAnswer[] = [],
 ): string {
-    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${renderUnconfirmed(unconfirmed)}${emitToml(config)}`
+    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${renderUnconfirmed(unconfirmed)}${emitToml(config)}${renderDecisionDefaults()}`
 }

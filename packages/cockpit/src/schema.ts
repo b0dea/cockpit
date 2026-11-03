@@ -449,9 +449,9 @@ export type WorkGrading = typeof WORK_GRADING[number]
 
 const WorkGates = z
     .object({
-        accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = "agent".'),
-        amend: Decider.optional().describe('Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci.'),
-        answer: Decider.optional().describe('Who answers an open question on an order. Default person.'),
+        accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default agent.'),
+        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing or rewriting an accepted criterion always needs a person or ci.'),
+        answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
         signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
     })
     .strict()
@@ -478,7 +478,6 @@ export const Work = z
 
 export const Autonomy = z
     .object({
-        preset: z.enum(['agent']).optional().describe('agent: every decision this table and [work.gates] leave unset defaults to agent.'),
         sync: Decider.optional().describe('Who may run a sync that writes: agent, person or ci. Default agent.'),
         stale_delete: Decider.optional().describe('Who approves sync deleting files cockpit generated before and no longer generates. Default agent.'),
         reset: Decider.optional().describe('Who may apply a reset, which deletes stack data. Default person.'),

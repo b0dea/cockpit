@@ -103,7 +103,7 @@ describe('work-order lifecycle', () => {
     }, 120_000)
 
     it('records a self-reported closure only with the agent\'s verdict and note', async () => {
-        const root = await cockpit('[autonomy]\npreset = "agent"\n\n[work]\ngrading = "self"')
+        const root = await cockpit('[work]\ngrading = "self"')
         writeFileSync(join(root, 'workorders/WO-2.md'), order('WO-2', '  - id: AC1\n    text: The change reads well.'))
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-2'])).status).toBe(0)
         expect((await work(root, ['work', 'grade', '--work-order', 'WO-2'])).diagnostics[0]?.message).toMatch(/pass --verdict met\|unmet and --note/)
