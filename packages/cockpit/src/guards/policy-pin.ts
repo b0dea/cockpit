@@ -1,7 +1,8 @@
 // Owns the guard's pin on the autonomy policy: an agent tool call that would change cockpit.toml's
 // [work] (with [work.gates]) or [autonomy] table, or [mcp] while a person approves MCP servers, is a
 // hard denial. An edit, write or patch is applied to the current text and the tables compared; a
-// shell command that names the file and is not a proven read cannot be applied, so it is denied too.
+// shell command that names the file and is not a proven read, a Git record or cockpit's --config
+// operand cannot be applied, so it is denied too.
 // The decision is pure: the guard application supplies the current text and which targets are the
 // configuration under another name.
 import { posix } from 'node:path'
@@ -72,8 +73,9 @@ function proposedText(content: GuardFileContent, isConfig: (path: string) => boo
 }
 
 const GIT_RECORDING = new Set(['add', 'commit', 'diff', 'log', 'show', 'status', 'blame'])
+// Only the `git` the command search path finds: a path spelled `git` may be any program.
 function recordsWithoutWriting(invocation: ParsedInvocation): boolean {
-    if (invocation.executable === null || posix.basename(invocation.executable) !== 'git') return false
+    if (invocation.executable !== 'git') return false
     const words = invocation.argv
     for (let index = 0; index < words.length; index++) {
         const word = words[index]!
@@ -85,6 +87,25 @@ function recordsWithoutWriting(invocation: ParsedInvocation): boolean {
 }
 
 /**
+ * The invocations the pin judges. A cockpit session runs the words after its `--` as a command of
+ * its own, so that command is judged as one more invocation and the session by the words before it.
+ */
+function judgedInvocations(invocations: readonly ParsedInvocation[]): ParsedInvocation[] {
+    const judged: ParsedInvocation[] = []
+    const pending = [...invocations]
+    for (let invocation = pending.shift(); invocation; invocation = pending.shift()) {
+        const prefix = invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
+        const separator = prefix !== undefined && invocation.argv[prefix] === 'session' ? invocation.argv.indexOf('--', prefix) : -1
+        if (separator < 0) { judged.push(invocation); continue }
+        judged.push({ ...invocation, argv: invocation.argv.slice(0, separator) })
+        const command = invocation.argv.slice(separator + 1)
+        if (command.length) pending.push({ executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
+            words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) })
+    }
+    return judged
+}
+
+/**
  * The denial for a tool call that would change the pinned policy tables, or undefined. `isConfig`
  * says whether a lexically resolved path is the configuration, by spelling or by file identity.
  */
@@ -93,15 +114,23 @@ export function pinnedPolicyDenial(input: Readonly<{
 }>, current: string, isConfig: (path: string) => boolean): GuardDecision | undefined {
     const resolved = (cwd: string) => (path: string) => isConfig(posix.resolve(cwd, path))
     if (input.tool === 'Bash') {
-        for (const invocation of input.invocations) {
-            const named = invocation.redirects.some(redirect => redirect.write && resolved(invocation.cwd)(redirect.target))
-                || invocation.argv.some(resolved(invocation.cwd))
-            if (!named) continue
-            // A proven read leaves the file as it is, cockpit itself reads the file it is given with
-            // --config, and staging or committing it records the text the guard already checked.
-            if (!invocation.redirects.some(redirect => redirect.write) && (classifyReadOnlyInvocation(invocation)
-                || invocation.executable !== null && cockpitLauncherPrefix(invocation.executable, invocation.argv) !== undefined
-                || recordsWithoutWriting(invocation))) continue
+        for (const invocation of judgedInvocations(input.invocations)) {
+            const names = resolved(invocation.cwd)
+            // `--out=cockpit.toml` names the file as surely as a bare operand does.
+            const naming = invocation.argv.flatMap((word, index) => names(word) || word.includes('=') && names(word.slice(word.indexOf('=') + 1)) ? [index] : [])
+            const writes = invocation.redirects.some(redirect => redirect.write)
+            if (!naming.length && !invocation.redirects.some(redirect => redirect.write && names(redirect.target))) continue
+            // A proven read leaves the file as it is, and staging or committing it records the text the
+            // guard already checked.
+            if (!writes && (classifyReadOnlyInvocation(invocation) || recordsWithoutWriting(invocation))) continue
+            // Installed cockpit reads the file it is given with --config, but a path or `node <script>`
+            // spells any program as well as cockpit. Whether it starts cockpit is the evaluator's
+            // launcher proof, so only the --config operand is left to it; naming the file anywhere
+            // else is denied whatever the spelling starts.
+            const prefix = invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
+            const configOperand = (index: number) => prefix !== undefined && index >= prefix
+                && (invocation.argv[index]!.startsWith('--config=') || index > prefix && invocation.argv[index - 1] === '--config')
+            if (!writes && naming.every(configOperand)) continue
             return denial(`Refusing a shell command that names the cockpit configuration: the guard cannot tell whether it changes ${PINNED}, which only a person changes. Edit other tables with your editing tool, which the guard can check.`)
         }
         return undefined

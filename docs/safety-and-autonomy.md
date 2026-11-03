@@ -333,7 +333,10 @@ shell commands only.
 `[work.gates]` or `[autonomy]`, or `[mcp]` while `mcp_approve` is `person`, is a hard denial. It
 applies the edit to the current text and compares the tables, so an edit elsewhere in the file stays
 permitted; an edit it cannot apply exactly, and a shell command that names the file and is not a
-proven read, are denied because the guard cannot show the tables unchanged. The pin holds only for the
+proven read, a Git record or the `--config` operand of a cockpit command, are denied because the guard
+cannot show the tables unchanged. A cockpit session's command after `--` is judged as a command of its
+own, and a path or `node <script>` spelling of cockpit is admitted only where the guard proves it
+starts the installed cockpit. The pin holds only for the
 tool calls the guard inspects.
 
 Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. A later sync that finds

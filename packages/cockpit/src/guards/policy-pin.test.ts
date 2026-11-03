@@ -48,10 +48,19 @@ describe('guard policy pin', () => {
         expect(edit('"', "'")).toBe('deny')
         expect(edit('[work]', '[work')).toBe('deny')
         expect(decide({ tool_name: 'Edit', tool_input: { file_path: config } })).toBe('deny')
-        for (const command of [`sed -i '' 's/person/agent/' ${config}`, `printf x >> ${config}`, `cp other.toml ${config}`]) {
+        // A path or `node <script>` may spell the installed cockpit, but only cockpit's own --config
+        // operand is left to the guard's launcher proof; any other naming may be a writer under that
+        // spelling, and a session's command is judged as a command of its own.
+        for (const command of [`sed -i '' 's/person/agent/' ${config}`, `printf x >> ${config}`, `cp other.toml ${config}`,
+            `/usr/bin/sed -i 's/reset = "person"/reset = "agent"/' cockpit.toml`, '/bin/cp other.toml cockpit.toml', 'node /tmp/w.js cockpit.toml',
+            "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml",
+            'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session -- cp other.toml cockpit.toml',
+            'node /tmp/w.js --out=cockpit.toml', './git add cockpit.toml']) {
             expect(decide({ tool_name: 'Bash', tool_input: { command } }), command).toBe('deny')
         }
-        for (const command of [`cat ${config}`, `git add ${config}`, 'git -C . diff -- cockpit.toml', 'printf x > notes.txt']) {
+        for (const command of [`cat ${config}`, `git add ${config}`, 'git -C . diff -- cockpit.toml', 'printf x > notes.txt',
+            'npx --no cockpit sync --config cockpit.toml', './node_modules/.bin/cockpit check --config=cockpit.toml',
+            'npx --no cockpit session --config cockpit.toml -- cat cockpit.toml']) {
             expect(decide({ tool_name: 'Bash', tool_input: { command } }), command).toBeUndefined()
         }
         // A hard link or another spelling of the configuration is the configuration.

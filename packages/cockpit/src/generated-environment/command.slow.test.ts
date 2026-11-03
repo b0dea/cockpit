@@ -503,6 +503,12 @@ native_hooks = { install = "inspect" }
         expect(decision(command), command).toBe('ask')
     }
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
+    // A launcher spelling admits cockpit's own --config operand only; naming the configuration any
+    // other way, directly or as a session's command, is the policy pin's hard denial.
+    for (const command of [`/usr/bin/sed -i 's/sync = "person"/sync = "agent"/' cockpit.toml`, '/bin/cp app/package-lock.json cockpit.toml',
+        'node /tmp/w.js cockpit.toml', "npx --no cockpit session --config cockpit.toml -- sed -i '' 's/person/agent/' cockpit.toml"]) {
+        expect(decision(command), command).toBe('deny')
+    }
     // Bare cockpit counts only when the command search path finds the installed package.
     expect(decision('cockpit check --config cockpit.toml')).toBe('ask')
     expect(decision('cockpit check --config cockpit.toml', root, `${dirname(bin)}:${basePath}`)).toBe('allow')
