@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
+import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { parse as parseToml, TomlError } from 'smol-toml'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs, types as utilTypes } from 'node:util'
@@ -217,7 +218,17 @@ export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
     // The autonomy policy sync and reset decide by, read from cockpit.toml and the recorded policy.
     loadPolicy?: typeof loadOperatorPolicy
+    scaffoldCompose?: (input: ComposeScaffoldRequest) => Promise<CommandOutcome>
 }>
+
+/** A validated `init --scaffold-compose` request: the canonical cockpit root and what to write there. */
+export interface ComposeScaffoldRequest {
+    readonly root: string
+    readonly dir: string
+    readonly port: number
+    readonly command?: readonly string[]
+    readonly with: readonly ScaffoldBackingService[]
+}
 
 type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorWorkApplication' | 'loadPolicy'>
 
@@ -867,11 +878,56 @@ async function decodeUnattendedInit(values: {
     return { value: { previewSha256, answers, ...(defaultsSha256 === undefined ? {} : { defaultsSha256 }) } }
 }
 
+// A one-time write of a plain compose.yml the user then owns; it is not part of the init interview.
+async function decodeComposeScaffold(root: string | undefined, extraRoots: readonly string[],
+    values: ParsedCommandArguments['values']): Promise<Readonly<{ scaffold: ComposeScaffoldRequest }> | CommandOutcome> {
+    const allowed = new Set(['scaffold-compose', 'command', 'port', 'with', 'json'])
+    const stray = Object.keys(values).find(name => !allowed.has(name) && values[name] !== undefined && values[name] !== false)
+    if (!root || extraRoots.length || stray) return usageOutcome('CLI_USAGE_INVALID',
+        `init --scaffold-compose takes one root and only --command, --port, --with and --json${stray ? `, not --${stray}` : ''}`)
+    const port = Number(values.port)
+    if (typeof values.port !== 'string' || !/^\d{1,5}$/.test(values.port)) return usageOutcome('CLI_USAGE_INVALID',
+        'init --scaffold-compose needs --port, the port the app listens on inside its container', '--port')
+    const backing = typeof values.with === 'string' ? values.with.split(',').map(name => name.trim()).filter(Boolean) : []
+    const unknown = backing.find(name => !Object.hasOwn(SCAFFOLD_BACKING_SERVICES, name))
+    if (unknown) return usageOutcome('CLI_USAGE_INVALID',
+        `--with names ${JSON.stringify(unknown)}; the scaffold adds only ${Object.keys(SCAFFOLD_BACKING_SERVICES).join(' and ')}`, '--with')
+    const command = typeof values.command === 'string' ? values.command.trim().split(/\s+/).filter(Boolean) : undefined
+    let absoluteRoot: string
+    try { absoluteRoot = await realpath(resolve(root)) }
+    catch (error) { return usageOutcome('CLI_USAGE_INVALID', `init root must be an existing directory: ${errorCause(error)}`) }
+    return { scaffold: Object.freeze({ root: absoluteRoot, dir: String(values['scaffold-compose']), port,
+        ...(command?.length ? { command: Object.freeze(command) } : {}), with: Object.freeze(backing as ScaffoldBackingService[]) }) }
+}
+
+async function runComposeScaffold(request: ComposeScaffoldRequest): Promise<CommandOutcome> {
+    const { root: absoluteRoot, dir, port, command } = request
+    const present = async (name: string) => {
+        try { return (await lstat(join(absoluteRoot, dir, name))).isFile() } catch (error) {
+            if (hasErrorCode(error, 'ENOENT') || hasErrorCode(error, 'ENOTDIR')) return false
+            throw error
+        }
+    }
+    const rendered = renderComposeScaffold({ dir, dockerfile: await present('Dockerfile'), packageJson: await present('package.json'),
+        ...(command ? { command } : {}), port, with: request.with })
+    if (rendered.kind === 'refusal') return { artifact: null, destination: null, result: null, status: 2,
+        diagnostics: [{ severity: 'error', code: 'INIT_SCAFFOLD_INVALID', message: rendered.message, target: '--scaffold-compose', fix: rendered.fix }] }
+    const written = await writeComposeScaffold(absoluteRoot, rendered.bytes)
+    if (written.kind === 'exists') return { artifact: null, destination: null, result: null, status: 2,
+        diagnostics: [{ severity: 'error', code: 'INIT_SCAFFOLD_COMPOSE_EXISTS', target: written.path,
+            message: `${written.path} already exists, and the scaffold never replaces a Compose file`,
+            fix: 'run npx --no cockpit init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files' }] }
+    const next = `declare ${rendered.portVariable} under [ports.bases]${rendered.volumes.length ? ` and resettable_volumes = ${JSON.stringify(rendered.volumes)} under [environment]` : ''}; npx --no cockpit init ${absoluteRoot} --target <tool> proposes compose_files = ["compose.yml"]`
+    return { artifact: `wrote ${written.path}; it is yours to edit, and cockpit never rewrites it. Next: ${next}.\n`, destination: null,
+        diagnostics: [], status: 0,
+        result: { action: 'scaffolded', path: written.path, service: rendered.service, portVariable: rendered.portVariable, volumes: rendered.volumes } }
+}
+
 async function decodeRequest(
     handler: HandlerIdentifier,
     parsed: ParsedCommandArguments,
     runtimeEnv: Readonly<Record<string, string | undefined>>,
-): Promise<HandlerRequest | CommandOutcome> {
+): Promise<HandlerRequest | Readonly<{ scaffold: ComposeScaffoldRequest }> | CommandOutcome> {
     if (isWorkHandler(handler)) {
         const values = parsed.values
         if (parsed.positionals.length || typeof values.config !== 'string' || !values.config) {
@@ -932,6 +988,9 @@ async function decodeRequest(
     }
     if (handler === 'init') {
         const [root, ...extraRoots] = parsed.positionals
+        if (parsed.values['scaffold-compose'] !== undefined) return decodeComposeScaffold(root, extraRoots, parsed.values)
+        const scaffoldOnly = ['command', 'port', 'with'].find(name => parsed.values[name] !== undefined)
+        if (scaffoldOnly) return usageOutcome('CLI_USAGE_INVALID', `--${scaffoldOnly} belongs to --scaffold-compose`, `--${scaffoldOnly}`)
         const registry = parsed.values.registry
         // `--target a,b` chooses several tools; the first is the one whose setup skill init publishes
         // before the interview. One comma list rather than a repeated flag keeps the guard's
@@ -1502,7 +1561,10 @@ export async function runCli(
                     decoded = usageOutcome('CLI_USAGE_INVALID', 'config path must be recordable without control characters', '--config')
                 }
             }
-            if (!('handler' in decoded)) {
+            if ('scaffold' in decoded) {
+                try { outcome = await (handlerOverrides.scaffoldCompose ?? runComposeScaffold)(decoded.scaffold) }
+                catch (error) { outcome = usageOutcome('CLI_INTERNAL_ERROR', `the scaffold failed unexpectedly (${errorCause(error)})`, '--scaffold-compose') }
+            } else if (!('handler' in decoded)) {
                 outcome = decoded
             } else if (decoded.handler === 'logs' && decoded.input.follow && !runtime.signal) {
                 outcome = usageOutcome('CLI_USAGE_INVALID', '--follow requires a cancellation signal', '--follow')

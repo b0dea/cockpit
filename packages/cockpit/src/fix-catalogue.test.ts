@@ -181,7 +181,8 @@ describe('printed cockpit commands', () => {
                 for (const match of line.matchAll(bare)) unrunnable.push(`${at}: bare ${match[0]}`)
                 for (const match of line.matchAll(runnableInit)) {
                     const rest = line.slice(match.index + match[0].length).replace(/"[^"]*"|'[^']*'/g, 'quoted')
-                    if (!/^ (?!--)\S+ (?:.* )?--target \S/.test(rest.split(commandEnd)[0]!)) {
+                    // The one-time Compose scaffold is the other init mode: it names its app directory instead of a tool.
+                    if (!/^ (?!--)\S+ (?:.* )?--(?:target|scaffold-compose) \S/.test(rest.split(commandEnd)[0]!)) {
                         unrunnable.push(`${at}: ${match[0]} without its root and --target`)
                     }
                 }
@@ -309,7 +310,7 @@ describe('printed cockpit commands', () => {
         for (const name of shapes) expect(printed.map(row => row.command)).toContain(name)
 
         // Placeholders become synthetic values of the kind the parser accepts; the rest stay generic.
-        const placeholder: Readonly<Record<string, string>> = { kind: 'spec', target: 'codexcli', tool: 'codexcli', root: '.', command: 'true', 'agent command': 'true' }
+        const placeholder: Readonly<Record<string, string>> = { kind: 'spec', target: 'codexcli', tool: 'codexcli', root: '.', command: 'true', 'agent command': 'true', port: '3000', 'cockpit root': '.' }
         const substitute = (command: string) => command.replace(/<([^<>]+)>/g, (_, name: string) => placeholder[name]
             ?? (/sha256$/i.test(name) ? 'a'.repeat(64) : `synthetic-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`))
         // The file a reader has written by the time they run the command: the init answers it reads.
@@ -322,7 +323,7 @@ describe('printed cockpit commands', () => {
         let reached = false
         const stop = () => { reached = true; throw new Error('stopped before work') }
         const stubs = Object.fromEntries([...new Set(cliCommands.map(command => command.handler)),
-            'beginOperatorWorkApplication', 'beginOperatorReset', 'loadPolicy'].map(name => [name, stop])) as CliHandlerOverrides
+            'beginOperatorWorkApplication', 'beginOperatorReset', 'loadPolicy', 'scaffoldCompose'].map(name => [name, stop])) as CliHandlerOverrides
         // Relative paths in a printed command resolve against the reader's cockpit root.
         const cwd = process.cwd()
         process.chdir(root)

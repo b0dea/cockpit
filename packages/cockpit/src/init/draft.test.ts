@@ -696,6 +696,8 @@ describe('operator-confirmed document completion', () => {
         const afterPorts = await documentCommand({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer] } })
         const policyAnswer = answer(afterPorts.question!, generatedConfig.environment.install_policies)
         const generated = await documentCommand({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer, policyAnswer] } })
+        // A product with no Compose file is pointed at the one-time scaffold rather than left stuck.
+        expect(generated.question!.why).toContain('npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>')
         const composeAnswer = answer(generated.question!, ['compose.yml'])
         // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
         // product requirement: it is asked, never defaulted.

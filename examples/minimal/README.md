@@ -1,7 +1,8 @@
 # Minimal cockpit
 
 The smallest stack, for seeing one come up: one service built from `api/` by the cockpit's own
-`compose.yml`, one leased port, one healthcheck.
+`compose.yml`, one leased port, one healthcheck. A small app with no Compose file gets a starting
+one like this from `npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>`.
 
 [Install cockpit as an exact project-local dependency](../../docs/getting-started.md#install-cockpit),
 then run this example in a `git init` copy. `check` validates `compose.yml` through
