@@ -1240,6 +1240,7 @@ describe('setup application choreography', () => {
             const policy = {
                 toolchain: 'node' as const,
                 lockfile: 'package-lock.json',
+                test: ['npm', 'test'],
             }
             const { configPath, context, adapters } = await sequenceFixture({
                 toolchain: 'node',
@@ -1364,6 +1365,7 @@ describe('setup application choreography', () => {
         const policy = {
             toolchain: 'node' as const,
             lockfile: 'package-lock.json',
+            test: ['npm', 'test'],
         }
         const { configPath, context, adapters } = await sequenceFixture({ toolchain: 'node' }, [policy])
         adapters.resolvePolicy = ({ siblingIndex, sibling, checkoutRoot, checkoutId }) => {
@@ -1389,7 +1391,7 @@ describe('setup application choreography', () => {
     })
 
     it('keeps the complete sequence adjacent for each sibling', async () => {
-        const policy = { toolchain: 'node' as const, lockfile: 'package-lock.json' }
+        const policy = { toolchain: 'node' as const, lockfile: 'package-lock.json', test: ['npm', 'test'] }
         const source = sequenceSource(
             { toolchain: 'node', environment_files: [{ template: '.env.example', instance: '.env' }] },
             [policy],
@@ -1452,7 +1454,7 @@ describe('setup application choreography', () => {
 
         beforeEach(async () => {
             policy = {
-                toolchain: 'node', lockfile: 'package-lock.json',
+                toolchain: 'node', lockfile: 'package-lock.json', test: ['npm', 'test'],
             }
             const fixture = await unissuedContextFixture(sequenceSource({
                 toolchain: 'node',
