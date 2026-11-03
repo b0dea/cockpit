@@ -14,7 +14,7 @@ import {
     snapshotJson,
 } from '../environment/contract.js'
 import { validateWorkOrderPolicy, WORK_ORDER_WIP_MAXIMA, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
-import { CockpitConfig, runtimeDeclarationSha256 } from '../schema.js'
+import { CockpitConfig, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 import { deriveRegistry } from '../registry-derivation.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
@@ -105,6 +105,7 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly workOrderPolicy: ValidatedWorkOrderPolicy
     readonly verificationTimeoutSeconds: number
     readonly evaluatorTimeoutSeconds: number
+    readonly evaluator: EvaluatorTool
     readonly generatedHostPaths: readonly string[]
     readonly browser?: ReturnType<typeof projectBrowserConfig>
     readonly testing?: ReturnType<typeof projectTestingConfig>
@@ -210,6 +211,7 @@ export function projectWorkEnvironmentConfig(
         workOrderPolicy: policy.policy,
         verificationTimeoutSeconds: loaded.config.workorders.verification_timeout_seconds,
         evaluatorTimeoutSeconds: loaded.config.workorders.evaluator_timeout_seconds,
+        evaluator: loaded.config.workorders.evaluator,
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
         ...(testing === undefined ? {} : { testing }),

@@ -28,6 +28,7 @@ export const mechanism = {
         'GeneratedHostPath',
         'parseBrowserNetworkExposure',
         'BROWSER_DRIVER_VERSION',
+        'EVALUATOR_COMMANDS',
         'SIBLING_DEFAULT_GUIDES',
         'browserDriversCompatible',
         'SafeUrlPath',
@@ -841,9 +842,13 @@ export const Mcp = z
 // a hung stage so a gate always returns a verdict. Work-order verification runs the same suites.
 const TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS = 1_800
 export const TESTING_STAGE_TIMEOUT_MAX_SECONDS = 7_200
-// One independent review or grading run of the Codex CLI reads the change and reruns checks; minutes
+// One independent review or grading run of the evaluator reads the change and reruns checks; minutes
 // are normal, and each of the four runs gets its own budget rather than sharing one.
 const EVALUATOR_TIMEOUT_DEFAULT_SECONDS = 900
+// The agent tools that can run headless with a read-only mechanism of their own and return output a
+// schema constrains, named as the harness registry names them, each with the command it runs as.
+export const EVALUATOR_COMMANDS = Object.freeze({ codexcli: 'codex', claudecode: 'claude', opencode: 'opencode' } as const)
+export type EvaluatorTool = keyof typeof EVALUATOR_COMMANDS
 
 export const Workorders = z
     .object({
@@ -855,6 +860,8 @@ export const Workorders = z
             .describe('Seconds one declared work-order verification command may run before it is stopped and reported as not run.'),
         evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds one independent review or grading run of the evaluator may take before it is stopped.'),
+        evaluator: z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[]).default('codexcli')
+            .describe('Agent tool that runs the independent reviewers and grader for work review and work grade: codexcli, claudecode or opencode.'),
     })
     .strict()
 

@@ -28,7 +28,9 @@ verification digests the verifier gave you. Each verification citation must quot
 actual stdout or stderr at the range you were given. When you cite a symbol, quote its
 declaration and give the exact character range; a nearby mention does not count. Every quote
 must be at least eight characters and occur exactly once in the text it cites; a shorter or
-repeated quote is rejected as unsupported, so quote a longer, distinctive span. Quoting a file
+repeated quote is rejected as unsupported, so quote a longer, distinctive span. Give at most as
+many file citations for a criterion as the work order has Authority paths; more are rejected as
+unsupported, so cite the one span in each file that best supports it. Quoting a file
 shows what the file contains; explain why what you saw supports the
 criterion. Say plainly when you are unsure, when output was truncated or contaminated, when something errored, and when you abstain.
 
@@ -73,7 +75,9 @@ product state stays instructed because driving a browser can change it. Retain b
 for observation and stay within the declared data setup and permissions. No tool allow-list may
 exclude them. If there is no current native proof, say that file read-only is instructed and claim
 nothing stronger. That limits what you say about your own restraint; it is never a reason to withhold
-an outcome for a criterion. When cockpit runs you, the request's `restriction` field states the restraint.
+an outcome for a criterion. When cockpit runs you for `work review` or `work grade`, whichever of
+Codex, Claude Code or OpenCode it is, the request's `restriction` field names the read-only mechanism
+your tool was started with; that mechanism, not this file, is what holds repository files read-only then.
 
 ## Rules
 

@@ -153,9 +153,10 @@ their subcommands. Every command and flag is in the [CLI reference](docs/cli-ref
 - **macOS and Linux.** Native Windows stops at startup with `CLI_PLATFORM_UNSUPPORTED`.
 - **Running the stack needs Docker Compose** and a measured local runtime. Generation and `check`
   work without Docker; see [which commands need a runtime](docs/environment.md#measure-the-container-runtime).
-- **Work orders need the Codex CLI.** `work review` and `work grade` run the independent reviewers
-  and grader in `codex exec`, so `codex` must be on `PATH` and signed in, whichever agent tool did
-  the work; see [Verify and grade independently](docs/work-and-browser.md#verify-and-grade-independently).
+- **Work orders need one headless agent tool.** `work review` and `work grade` run the independent
+  reviewers and grader in the Codex CLI, Claude Code or OpenCode, as `workorders.evaluator` selects
+  (Codex by default), so that tool must be on `PATH` and signed in, whichever tool did the work; see
+  [Verify and grade independently](docs/work-and-browser.md#verify-and-grade-independently).
 - **Not a sandbox.** Guards, ignore rules and file permissions stop mistakes, not malicious code
   running as your user.
 - **One maintainer.** See [Governance](CONTRIBUTING.md#governance).

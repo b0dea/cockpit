@@ -4,20 +4,40 @@ import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
-import { CockpitConfig } from '../src/schema.js'
+import { CockpitConfig, type EvaluatorTool } from '../src/schema.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
 import { createConfiguredWorkApplicationComposition } from '../src/work-orders/composition.js'
 import { parseWorkOrder, type ParsedWorkOrder } from '../src/work-orders/contract.js'
 import type { WorkOrderIdentityGit } from '../src/work-orders/identity-observation.js'
 import { workOrderFixture } from '../src/test-support/work-order.js'
 
+// One synthetic evaluator answers as whichever tool it is installed as: the Codex CLI writes its answer
+// to --output-last-message beside a JSON event stream, Claude Code prints one result object carrying
+// structured_output, and OpenCode streams events whose last text part is the answer.
 const nativeFixture = `#!/usr/bin/env node
 const fs = require('node:fs'); const crypto = require('node:crypto')
-const argv = process.argv.slice(2); const output = argv[argv.indexOf('--output-last-message') + 1]
-if (argv.length === 1 && argv[0] === '--version') { process.stdout.write('codex-cli 0.149.0\\n'); process.exit(0) }
-if (argv.length === 2 && argv[0] === 'exec' && argv[1] === '--help') {
+const tool = require('node:path').basename(process.argv[1]); const argv = process.argv.slice(2)
+if (argv.length === 1 && argv[0] === '--version') { process.stdout.write(tool + ' 0.149.0\\n'); process.exit(0) }
+if (tool === 'codex' && argv.length === 2 && argv[0] === 'exec' && argv[1] === '--help') {
   process.stdout.write('--ephemeral --ignore-user-config --skip-git-repo-check --sandbox --cd --json --output-schema --output-last-message\\n'); process.exit(0)
 }
+if (tool === 'claude' && argv.length === 1 && argv[0] === '--help') {
+  process.stdout.write('--print --output-format --json-schema --no-session-persistence --safe-mode --strict-mcp-config --tools --permission-mode --add-dir\\n'); process.exit(0)
+}
+if (tool === 'opencode' && argv.length === 2 && argv[0] === 'run' && argv[1] === '--help') { process.stderr.write('--pure --format --print-logs --log-level\\n'); process.exit(0) }
+const signedOut = () => {
+  if (tool === 'codex') process.stdout.write(JSON.stringify({ type: 'error', message: 'Not signed in; run codex login' }) + '\\n')
+  else if (tool === 'claude') process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: 'Not logged in · Please run /login', session_id: crypto.randomUUID() }))
+  else {
+    // OpenCode's error log on stderr, which --print-logs turns on, carries the cause beside a stack.
+    process.stderr.write('level=ERROR message=failed error="APIError: Authentication failed" cause="APIError: Authentication failed\\n    at <anonymous>"\\n')
+    process.stdout.write(JSON.stringify({ type: 'error', sessionID: 'ses_signed_out', error: { name: 'APIError', data: { message: 'Authentication failed', statusCode: 401 } } }) + '\\n')
+  }
+  process.exit(1)
+}
+const prompt = argv.at(-1)
+const schemaText = tool === 'codex' ? fs.readFileSync(argv[argv.indexOf('--output-schema') + 1], 'utf8')
+  : tool === 'claude' ? argv[argv.indexOf('--json-schema') + 1] : fs.readFileSync(/JSON Schema at (\\S+)\\.$/.exec(prompt)[1], 'utf8')
 // OpenAI structured outputs reject a schema unless every object lists all its properties as required
 // and forbids others; the real CLI then exits 1 with the API's 400 as an error event, as this does.
 const strictViolation = (node, path) => {
@@ -36,11 +56,11 @@ const strictViolation = (node, path) => {
   if (types.includes('array')) return node.items ? strictViolation(node.items, path + '.items') : path + ".items' is required for array schemas"
   return undefined
 }
-const violation = strictViolation(JSON.parse(fs.readFileSync(argv[argv.indexOf('--output-schema') + 1], 'utf8')), "'schema")
+const violation = strictViolation(JSON.parse(schemaText), "'schema")
 if (violation) {
   process.stdout.write(JSON.stringify({ type: 'error', message: "Invalid schema for response_format 'codex_output_schema': " + violation }) + '\\n'); process.exit(1)
 }
-const match = /request JSON at (.+) with SHA-256 ([a-f0-9]{64});/.exec(argv.at(-1))
+const match = /request JSON at (.+) with SHA-256 ([a-f0-9]{64});/.exec(prompt)
 if (!match) process.exit(31)
 const bytes = fs.readFileSync(match[1]); if (crypto.createHash('sha256').update(bytes).digest('hex') !== match[2]) process.exit(32)
 const request = JSON.parse(bytes); const context = request.context; let response
@@ -58,6 +78,13 @@ if (request.role === 'grader') {
   || !context.subject || !Array.isArray(context.changedPaths)) process.exit(34)
 fs.appendFileSync(repository('.native-calls'), request.role + '\\n')
 const mode = fs.existsSync(repository('.native-mode')) ? fs.readFileSync(repository('.native-mode'), 'utf8').trim() : 'complete'
+if (mode === 'signed-out') signedOut()
+if (mode === 'rate-limited') {
+  // OpenCode logs a rejected request and retries it until it is stopped.
+  process.stderr.write('level=ERROR message="stream error" error.error="AI_APICallError: Free usage limit reached"\\n')
+  setTimeout(() => process.exit(0), 60_000)
+  return
+}
 if (request.role === 'grader') response = { kind: 'assessment', runId: context.runId, integrity: 'clean', criteria: context.criteria.map(row => {
   const artifact = context.artifacts[0]; const verification = context.verification.filter(item => item.criterion === row.criterion.id)
   return { criterion: row.criterion.id, criterionDigest: row.digest, outcome: 'passed with current supporting evidence',
@@ -69,12 +96,23 @@ else { const findingId = request.role + '-advisory'; response = { kind: 'review'
   findings: [{ id: findingId, severity: 'advisory', summary: request.role + ' retained a documented tradeoff', affectedVerification: [context.subject.verification[0].argv] }],
   dispositions: [{ findingId, outcome: 'accepted-risk', reason: 'The synthetic boundary records the exact disposition.' }], evidence: request.role + ' accepted current evidence' } }
 if (mode === 'extra') response.extra = true
-fs.writeFileSync(output, JSON.stringify(response), { flag: 'wx', mode: 0o600 })
-process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: mode === 'replay' ? 'fixed-thread' : crypto.randomUUID() }) + '\\n')
+const thread = mode === 'replay' ? 'fixed-thread' : crypto.randomUUID()
+if (tool === 'codex') {
+  fs.writeFileSync(argv[argv.indexOf('--output-last-message') + 1], JSON.stringify(response), { flag: 'wx', mode: 0o600 })
+  process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: thread }) + '\\n')
+} else if (tool === 'claude') {
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: thread, result: JSON.stringify(response), structured_output: response }))
+} else {
+  // OpenCode has no flag that constrains its answer, so a model may answer in prose.
+  const text = mode === 'prose' ? 'The work looks fine to me.' : JSON.stringify(response)
+  for (const event of [{ type: 'step_start' }, { type: 'tool_use', part: { tool: 'read' } }, { type: 'text', part: { type: 'text', text } }, { type: 'step_finish' }]) {
+    process.stdout.write(JSON.stringify({ ...event, sessionID: thread }) + '\\n')
+  }
+}
 `
 
 export function createWorkCompositionFixtureSupport(roots: string[]) {
-async function configuredFixture(options: Readonly<{ rootSibling?: boolean; externalSibling?: boolean; authority?: readonly string[]; hardlinkedGit?: boolean }> = {}) {
+async function configuredFixture(options: Readonly<{ rootSibling?: boolean; externalSibling?: boolean; authority?: readonly string[]; hardlinkedGit?: boolean; evaluator?: EvaluatorTool; evaluatorTimeoutSeconds?: number }> = {}) {
     const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-work-application-'))); roots.push(fixtureRoot)
     const root = options.externalSibling ? join(fixtureRoot, 'cockpit') : fixtureRoot
     if (options.externalSibling) await mkdir(root)
@@ -102,6 +140,8 @@ purpose = "Synthetic root declaration"
             .filter(entry => entry.subject !== 'vendor')
         declaration = stringifyToml(CockpitConfig.parse(external))
     }
+    if (options.evaluator) declaration += `\n[workorders]\nevaluator = "${options.evaluator}"\n${
+        options.evaluatorTimeoutSeconds ? `evaluator_timeout_seconds = ${options.evaluatorTimeoutSeconds}\n` : ''}`
     await writeFile(configPath, declaration)
     await writeFile(join(root, '.gitignore'), '.native-calls\n.native-mode\n.native-expect-artifact\n.verification-fail\n.gate-mutate\n.completion-observations\n.completion-artifact-race\n.execution-hold\n.execution-started\n.identity-inventory-unavailable\n.identity-inventory-malformed\n.identity-worktree-malformed\n.identity-inventory-change\n.identity-inventory-count\n.repository-status-malformed\n.git-temp-warning\n')
     await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
@@ -174,9 +214,9 @@ if (fs.existsSync('.completion-artifact-race') && argv[0] === 'status' && argv.i
 const result = spawnSync('/usr/bin/git', argv, { stdio: 'inherit' }); process.exit(result.status ?? 1)
 `)
     await writeFile(join(tools, 'npm'), "#!/bin/sh\nif [ -f .verification-fail ]; then printf 'cache-1 failed: stale value\\n'; exit 1; fi\nif [ -f .gate-mutate ]; then printf \"export function refresh() { return 'changed' }\\n\" > src/cache.ts; fi\nif [ -f .execution-hold ]; then : > .execution-started; while [ -f .execution-hold ]; do sleep 0.05; done; fi\nprintf 'passed\\n'\n")
-    await writeFile(join(tools, 'codex'), nativeFixture)
+    await Promise.all(['codex', 'claude', 'opencode'].map(name => writeFile(join(tools, name), nativeFixture)))
     await symlink(process.execPath, join(tools, 'node'))
-    await Promise.all(['git', 'npm', 'codex'].map(name => chmod(join(tools, name), 0o700)))
+    await Promise.all(['git', 'npm', 'codex', 'claude', 'opencode'].map(name => chmod(join(tools, name), 0o700)))
     const authority = options.authority ?? ['src/cache.ts', 'tests/cache.test.ts']
     const firstBytes = workOrderFixture().replace('- src/cache.ts\n- tests/cache.test.ts', authority.map(path => `- ${path}`).join('\n'))
     const secondBytes = firstBytes.replaceAll('WO-001', 'WO-002')

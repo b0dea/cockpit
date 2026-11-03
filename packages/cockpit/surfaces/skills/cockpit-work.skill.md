@@ -1,6 +1,6 @@
 ---
 name: cockpit-work
-description: "Use when a change needs a second person to certify it, must carry on in a later session, or belongs to a programme, in a cockpit with work orders configured. Review and grading require the Codex CLI; ordinary fixes use cockpit-fix."
+description: "Use when a change needs a second person to certify it, must carry on in a later session, or belongs to a programme, in a cockpit with work orders configured. Review and grading require the evaluator tool workorders.evaluator selects; ordinary fixes use cockpit-fix."
 targets: ["*"]
 cockpit:
   tools: [shell]

@@ -40,7 +40,7 @@ import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupRe
 import type { InstructionPointerResult } from './instruction-pointer.js'
 import type { SiblingInstructionFilesResult } from './sibling-instructions.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
-import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
+import { CockpitConfig, type EntrypointDerivative, type EvaluatorTool, type InstallPolicy, type Sibling } from '../schema.js'
 import { evaluateGuard, GUARD_LOCATION_LIMITS, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { ordinarySessionCommand, resolveOrdinaryInvocation } from '../command-table.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
@@ -4606,7 +4606,7 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
-    readonly inspectEvaluator?: () => Promise<readonly EnvironmentDiagnostic[]>
+    readonly inspectEvaluator?: (evaluator: EvaluatorTool) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
     readonly inspectReadiness?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Other cockpits' state namespaces this version skipped, or why the inventory could not be read; read after load has selected this cockpit's state root. */
@@ -4704,6 +4704,11 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
 
 // A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;
 // a docs-only cockpit has no product to test and stays quiet.
+async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
+    const loaded = await loading
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(loaded.result.config.workorders.evaluator) : Object.freeze([])
+}
+
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete' || loaded.result.config.testing || declaredRuntime(loaded.result.config.environment) === 'none') {
@@ -5278,7 +5283,7 @@ export async function runDoctor(
     const config = loadCockpitConfig(input.configPath)
     const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([]),
-        adapters.inspectEvaluator?.() ?? Object.freeze([]), adapters.inspectReadiness?.() ?? Object.freeze([])])
+        doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? Object.freeze([])])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'
         // An inventory that cannot be read, such as one another command holds locked, is no clean one.
