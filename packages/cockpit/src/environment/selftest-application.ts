@@ -1,3 +1,4 @@
+import { exactKeys } from '../exact-keys.js'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
@@ -195,7 +196,7 @@ function probeSpecificationsArtifact(
 ): Readonly<{ kind: 'complete' | 'stale'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed'; cause?: string }> {
     let captured: Readonly<Record<string, unknown>> | undefined
     try { captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined } catch (error) { return { kind: 'malformed', cause: errorCause(error) } }
-    if (!captured || Object.keys(captured).sort().join('\0') !== ['generatedManifestSha256', 'schema', 'sourceSha256', 'specifications'].join('\0')
+    if (!captured || !exactKeys(captured, ['generatedManifestSha256', 'schema', 'sourceSha256', 'specifications'])
         || captured.schema !== PROBE_SPECIFICATIONS_SCHEMA || !Array.isArray(captured.specifications)) return { kind: 'malformed' }
     if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) {
         return { kind: 'stale', specifications: captured.specifications }

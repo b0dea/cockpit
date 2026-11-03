@@ -1,3 +1,4 @@
+import { exactKeys } from '../exact-keys.js'
 import { z } from 'zod'
 import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, relative, sep } from 'node:path'
@@ -122,7 +123,7 @@ export function decodeLifecycleRecord(
 ): CurrentLifecycleRecord | undefined {
     const value = snapshotJson(record.value)
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || Object.keys(value).sort().join('\0') !== ['completedServices', 'holderId', 'operationGeneration', ...(Object.hasOwn(value, 'runtimeInputs') ? ['runtimeInputs'] : []), ...(Object.hasOwn(value, 'teardownComplete') ? ['teardownComplete'] : []), 'workBasisSha256'].join('\0')
+        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['runtimeInputs', 'teardownComplete'])
         || record.format !== 'cockpit-state/v1' || record.kind !== 'lifecycle'
         || record.cockpitId !== context.cockpitId || record.subjectId !== context.stackId) return undefined
     const candidate = value as Record<string, unknown>
@@ -143,7 +144,7 @@ export function decodeLifecycleRecord(
     }
     const completed = candidate.completedServices.map((item) => {
         if (!item || typeof item !== 'object' || Array.isArray(item)
-            || Object.keys(item).sort().join('\0') !== ['containerId', 'service'].join('\0')) return undefined
+            || !exactKeys(item, ['containerId', 'service'])) return undefined
         const service = (item as Record<string, unknown>).service
         const containerId = (item as Record<string, unknown>).containerId
         return typeof service === 'string' && lifecycleService.test(service)

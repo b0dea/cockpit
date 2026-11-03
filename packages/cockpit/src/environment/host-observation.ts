@@ -1,3 +1,4 @@
+import { exactKeys } from '../exact-keys.js'
 import {
     RefusalError,
     ENVIRONMENT_CODES,
@@ -63,7 +64,7 @@ export function observeHostCapacity(input: {
     const floor = snapshotJson(evidence.floor)
     if (typeof stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(stackId)
         || floor === null || typeof floor !== 'object' || Array.isArray(floor)
-        || Object.keys(floor).sort().join('\0') !== ['cpuMillis', 'freeDiskBytes', 'memoryBytes'].join('\0')
+        || !exactKeys(floor, ['cpuMillis', 'freeDiskBytes', 'memoryBytes'])
         || Object.values(floor).some((value) => !Number.isSafeInteger(value) || (value as number) < 1)) {
         throw new RefusalError('host capacity floor must use exact positive integer units')
     }

@@ -1,3 +1,4 @@
+import { exactKeys } from '../exact-keys.js'
 import { createHash } from 'node:crypto'
 import { constants, type BigIntStats } from 'node:fs'
 import { lstat, open, readFile, readdir, realpath } from 'node:fs/promises'
@@ -64,12 +65,7 @@ type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : T
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return false
-    try {
-        return typeof Reflect.get(value, 'then') === 'function'
-    } catch {
-        // A throwing getter is treated as thenable so the caller rejects the value.
-        return true
-    }
+    return typeof Reflect.get(value, 'then') === 'function'
 }
 
 function directoryIdentity(stat: BigIntStats): DirectoryIdentity {
@@ -208,7 +204,7 @@ function snapshotIgnoreInput(value: unknown): EnvironmentIgnoreInput | undefined
     const environmentFile = EnvironmentFile.safeParse(input.environmentFile)
     const executable = resolvedGitExecutable(input.gitExecutable)
     const environment = input.env
-    if (Object.keys(input).sort().join('\0') !== expectedKeys.join('\0')
+    if (!exactKeys(input, expectedKeys)
         || !validSource(input.source)
         || !Number.isSafeInteger(input.siblingIndex) || (input.siblingIndex as number) < 0
         || typeof input.siblingSlug !== 'string' || !SLUG.test(input.siblingSlug)
@@ -634,7 +630,7 @@ function snapshotSetupCheckoutInput(input: unknown): SetupCheckoutInput | undefi
     const value = snapshot as Record<string, unknown>
     const expectedKeys = ['cockpitName', 'env', 'gitExecutable', 'observedAt', 'source']
     const executable = resolvedGitExecutable(value.gitExecutable)
-    if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')
+    if (!exactKeys(value, expectedKeys)
         || !validSource(value.source)
         || typeof value.cockpitName !== 'string' || !COCKPIT_NAME.test(value.cockpitName)
         || !isCanonicalTimestamp(value.observedAt)
@@ -1148,7 +1144,7 @@ function snapshotSetupCheckoutContext(value: unknown): SetupCheckoutObservationC
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
     const context = snapshot as Record<string, unknown>
     const expectedKeys = ['cockpitName', 'evaluatedAt', 'source']
-    return Object.keys(context).sort().join('\0') === expectedKeys.join('\0')
+    return exactKeys(context, expectedKeys)
         && validSource(context.source)
         && typeof context.cockpitName === 'string' && COCKPIT_NAME.test(context.cockpitName)
         && Number.isSafeInteger(context.evaluatedAt)
@@ -1221,16 +1217,10 @@ async function checkoutBindingCurrent(binding: SetupCheckoutBinding, publication
 export function consumeSetupCheckoutProjection(
     projection: SetupCheckoutProjection,
 ): ConsumedSetupCheckoutObservation | undefined {
-    try {
-        if (projection === null || typeof projection !== 'object') return undefined
-        const binding = issuedSetupCheckoutProjections.get(projection)
-        if (!binding) return undefined
-        issuedSetupCheckoutProjections.delete(projection)
-        return binding
-    } catch {
-        // A throwing accessor or proxy trap means the projection is not one we issued.
-        return undefined
-    }
+    const binding = issuedSetupCheckoutProjections.get(projection)
+    if (!binding) return undefined
+    issuedSetupCheckoutProjections.delete(projection)
+    return binding
 }
 
 export interface GeneratedCheckoutIdentity {
@@ -1260,37 +1250,27 @@ function captureGeneratedCheckoutInput(input: unknown): Readonly<{
     cockpitName: string
     env: Readonly<Record<string, string | undefined>>
 }> | undefined {
-    try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = ['cockpitName', 'env', 'source']
-        if (Reflect.ownKeys(descriptors).length !== keys.length
-            || keys.some(key => !descriptors[key] || !Object.hasOwn(descriptors[key]!, 'value'))) return undefined
-        const source = snapshotJson(descriptors.source!.value)
-        const cockpitName = descriptors.cockpitName!.value
-        const rawEnvironment = descriptors.env!.value
-        if (!validSource(source) || typeof cockpitName !== 'string' || !COCKPIT_NAME.test(cockpitName)
-            || rawEnvironment === null || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)
-            || isProxy(rawEnvironment)) return undefined
-        const environmentDescriptors = Object.getOwnPropertyDescriptors(rawEnvironment)
-        const environmentKeys = Reflect.ownKeys(environmentDescriptors)
-        if (environmentKeys.length > 4_096) return undefined
-        const env: Record<string, string | undefined> = {}
-        for (const key of environmentKeys) {
-            if (typeof key !== 'string') return undefined
-            if (key !== 'PATH') continue
-            const descriptor = environmentDescriptors[key]!
-            if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')
-                || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
-                    || descriptor.value.includes('\0') || Buffer.byteLength(descriptor.value) > 65_536)) return undefined
-            env[key] = descriptor.value
-        }
-        return { source: { path: source.path, byteLength: source.byteLength, sha256: source.sha256 },
-            cockpitName, env }
-    } catch {
-        // A throwing accessor or proxy trap means the caller-supplied environment is malformed.
-        return undefined
+    if (input === null || typeof input !== 'object' || Array.isArray(input) || !exactKeys(input, ['cockpitName', 'env', 'source'])) return undefined
+    const { source: rawSource, cockpitName, env: rawEnvironment } = input as Record<string, unknown>
+    const source = snapshotJson(rawSource)
+    if (!validSource(source) || typeof cockpitName !== 'string' || !COCKPIT_NAME.test(cockpitName)
+        || rawEnvironment === null || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)
+        || isProxy(rawEnvironment)) return undefined
+    const environmentDescriptors = Object.getOwnPropertyDescriptors(rawEnvironment)
+    const environmentKeys = Reflect.ownKeys(environmentDescriptors)
+    if (environmentKeys.length > 4_096) return undefined
+    const env: Record<string, string | undefined> = {}
+    for (const key of environmentKeys) {
+        if (typeof key !== 'string') return undefined
+        if (key !== 'PATH') continue
+        const descriptor = environmentDescriptors[key]!
+        if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')
+            || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
+                || descriptor.value.includes('\0') || Buffer.byteLength(descriptor.value) > 65_536)) return undefined
+        env[key] = descriptor.value
     }
+    return { source: { path: source.path, byteLength: source.byteLength, sha256: source.sha256 },
+        cockpitName, env }
 }
 
 async function pathAbsent(path: string): Promise<boolean> {
