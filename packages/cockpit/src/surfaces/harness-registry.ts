@@ -4,10 +4,12 @@ export const mechanism = {
     exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget', 'isMeasurementDate'],
 } as const
 
-const pendingNative = (measuredOn: string) => Object.freeze({
-    state: 'pending_evidence' as const,
-    measuredOn,
-    reason: 'native loading and enforcement require a paired candidate and broken-control probe',
+// Guard firing and instruction loading for these harnesses are dated runs (the firing records below
+// and the projection's instruction capabilities), so this record claims no pending measurement for
+// them; what stays open is a person's review of the rendered skills.
+const reviewedNative = Object.freeze({
+    state: 'instructed' as const,
+    reason: 'a person has not yet reviewed whether the tool loads and triggers them as written',
 })
 
 // Cockpit writes rules, skills, MCP and permission files for these harnesses through the
@@ -45,19 +47,19 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'claudecode', type: 'agent' as const, displayName: 'Claude Code', rulesyncTarget: 'claudecode',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: pendingNative('2026-09-26'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative,
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: pendingNative('2026-09-26'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative,
     }),
     Object.freeze({
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
         rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: pendingNative('2026-09-26'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: reviewedNative,
     }),
     Object.freeze({
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',

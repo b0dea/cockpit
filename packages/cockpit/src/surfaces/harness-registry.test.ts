@@ -25,11 +25,11 @@ describe('shipped harness registry', () => {
             row.rulesyncFeatures,
             row.guard.capability,
             row.native.state,
-            row.native.measuredOn,
+            'measuredOn' in row.native ? row.native.measuredOn : null,
         ])).toEqual([
-            ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['.claude/settings.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
-            ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['.codex/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
-            ['opencode', 'OpenCode', 'opencodev1', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['opencode.jsonc'], ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'instructed', 'pending_evidence', '2026-09-26'],
+            ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['.claude/settings.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'instructed', null],
+            ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['.codex/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'instructed', null],
+            ['opencode', 'OpenCode', 'opencodev1', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['opencode.jsonc'], ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'instructed', 'instructed', null],
             ['cursor', 'Cursor', 'cursor', '.cursor/rules', '.cursor/skills', '.cursor/mcp.json', ['.cursor/cli.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'generated', '2026-10-28'],
             ['grokcli', 'Grok Build', 'grokcli', 'AGENTS.md', '.grok/skills', '.grok/config.toml', ['.grok/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'generated', '2026-10-28'],
         ])
@@ -52,7 +52,7 @@ describe('shipped harness registry', () => {
         expect(['2026-11-04', '2026-02-30', '2026-9-26', '2026-11-03T00:00:00Z', '', 20261103].map(date => isMeasurementDate(date, today)))
             .toEqual([false, false, false, false, false, false])
         // Every recorded date holds against the real clock, so a typo in the future fails here and not at a user's machine.
-        const recorded = HARNESS_REGISTRY.flatMap(row => [row.native.measuredOn, ...('firing' in row.guard ? [row.guard.firing.measuredOn] : [])])
+        const recorded = HARNESS_REGISTRY.flatMap(row => [...('measuredOn' in row.native ? [row.native.measuredOn] : []), ...('firing' in row.guard ? [row.guard.firing.measuredOn] : [])])
         expect(recorded.every(date => isMeasurementDate(date))).toBe(true)
     })
 

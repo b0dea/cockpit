@@ -157,8 +157,8 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
             cells.push(native.state === 'generated'
                 ? Object.freeze({ target, capability: 'skill-parity', state: native.state, evidence: 'pending_evidence',
                     provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location })
-                : Object.freeze({ target, capability: 'skill-parity', state: 'instructed', evidence: 'human_needed',
-                    provenance: 'a person has not yet reviewed whether the tool loads and triggers them as written', measuredOn: NEVER_PROBED, measuredVersion: null, location }))
+                : Object.freeze({ target, capability: 'skill-parity', state: native.state, evidence: 'human_needed',
+                    provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location }))
         }
         // The rendered skill digests stay out of the table but in the manifest, so editing a skill
         // still changes the published source manifest.
