@@ -167,20 +167,27 @@ const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repe
 function value(role: OrdinaryValueRole, required = false): OrdinaryOption {
     return { kind: 'value', role, repetition: 'singleton', ...(required ? { required: true as const } : {}) }
 }
-const configured = Object.freeze({ config: value('resolved-config', true), json: flag })
-function ordinary(command: HandlerIdentifier, options: Readonly<Record<string, OrdinaryOption>> = configured,
-    extra: Partial<Extract<OrdinaryCommandMetadata, { availability: 'available' }>> = {}): OrdinaryCommandMetadata {
+/**
+ * One row per CLI flag: how the parser reads it and, when an agent may pass it, the role its value
+ * must satisfy. A flag with no `agent` role is never admitted in an ordinary agent invocation.
+ */
+type Flag = Readonly<{ type: 'string' | 'boolean'; default?: string | boolean; multiple?: true; agent?: OrdinaryOption }>
+const str = (agent?: OrdinaryOption, fallback?: string): Flag => ({ type: 'string', ...fallback === undefined ? {} : { default: fallback }, ...agent ? { agent } : {} })
+const bool = (agent?: OrdinaryOption): Flag => ({ type: 'boolean', default: false, ...agent ? { agent } : {} })
+const configFlag = str(value('resolved-config', true))
+const jsonFlag = bool(flag)
+const configured = { config: configFlag, json: jsonFlag } as const
+const workOrderFlag = str(value('identifier', true))
+
+// The flags and their roles are filled in from `flags` when the table is built.
+function ordinary(command: HandlerIdentifier, extra: Partial<Extract<OrdinaryCommandMetadata, { availability: 'available' }>> = {}): OrdinaryCommandMetadata {
     return { availability: 'available', executableRole: 'installed-cockpit', command,
-        positional: { min: 0, max: 0, roles: [] as const }, options,
+        positional: { min: 0, max: 0, roles: [] as const }, options: {},
         cwdRole: 'canonical-root', configuration: 'resolved',
         forbidden: { presence: [] }, ...extra }
 }
 function unavailable(reason: string): OrdinaryCommandMetadata { return { availability: 'unavailable', reason } }
 
-const workOptions = { config: { type: 'string' }, json: { type: 'boolean', default: false } } as const
-const workOrderOption = { 'work-order': { type: 'string' } } as const
-const workOrderOptions = Object.freeze({ ...configured, 'work-order': value('identifier', true) })
-const browserOptions = Object.freeze({ ...configured, role: value('identifier') })
 const browserAdmission = Object.freeze({ requires: 'browser-preapproval' as const })
 // --interactive asks for a person at a terminal, so an agent invocation never carries it.
 const personFlag = Object.freeze({ forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) })
@@ -190,7 +197,9 @@ export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIde
     return value.startsWith('work-') || value.startsWith('browser-') || value === 'test-run' || value === 'grade-criteria'
 }
 
-export const commands: readonly CommandDefinition[] = [
+type CommandSource = Omit<CommandDefinition, 'options'> & { flags: Readonly<Record<string, Flag>> }
+
+const sources = [
     {
         name: 'init',
         stage: 'set-up',
@@ -198,17 +207,16 @@ export const commands: readonly CommandDefinition[] = [
         usage: '<root> [options]',
         handler: 'init',
         visibility: 'public',
-        ordinary: ordinary('init', { target: value('surface-target', true), registry: value('confined-path'),
-            'reset-answer': value('field'), 'accept-reset': value('sha256'), json: flag }, {
+        ordinary: ordinary('init', {
             configuration: 'none',
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
             forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']) }),
         }),
-        options: { target: { type: 'string' }, registry: { type: 'string' },
-            interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
-            answers: { type: 'string' }, 'accept-preview': { type: 'string' }, 'accept-defaults': { type: 'string' },
-            'reset-answer': { type: 'string' }, 'accept-reset': { type: 'string' },
-            'scaffold-compose': { type: 'string' }, command: { type: 'string' }, port: { type: 'string' }, with: { type: 'string' } },
+        flags: { target: str(value('surface-target', true)), registry: str(value('confined-path')),
+            interactive: bool(), json: jsonFlag,
+            answers: str(), 'accept-preview': str(), 'accept-defaults': str(),
+            'reset-answer': str(value('field')), 'accept-reset': str(value('sha256')),
+            'scaffold-compose': str(), command: str(), port: str(), with: str() },
     },
     {
         name: 'setup',
@@ -216,13 +224,8 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        ordinary: ordinary('setup', configured, { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']) }) }),
-        options: {
-            config: { type: 'string' },
-            'write-instruction-pointers': { type: 'boolean', default: false },
-            'write-instruction-files': { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        ordinary: ordinary('setup', { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']) }) }),
+        flags: { config: configFlag, 'write-instruction-pointers': bool(), 'write-instruction-files': bool(), json: jsonFlag },
     },
     {
         name: 'sibling',
@@ -232,18 +235,8 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'sibling',
         visibility: 'public',
         ordinary: unavailable('sibling add and remove rewrite cockpit.toml'),
-        options: {
-            config: { type: 'string' },
-            create: { type: 'boolean', default: false },
-            from: { type: 'string' },
-            remote: { type: 'string' },
-            dir: { type: 'string' },
-            var: { type: 'string' },
-            purpose: { type: 'string' },
-            mount: { type: 'string' },
-            'instruction-pointer': { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        flags: { config: str(), create: bool(), from: str(), remote: str(), dir: str(), var: str(), purpose: str(), mount: str(),
+            'instruction-pointer': bool(), json: bool() },
     },
     {
         name: 'tool',
@@ -254,11 +247,7 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         // Classified with sibling add and remove: both rewrite cockpit.toml.
         ordinary: unavailable('tool add and remove rewrite cockpit.toml'),
-        options: {
-            config: { type: 'string' },
-            'dry-run': { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        flags: { config: str(), 'dry-run': bool(), json: bool() },
     },
     {
         name: 'registry-resolve',
@@ -266,13 +255,8 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Turn a validated shell registry into data shell scripts can source',
         handler: 'registry-resolve',
         visibility: 'public',
-        ordinary: ordinary('registry-resolve', { registry: value('confined-path', true), 'siblings-root': value('confined-path', true), adoption: value('confined-path', true), json: flag }, { configuration: 'none' }),
-        options: {
-            registry: { type: 'string' },
-            'siblings-root': { type: 'string' },
-            adoption: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        ordinary: ordinary('registry-resolve', { configuration: 'none' }),
+        flags: { registry: str(value('confined-path', true)), 'siblings-root': str(value('confined-path', true)), adoption: str(value('confined-path', true)), json: jsonFlag },
     },
     {
         name: 'upgrade',
@@ -283,12 +267,9 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
         // exactly where [autonomy] sync lets it sync; the version is the one positional.
-        ordinary: ordinary('upgrade', { config: configured.config, 'dry-run': flag }, {
+        ordinary: ordinary('upgrade', {
             positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }), requires: 'autonomy-sync' }),
-        options: {
-            config: { type: 'string' },
-            'dry-run': { type: 'boolean', default: false },
-        },
+        flags: { config: configFlag, 'dry-run': bool(flag) },
     },
     {
         name: 'sync',
@@ -299,14 +280,8 @@ export const commands: readonly CommandDefinition[] = [
         // Adoption rewrites cockpit.toml and moves a team's harness settings, so it stays a person's. A
         // real sync rewrites the guard's own files from a configuration the guard already pins and
         // holds every call after an edit to, so it is an agent's only where [autonomy] sync = "agent".
-        ordinary: ordinary('sync', { ...configured, 'dry-run': flag }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync' }),
-        options: {
-            config: { type: 'string' },
-            'dry-run': { type: 'boolean', default: false },
-            adopt: { type: 'string', multiple: true },
-            interactive: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync' }),
+        flags: { config: configFlag, 'dry-run': bool(flag), adopt: { type: 'string', multiple: true }, interactive: bool(), json: jsonFlag },
     },
     {
         name: 'check',
@@ -315,10 +290,7 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'check',
         visibility: 'public',
         ordinary: ordinary('check'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: configured,
     },
     {
         name: 'selftest',
@@ -326,14 +298,9 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Test whether agent tools enforce the generated controls',
         handler: 'selftest',
         visibility: 'public',
-        ordinary: ordinary('selftest', { ...configured, 'probe-specifications': value('confined-path', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
-        options: {
-            config: { type: 'string' },
-            'probe-specifications': { type: 'string' },
-            'write-probe-specifications': { type: 'string' },
-            interactive: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        ordinary: ordinary('selftest', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
+        flags: { config: configFlag, 'probe-specifications': str(value('confined-path', true)), 'write-probe-specifications': str(),
+            interactive: bool(), json: jsonFlag },
     },
     {
         name: 'runtime',
@@ -344,14 +311,10 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         // The probe runs a disposable stack under its own project, cleans it up, and records the result
         // only in this machine's ignored state, so an agent can measure before its first `up`.
-        ordinary: ordinary('runtime', { ...configured, image: value('local-image', true) }, {
+        ordinary: ordinary('runtime', {
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['measure']) }),
         }),
-        options: {
-            config: { type: 'string' },
-            image: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: { config: configFlag, image: str(value('local-image', true)), json: jsonFlag },
     },
     {
         name: 'up',
@@ -360,10 +323,7 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'up',
         visibility: 'public',
         ordinary: ordinary('up'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: configured,
     },
     {
         name: 'preflight',
@@ -372,10 +332,7 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'preflight',
         visibility: 'public',
         ordinary: ordinary('preflight'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: configured,
     },
     {
         name: 'session',
@@ -386,9 +343,7 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         // The guard admits `session --config <file> -- <command>` only when it admits the inner command.
         ordinary: unavailable('session wraps an arbitrary foreground command'),
-        options: {
-            config: { type: 'string' },
-        },
+        flags: { config: str() },
     },
     {
         name: 'logs',
@@ -396,15 +351,9 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Show recent logs for one declared service',
         handler: 'logs',
         visibility: 'public',
-        ordinary: ordinary('logs', { ...configured, service: value('declared-service', true), tail: value('tail'), since: value('since'), follow: flag }),
-        options: {
-            config: { type: 'string' },
-            service: { type: 'string' },
-            tail: { type: 'string', default: '100' },
-            since: { type: 'string', default: '15m' },
-            follow: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        ordinary: ordinary('logs'),
+        flags: { config: configFlag, service: str(value('declared-service', true)), tail: str(value('tail'), '100'), since: str(value('since'), '15m'),
+            follow: bool(flag), json: jsonFlag },
     },
     {
         name: 'sleep',
@@ -413,10 +362,7 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'sleep',
         visibility: 'public',
         ordinary: ordinary('sleep'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: configured,
     },
     {
         name: 'down',
@@ -426,10 +372,7 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         // down removes only the containers and networks cockpit created; reset, which deletes data, stays out.
         ordinary: ordinary('down'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: configured,
     },
     {
         name: 'reset',
@@ -438,13 +381,8 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'reset',
         visibility: 'public',
         // Reset deletes stack data, so an agent applies one only where [autonomy] reset = "agent".
-        ordinary: ordinary('reset', { ...configured, apply: Object.freeze({ ...flag, required: true as const }) }, { requires: 'autonomy-reset' }),
-        options: {
-            config: { type: 'string' },
-            interactive: { type: 'boolean', default: false },
-            apply: { type: 'boolean', default: false },
-            json: { type: 'boolean', default: false },
-        },
+        ordinary: ordinary('reset', { requires: 'autonomy-reset' }),
+        flags: { config: configFlag, interactive: bool(), apply: bool(Object.freeze({ ...flag, required: true as const })), json: jsonFlag },
     },
     {
         name: 'doctor',
@@ -453,63 +391,68 @@ export const commands: readonly CommandDefinition[] = [
         handler: 'doctor',
         visibility: 'public',
         ordinary: ordinary('doctor'),
-        options: {
-            config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
+        flags: configured,
     },
     // A gate runs only the stages a person declared in the reviewed cockpit.toml, which is the trust
     // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
-        ordinary: ordinary('test-run', { ...configured, gate: value('declared-gate', true), mode: value('gate-mode'), select: value('gate-selector') }),
-        options: { ...workOptions, ...{ gate: { type: 'string' }, mode: { type: 'string', default: 'canonical' }, select: { type: 'string' } } } },
+        ordinary: ordinary('test-run'),
+        flags: { ...configured, gate: str(value('declared-gate', true)), mode: str(value('gate-mode'), 'canonical'), select: str(value('gate-selector')) } },
     // A gated step passes for the agent only where [work.gates] says agent; under person the command
     // waits for the digest a person types after --interactive, which no agent invocation carries.
     { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report each work order, its state and how it closed', visibility: 'public',
-        ordinary: ordinary('work-status', { ...configured, 'work-order': value('identifier') }),
-        options: { ...workOptions, ...workOrderOption } },
+        ordinary: ordinary('work-status'),
+        flags: { ...configured, 'work-order': str(value('identifier')) } },
     { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one, as [work.gates] allows', visibility: 'public',
-        ordinary: ordinary('work-accept', workOrderOptions, personFlag),
-        options: { ...workOptions, ...workOrderOption, interactive: { type: 'boolean', default: false } } },
+        ordinary: ordinary('work-accept', personFlag),
+        flags: { ...configured, 'work-order': workOrderFlag, interactive: bool() } },
     { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
-        ordinary: ordinary('work-check', workOrderOptions),
-        options: { ...workOptions, ...workOrderOption } },
+        ordinary: ordinary('work-check'),
+        flags: { ...configured, 'work-order': workOrderFlag } },
     { name: 'work note', handler: 'work-note', stage: 'test-and-grade', summary: 'Record a note on an order, or with --ask an open question that blocks it', visibility: 'public',
-        ordinary: ordinary('work-note', { ...workOrderOptions, text: value('label', true), ask: flag }),
-        options: { ...workOptions, ...workOrderOption, text: { type: 'string' }, ask: { type: 'boolean', default: false } } },
+        ordinary: ordinary('work-note'),
+        flags: { ...configured, 'work-order': workOrderFlag, text: str(value('label', true)), ask: bool(flag) } },
     { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
-        ordinary: ordinary('work-answer', { ...workOrderOptions, question: value('tail', true), text: value('label', true) }, personFlag),
-        options: { ...workOptions, ...workOrderOption, question: { type: 'string' }, text: { type: 'string' }, interactive: { type: 'boolean', default: false } } },
+        ordinary: ordinary('work-answer', personFlag),
+        flags: { ...configured, 'work-order': workOrderFlag, question: str(value('tail', true)), text: str(value('label', true)), interactive: bool() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
     // [work] grading names checks or self.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',
-        ordinary: ordinary('work-grade', { ...workOrderOptions, verdict: value('label'), note: value('label') }),
-        options: { ...workOptions, ...workOrderOption, verdict: { type: 'string' }, note: { type: 'string' } } },
+        ordinary: ordinary('work-grade'),
+        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(value('label')), note: str(value('label')) } },
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
-        ordinary: ordinary('work-signoff', { ...workOrderOptions, partial: flag, abandon: flag, note: value('label') }, personFlag),
-        options: { ...workOptions, ...workOrderOption, partial: { type: 'boolean', default: false }, abandon: { type: 'boolean', default: false },
-            note: { type: 'string' }, interactive: { type: 'boolean', default: false } } },
+        ordinary: ordinary('work-signoff', personFlag),
+        flags: { ...configured, 'work-order': workOrderFlag, partial: bool(flag), abandon: bool(flag), note: str(value('label')), interactive: bool() } },
     // Inspection only reports the holder. --apply deletes the lock once a pid probe calls its holder
     // dead, and that probe sees only this machine's process table: a holder running in a container or
     // on another host that shares the checkout looks dead to it, so a person confirms it is gone.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',
-        ordinary: ordinary('work-recover', workOrderOptions, { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
-        options: { ...workOptions, ...workOrderOption, apply: { type: 'boolean', default: false } } },
+        ordinary: ordinary('work-recover', { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
+        flags: { ...configured, 'work-order': workOrderFlag, apply: bool() } },
     { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order; in CI, pass the steps gated on ci', visibility: 'public',
         ordinary: ordinary('work-verify'),
-        options: workOptions },
+        flags: configured },
     { name: 'grade', handler: 'grade-criteria', stage: 'test-and-grade', summary: 'Independently grade uncommitted work against a criteria file, with no work order', visibility: 'public',
-        ordinary: ordinary('grade-criteria', { ...configured, criteria: value('confined-path', true) }),
-        options: { ...workOptions, criteria: { type: 'string' } } },
+        ordinary: ordinary('grade-criteria'),
+        flags: { ...configured, criteria: str(value('confined-path', true)) } },
     // Driving signs in and captures the application, so it runs unprompted only on the data posture a
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
-        ordinary: ordinary('browser-drive', browserOptions, browserAdmission),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
+        ordinary: ordinary('browser-drive', browserAdmission),
+        flags: { ...configured, role: str(value('identifier')) } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
-        ordinary: ordinary('browser-screenshot', browserOptions, browserAdmission),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-] as const satisfies readonly CommandDefinition[]
+        ordinary: ordinary('browser-screenshot', browserAdmission),
+        flags: { ...configured, role: str(value('identifier')) } },
+] as const satisfies readonly CommandSource[]
+
+export const commands: readonly CommandDefinition[] = sources.map(({ flags, ...command }): CommandDefinition => {
+    const entries = Object.entries(flags as Readonly<Record<string, Flag>>)
+    return { ...command,
+        options: Object.fromEntries(entries.map(([name, { agent: _agent, ...option }]) => [name, option])),
+        ordinary: command.ordinary.availability === 'available'
+            ? { ...command.ordinary, options: Object.fromEntries(entries.flatMap(([name, { agent }]) => agent ? [[name, agent]] : [])) }
+            : command.ordinary }
+})
 
 export interface InternalCommandDefinition {
     readonly name: 'guard-evaluate'

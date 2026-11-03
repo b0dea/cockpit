@@ -776,6 +776,8 @@ function renderVersion(): string {
     return `${installedPackageMetadata.name} ${installedPackageMetadata.version} (Node ${installedPackageMetadata.engines.node}; source ${installedPackageMetadata.cockpitSourceRevision})\n`
 }
 
+const missingConfig = (): CommandOutcome => usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+
 function usageOutcome(code: string, message: string, target?: string): CommandOutcome {
     return {
         artifact: null,
@@ -1052,7 +1054,7 @@ async function decodeRequest(
     if (handler === 'sync') {
         const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean; adopt?: string[] }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'sync accepts named inputs only')
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         if (values['dry-run'] && values.interactive) {
             return usageOutcome('CLI_USAGE_INVALID', 'sync --dry-run and --interactive are mutually exclusive', '--interactive')
         }
@@ -1066,7 +1068,7 @@ async function decodeRequest(
     if (handler === 'upgrade') {
         const values = parsed.values as { config?: string; 'dry-run'?: boolean }
         if (parsed.positionals.length > 1) return usageOutcome('CLI_USAGE_INVALID', 'upgrade accepts at most one version')
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         return { handler, input: { configPath: values.config, dryRun: values['dry-run'] === true,
             ...(parsed.positionals[0] === undefined ? {} : { version: parsed.positionals[0] }) } }
     }
@@ -1074,7 +1076,7 @@ async function decodeRequest(
     if (handler === 'selftest') {
         const values = parsed.values as { config?: string; 'probe-specifications'?: string; 'write-probe-specifications'?: string; interactive?: boolean; json?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         const draftPath = values['write-probe-specifications']
         if (draftPath !== undefined) {
             if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
@@ -1114,7 +1116,7 @@ async function decodeRequest(
     if (handler === 'session') {
         const values = parsed.values as { config?: string }
         const [command, ...argv] = parsed.positionals
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         if (!command) return usageOutcome('CLI_USAGE_INVALID', 'session requires a command after --', 'session')
         const inherited = inheritedSessionId(runtimeEnv)
         if (inherited === null) return usageOutcome(
@@ -1130,7 +1132,7 @@ async function decodeRequest(
         if (parsed.positionals.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`)
         }
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         return { handler, input: { configPath: values.config } } as HandlerRequest
     }
 
@@ -1144,7 +1146,7 @@ async function decodeRequest(
             json?: boolean
         }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'logs accepts named inputs only')
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         if (!values.service) return usageOutcome('CLI_USAGE_INVALID', 'provide --service <name>', '--service')
         const tail = Number(values.tail)
         if (!Number.isSafeInteger(tail) || tail < 1 || tail > 10_000) {
@@ -1170,7 +1172,7 @@ async function decodeRequest(
         if (operation !== 'measure' || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>')
         }
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
         return { handler, input: { configPath: values.config, image: values.image } }
     }
@@ -1182,7 +1184,7 @@ async function decodeRequest(
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
         }
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         if (operation === 'remove') {
             const stray = ['create', 'from', 'remote', 'dir', 'var', 'purpose', 'mount', 'instruction-pointer'].find((name) => (values as Record<string, unknown>)[name] !== undefined && (values as Record<string, unknown>)[name] !== false)
             if (stray) return usageOutcome('CLI_USAGE_INVALID', `sibling remove takes only --config and --json; --${stray} belongs to sibling add`, `--${stray}`)
@@ -1204,7 +1206,7 @@ async function decodeRequest(
         if ((operation !== 'add' && operation !== 'remove') || !tool || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `tool requires an operation and one tool: npx --no cockpit tool add|remove <${SURFACE_TARGETS.join('|')}> --config <your cockpit.toml> [--dry-run]`)
         }
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.config) return missingConfig()
         return { handler, input: { operation, configPath: values.config, tool, dryRun: values['dry-run'] === true } }
     }
 
