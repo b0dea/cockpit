@@ -29,7 +29,7 @@ async function surfaceOverrideFixture() {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-surface-override-')))
     roots.push(root)
     const configPath = join(root, 'cockpit.toml')
-    const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
+    const entryPoint = (await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')).replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.')
     const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/setup.md'), 'utf8')
     const declaration = (await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8'))
         .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')

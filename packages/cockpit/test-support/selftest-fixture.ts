@@ -10,7 +10,7 @@ import { surfaceSelftestExpectation, type SelftestProbeSpecification } from '../
 const fixture = resolve('fixtures/registries/generated-environment.toml')
 
 async function syntheticSkillSources(names: readonly string[]): Promise<string> {
-    const entry = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
+    const entry = (await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')).replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.')
     const procedure = '---\nloading: pull\nbudget: uncapped\n---\n\nInspect the synthetic product-owned verification target.\n'
     return names.flatMap((name) => [
         { path: `skills/${name}/SKILL.md`, bytes: entry.replace('name: cockpit-setup', `name: ${name}`) },

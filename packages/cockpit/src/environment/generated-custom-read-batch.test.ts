@@ -223,7 +223,7 @@ describe('custom surface output authentication batching', () => {
             execute: async step => {
                 if (step.cwd === root && step.labels.action === 'read-batch') {
                     const request = JSON.parse(step.argv[3]!) as BatchRequest
-                    if (request.entries[0]?.action === 'read-persona') {
+                    if (request.entries[0]?.action === 'read-file') {
                         batches.push(request)
                         if (change && batches.length === 2) {
                             await writeFile(join(root, 'adapters/synthetic.mjs'), 'export const replaced = true\n')
@@ -239,7 +239,7 @@ describe('custom surface output authentication batching', () => {
             path: [...entry.segments, entry.name].join('/'), action: entry.action, maxBytes: entry.maxBytes,
         })))).toEqual(Array.from({ length: change ? 2 : 3 }, () => [
             // With no persona source declared, the configuration file is the source that anchors freshness.
-            { path: 'cockpit.toml', action: 'read-persona', maxBytes: 16_777_216 },
+            { path: 'cockpit.toml', action: 'read-file', maxBytes: 16_777_216 },
             { path: 'adapters/synthetic.mjs', action: 'read-file', maxBytes: 16_777_216 },
         ]))
         expect(changed).toBe(change)

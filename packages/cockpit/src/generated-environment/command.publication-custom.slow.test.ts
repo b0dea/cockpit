@@ -188,7 +188,7 @@ ${original.replace('  return {', `  await writeFile(${JSON.stringify(join(fixtur
 
         it.each([false, true])('issues active surface overrides and changed originals only from the authenticated merge (additional skill: %s)', async additionalSkill => {
             const fixture = await surfaceConsumer('surface-override-projection')
-            const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
+            const entryPoint = (await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')).replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.')
             const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/setup.md'), 'utf8')
             const originalSha256 = surfaceDeclarationSha256({
                 name: 'cockpit-setup',
