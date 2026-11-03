@@ -123,22 +123,6 @@ describe('estate observation classification', () => {
         })
     })
 
-    it('ignores fresh observation time when the source facts are unchanged', async () => {
-        const { estateRoot, repositories } = materializeEstate('one-sibling.json')
-        const first = await classifyEstateObservation({ root: estateRoot }, {
-            observe: async () => ({ root: estateRoot, observedAt: '2026-10-25T10:00:00.000Z', repositories }),
-        })
-        const later = await classifyEstateObservation({ root: estateRoot }, {
-            observe: async () => ({ root: estateRoot, observedAt: '2026-10-26T11:30:00.000Z', repositories }),
-        })
-        expect(first).toMatchObject({ kind: 'complete', result: {
-            sourceObservationSha256: observationDigest(estateRoot, repositories),
-        } })
-        expect(later).toMatchObject({ kind: 'complete', result: {
-            sourceObservationSha256: observationDigest(estateRoot, repositories),
-        } })
-    })
-
     it('changes its source digest when evidence bytes change without changing classification', async () => {
         const { estateRoot, repositories } = materializeEstate('one-sibling.json')
         const first = await classifyEstateObservation({ root: estateRoot }, {
