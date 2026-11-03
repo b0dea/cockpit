@@ -2,6 +2,7 @@
 // bytes. Every renderer calls this same constructor, so none may independently reinterpret the
 // skill collection or choose a different declaration shape.
 import type { SurfaceDeclaration } from '../schema.js'
+import type { SurfaceTarget } from './contract.js'
 import { tryParseJson } from '../environment/contract.js'
 
 export const CORE_EVALUATOR_ASSET = 'agents/evaluator.agent.md' as const
@@ -31,6 +32,20 @@ export const CORE_SKILL_ASSETS = Object.freeze([
 
 type CoreAsset = Readonly<{ bytes: string }>
 
+const TOOL_PLACEHOLDER = '{{tool-equivalence}}'
+// The shell tool's name differs per harness, so an entry point names only the tools the cockpit
+// actually renders for; a harness without a guard (no entry here) uses whichever shell it has.
+const SHELL_TOOL: Readonly<Partial<Record<SurfaceTarget, string>>> = Object.freeze({
+    claudecode: '`Bash` in Claude Code', codexcli: '`shell` in Codex CLI', opencode: '`bash` in OpenCode',
+})
+
+function toolEquivalenceLine(tools: readonly SurfaceTarget[]): string {
+    const names = tools.flatMap(tool => SHELL_TOOL[tool] ?? [])
+    if (names.length === 0) return 'Use your shell tool.'
+    const last = names.at(-1)!
+    return `Use ${names.length === 1 ? last : `${names.slice(0, -1).join(', ')}${names.length > 2 ? ',' : ''} or ${last}`}.`
+}
+
 function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): readonly string[] | undefined {
     const bytes = assets.get('skills/collection.json')?.bytes
     if (bytes === undefined) return undefined
@@ -44,6 +59,7 @@ function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): readonly str
 /** Each shipped skill's entry point and its own procedure, as neutral skill sources. */
 export function shippedSkillSources(
     assets: ReadonlyMap<string, CoreAsset>,
+    tools: readonly SurfaceTarget[],
 ): readonly Readonly<{ name: string; sources: readonly Readonly<{ path: string; bytes: string }>[] }>[] | undefined {
     const skills = shippedSkillNames(assets)
     if (!skills) return undefined
@@ -52,7 +68,7 @@ export function shippedSkillSources(
         const entry = assets.get(`skills/${name}.skill.md`)?.bytes
         const bytes = procedure === undefined ? undefined : assets.get(`skills/${procedure}`)?.bytes
         return entry === undefined || bytes === undefined ? undefined : { name, sources: [
-            { path: `skills/${name}/SKILL.md`, bytes: entry },
+            { path: `skills/${name}/SKILL.md`, bytes: entry.replace(TOOL_PLACEHOLDER, toolEquivalenceLine(tools)) },
             { path: `skills/${name}/${procedure}`, bytes },
         ] }
     })
@@ -61,9 +77,10 @@ export function shippedSkillSources(
 
 export function coreSurfaceDeclarations(
     assets: ReadonlyMap<string, CoreAsset>,
+    tools: readonly SurfaceTarget[],
 ): readonly SurfaceDeclaration[] | undefined {
     const evaluator = assets.get(CORE_EVALUATOR_ASSET)?.bytes
-    const skills = shippedSkillSources(assets)
+    const skills = shippedSkillSources(assets, tools)
     if (evaluator === undefined || !skills) return undefined
     const declarations: SurfaceDeclaration[] = [{
         name: 'evaluator', feature: 'subagents' as const, source: CORE_EVALUATOR_ASSET,

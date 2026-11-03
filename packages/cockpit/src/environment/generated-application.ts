@@ -822,18 +822,19 @@ function selectedBootstrapInput(input: unknown): SelectedBootstrapSurfaceInput |
 type AuthenticatedAsset = Readonly<{ path: string; bytes: string; sha256: string }>
 
 /** The shipped skill sources with the packaged collection and procedures that authenticate them. */
-function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>): Readonly<{
+function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>, tools: readonly SurfaceTarget[]): Readonly<{
     sources: readonly SurfaceSourceFile[]
     collection: AuthenticatedAsset
     procedures: readonly AuthenticatedAsset[]
+    tools: readonly SurfaceTarget[]
 }> | undefined {
-    const skills = shippedSkillSources(assets)
+    const skills = shippedSkillSources(assets, tools)
     const collection = assets.get('skills/collection.json')
     const procedures = PROCEDURE_ASSETS.map(path => assets.get(path))
     if (!skills || !collection || procedures.some(row => row === undefined)) return undefined
     const pick = ({ path, bytes, sha256: digest }: AuthenticatedAsset) => ({ path, bytes, sha256: digest })
     return { sources: skills.flatMap(skill => skill.sources), collection: pick(collection),
-        procedures: (procedures as AuthenticatedAsset[]).map(pick) }
+        procedures: (procedures as AuthenticatedAsset[]).map(pick), tools }
 }
 
 async function selectedBootstrapAssets(
@@ -887,7 +888,7 @@ export async function prepareSelectedBootstrapSurface(
     const node = await nodeAuthority()
     const assets = node && await selectedBootstrapAssets(node, adapters)
     if (!node || !assets) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets could not be authenticated', 'bootstrap')
-    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])))
+    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])), captured.tools)
     if (!skillInput) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets are incomplete', 'bootstrap')
     const { sources } = skillInput
     const inspection = await inspectSkillSet(skillInput)
@@ -965,7 +966,7 @@ export async function resumeSelectedBootstrapSurface(
     )
     const assets = await selectedBootstrapAssets(node, adapters)
     if (!assets) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume packaged assets could not be authenticated', 'bootstrap')
-    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])))
+    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])), captured.tools)
     if (!skillInput) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume packaged assets are incomplete', 'bootstrap')
     const { sources } = skillInput
     const inspection = await inspectSkillSet(skillInput)
@@ -1103,17 +1104,24 @@ async function bootstrapPublishedSurfaces(
         || record.value.target !== record.target) return undefined
     const assets = await selectedBootstrapAssets(node, adapters)
     if (!assets) return undefined
-    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])))
+    // The record names no tools, so they are the targets whose setup skill it published, in published order.
+    const allTools = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])), SURFACE_TARGETS)
+    const allInspection = allTools && await inspectSkillSet(allTools)
+    const allProjection = allInspection?.kind === 'complete'
+        ? projectInspectedSkillOutputs(allInspection, SURFACE_TARGETS, SHIPPED_SETUP_SKILL) : undefined
+    if (allProjection?.kind !== 'complete') return undefined
+    const targetByPath = new Map(allProjection.files.map(file => [file.path, file.target]))
+    const tools = [...new Set(record.value.published.map(row => targetByPath.get(row.path)))]
+    if (tools.some(tool => tool === undefined)) return undefined
+    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])), tools as SurfaceTarget[])
     if (!skillInput) return undefined
     const sourceRows = skillInput.sources.map(source => ({ path: source.path, sha256: sha256(source.bytes) }))
     if (JSON.stringify(sourceRows) !== JSON.stringify(record.value.sources)) return undefined
     const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return undefined
-    // The record names no tools, so the targets are the ones whose setup skill it published.
-    const publishedPaths = new Set(record.value.published.map(row => row.path))
-    const inspected = projectInspectedSkillOutputs(inspection, SURFACE_TARGETS, SHIPPED_SETUP_SKILL)
+    const inspected = projectInspectedSkillOutputs(inspection, tools as SurfaceTarget[], SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return undefined
-    const files = inspected.files.filter(file => publishedPaths.has(file.path))
+    const files = inspected.files
     const published = files.map(file => ({ path: file.path, sha256: file.sha256 }))
     if (JSON.stringify(published) !== JSON.stringify(record.value.published)) return undefined
     const reads = await readAnchoredBatches(root, files.map(file => ({
@@ -2316,7 +2324,7 @@ async function prepareSurfaces(
         return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
     }
     const coreAssets = new Map(assets.map(row => [row.path, row] as const))
-    const coreDeclarations = coreSurfaceDeclarations(coreAssets)
+    const coreDeclarations = coreSurfaceDeclarations(coreAssets, tools)
     if (!coreDeclarations) return refuse('SURFACE_INPUT_INVALID', 'the shipped core surface declarations could not be read', 'skills/collection.json')
     const shippedSkills = coreDeclarations.filter(declaration => declaration.feature === 'skills').map(declaration => declaration.name)
     const merge = mergeSurfaceDeclarations(coreDeclarations, config.surfaces.overlays)

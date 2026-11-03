@@ -27,7 +27,7 @@ opencode:
 
 # Work an order
 
-Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
+{{tool-equivalence}}
 Read the generated [procedures/work.md](procedures/work.md) beside this skill and follow **Work**; if nobody else sets the criteria, stop and use cockpit-fix.
 Write `workorders/<id>.md`, then run `npx --no cockpit work accept --config cockpit.toml --work-order <id>`, `npx --no cockpit work check --config cockpit.toml --work-order <id>`, `npx --no cockpit work grade --config cockpit.toml --work-order <id>` and `npx --no cockpit work signoff --config cockpit.toml --work-order <id>`.
 `npx --no cockpit work status --config cockpit.toml --json` says each order's state and how it closed; record questions with `npx --no cockpit work note --config cockpit.toml --work-order <id> --ask --text <question>`.

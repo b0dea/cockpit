@@ -27,7 +27,7 @@ opencode:
 
 # Explain an installed cockpit
 
-Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
+{{tool-equivalence}}
 Read the generated [procedures/explain.md](procedures/explain.md) beside this skill and follow **Explain**.
 Choose only the question-relevant read-only command: `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, or `npx --no cockpit preflight --config cockpit.toml`.
 

@@ -27,7 +27,7 @@ opencode:
 
 # Set up and maintain an installed cockpit
 
-Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
+{{tool-equivalence}}
 Read the generated [procedures/setup.md](procedures/setup.md) beside this skill and follow the section that matches the request: **Add a repository** (`npx --no cockpit sibling add <slug> --config cockpit.toml`), **Add or remove an agent tool** (`npx --no cockpit tool add <tool> --config cockpit.toml`), **Make a repository's instructions reach every tool** (`npx --no cockpit setup --config cockpit.toml`), **After upgrading cockpit** (run `npx --no cockpit upgrade --config cockpit.toml` (`--dry-run` previews); or by hand, install the new release with `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, then ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`), or **Diagnose** (`npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, `npx --no cockpit preflight --config cockpit.toml`).
 **Bootstrap** (`npx --no cockpit init . --target <tool>`, `npx --no cockpit up --config cockpit.toml`) is what the first install ran; a repository that has never run locally follows **Create a local setup**.
 For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`.

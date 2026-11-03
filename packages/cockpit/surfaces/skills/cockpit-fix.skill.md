@@ -29,7 +29,7 @@ opencode:
 
 # Fix a defect
 
-Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
+{{tool-equivalence}}
 Read the generated [procedures/fix.md](procedures/fix.md) beside this skill and follow **Fix**.
 Run the declared gate with `npx --no cockpit test-run --config cockpit.toml --gate <gate>` before and after the change. Route through `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit logs --config cockpit.toml --service <service>`, and `npx --no cockpit check --config cockpit.toml` as the defect requires. Use `npx --no cockpit up --config cockpit.toml` only for behavior that depends on a live process or integration.
 

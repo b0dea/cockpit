@@ -114,7 +114,9 @@ describe('selected bootstrap target', () => {
         expect(prepared.result.files.map(file => file.path)).toEqual(expect.arrayContaining([
             '.agents/skills/cockpit-setup/SKILL.md', '.claude/skills/cockpit-setup/SKILL.md']))
         expect(await applySelectedBootstrapSurface(prepared.authority)).toMatchObject({ kind: 'complete' })
-        await expect(readFile(join(root, '.claude/skills/cockpit-setup/SKILL.md'), 'utf8')).resolves.toContain('cockpit-setup')
+        // The entry point names the shell tool of the listed tools only.
+        await expect(readFile(join(root, '.claude/skills/cockpit-setup/SKILL.md'), 'utf8')).resolves
+            .toContain('Use `shell` in Codex CLI or `Bash` in Claude Code.')
     }, 120_000)
 
     it('refuses changed destination preimages and copied preparation data', async () => {

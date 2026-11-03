@@ -106,6 +106,8 @@ export function isInspectedBootstrapOutputs(value: unknown): value is InspectedB
 
 interface CapturedInput {
     readonly sources: readonly SurfaceSourceFile[]
+    /** The tools whose entry points are checked for their shell-tool name. */
+    readonly tools: readonly SurfaceTarget[]
     readonly declaredExtensions: readonly string[]
     readonly collection: Readonly<{ path: string; bytes: string; sha256: string }>
     readonly procedures: readonly Readonly<{ path: string; bytes: string; sha256: string }>[]
@@ -167,8 +169,10 @@ function authenticatedAsset(value: JsonSnapshot | undefined, path: string | RegE
 
 function captureInput(input: unknown): CapturedInput | undefined {
     const captured = snapshotJson(input)
-    if (!object(captured) || !exactKeys(captured, ['sources', 'collection', 'procedures',
+    if (!object(captured) || !exactKeys(captured, ['sources', 'collection', 'procedures', 'tools',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])]) || !Array.isArray(captured.sources)
+        || !Array.isArray(captured.tools) || captured.tools.length === 0 || new Set(captured.tools).size !== captured.tools.length
+        || !captured.tools.every(tool => SURFACE_TARGETS.includes(tool as SurfaceTarget))
         || !authenticatedAsset(captured.collection, 'skills/collection.json')
         || !Array.isArray(captured.procedures) || captured.procedures.length === 0 || captured.procedures.length > 16
         || !captured.procedures.every(procedure => authenticatedAsset(procedure, PROCEDURE_ASSET))
@@ -213,7 +217,7 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
         && new Set(captured.targets).size === captured.targets.length
         ? SURFACE_TARGETS.filter(target => (captured.targets as readonly JsonSnapshot[]).includes(target)) : undefined
     if (!targets) return undefined
-    const base = captureInput({ sources: captured.sources, collection: captured.collection, procedures: captured.procedures,
+    const base = captureInput({ sources: captured.sources, tools: targets, collection: captured.collection, procedures: captured.procedures,
         ...(Object.hasOwn(captured, 'declaredExtensions') ? { declaredExtensions: captured.declaredExtensions } : {}) })
     const generated = captured.generated
     if (!base || !object(generated) || !exactKeys(generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', 'warnings'])
@@ -273,7 +277,7 @@ function targetToolsMatch(frontmatter: JsonSnapshotObject, equivalences: Readonl
         && executable.value === 'cockpit' && typeof executable.description === 'string' && executable.description.length > 0
 }
 
-function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContractResult {
+function declaration(source: SurfaceSourceFile, renderedTools: readonly SurfaceTarget[]): SkillDeclaration | SkillContractResult {
     const parsed = parseEntryPoint(source.bytes)
     if (!parsed) return refusal('SKILL_FRONTMATTER_INVALID', 'skill frontmatter is missing, malformed, aliased, duplicated, or unbounded', source.path)
     const { frontmatter, body } = parsed
@@ -322,7 +326,11 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
     if (invoked.some(command => !declaredCommands.includes(command) || !ALLOWED_COMMANDS.has(command))) {
         return refusal('SKILL_COMMAND_UNDECLARED', 'skill invokes an undeclared cockpit command', source.path)
     }
-    for (const target of GUARD_SURFACE_TARGETS) {
+    if (body.includes('{{')) {
+        return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', 'skill entry point still holds an unrendered placeholder', source.path)
+    }
+    // An entry point names the shell tool of the harnesses the cockpit renders for, and only those.
+    for (const target of GUARD_SURFACE_TARGETS.filter(guard => renderedTools.includes(guard))) {
         if (!equivalences[target].every(tool => body.includes(`\`${tool}\``))) {
             return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', `skill entry point omits the ${target} tool equivalence`, source.path)
         }
@@ -360,7 +368,7 @@ function admitDeclarations(captured: CapturedInput): SkillDeclaration[] | SkillC
     const entrySources = captured.sources.filter(source => source.path.endsWith('/SKILL.md'))
     const declarations: SkillDeclaration[] = []
     for (const source of entrySources) {
-        const admitted = declaration(source)
+        const admitted = declaration(source, captured.tools)
         if ('kind' in admitted) return admitted
         if (declarations.some(skill => skill.name === admitted.name) || source.path !== `skills/${admitted.name}/SKILL.md`) {
             return refusal('SKILL_NAME_DUPLICATE', 'skill names must be unique and match their source directory', source.path)

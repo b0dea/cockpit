@@ -29,7 +29,11 @@ function authenticated(source: { path: string; bytes: string }) {
     return { ...source, sha256: createHash('sha256').update(source.bytes).digest('hex') }
 }
 
-async function shippedSources() {
+// Rendered for every harness, the way a cockpit that lists them all renders the entry points.
+const shippedSources = async () => (await shippedSourcesRaw()).map(source => ({ ...source,
+    bytes: source.bytes.replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.') }))
+
+async function shippedSourcesRaw() {
     return Promise.all(Object.entries(PROCEDURES).flatMap(([name, procedure]) => [
         readFile(join(surfaceRoot, `${name}.skill.md`), 'utf8').then(bytes => ({ path: `skills/${name}/SKILL.md`, bytes })),
         readFile(join(surfaceRoot, procedure), 'utf8').then(bytes => ({ path: `skills/${name}/${procedure}`, bytes })),
@@ -37,10 +41,13 @@ async function shippedSources() {
 }
 
 function input(sources: readonly { path: string; bytes: string }[], standingCostCaps = generousCaps) {
-    return { sources, collection: authenticated({ path: 'skills/collection.json', bytes: JSON.stringify({
+    return { sources, tools: SURFACE_TARGETS, collection: authenticated({ path: 'skills/collection.json', bytes: JSON.stringify({
         skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: standingCostCaps,
     }) }), procedures: procedureAssets.map(authenticated) }
 }
+
+// The rendered inspection takes its tools from the rendered targets.
+const rendered = ({ tools: _tools, ...rest }: ReturnType<typeof input>) => rest
 
 function changeEntry(
     sources: readonly { path: string; bytes: string }[],
@@ -86,7 +93,7 @@ describe('shipped skill contract', () => {
                 cursor: paths.map(path => `.cursor/skills/${path}`),
                 grokcli: paths.map(path => `.grok/skills/${path}`),
             } })
-        expect(await inspectRenderedSkillSet({ ...captured, declaredExtensions: ['inspect'], generated, targets: SURFACE_TARGETS }))
+        expect(await inspectRenderedSkillSet({ ...rendered(captured), declaredExtensions: ['inspect'], generated, targets: SURFACE_TARGETS }))
             .toMatchObject({ kind: 'complete', skills: admitted.skills })
         for (const bytes of ['', '---\nloading: eager\nbudget: uncapped\n---\nInspect.\n',
             '---\nloading: pull\nbudget: uncapped\n---\n']) {
@@ -96,7 +103,7 @@ describe('shipped skill contract', () => {
         }
         expect(await inspectSkillSet(captured)).toMatchObject({ kind: 'refusal' })
         expect(await inspectSkillSet({ ...input(shipped), declaredExtensions: ['inspect'] })).toMatchObject({ kind: 'refusal' })
-        expect(await inspectRenderedSkillSet({ ...captured, generated, targets: SURFACE_TARGETS })).toMatchObject({ kind: 'refusal' })
+        expect(await inspectRenderedSkillSet({ ...rendered(captured), generated, targets: SURFACE_TARGETS })).toMatchObject({ kind: 'refusal' })
     })
 
     it.each([null, 'inspect', ['inspect', 'inspect'], ['zeta', 'alpha'], ['cockpit-setup'], ['bad/name'],
@@ -369,7 +376,7 @@ describe('shipped skill contract', () => {
         expect(generated.kind, JSON.stringify(generated)).toBe('complete')
         if (generated.kind !== 'complete') return
 
-        const result = await inspectRenderedSkillSet({ ...input(sources), generated, targets: SURFACE_TARGETS })
+        const result = await inspectRenderedSkillSet({ ...rendered(input(sources)), generated, targets: SURFACE_TARGETS })
 
         expect(result).toMatchObject({ kind: 'complete', skills: ['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'] })
         if (result.kind !== 'complete') return
@@ -378,14 +385,24 @@ describe('shipped skill contract', () => {
 
         const missingSidecar = { ...generated, files: generated.files.filter(file =>
             file.path !== '.agents/skills/cockpit-setup/agents/openai.yaml') }
-        await expect(inspectRenderedSkillSet({ ...input(sources), generated: missingSidecar, targets: SURFACE_TARGETS })).resolves.toMatchObject({
+        await expect(inspectRenderedSkillSet({ ...rendered(input(sources)), generated: missingSidecar, targets: SURFACE_TARGETS })).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVENTORY_INVALID', target: 'codexcli' }],
         })
         // Skills rendered for a tool cockpit.toml does not list are refused, not published beside the listed ones.
-        await expect(inspectRenderedSkillSet({ ...input(sources), generated, targets: ['claudecode'] })).resolves.toMatchObject({
+        await expect(inspectRenderedSkillSet({ ...rendered(input(sources)), generated, targets: ['claudecode'] })).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVENTORY_INVALID' }],
         })
     }, 120_000)
+
+    it('checks the shell-tool name only for the tools the cockpit renders for', async () => {
+        const claudeOnly = (await shippedSourcesRaw()).map(source => ({ ...source,
+            bytes: source.bytes.replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code.') }))
+        expect(await inspectSkillSet({ ...input(claudeOnly), tools: ['claudecode'] })).toMatchObject({ kind: 'complete' })
+        expect(await inspectSkillSet({ ...input(claudeOnly), tools: ['claudecode', 'codexcli'] }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_TOOL_EQUIVALENCE_MISSING' }] })
+        expect(await inspectSkillSet({ ...input(await shippedSourcesRaw()), tools: ['claudecode'] }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_TOOL_EQUIVALENCE_MISSING' }] })
+    })
 
     it.each([
         ['missing name', (bytes: string) => bytes.replace('name: cockpit-setup\n', '')],
