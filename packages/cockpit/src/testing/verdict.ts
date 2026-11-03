@@ -1,9 +1,3 @@
-export const mechanism = {
-    id: 'testing-run-verdict',
-    module: 'packages/cockpit/src/testing/verdict.ts',
-    exports: ['RUN_VERDICTS', 'classifyRun'],
-} as const
-
 export const RUN_VERDICTS = ['PASS', 'FAIL', 'PARTIAL', 'DEGRADED', 'VOID'] as const
 export type RunVerdict = typeof RUN_VERDICTS[number]
 

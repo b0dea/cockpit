@@ -6,10 +6,6 @@ import { availableParallelism, tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const mechanism = {
-    id: 'bounded-test-runner', module: 'scripts/run-tests.mjs', exports: ['readProcessTable', 'runTestsCli'],
-}
-
 const TARGETED_EXECUTION_TIMEOUT_MS = 825_000
 const COMPLETE_EXECUTION_TIMEOUT_MS = 3_600_000
 const TERMINATION_GRACE_MS = 10_000

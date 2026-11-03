@@ -47,12 +47,6 @@ import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycl
 import type { RuntimeMeasurementProbeAuthority } from './runtime.js'
 import type { LeasePortFamilyResult } from './ports.js'
 
-export const mechanism = {
-    id: 'destructive-adapter-composition',
-    module: 'packages/cockpit/src/environment/destructive-composition.ts',
-    exports: ['createDestructiveCommandAdapters', 'selectDestructiveDaemon'],
-} as const
-
 export interface DestructiveCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>

@@ -1,9 +1,3 @@
-export const mechanism = {
-    id: 'repository-identity',
-    module: 'packages/cockpit/src/environment/repository-identity.ts',
-    exports: ['repositoryIdentity'],
-} as const
-
 export interface RepositoryIdentity {
     readonly host: string
     readonly owner: string

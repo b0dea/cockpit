@@ -30,19 +30,7 @@ import { resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } 
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
 
-export const mechanism = {
-    id: 'setup-observation',
-    module: 'packages/cockpit/src/environment/setup-observation.ts',
-    exports: [
-        'observeSetupPath',
-        'observeSetupCheckout',
-        'withSetupCheckoutProjection',
-        'consumeSetupCheckoutProjection',
-        'observeGeneratedCheckoutIdentity',
-        'revalidateGeneratedCheckoutIdentity',
-        'observeEnvironmentIgnore',
-    ],
-} as const
+const OWNER = 'setup-observation'
 
 const CHECKOUT_ID = /^checkout:[a-f0-9]{64}$/
 const SLUG = /^[a-z0-9][a-z0-9-]*$/
@@ -588,12 +576,12 @@ interface SetupCheckoutBinding {
 
 export type SetupCheckoutObservation = Readonly<{
     state: 'available'
-    producer: typeof mechanism.id
+    producer: typeof OWNER
     observedAt: string
     validThrough: string
 }> | Readonly<{
     state: 'failed'
-    producer: typeof mechanism.id
+    producer: typeof OWNER
     code: typeof ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID
     reason: string
 }>
@@ -634,7 +622,7 @@ interface SetupCheckoutInput {
 function setupCheckoutFailure(reason: string): Extract<SetupCheckoutObservation, { state: 'failed' }> {
     return Object.freeze({
         state: 'failed',
-        producer: mechanism.id,
+        producer: OWNER,
         code: ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
         reason,
     })
@@ -1146,7 +1134,7 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         directoryIdentities,
         fileIdentities,
     })
-    const observation = Object.freeze({ state: 'available' as const, producer: mechanism.id, observedAt: value.observedAt, validThrough })
+    const observation = Object.freeze({ state: 'available' as const, producer: OWNER, observedAt: value.observedAt, validThrough })
     issuedSetupCheckoutObservations.set(observation, binding)
     return observation
 }
@@ -1454,7 +1442,7 @@ function probeStep(
 }
 
 function available(value: SetupPathEvidence): SetupObservation {
-    return { state: 'available', value, observedAt: new Date().toISOString(), producer: mechanism.id }
+    return { state: 'available', value, observedAt: new Date().toISOString(), producer: OWNER }
 }
 
 function outsideRoot(): SetupObservation {
@@ -1462,12 +1450,12 @@ function outsideRoot(): SetupObservation {
         state: 'failed',
         code: ENVIRONMENT_CODES.SETUP_PATH_OUTSIDE_ROOT,
         reason: 'the checkout or its Git administrative directory is outside the declared siblings root',
-        producer: mechanism.id,
+        producer: OWNER,
     }
 }
 
 function failure(message: string, code: RefusalCode = ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID): SetupObservation {
-    return { state: 'failed', code, reason: message, producer: mechanism.id }
+    return { state: 'failed', code, reason: message, producer: OWNER }
 }
 
 function decodeLines(bytes: Buffer): readonly string[] | undefined {

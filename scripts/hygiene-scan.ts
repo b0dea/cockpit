@@ -4,33 +4,6 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export const IMPLEMENTED_MECHANISMS = Object.freeze([
-    {
-        id: 'tree-hygiene',
-        exports: [
-            'ROOT_URL',
-            'ROOT',
-            'SITE_NEEDLES',
-            'INTERNAL',
-            'FIXTURE',
-            'ALLOWED',
-            'universalPatterns',
-            'siteTerms',
-            'hasInternal',
-            'buildNeedle',
-            'coverage',
-            'scanText',
-            'scanPathText',
-            'scanPublicationPathText',
-            'commitMessageText',
-            'scanCommitMessage',
-            'trackedContents',
-            'untrackedPaths',
-            'scanGitHistory',
-        ],
-    },
-])
-
 // Tests and commit hooks share these rules so index and working-tree checks cannot drift.
 // Node strips the types itself, so mandatory hooks start no compiler or package manager.
 

@@ -17,12 +17,6 @@ import { redactSensitiveText } from '../environment/sensitive.js'
 import { formatShellCommand, initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable, TestingName } from '../schema.js'
 
-export const mechanism = {
-    id: 'init-inference',
-    module: 'packages/cockpit/src/init/derive.ts',
-    exports: ['COMPOSE_NAMES', 'NODE_LOCKFILE_NAMES', 'deriveInferredFacts', 'readDockerfileFacts'],
-} as const
-
 export interface InferredProvenance {
     readonly kind: 'inferred'
     readonly source: string

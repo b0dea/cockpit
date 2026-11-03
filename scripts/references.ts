@@ -16,12 +16,6 @@ import { inspectSkillSet } from '../packages/cockpit/src/surfaces/skill-contract
 import { CORE_PROCEDURE_ASSETS, CORE_SKILL_PROCEDURES } from '../packages/cockpit/src/surfaces/core-declarations.js'
 import { diagnosticInventory, type DiagnosticInventory } from './diagnostic-inventory.ts'
 
-export const mechanism = {
-    id: 'reference-generation',
-    module: 'scripts/references.ts',
-    exports: ['readReferenceSources', 'renderReferences'],
-}
-
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SURFACES = 'packages/cockpit/surfaces'
 const SKILLS = ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'] as const

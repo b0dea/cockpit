@@ -3,12 +3,6 @@ import { isAbsolute, normalize } from 'node:path'
 import type { CheckoutId, CockpitId, HolderId, StackId } from './contract.js'
 import { RefusalError } from './contract.js'
 
-export const mechanism = {
-    id: 'environment-identity',
-    module: 'packages/cockpit/src/environment/identity.ts',
-    exports: ['cockpitId', 'publicationCockpitId', 'checkoutId', 'stackId', 'composeProjectName', 'holderId', 'bootstrapHolderId'],
-} as const
-
 declare const bootstrapLockOwnerBrand: unique symbol
 export type BootstrapLockOwnerId = string & { readonly [bootstrapLockOwnerBrand]: 'BootstrapLockOwnerId' }
 

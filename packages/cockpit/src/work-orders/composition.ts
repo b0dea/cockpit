@@ -31,12 +31,6 @@ import { runGate, type GateDependencies, type GateRegistry, type GateRequest, ty
 import { parseCriteriaFile, parseWorkOrder, WORK_ORDER_ID, type ParsedFile, type WorkOrder, type WorkOrderCheck } from './contract.js'
 import { createWorkStore, outputTail, WORK_RECORD_DIRECTORY, type CheckResult, type WorkStore } from './store.js'
 
-export const mechanism = {
-    id: 'work-order-composition',
-    module: 'packages/cockpit/src/work-orders/composition.ts',
-    exports: ['isWorkApplicationComposition', 'createConfiguredWorkApplicationComposition'],
-} as const
-
 export type WorkEnvironmentApplicationConfig = ConsumedWorkEnvironmentConfig
 
 type BrowserAuthority = Readonly<{

@@ -10,12 +10,6 @@
  * rather than guessed at.
  */
 
-export const mechanism = {
-    id: 'sibling-toml-edit',
-    module: 'packages/cockpit/src/config/sibling-toml.ts',
-    exports: ['scanHeaders', 'locateSiblingTables', 'appendSiblingTable', 'removeSiblingTable', 'recordSiblingRemote', 'siblingTable'],
-} as const
-
 export interface SiblingTableRow {
     readonly slug: string
     readonly dir: string

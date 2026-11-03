@@ -9,14 +9,6 @@ import { publicationCockpitId } from '../environment/identity.js'
 import { safeSurfacePath as safePath } from './contract.js'
 import { SURFACE_TARGETS } from './harness-registry.js'
 
-export const mechanism = {
-    id: 'surface-ownership',
-    module: 'packages/cockpit/src/surfaces/ownership.ts',
-    exports: ['classifySurfaceOwnership', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
-        'encodeOwnershipManifest', 'parseOwnershipManifest', 'projectGeneratedPathFacts',
-        'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths', 'SURFACE_HAND_EDIT_FIX', 'SURFACE_UNRECORDED_FIX'],
-} as const
-
 export type SurfaceOwnership = 'whole-file' | 'shared-region'
 export type SurfaceScope = 'always' | 'scoped'
 export type SurfaceCapability = 'enforced' | 'instructed'

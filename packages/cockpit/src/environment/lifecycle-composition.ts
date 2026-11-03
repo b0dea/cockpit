@@ -73,11 +73,7 @@ import {
 } from './setup-observation.js'
 import { selectStateRoot } from './state.js'
 
-export const mechanism = {
-    id: 'lifecycle-adapter-composition',
-    module: 'packages/cockpit/src/environment/lifecycle-composition.ts',
-    exports: ['createLifecycleCommandAdapters'],
-} as const
+const OWNER = 'lifecycle-adapter-composition'
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
@@ -353,13 +349,13 @@ async function listenerEvidence(
                 ? Object.freeze({
                     state: 'unavailable' as const,
                     reason: 'bounded loopback listener observation is unavailable',
-                    producer: mechanism.id,
+                    producer: OWNER,
                 })
                 : Object.freeze({
                     state: 'available' as const,
                     value: Object.freeze(ports.filter((_port, index) => familyObservation[index] === true)),
                     observedAt: new Date(Math.max(completedAt, Date.parse(requestedAt))).toISOString(),
-                    producer: mechanism.id,
+                    producer: OWNER,
                 }),
         })
     }))

@@ -21,23 +21,19 @@ import { stackId as deriveStackId } from './identity.js'
 import { isRuntimeTopologyEvidence, type RuntimeTopologyEvidence } from './runtime.js'
 import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './setup-observation.js'
 
-export const mechanism = {
-    id: 'git-observation',
-    module: 'packages/cockpit/src/environment/git-observation.ts',
-    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations', 'inspectTrackedSecretFiles', 'gitRepositoryRefusal'],
-} as const
+const OWNER = 'git-observation'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'git-working-tree', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
-    { id: 'git-adjacency', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CHECKOUT_ADJACENCY_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
-    { id: 'running-checkout', owner: mechanism.id, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'no running checkout exists before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, isIssued: isGitObservation, issuedAt: observationIssuedAt },
+    { id: 'git-working-tree', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
+    { id: 'git-adjacency', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CHECKOUT_ADJACENCY_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
+    { id: 'running-checkout', owner: OWNER, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'no running checkout exists before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, isIssued: isGitObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('Git observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('Git observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -209,7 +205,7 @@ export function decodeGitObservation(
         return unavailable('Git checkout path is too long to name in its remedy')
     }
     const common = {
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: context.stackId,
         observedAt: context.observedAt,
         applicability: { state: 'required' as const, posture: 'environment' },
@@ -565,7 +561,7 @@ export function observeRunningCheckout(
         checkoutMatches: topology.cwd === dirname(checkout.source.path) })
     const expected = Object.freeze({ stackId: expectedStack, configSha256: runtimeSha256, checkoutMatches: true })
     const observation: EnvironmentObservation = {
-        code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, owner: mechanism.id, stackId: expectedStack,
+        code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, owner: OWNER, stackId: expectedStack,
         source: `${checkout.source.path}:running-checkout`, observed: { state: 'available', value: measured, observedAt },
         expectation: { kind: 'equal', value: expected }, applicability: { state: 'required', posture: 'running-stack' },
         freshness: { state: 'current' }, remedy: 'restart the stack from the current checkout and configuration',

@@ -7,11 +7,6 @@
 // callers still compare the digest with the one they expect.
 import type { Stats } from 'node:fs'
 
-export const mechanism = {
-    id: 'environment-verified-digest', module: 'packages/cockpit/src/environment-exec/verified-digest.ts',
-    exports: ['fileFingerprint', 'recordVerifiedDigest', 'verifiedDigest'],
-} as const
-
 const MAX_ENTRIES = 64
 const verified = new Map<string, string>()
 

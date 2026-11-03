@@ -10,11 +10,6 @@ import { join } from 'node:path'
 import { readBoundedInput } from '../config/load.js'
 import { errorCause, hasErrorCode } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'guard-local-identity', module: 'packages/cockpit/src/guards/local-identity.ts',
-    exports: ['GUARD_LOCAL_PATHS', 'encodeGuardLocalIdentity', 'parseGuardLocalIdentity', 'writeCockpitLocalFiles', 'writeGuardLocalIdentity'],
-} as const
-
 export interface GuardHandlerIdentity {
     readonly root: string
     readonly rootDevice: string

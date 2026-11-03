@@ -4,11 +4,6 @@ import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harn
 import type { GuardDecision } from './evaluator.js'
 import { GUARD_INPUT_LIMITS } from './invocation-parser.js'
 
-export const mechanism = {
-    id: 'guard-harness-adapter', module: 'packages/cockpit/src/guards/harness-adapter.ts',
-    exports: ['adaptGuardDecision', 'normalizeOpenCodeInput', 'planGuardTransport', 'completeGuardTransport', 'GUARD_HANDLER_ARGV'],
-} as const
-
 export const GUARD_HANDLER_ARGV = Object.freeze(['guard-evaluate'] as const)
 export interface NativeGuardOutput {
     readonly target: GuardSurfaceTarget | null

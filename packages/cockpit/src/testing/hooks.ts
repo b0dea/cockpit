@@ -6,12 +6,6 @@ import { bindSurfaceOwnershipIdentity, type SurfaceDesiredEntry } from '../surfa
 import { resolveExecutablePath } from '../environment/executable.js'
 import { errorCause } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'native-testing-guards',
-    module: 'packages/cockpit/src/testing/hooks.ts',
-    exports: ['NATIVE_HOOK_COST_SCRIPT', 'checkNativeHookBudget', 'projectNativeHooks'],
-} as const
-
 export type NativeHookEntry = Extract<SurfaceDesiredEntry, { kind: 'file' }>
 export interface NativeHookPolicy extends NamedPathInput { readonly bytes: string }
 export type NativeHookMeasurement = ExecutionStep

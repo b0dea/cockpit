@@ -15,12 +15,6 @@ import { checkoutId, stackId as deriveStackId, type StackVariant } from './ident
 import { authenticateLifecycleStageAuthority, type LifecycleStageAuthority } from './lifecycle-stage.js'
 import { isStateObservation } from './state.js'
 
-export const mechanism = {
-    id: 'environment-posture-observation',
-    module: 'packages/cockpit/src/environment/posture-observation.ts',
-    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'authenticateObservationPostureContext', 'judgePostureDeclaration', 'POSTURE_REQUIREMENT_OWNER'],
-} as const
-
 /** The owner of the posture-requirement checks preflight derives from the declared postures. */
 export const POSTURE_REQUIREMENT_OWNER = 'posture-requirements'
 

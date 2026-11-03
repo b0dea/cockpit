@@ -6,12 +6,6 @@ import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-regist
 import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
 
-export const mechanism = {
-    id: 'surface-restrictions',
-    module: 'packages/cockpit/src/surfaces/restrictions.ts',
-    exports: ['expandRestrictions', 'inspectShippedRestrictionCapabilities', 'compareRestrictionOutputs', 'RESTRICTION_OUTPUT_LIMITS', 'validateGuardRegistration'],
-} as const
-
 export const RESTRICTION_OUTPUT_LIMITS = Object.freeze({
     scalarBytes: 65_536,
     aggregateBytes: 102_400,

@@ -10,23 +10,19 @@ import {
 } from './contract.js'
 import { isMachineFloorEvidence, type MachineFloorEvidence } from './runtime.js'
 
-export const mechanism = {
-    id: 'host-observation',
-    module: 'packages/cockpit/src/environment/host-observation.ts',
-    exports: ['observeHostCapacity', 'isHostObservation', 'observationDeclarations'],
-} as const
+const OWNER = 'host-observation'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'machine-memory', owner: mechanism.id, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
-    { id: 'machine-cpu', owner: mechanism.id, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
-    { id: 'machine-disk', owner: mechanism.id, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
+    { id: 'machine-memory', owner: OWNER, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
+    { id: 'machine-cpu', owner: OWNER, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
+    { id: 'machine-disk', owner: OWNER, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('host observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('host observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -48,7 +44,7 @@ export interface HostCapacityFloor {
 function metric(stackId: StackId, evidence: MachineFloorEvidence, code: EnvironmentCode, source: string,
     measured: number, expectation: ObservationExpectation, remedy: string): EnvironmentObservation {
     return issueObservation({
-        code, owner: mechanism.id, stackId, source,
+        code, owner: OWNER, stackId, source,
         observed: { state: 'available', value: measured, observedAt: evidence.observedAt },
         expectation,
         applicability: { state: 'required', posture: 'machine-floor' },

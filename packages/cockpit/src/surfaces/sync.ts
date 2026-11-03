@@ -13,12 +13,6 @@ import {
     type SurfacePriorOwnedEntry,
 } from './ownership.js'
 
-export const mechanism = {
-    id: 'surface-sync-plan',
-    module: 'packages/cockpit/src/surfaces/sync.ts',
-    exports: ['planSurfaceChanges'],
-} as const
-
 export type SurfaceObservedEntry =
     | Readonly<{ path: string; kind: 'missing' }>
     | Readonly<{ path: string; kind: 'file'; bytes: string; sha256: string; identity: string }>

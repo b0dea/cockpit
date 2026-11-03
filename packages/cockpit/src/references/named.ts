@@ -3,12 +3,6 @@ import {
     type GeneratedPathFact, type GeneratedPathProducer, type OwnershipAuthority, type OwnershipManifest,
 } from '../surfaces/ownership.js'
 
-export const mechanism = {
-    id: 'named-reference-resolution',
-    module: 'packages/cockpit/src/references/named.ts',
-    exports: ['resolveNamedPath'],
-} as const
-
 interface NamedAuthority {
     readonly manifest: OwnershipManifest
     readonly authority: OwnershipAuthority

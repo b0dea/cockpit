@@ -11,12 +11,6 @@ import { parse as parseToml, TomlError } from 'smol-toml'
 import { hasErrorCode, RefusalError } from './environment/contract.js'
 import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
 
-export const mechanism = {
-    id: 'autonomy-policy',
-    module: 'packages/cockpit/src/autonomy.ts',
-    exports: ['POLICY_RECORD_PATH', 'decide', 'effectivePolicy', 'pinnedPolicyTables', 'policyWeakening', 'readRecordedPolicy', 'runningInCi', 'weakeningDigest', 'writeRecordedPolicy'],
-} as const
-
 export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff'
 export type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
 export interface EffectivePolicy {

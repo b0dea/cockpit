@@ -18,12 +18,6 @@ import {
 import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from './derive.js'
 import { productPackageManifest } from '../team-metadata.js'
 
-export const mechanism = {
-    id: 'document-outcome',
-    module: 'packages/cockpit/src/init/draft.ts',
-    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'observeCockpitRoot', 'plannedGreenfieldQuestions', 'isAnswerProvenance'],
-} as const
-
 /**
  * The directory holding the repositories, and optionally the direct children to observe. A cockpit
  * created beside a product repository observes only that repository in their shared parent, which

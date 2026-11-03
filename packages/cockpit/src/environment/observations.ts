@@ -32,12 +32,6 @@ import {
 export { resolveObservationPostures, refreshObservationPostures } from './posture-observation.js'
 export type { PreflightContext, ResolvedPostureAuthority } from './posture-observation.js'
 
-export const mechanism = {
-    id: 'environment-observation-evaluation',
-    module: 'packages/cockpit/src/environment/observations.ts',
-    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'projectDoctor', 'validateObservationDeclarations', 'allObservationDeclarations', 'aggregateObservations', 'observationSatisfiesExpectation', 'stoppedStackApplicability'],
-} as const
-
 export interface EvaluatedObservation {
     readonly code: EnvironmentObservation['code']
     readonly owner: string

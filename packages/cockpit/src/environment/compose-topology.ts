@@ -15,12 +15,6 @@ import type { ResolvedExecutable } from './executable.js'
 import { redactSensitiveText } from './sensitive.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 
-export const mechanism = {
-    id: 'compose-topology',
-    module: 'packages/cockpit/src/environment/compose-topology.ts',
-    exports: ['composeProjectDirectory', 'observeComposeTopology', 'assessComposeTopology', 'composeBindPath', 'compareBindSources', 'redirectedBindSources', 'splitComposeShort', 'bindHolder'],
-} as const
-
 /**
  * The directory every relative path in a cockpit's own Compose files resolves against: the first
  * file's, as `docker compose -f first.yml -f second.yml` takes it. Compose cannot default it itself

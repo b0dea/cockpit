@@ -8,12 +8,6 @@ import {
 import type { Sibling } from '../schema.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 
-export const mechanism = {
-    id: 'setup-planning',
-    module: 'packages/cockpit/src/environment/setup.ts',
-    exports: ['planSetup', 'gitEnvironment', 'resolveLocalRemote'],
-} as const
-
 type ObservedPathKind = 'absent' | 'directory' | 'repository' | 'symlink'
 
 export interface SetupPathEvidence {

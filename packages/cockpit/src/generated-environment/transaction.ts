@@ -19,12 +19,6 @@ import { reservedPathSegment } from '../surfaces/contract.js'
 import { isInspectedBootstrapOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import type { SurfaceChange } from '../surfaces/sync.js'
 
-export const mechanism = {
-    id: 'generated-publication-transaction',
-    module: 'packages/cockpit/src/generated-environment/transaction.ts',
-    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'portablePublicationPaths', 'admitPublicationPlan', 'authorizePublicationPlan', 'runPublicationPlan'],
-} as const
-
 export interface PublicationAdapters {
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
     readonly authorizeStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<GeneratedStaleRemovalApproval | undefined>

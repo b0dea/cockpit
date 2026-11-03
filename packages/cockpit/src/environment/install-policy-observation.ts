@@ -16,16 +16,7 @@ import {
 } from './contract.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 
-export const mechanism = {
-    id: 'install-policy-lockfile-observation',
-    module: 'packages/cockpit/src/environment/install-policy-observation.ts',
-    exports: [
-        'observeInstallPolicyLockfiles',
-        'withInstallPolicyProjection',
-        'consumeInstallPolicyProjection',
-        'matchesInstallPolicyCatalog',
-    ],
-} as const
+const OWNER = 'install-policy-lockfile-observation'
 
 const CHECKOUT_ID = /^checkout:[a-f0-9]{64}$/
 const SLUG = /^[a-z0-9][a-z0-9-]*$/
@@ -76,10 +67,10 @@ interface ObservationBinding {
 }
 
 export type InstallPolicyLockfileObservation =
-    | ({ readonly state: 'available'; readonly producer: typeof mechanism.id } & ObservationBinding)
+    | ({ readonly state: 'available'; readonly producer: typeof OWNER } & ObservationBinding)
     | {
           readonly state: 'unavailable' | 'failed'
-          readonly producer: typeof mechanism.id
+          readonly producer: typeof OWNER
           readonly code:
               | typeof ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_UNAVAILABLE
               | typeof ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_INVALID
@@ -250,7 +241,7 @@ function sameObservation(left: ObservedLockfile, right: ObservedLockfile): boole
 function failure(state: 'unavailable' | 'failed', reason: string): InstallPolicyLockfileObservation {
     return Object.freeze({
         state,
-        producer: mechanism.id,
+        producer: OWNER,
         code: state === 'unavailable'
             ? ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_UNAVAILABLE
             : ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_INVALID,
@@ -307,7 +298,7 @@ export async function observeInstallPolicyLockfiles(input: unknown): Promise<Ins
         observedAt: value.observedAt,
         validThrough: new Date(observedAt + MAX_VALIDITY_MS).toISOString(),
     })
-    const observation = Object.freeze({ state: 'available' as const, producer: mechanism.id, ...binding })
+    const observation = Object.freeze({ state: 'available' as const, producer: OWNER, ...binding })
     issuedObservations.set(observation, binding)
     return observation
 }

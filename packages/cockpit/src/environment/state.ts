@@ -27,15 +27,11 @@ import {
     type StackId,
 } from './contract.js'
 
-export const mechanism = {
-    id: 'environment-state',
-    module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectMachineStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'refreshBootstrapPublication', 'restartBootstrapState', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
-} as const
+const OWNER = 'environment-state'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'config-freshness', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_STALE, isIssued: isStateObservation, issuedAt: observationIssuedAt },
-    { id: 'config-schema-validity', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, isIssued: isStateObservation, issuedAt: observationIssuedAt },
+    { id: 'config-freshness', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_STALE, isIssued: isStateObservation, issuedAt: observationIssuedAt },
+    { id: 'config-schema-validity', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, isIssued: isStateObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
@@ -50,7 +46,7 @@ const issuedBootstrapRestarts = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('state observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('state observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -75,7 +71,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
     const source = loaded.kind === 'complete' ? loaded.result.source.path : failure?.target ?? owned.path
     return Object.freeze([
         issueObservation({
-            code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, owner: mechanism.id, stackId: owned.stackId as StackId, source,
+            code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: failure
                 ? { state: 'failed', reason: failure.message, observedAt: owned.observedAt }
                 : { state: 'available', value: true, observedAt: owned.observedAt },
@@ -83,7 +79,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
             remedy: 'repair the configuration before evaluating the environment',
         }),
         issueObservation({
-            code: ENVIRONMENT_CODES.CONFIG_STALE, owner: mechanism.id, stackId: owned.stackId as StackId, source,
+            code: ENVIRONMENT_CODES.CONFIG_STALE, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: loaded.kind === 'complete'
                 ? { state: 'available', value: loaded.result.source.sha256, observedAt: owned.observedAt }
                 : { state: 'unavailable', reason: 'configuration revision is unavailable', observedAt: owned.observedAt },

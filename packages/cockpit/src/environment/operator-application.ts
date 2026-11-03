@@ -13,12 +13,6 @@ import type {
     GeneratedStaleRemovalApprovalRequest,
 } from './generated-application.js'
 
-export const mechanism = {
-    id: 'environment-operator-application',
-    module: 'packages/cockpit/src/environment/operator-application.ts',
-    exports: ['loadOperatorPolicy', 'runResetOperatorApplication', 'runSyncOperatorApplication'],
-} as const
-
 export interface OperatorAdmission {
     readonly interactive: boolean
     readonly json: boolean

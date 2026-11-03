@@ -1,9 +1,5 @@
 import { appendFileSync } from 'node:fs'
 
-export const mechanism = {
-    id: 'immediate-test-failures', module: 'scripts/immediate-failure-reporter.mjs', exports: ['default'],
-}
-
 export default class ImmediateFailureReporter {
     logger
 

@@ -27,12 +27,6 @@ import {
 import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from './verified-digest.js'
 
-export const mechanism = {
-    id: 'environment-execution',
-    module: 'packages/cockpit/src/environment-exec/execute.ts',
-    exports: ['executePlan', 'executeProbe', 'executeForegroundProcess', 'repairFencedExecution', 'cleanupFencedExecution', 'consumeFencedExecutionTermination', 'authenticatedExecutionOutcome', 'executionOutcomeMatches'],
-} as const
-
 const FENCE_READY_MS = 2_000
 const FENCE_REPAIR_MS = 2_000
 

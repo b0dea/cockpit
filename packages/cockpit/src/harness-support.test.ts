@@ -6,7 +6,6 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
-    IMPLEMENTED_MECHANISMS,
     validateEvidenceManifest,
     validateEvidenceManifests,
     validateSelftestEvidenceBundle,
@@ -1102,11 +1101,7 @@ describe('operator executable identity', () => {
 })
 
 describe('versioned harness selftest evidence', () => {
-    it('keeps the legacy mechanism closed and exposes one versioned validator', () => {
-        expect(IMPLEMENTED_MECHANISMS).toEqual([{
-            id: 'harness-evidence-validation',
-            exports: ['validateEvidenceManifest', 'validateEvidenceManifests', 'validateSelftestEvidenceBundle'],
-        }])
+    it('refuses an empty evidence manifest list', () => {
         expect(validateEvidenceManifests([], ROOT)).toEqual({ errors: ['no evidence manifests supplied'], rows: [] })
     })
 

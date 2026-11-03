@@ -10,8 +10,6 @@ import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
 
-export const mechanism = { id: 'runtime-logs', module: 'packages/cockpit/src/environment/logs.ts', exports: ['planLogs', 'collectLogs', 'planFailureLogs', 'admitFailureLogs', 'failureLogExcerpt'] } as const
-
 export interface LogRequest {
     runtime: 'docker-compose'
     executable: ResolvedExecutable

@@ -46,26 +46,17 @@ import {
     type StateTransactionOptions,
 } from './state.js'
 
-export const mechanism = {
-    id: 'environment-claims',
-    module: 'packages/cockpit/src/environment/claims.ts',
-    exports: [
-        'releaseClaim', 'decodeCoordinationRecord',
-        'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
-        'observeProcessStart', 'processHost', 'isProcessStart', 'isProcessGone', 'releaseDeadSessionHolders', 'liveHolderMessage',
-        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive',
-    ],
-} as const
+const OWNER = 'environment-claims'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'claim-state', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'claims do not exist before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY, isIssued: isClaimObservation, issuedAt: observationIssuedAt },
+    { id: 'claim-state', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'claims do not exist before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY, isIssued: isClaimObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('claim observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('claim observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -87,7 +78,7 @@ export async function observeClaimState(input: { readonly namespace: StateNamesp
     const refusal = inventory.kind === 'refusal' ? inventory.diagnostics[0] : undefined
     return issueObservation({
         code: ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: input.stackId,
         source: namespace.paths.coordination(input.stackId).path,
         observed: refusal

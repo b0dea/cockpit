@@ -4,12 +4,6 @@ import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promise
 import { dirname, join, posix, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export const mechanism = {
-    id: 'cockpit-package-build',
-    module: 'scripts/build-cockpit.ts',
-    exports: ['cleanOwnedPackageDist', 'packagedDocumentationPages', 'writePackagedDocumentation'],
-}
-
 // The surfaces a consumer's cockpit renders send agents to the user guide. They run after cockpit
 // is installed, possibly offline and possibly before the repository is reachable, so the guide
 // travels in the package. Contributor pages describe this repository, not an installation.

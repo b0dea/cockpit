@@ -7,12 +7,6 @@ import type { GuardInvocationProfile } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 
-export const mechanism = {
-    id: 'command-metadata',
-    module: 'packages/cockpit/src/command-table.ts',
-    exports: ['commands', 'commandStages', 'commandGroups', 'commandSpelling', 'internalCommands', 'describePublicOption', 'resolveOrdinaryInvocation', 'ordinarySessionCommand', 'isWorkHandler', 'isRecordedAnswerField'],
-} as const
-
 export function isRecordedAnswerField(value: string): boolean {
     return value.length <= 256 && /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(value)
 }

@@ -12,12 +12,6 @@ import { parseJsonText } from '../environment/contract.js'
 import { ADOPTED_SURFACE_ROOT, type AdoptableSurfacePath } from './contract.js'
 import { composeHookSettings } from './render.js'
 
-export const mechanism = {
-    id: 'surface-adoption-merge',
-    module: 'packages/cockpit/src/surfaces/adoption.ts',
-    exports: ['adoptedCopyPath', 'inspectAdoptedSettings', 'mergeAdoptedSurface'],
-} as const
-
 export type AdoptionDiagnostic = Readonly<{ code: 'SURFACE_ADOPTION_REFUSED'; message: string; target: string }>
 export type AdoptedSettingsInspection =
     | Readonly<{ kind: 'complete'; value: Record<string, unknown> }>

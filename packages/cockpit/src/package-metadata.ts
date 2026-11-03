@@ -1,11 +1,5 @@
 import { readFileSync } from 'node:fs'
 
-export const mechanism = {
-    id: 'installed-package-metadata',
-    module: 'packages/cockpit/src/package-metadata.ts',
-    exports: ['installedPackageMetadata'],
-} as const
-
 export interface InstalledPackageMetadata {
     readonly name: string
     readonly version: string

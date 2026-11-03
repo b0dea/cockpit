@@ -4,10 +4,6 @@ import { basename, dirname, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runTestsCli } from './run-tests.mjs'
 
-export const mechanism = {
-    id: 'changed-adjacent-owner-tests', module: 'scripts/run-changed-tests.mjs', exports: ['SLOW_TEST_PATH', 'runChangedTestsCli'],
-}
-
 const TEST_PATH = /^packages\/[^/]+\/src\/.+\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/
 // The slow tier (packaging, the installed tarball, end-to-end CLI and composition runs, real Docker)
 // runs in the full suite. The changed-test loop defers it unless --wide asks for it.
@@ -45,6 +41,9 @@ const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.test.ts', 'test-prote
 const GENERATED_FIXTURES = 'packages/cockpit/test-support/generated-fixtures.ts'
 const GENERATED_COMMAND_TEST = /^command(?:\..+)?\.test\.ts$/
 const SHARED_TEST_CONFIGURATION = new Set(['vitest.config.ts', 'packages/cockpit/src/test-support/git-isolation.ts'])
+const ARCHITECTURE_TEST = 'packages/cockpit/src/architecture.test.ts'
+// The import-graph rules the architecture test runs.
+const ARCHITECTURE_RULES = '.dependency-cruiser.mjs'
 
 function git(root, args) {
     return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -286,6 +285,10 @@ function ownerTests(root, paths, extras, wide) {
             for (const test of packageTestFiles(root)) selected.add(test)
             continue
         }
+        if (path === ARCHITECTURE_RULES) {
+            sourceChanged = true
+            continue
+        }
         if (path === GENERATED_FIXTURES) {
             const directory = 'packages/cockpit/src/generated-environment'
             for (const name of readdirSync(resolve(root, directory)).filter(name => GENERATED_COMMAND_TEST.test(name))) {
@@ -305,7 +308,7 @@ function ownerTests(root, paths, extras, wide) {
             sourceChanged = true
             const owners = sourceOwners(root, path, () => imports ??= importedModules(root, wide), wide)
             if (owners.length) for (const candidate of owners) selected.add(candidate)
-            // A deleted file nothing imports any more has no owner left to run; the architecture contract still does.
+            // A deleted file nothing imports any more has no owner left to run; the architecture test still does.
             else if (existingFile(root, path)) unmapped.push(path)
             continue
         }
@@ -320,7 +323,7 @@ function ownerTests(root, paths, extras, wide) {
         }
         if (CHANGESET_FRAGMENT.test(path)) mapped.push(...testsInDirectory(root, [CHANGESET_FRAGMENT_TEST]))
         else if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
-        // Beside the fixed owners, any test that reads the file by name: the architecture contract
+        // Beside the fixed owners, any test that reads the file by name: the architecture test
         // pins workflow jobs and root scripts, and the ownership tests read CODEOWNERS. A manifest
         // is matched by basename because tests reach it through relative URLs, so this
         // over-selects rather than miss one.
@@ -356,9 +359,8 @@ function ownerTests(root, paths, extras, wide) {
         selected.add(path)
     }
     if (sourceChanged) {
-        const architecture = 'packages/cockpit/src/architecture-contract.test.ts'
-        if (!existingFile(root, architecture)) unmapped.push(architecture)
-        else selected.add(architecture)
+        if (!existingFile(root, ARCHITECTURE_TEST)) unmapped.push(ARCHITECTURE_TEST)
+        else selected.add(ARCHITECTURE_TEST)
     }
     return { selected: [...selected].sort(), unmapped: [...new Set(unmapped)].sort() }
 }

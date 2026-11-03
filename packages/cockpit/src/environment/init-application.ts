@@ -29,12 +29,6 @@ import {
     type StateResult,
 } from './state.js'
 
-export const mechanism = {
-    id: 'init-application',
-    module: 'packages/cockpit/src/environment/init-application.ts',
-    exports: ['unsupportedInitPlatformOutcome', 'runInitApplication'],
-} as const
-
 const DRAFT_BYTE_LIMIT = 262_144
 const SHA256 = /^[a-f0-9]{64}$/
 

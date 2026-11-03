@@ -1,11 +1,5 @@
 import { requiresOperatorGate, type Acquire, type Mount } from '../schema.js'
 
-export const mechanism = {
-    id: 'registry-parsing',
-    module: 'packages/cockpit/src/registry-resolve/registry.ts',
-    exports: ['parseRegistry', 'gaps'],
-} as const
-
 // A registry read describes a cockpit that already exists as what it already is. It never
 // guesses silently: every field it could not read directly carries a Provenance, and `init
 // --registry` lists the inferred ones for a human to confirm once. A clean-looking config with

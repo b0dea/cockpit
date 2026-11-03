@@ -2,12 +2,6 @@ import type { CockpitConfig, configurationDefaults, UNCONFIRMABLE_ANSWERS } from
 import { emitGaps, emitToml, toSiblingRows } from '../emit.js'
 import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
 
-export const mechanism = {
-    id: 'document-rendering',
-    module: 'packages/cockpit/src/init/render.ts',
-    exports: ['ANSWER_PROVENANCES', 'UNCONFIRMED_FIX', 'unconfirmedReason', 'renderIncompleteDocument', 'renderCompleteDocument'],
-} as const
-
 /**
  * Who gave an interview answer: a person, the setup agent choosing a default it was allowed to
  * choose, or no one said (an answers file that does not attribute a value cockpit never proposes).

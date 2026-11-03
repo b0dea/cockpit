@@ -7,12 +7,6 @@
  */
 import { scanHeaders, type SiblingEdit } from './sibling-toml.js'
 
-export const mechanism = {
-    id: 'surface-tools-toml-edit',
-    module: 'packages/cockpit/src/config/surface-tools-toml.ts',
-    exports: ['setSurfaceTools'],
-} as const
-
 const TOOLS_KEY = /^\s*tools\s*=/
 const SINGLE_LINE_ARRAY = /^\s*tools\s*=\s*\[[^\]#]*\]\s*(#.*)?$/
 

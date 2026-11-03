@@ -5,16 +5,6 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 
 export { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 
-export const mechanism = {
-    id: 'surface-contract',
-    module: 'packages/cockpit/src/surfaces/contract.ts',
-    exports: [
-        'SURFACE_TARGETS', 'SURFACE_FEATURES', 'SURFACE_FILE_MAX_BYTES', 'SURFACE_OUTPUT_MAX_BYTES',
-        'SURFACE_OUTPUT_MAX_FILES', 'SURFACE_BUNDLE_FORMATS', 'captureSurfaceBatch', 'captureSurfaceBundleBatch',
-        'bundleSurfaceFiles', 'surfaceSourcesMatchFeature', 'reservedPathSegment', 'safeSurfacePath', 'ADOPTABLE_SURFACE_PATHS', 'ADOPTED_SURFACE_ROOT',
-    ],
-} as const
-
 export const SURFACE_FEATURES = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 export const SURFACE_BUNDLE_FORMATS = Object.freeze(['claudecode-plugin'] as const)
 export const SURFACE_FILE_MAX_BYTES = 65_536

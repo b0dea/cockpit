@@ -5,12 +5,6 @@ import {
     type Provenance,
 } from './schema.js'
 
-export const mechanism = {
-    id: 'registry-derivation',
-    module: 'packages/cockpit/src/registry-derivation.ts',
-    exports: ['deriveRegistry'],
-} as const
-
 export interface RegistryMcpSource {
     readonly slug: string
     readonly siblingDir: string

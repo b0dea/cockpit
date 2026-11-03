@@ -1,11 +1,5 @@
 import { isAbsolute, normalize } from 'node:path'
 
-export const mechanism = {
-    id: 'invocation-record',
-    module: 'packages/cockpit/src/invocation.ts',
-    exports: ['EXIT_CODES', 'createInvocationRecord'],
-} as const
-
 export const EXIT_CODES = Object.freeze({ success: 0, failure: 2, cancelled: 130 } as const)
 export type ExitCode = (typeof EXIT_CODES)[keyof typeof EXIT_CODES]
 

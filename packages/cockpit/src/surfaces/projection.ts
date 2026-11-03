@@ -7,12 +7,6 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
 import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
 
-export const mechanism = {
-    id: 'sibling-projection',
-    module: 'packages/cockpit/src/surfaces/projection.ts',
-    exports: ['codexWritableRoot', 'observeSiblingGuides', 'planSiblingProjection', 'shippedInstructionCapabilities', 'SIBLING_GUIDE_MARKER'],
-} as const
-
 const GUIDE_BYTE_LIMIT = 65_536
 const GUIDE_COUNT_LIMIT = 256
 const OBSERVATION_CONTENT_BYTE_LIMIT = 786_432

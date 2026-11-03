@@ -12,12 +12,6 @@ import type { ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
 
-export const mechanism = {
-    id: 'guard-protected-locations', module: 'packages/cockpit/src/guards/protected-locations.ts',
-    exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSearchPathRelativeEntry', 'guardSecretFiles', 'guardSensitivePathsBelow',
-        'guardUnignoredSensitivePaths', 'guardTrackedSensitivePaths'],
-} as const
-
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
 /** The directory Node loads a bare specifier from: the nearest `node_modules/<name>` above `from`. */

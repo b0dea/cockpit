@@ -7,12 +7,6 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from '
 import { fileURLToPath } from 'node:url'
 import { RefusalError, errorCause } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'libexec-program',
-    module: 'packages/cockpit/src/environment-exec/libexec-program.ts',
-    exports: ['libexecProgram'],
-} as const
-
 const PROGRAM_MAX_BYTES = 1_048_576
 
 export interface LibexecProgram {

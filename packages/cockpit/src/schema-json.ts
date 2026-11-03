@@ -2,12 +2,6 @@ import { z } from 'zod'
 
 import { CockpitConfig, OPERATOR_GATE_RISK_PATTERN, STRUCTURED_INPUT_ENTRY_LIMIT } from './schema.js'
 
-export const mechanism = {
-    id: 'schema-generation',
-    module: 'packages/cockpit/src/schema-json.ts',
-    exports: ['renderCockpitSchema'],
-} as const
-
 type JsonSchema = Record<string, unknown>
 
 export function renderCockpitSchema(): string {

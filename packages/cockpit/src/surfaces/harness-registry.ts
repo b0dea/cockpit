@@ -1,9 +1,3 @@
-export const mechanism = {
-    id: 'shipped-harness-registry',
-    module: 'packages/cockpit/src/surfaces/harness-registry.ts',
-    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'DEFAULT_SURFACE_TOOLS', 'listedSurfaceTargets', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget', 'isMeasurementDate'],
-} as const
-
 // Guard firing and instruction loading for these harnesses are dated runs (the firing records below
 // and the projection's instruction capabilities), so this record claims no pending measurement for
 // them; what stays open is a person's review of the rendered skills.

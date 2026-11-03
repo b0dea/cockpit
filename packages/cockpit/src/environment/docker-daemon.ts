@@ -8,12 +8,6 @@ import { ENVIRONMENT_CODES, type Diagnostic, type ExecutionStep } from './contra
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { resolveDockerExecutable, type ResolvedExecutable } from './executable.js'
 
-export const mechanism = {
-    id: 'local-docker-daemon-selection',
-    module: 'packages/cockpit/src/environment/docker-daemon.ts',
-    exports: ['selectLocalDockerDaemon'],
-} as const
-
 type Executor = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
 export type LocalDockerDaemon =

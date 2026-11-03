@@ -29,12 +29,6 @@ import { decodeLifecycleRecord } from './lifecycle-stage.js'
 import { observeGeneratedCheckoutIdentity } from './setup-observation.js'
 import { readState, selectStateRoot } from './state.js'
 
-export const mechanism = {
-    id: 'sibling-registration',
-    module: 'packages/cockpit/src/environment/sibling-registration.ts',
-    exports: ['initializeLocalGitRepository', 'runSiblingAdd', 'runSiblingRemove'],
-} as const
-
 export interface SiblingAddInput {
     readonly configPath: string
     readonly slug: string

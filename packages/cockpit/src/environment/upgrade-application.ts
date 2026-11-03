@@ -17,12 +17,6 @@ import { installedPackageMetadata } from '../package-metadata.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type ExecutionStep } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 
-export const mechanism = {
-    id: 'upgrade-application',
-    module: 'packages/cockpit/src/environment/upgrade-application.ts',
-    exports: ['runUpgrade', 'upgradeNotes'],
-} as const
-
 export interface UpgradeInput {
     readonly configPath: string
     readonly version?: string

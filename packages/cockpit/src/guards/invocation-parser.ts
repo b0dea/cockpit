@@ -2,11 +2,6 @@ import { posix } from 'node:path'
 import { isProxy, isUint8Array } from 'node:util/types'
 import { hasErrorCode, RefusalError, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'guard-invocation-parser', module: 'packages/cockpit/src/guards/invocation-parser.ts',
-    exports: ['GUARD_INPUT_LIMITS', 'parseGuardInput', 'isParsedGuardInput', 'shownGuardWord'],
-} as const
-
 export const GUARD_INPUT_LIMITS = Object.freeze({ inputBytes: 65_536, invocations: 256, words: 4_096, wordBytes: 4_096, paths: 256, pathBytes: 4_096 })
 
 export type InvocationRole = 'executable' | 'argument' | 'environment-assignment-value' | 'wrapper-option-value'

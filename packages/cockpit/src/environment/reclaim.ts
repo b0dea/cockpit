@@ -49,19 +49,6 @@ import type { ResolvedExecutable } from './executable.js'
 import { resolvedDockerExecutable, resolvedExecutable } from './executable.js'
 import { readState, type StateAddress, type StateRecord } from './state.js'
 
-export const mechanism = {
-    id: 'environment-reclamation',
-    module: 'packages/cockpit/src/environment/reclaim.ts',
-    exports: [
-        'classifyReclaim', 'createDockerSelectionSteps', 'admitDockerSelection',
-        'createReclaimDiscoverySteps', 'admitReclaimDiscovery',
-        'createImageInspectionSteps', 'admitImageInspections', 'createVolumeInspectionSteps',
-        'admitVolumeInspections', 'createNetworkInspectionSteps', 'admitNetworkInspections',
-        'combineReclaimDiscoveries', 'inspectionOverflow',
-        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'keptTeardownResources', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted',
-    ],
-} as const
-
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const COCKPIT_ID = /^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/
 const SHA256 = /^[a-f0-9]{64}$/

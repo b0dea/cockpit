@@ -38,12 +38,6 @@ import {
 } from './evidence.js'
 import { readState, type StateNamespace, type StateRecord } from './state.js'
 
-export const mechanism = {
-    id: 'read-command-composition',
-    module: 'packages/cockpit/src/environment/read-composition.ts',
-    exports: ['createReadCommandAdapters'],
-} as const
-
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const DEFAULT_OUTPUT_LIMIT = 1_048_576
 

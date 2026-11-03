@@ -4,12 +4,6 @@
 import type { SurfaceDeclaration } from '../schema.js'
 import { tryParseJson } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'core-surface-declarations',
-    module: 'packages/cockpit/src/surfaces/core-declarations.ts',
-    exports: ['CORE_EVALUATOR_ASSET', 'CORE_SKILL_PROCEDURES', 'CORE_PROCEDURE_ASSETS', 'CORE_SKILL_ASSETS', 'shippedSkillNames', 'coreSurfaceDeclarations', 'shippedSkillSources'],
-} as const
-
 export const CORE_EVALUATOR_ASSET = 'agents/evaluator.agent.md' as const
 // Each shipped skill installs only its own procedure; one shared copy per skill multiplied the whole
 // procedure by the skill count in every tool's skills directory. The entry point's `procedure`

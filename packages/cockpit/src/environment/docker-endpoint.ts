@@ -2,12 +2,6 @@
  * Classifies local Docker transports without rewriting endpoint identity. Context observation and
  * execution authentication remain with the runtime owners; syntax alone grants neither.
  */
-export const mechanism = {
-    id: 'local-docker-endpoint',
-    module: 'packages/cockpit/src/environment/docker-endpoint.ts',
-    exports: ['parseLocalDockerEndpoint', 'admitLocalDockerEndpoint'],
-} as const
-
 export function parseLocalDockerEndpoint(value: unknown): Readonly<{ transport: 'unix'; endpoint: string }> | undefined {
     // Docker trims host input. Reject that alias rather than bind authority to a different string.
     if (typeof value !== 'string' || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)) return undefined

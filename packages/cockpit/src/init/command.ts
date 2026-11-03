@@ -9,12 +9,6 @@ import {
     type InitApplicationOutcome,
 } from '../environment/init-application.js'
 
-export const mechanism = {
-    id: 'init-command',
-    module: 'packages/cockpit/src/init/command.ts',
-    exports: ['runInitOperatorCommand'],
-} as const
-
 export interface InitCommandInput {
     readonly root: string
     readonly target: SurfaceTarget

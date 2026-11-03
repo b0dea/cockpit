@@ -18,12 +18,6 @@ import { criteriaWeakening, scopeMatches, WORK_ORDER_ID, workOrderDigest, type W
 import type { CheckResult, WorkRecord } from './store.js'
 import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
 
-export const mechanism = {
-    id: 'work-order-application',
-    module: 'packages/cockpit/src/work-orders/application.ts',
-    exports: ['captureWorkApplicationRequest', 'runWorkApplication'],
-} as const
-
 const id = z.string().regex(WORK_ORDER_ID)
 const note = z.string().trim().min(1).max(4_096).regex(/^[^\x00-\x08\x0b-\x1f\x7f]*$/)
 const relativeFile = z.string().max(4_096).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+\-/]+$/)

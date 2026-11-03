@@ -43,12 +43,6 @@ export type {
     SelectedBootstrapSurfaceOutcome,
 } from '../environment/generated-application.js'
 
-export const mechanism = {
-    id: 'generated-environment-command',
-    module: 'packages/cockpit/src/generated-environment/command.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'applyGeneratedEnvironmentRepair', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'syncGeneratedEnvironment', 'syncTeamGeneratedEnvironment', 'adoptAndSyncGeneratedEnvironment', 'checkGeneratedEnvironment', 'runSyncOperatorCommand'],
-} as const
-
 export function prepareSelectedBootstrapSurface(
     input: SelectedBootstrapSurfaceInput,
     adapters?: Partial<GeneratedEnvironmentCommandAdapters>,

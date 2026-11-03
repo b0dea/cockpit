@@ -9,12 +9,6 @@ import { resolveExecutablePath } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { EVALUATOR_COMMANDS, type EvaluatorTool } from '../schema.js'
 
-export const mechanism = {
-    id: 'independent-evaluation',
-    module: 'packages/cockpit/src/grading/evaluate.ts',
-    exports: ['findEvaluators', 'locateEvaluators', 'evaluate', 'evaluatorUnavailable'],
-} as const
-
 // One run of an agent tool apart from the agent that did the work: a fresh headless session started in a
 // private directory of its own, held read-only by the tool's own mechanism, whose answer is checked
 // against the caller's schema. This module is the only place that knows how each tool is spelled.

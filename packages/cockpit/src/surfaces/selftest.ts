@@ -9,15 +9,6 @@ import type { SurfaceFeature } from './contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 import { classifySurfaceOwnership, type SurfaceDesiredEntry } from './ownership.js'
 
-export const mechanism = {
-    id: 'surface-selftest-planning',
-    module: 'packages/cockpit/src/surfaces/selftest.ts',
-    exports: [
-        'planSurfaceSelftest', 'surfaceSelftestExpectation', 'surfaceSelftestHumanNeeded', 'surfaceSelftestReviews',
-        'draftSurfaceSelftestSpecifications', 'unfilledSurfaceSelftestSpecifications', 'surfaceSelftestCellLabel',
-    ],
-} as const
-
 export type SelftestCapability = 'instruction-loading' | 'guard-firing' | 'skill-parity'
 
 export type BuiltinHarnessRef =

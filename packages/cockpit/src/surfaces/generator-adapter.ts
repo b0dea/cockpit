@@ -24,15 +24,6 @@ import {
 import { harnessFact, type HarnessRegistryRow } from './harness-registry.js'
 import { hasTargetMcpServers } from './mcp.js'
 
-export const mechanism = {
-    id: 'surface-generator-adapter',
-    module: 'packages/cockpit/src/surfaces/generator-adapter.ts',
-    exports: ['generateSurfaceBatch', 'generateSurfaceEstate'],
-    package: 'rulesync',
-    version: '43.1.2',
-    role: 'spelling',
-} as const
-
 export interface SurfaceGenerationDiagnostic {
     readonly severity: 'error'
     readonly code: string

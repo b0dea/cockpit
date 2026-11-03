@@ -14,12 +14,6 @@ import { join } from 'node:path'
 import { readBoundedInput } from '../config/load.js'
 import { ENVIRONMENT_CODES, errorCause, isMissing, RefusalError, type EnvironmentDiagnostic } from './contract.js'
 
-export const mechanism = {
-    id: 'sibling-instructions',
-    module: 'packages/cockpit/src/environment/sibling-instructions.ts',
-    exports: ['inspectSiblingInstructions', 'synchronizeSiblingInstructionFiles'],
-} as const
-
 const CLAUDE_IMPORT = '@AGENTS.md\n'
 const TOOL_ONLY_FILES = ['.cursorrules', '.cursor/rules', 'GEMINI.md', '.github/copilot-instructions.md', '.windsurfrules'] as const
 

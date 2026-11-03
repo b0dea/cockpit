@@ -6,12 +6,6 @@ import { createHash } from 'node:crypto'
 import { parseDocument } from 'yaml'
 import { z } from 'zod'
 
-export const mechanism = {
-    id: 'work-order-contract',
-    module: 'packages/cockpit/src/work-orders/contract.ts',
-    exports: ['Check', 'CriteriaFile', 'WORK_ORDER_ID', 'WORK_ORDER_LIMITS', 'WorkOrderFrontMatter', 'criteriaWeakening', 'parseWorkOrder', 'parseCriteriaFile', 'workOrderDigest', 'scopeMatches'],
-} as const
-
 // One inert word, never a path or an option: the CLI, the guard and the store each admit it before it names a file.
 export const WORK_ORDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export const WORK_ORDER_LIMITS = Object.freeze({ bytes: 65_536, criteria: 12, scope: 64, textBytes: 2_048, arguments: 32, argumentBytes: 2_048 })

@@ -17,12 +17,6 @@ import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-owners
 import { isVersionFloor, issueRuntimeMeasurementProbeAuthority, observeDockerRuntime, versionAtLeast } from './runtime.js'
 import { PROBE_OWNER_LABEL, isProbeOwner } from './runtime-probe-residue.js'
 
-export const mechanism = {
-    id: 'runtime-capability-probe',
-    module: 'packages/cockpit/src/environment/runtime-probe.ts',
-    exports: ['currentCoordinationCleanupVerdict', 'probeRuntimeSupport'],
-} as const
-
 export interface RuntimeProbeRequest {
     readonly executable: ResolvedExecutable
     readonly gitExecutable: ResolvedExecutable

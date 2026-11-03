@@ -6,12 +6,6 @@
 // stays with them; a gap here is a fact.
 import { ENVIRONMENT_CODES } from './environment/contract.js'
 
-export const mechanism = {
-    id: 'readiness-catalogue',
-    module: 'packages/cockpit/src/readiness.ts',
-    exports: ['READINESS_CATALOGUE', 'readinessReport'],
-} as const
-
 /** A cockpit that only publishes agent surfaces, or one that also declares a runtime. */
 export type ReadinessState = 'surfaces-only' | 'runtime'
 

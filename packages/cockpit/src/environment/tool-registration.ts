@@ -16,12 +16,6 @@ import { harnessFact, SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/ha
 import { ENVIRONMENT_CODES, errorCause } from './contract.js'
 import type { SiblingOutcome } from './sibling-registration.js'
 
-export const mechanism = {
-    id: 'tool-registration',
-    module: 'packages/cockpit/src/environment/tool-registration.ts',
-    exports: ['runToolChange'],
-} as const
-
 export interface ToolChangeInput {
     readonly operation: 'add' | 'remove'
     readonly configPath: string

@@ -10,12 +10,6 @@ import { lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isProcessGone, isProcessStart, type ProcessStartObservation } from './claims.js'
 
-export const mechanism = {
-    id: 'runtime-probe-residue',
-    module: 'packages/cockpit/src/environment/runtime-probe-residue.ts',
-    exports: ['MEASURE_DIRECTORY_PREFIX', 'PROBE_OWNER_LABEL', 'isProbeOwner', 'claimMeasureDirectory', 'sweepProbeResidue'],
-} as const
-
 export const MEASURE_DIRECTORY_PREFIX = 'cockpit-runtime-measure-'
 const OWNER_FILE = 'owner'
 // A directory with no owner file was killed between creation and its first write, or is being

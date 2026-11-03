@@ -249,19 +249,6 @@ import {
 } from './logs.js'
 import type { CapturedRuntimeEvidence, EnvironmentSnapshot } from './evidence.js'
 
-export const mechanism = {
-    id: 'environment-application',
-    module: 'packages/cockpit/src/environment/application.ts',
-    exports: [
-        'setupEnvironment', 'issueSetupRunContext', 'runSetup',
-        'issueLifecycleRunContext', 'noticeLifecycleRun', 'withLifecycleConfiguration', 'decodeLifecycleRecord', 'revalidateService', 'runUp', 'runSession', 'runSleep',
-        'issueDestructiveRunContext', 'runDown', 'runReset', 'beginOperatorReset',
-        'runPreflight', 'runDoctor', 'runLogs',
-        'prepareGuardEvaluationPolicy',
-        'runGuardEvaluationApplication',
-    ],
-} as const
-
 export interface GuardEvaluationApplicationInput {
     readonly identity: unknown
     /** The checkout the invoked guard script resolved from its own location. */

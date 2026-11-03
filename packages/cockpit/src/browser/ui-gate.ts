@@ -1,11 +1,5 @@
 import { isIssuedBrowserCommandReceipt, type BrowserCommandKind, type BrowserCommandReceipt } from './commands.js'
 
-export const mechanism = {
-    id: 'browser-ui-gate',
-    module: 'packages/cockpit/src/browser/ui-gate.ts',
-    exports: ['evaluateUiGate'],
-} as const
-
 export interface UiGateInput {
     readonly activating?: unknown
     readonly receipts: readonly unknown[]

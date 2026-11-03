@@ -124,17 +124,13 @@ import { TESTING_GUIDE_REGISTRY, createGateRegistry, renderTierGuide, type GateR
 import { NATIVE_HOOK_COST_SCRIPT, projectNativeHooks, type NativeHookEntry, type NativeHookPolicy } from '../testing/hooks.js'
 import { observeGeneratedCheckoutIdentity, revalidateGeneratedCheckoutIdentity, type GeneratedCheckoutIdentity } from './setup-observation.js'
 
-export const mechanism = {
-    id: 'generated-environment-application',
-    module: 'packages/cockpit/src/environment/generated-application.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'syncTeamGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'observeGeneratedApplicationSurfaces', 'isGeneratedApplicationSurfaceObservation', 'surfaceObservationDeclarations'],
-} as const
+const OWNER = 'generated-environment-application'
 
 export const surfaceObservationDeclarations = Object.freeze([
-    { id: 'harness-surfaces', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
-    { id: 'directory-grants', owner: mechanism.id, postures: ['directory-grants'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
-    { id: 'guide-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
-    { id: 'skill-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'harness-surfaces', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'directory-grants', owner: OWNER, postures: ['directory-grants'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'guide-budget', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'skill-budget', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
 ] as const)
 
 const issuedSurfaceObservations = new WeakMap<object, number>()
@@ -1182,7 +1178,7 @@ export function observeGeneratedApplicationSurfaces(
     const required = (posture: string) => ({ state: 'required' as const, posture })
     const observations = [
         snapshotEnvironmentObservation({
-            code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
+            code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, owner: OWNER, stackId: record.stackId,
             source: `surface-manifest:${record.surfaceSelftest.manifestSha256}`,
             observed: { state: 'available', value: { manifestSha256: record.surfaceSelftest.manifestSha256,
                 harnesses: record.surfaceSelftest.configuredHarnesses, entries: record.surfaceSelftest.entries.length }, observedAt },
@@ -1190,7 +1186,7 @@ export function observeGeneratedApplicationSurfaces(
             remedy: 'run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit preflight --config <your cockpit.toml>',
         }),
         snapshotEnvironmentObservation({
-            code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
+            code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, owner: OWNER, stackId: record.stackId,
             source: `directory-grants:${grantsSha256}`,
             observed: { state: 'available', value: { grants: record.surfaceHealth.grants.length,
                 generatedFragments: record.surfaceHealth.nativeGrants.fragments.length, modelSha256: grantsSha256 }, observedAt },
@@ -1201,14 +1197,14 @@ export function observeGeneratedApplicationSurfaces(
             remedy: 'run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit preflight --config <your cockpit.toml>',
         }),
         snapshotEnvironmentObservation({
-            code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, owner: mechanism.id, stackId: record.stackId,
+            code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, owner: OWNER, stackId: record.stackId,
             source: `surface-guide-costs:${record.surfaceSelftest.manifestSha256}`,
             observed: { state: 'available', value: guideValue, observedAt }, expectation: { kind: 'maximum', value: guideCap },
             applicability: required('environment'), freshness: { state: 'current' },
             remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run npx --no cockpit sync --config <your cockpit.toml>',
         }),
         snapshotEnvironmentObservation({
-            code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
+            code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, owner: OWNER, stackId: record.stackId,
             source: `installed-skill-inventory:${record.surfaceHealth.skillInventorySha256}`,
             observed: { state: 'available', value: { coreCollectionSha256: record.surfaceHealth.skillCollectionSha256,
                 inventorySha256: record.surfaceHealth.skillInventorySha256, inventory: record.surfaceHealth.skillInventory, skills: record.surfaceHealth.skills,

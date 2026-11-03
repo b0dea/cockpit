@@ -12,11 +12,6 @@ import type { GuardDecision } from './evaluator.js'
 import type { GuardFileContent, ParsedInvocation } from './invocation-parser.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from './read-only.js'
 
-export const mechanism = {
-    id: 'guard-policy-pin', module: 'packages/cockpit/src/guards/policy-pin.ts',
-    exports: ['pinnedPolicyDenial'],
-} as const
-
 const denial = (reason: string): GuardDecision => Object.freeze({ decision: 'deny', reason })
 const PINNED = '[work], [work.gates] and [autonomy] (and [mcp] while [autonomy] mcp_approve is not agent)'
 

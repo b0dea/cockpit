@@ -9,12 +9,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { commandGroups, commands } from '../packages/cockpit/src/command-table.js'
 
-export const mechanism = {
-    id: 'documentation-checks',
-    module: 'scripts/docs-lint.ts',
-    exports: ['ROOT', 'walkMarkdownProse', 'repositoryAuthority', 'lintDocumentation'],
-}
-
 export const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const INDEXES = { consumer: 'docs/README.md', contributor: 'docs/contributing/README.md' } as const
 // The consumer paths docs may name with `cockpit:ref consumer=`: files cockpit reads or writes in a

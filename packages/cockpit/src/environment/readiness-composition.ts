@@ -18,12 +18,6 @@ import { inspectSiblingInstructions } from './sibling-instructions.js'
 import { DEFAULT_SURFACE_TOOLS } from '../surfaces/harness-registry.js'
 import type { ReadinessReport } from '../readiness.js'
 
-export const mechanism = {
-    id: 'readiness-composition',
-    module: 'packages/cockpit/src/environment/readiness-composition.ts',
-    exports: ['inspectProjectReadiness', 'inspectInitReadiness'],
-} as const
-
 export interface ProjectReadinessInput {
     /** The cockpit root, where cockpit.toml is or will be written. */
     readonly root: string

@@ -16,13 +16,6 @@ function errorCause(error) {
         : error instanceof RangeError ? 'RangeError' : 'Error'
 }
 
-export const IMPLEMENTED_MECHANISMS = Object.freeze([
-    {
-        id: 'harness-evidence-validation',
-        exports: ['validateEvidenceManifest', 'validateEvidenceManifests', 'validateSelftestEvidenceBundle'],
-    },
-])
-
 const HARNESSES = ['Claude Code', 'Codex', 'OpenCode']
 const CAPABILITIES = ['sandbox', 'approval']
 const VERDICTS = ['enforced', 'unavailable']

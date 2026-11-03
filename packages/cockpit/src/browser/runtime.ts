@@ -9,12 +9,6 @@ import { authenticateStateNamespace, type StateNamespace } from '../environment/
 import { browserHostAllowed, resolveBrowserProxy, type BrowserProxyInput } from './proxy.js'
 import { RefusalError } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'browser-runtime',
-    module: 'packages/cockpit/src/browser/runtime.ts',
-    exports: ['assertBrowserStorageStateCurrent', 'bindBrowserRuntimePortLease', 'browserClientLimit', 'browserRuntimeControlAuthorities', 'browserRuntimeControlPorts', 'browserRuntimeCoordination', 'browserRuntimeExecutionReady', 'resolveBrowserRuntime'],
-} as const
-
 interface BrowserImage {
     readonly reference: string
     readonly driverVersion: string

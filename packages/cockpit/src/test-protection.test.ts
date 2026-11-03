@@ -80,7 +80,7 @@ describe('test protection diff classifier', () => {
         'packages/cockpit/src/invocation.test.ts',
         'packages/cockpit/src/schema.test.ts',
         'packages/cockpit/src/packaging.test.ts',
-        'packages/cockpit/src/architecture-contract.test.ts',
+        'packages/cockpit/src/architecture.test.ts',
         'packages/cockpit/src/test-protection.test.ts',
         'packages/cockpit/src/guards/fixtures/invocation-corpus.ts',
     ])('retains removed or replaced controls in %s regardless of writing tool', (path) => {

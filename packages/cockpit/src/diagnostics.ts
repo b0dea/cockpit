@@ -4,12 +4,6 @@ import { admitDiagnosticFix, bindConfigPath, cockpitCommand, initCommand, type F
 
 export type { Diagnostic } from './environment/contract.js'
 
-export const mechanism = {
-    id: 'diagnostic-envelope',
-    module: 'packages/cockpit/src/diagnostics.ts',
-    exports: ['renderHumanDiagnostics', 'renderHumanValue', 'renderJsonResponse'],
-} as const
-
 const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; fix: string }>>> = Object.freeze({
     INIT_CANONICAL_OWNERSHIP_MISSING: Object.freeze({
         why: 'init cannot safely resume when its recorded bootstrap state and generated ownership disagree',

@@ -11,12 +11,6 @@ import { cockpitCommand } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { guardLauncherEvidence } from './guards/protected-locations.js'
 
-export const mechanism = {
-    id: 'team-metadata', module: 'packages/cockpit/src/team-metadata.ts',
-    exports: ['prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata', 'productPackageManifest',
-        'inspectTeamReadiness'],
-} as const
-
 const PACKAGE = installedPackageMetadata.name
 const VERSION = installedPackageMetadata.version
 const INSTALLED_PACKAGE_ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))

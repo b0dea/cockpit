@@ -8,11 +8,6 @@ import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 
-export const mechanism = {
-    id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts',
-    exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'GUARD_LOCATION_LIMITS', 'GUARD_SECRET_FILE_LIMIT', 'foldGuardSpelling', 'guardIdentity'],
-} as const
-
 export interface GuardInvocationProfile {
     readonly executable: string
     readonly cwd: string

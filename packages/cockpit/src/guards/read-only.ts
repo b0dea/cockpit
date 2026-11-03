@@ -6,11 +6,6 @@
 import { posix } from 'node:path'
 import type { ParsedInvocation } from './invocation-parser.js'
 
-export const mechanism = {
-    id: 'guard-read-only-profile', module: 'packages/cockpit/src/guards/read-only.ts',
-    exports: ['classifyReadOnlyInvocation', 'cockpitLauncherPrefix'],
-} as const
-
 /** Paths are as written; `cwd` is where they resolve, after any `git -C`. */
 export interface ReadOnlyAccess {
     readonly cwd: string

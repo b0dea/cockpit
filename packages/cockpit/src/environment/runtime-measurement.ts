@@ -29,12 +29,6 @@ import { MEASURE_DIRECTORY_PREFIX, claimMeasureDirectory, sweepProbeResidue } fr
 import { selectMachineStateRoot } from './state.js'
 import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
 
-export const mechanism = {
-    id: 'runtime-measurement-recording',
-    module: 'packages/cockpit/src/environment/runtime-measurement.ts',
-    exports: ['runRuntimeMeasure', 'probeInstalledRuntime'],
-} as const
-
 export interface RuntimeMeasureInput {
     readonly configPath: string
     readonly image: string

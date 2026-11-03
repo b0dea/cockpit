@@ -2,12 +2,6 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, posix, sep } from 'node:path'
 import ts from '@typescript/typescript6'
 
-export const mechanism = {
-    id: 'diagnostic-inventory',
-    module: 'scripts/diagnostic-inventory.ts',
-    exports: ['productionSources', 'diagnosticInventoryFromSources', 'diagnosticInventory'],
-}
-
 /**
  * What the index can say about a code's fix: the one fix every emission states, that emissions
  * state different fixes (or some state none), or that none states a literal fix.

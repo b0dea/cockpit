@@ -5,12 +5,6 @@ import { TESTING_STAGE_TIMEOUT_MAX_SECONDS } from '../schema.js'
 import { classifyRun, type RunClassification, type RunInput, type StageObservation, type StageResult } from './verdict.js'
 import { RefusalError, errorCause } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'testing-gate-registry',
-    module: 'packages/cockpit/src/testing/gates.ts',
-    exports: ['GATE_SELECTOR_OPTION', 'TESTING_GUIDE_REGISTRY', 'createGateRegistry', 'runGate', 'renderTierGuide'],
-} as const
-
 export const GATE_SELECTOR_OPTION = '--select'
 const SELECTOR_KINDS = Object.freeze(['spec', 'file', 'test', 'route'] as const)
 const SELECTOR_VALUE = '{value}'

@@ -14,12 +14,6 @@ import { basename, dirname, join } from 'node:path'
 import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { loadCockpitConfig, readBoundedInput } from './load.js'
 
-export const mechanism = {
-    id: 'verified-config-write',
-    module: 'packages/cockpit/src/config/verified-write.ts',
-    exports: ['writeVerifiedConfig'],
-} as const
-
 /** What failed and the remedy, kept apart so the remedy reaches the reader as the diagnostic's fix. */
 export interface VerifiedWriteRefusal {
     readonly message: string

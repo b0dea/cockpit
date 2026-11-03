@@ -2,11 +2,6 @@ import { get } from 'node:https'
 import { installedPackageMetadata } from './package-metadata.js'
 import { RefusalError, errorCause } from './environment/contract.js'
 
-export const mechanism = {
-    id: 'release-freshness', module: 'packages/cockpit/src/freshness.ts',
-    exports: ['discoverReleaseFreshness'],
-} as const
-
 export type ReleaseFreshness = Readonly<{
     kind: 'known'; package: string; installedVersion: string; latestVersion: string
     currency: 'same-version' | 'different-version'; observedAt: string; expiresAt: string

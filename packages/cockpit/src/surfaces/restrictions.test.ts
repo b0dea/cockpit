@@ -17,7 +17,6 @@ import {
     compareRestrictionOutputs,
     expandRestrictions,
     inspectShippedRestrictionCapabilities,
-    mechanism,
     RESTRICTION_OUTPUT_LIMITS,
     validateGuardRegistration,
     type RestrictionExpansionComplete,
@@ -259,8 +258,7 @@ describe('restriction expansion', () => {
         expect(RESTRICTION_OUTPUT_LIMITS).toEqual({ scalarBytes: 65_536, aggregateBytes: 102_400, fileCount: 8 })
     })
 
-    it('declares its runtime limit export and refuses accessors without invoking them', async () => {
-        expect(mechanism.exports).toContain('RESTRICTION_OUTPUT_LIMITS')
+    it('refuses accessors without invoking them', async () => {
         const value = await input()
         let reads = 0
         const hostile = Object.defineProperty({ ...value }, 'guardTemplate', {

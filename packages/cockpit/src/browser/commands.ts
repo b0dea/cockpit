@@ -11,12 +11,6 @@ import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, bro
 import { authenticateBrowserProjectClient, executeBrowserProjectOperation, withBrowserProjectOperationAdmission,
     type BrowserProjectClient, type BrowserProjectOperationAuthorization } from './surfaces.js'
 
-export const mechanism = {
-    id: 'browser-command',
-    module: 'packages/cockpit/src/browser/commands.ts',
-    exports: ['executeBrowserCommand', 'isIssuedBrowserCommandReceipt', 'issueBrowserRoutePolicy', 'ownDataRecord'],
-} as const
-
 export type BrowserCommandKind = 'drive' | 'screenshot'
 export interface BrowserRouteDeclaration { readonly name: string; readonly path: string }
 export interface BrowserRoutePolicy {

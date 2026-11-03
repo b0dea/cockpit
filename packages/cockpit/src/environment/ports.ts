@@ -44,11 +44,7 @@ import {
     type StateTransactionAbort,
 } from './state.js'
 
-export const mechanism = {
-    id: 'environment-port-coordination',
-    module: 'packages/cockpit/src/environment/ports.ts',
-    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'inspectRecordedPortDeclaration', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'revalidatePortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'observePortListeners', 'isPortObservation'],
-} as const
+const OWNER = 'environment-port-coordination'
 
 const issuedObservations = new WeakMap<object, number>()
 const issuedLeaseResults = new WeakMap<object, {
@@ -79,7 +75,7 @@ const availableRetainedPortFamilies = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('port observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('port observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -120,7 +116,7 @@ export async function observePortFamily(input: {
         && sameValues(record.lease.ports, input.leaseEvidence.lease.ports)
     return issueObservation({
         code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: input.stackId,
         source: namespace.paths.coordination(input.stackId).path,
         observed: refusal

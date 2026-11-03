@@ -63,12 +63,6 @@ import {
 import { observeConfiguration, readState, selectStateRoot, type StateNamespace } from './state.js'
 import { observeTemplateHealth } from './templates.js'
 
-export const mechanism = {
-    id: 'health-command-composition',
-    module: 'packages/cockpit/src/environment/health-composition.ts',
-    exports: ['createHealthCommandAdapters'],
-} as const
-
 export interface HealthCommandCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>

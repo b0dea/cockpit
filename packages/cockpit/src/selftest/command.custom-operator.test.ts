@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -58,6 +58,11 @@ describe('surface selftest command', () => {
             expect(draft.specifications.length).toBeGreaterThan(0)
             expect(draft.specifications.filter((row) => row.harness.kind !== 'builtin')).toEqual([])
             expect(output.join('')).toMatch(/SELFTEST_CUSTOM_PROBE_UNSUPPORTED[^\n]*synthetic-harness instruction-loading/)
+            // A filled-in file is never overwritten by a second write.
+            await writeFile(draftPath, 'filled\n')
+            expect(await runCli(['selftest', '--config', configPath, '--write-probe-specifications', draftPath], io)).toBe(2)
+            expect(output.join('')).toContain('OUTPUT_EXISTS')
+            expect(await readFile(draftPath, 'utf8')).toBe('filled\n')
         } finally { await rm(draftPath, { force: true }) }
 
         const bin = await fakeHarnesses(root)

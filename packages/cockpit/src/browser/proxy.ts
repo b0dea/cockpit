@@ -1,12 +1,6 @@
 import { isProxy } from 'node:util/types'
 import { RefusalError } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'browser-proxy',
-    module: 'packages/cockpit/src/browser/proxy.ts',
-    exports: ['browserHostAllowed', 'browserProxyAuthorityMatches', 'resolveBrowserProxy'],
-} as const
-
 export interface BrowserProxyInput {
     readonly serverPort: number
     readonly proxyPort: number

@@ -11,19 +11,6 @@ export interface Diagnostic<Code extends string = string> {
     fix?: string
 }
 
-export const mechanism = {
-    id: 'environment-contract',
-    module: 'packages/cockpit/src/environment/contract.ts',
-    exports: [
-        'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
-        'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'DOCKER_CLIENT_ENVIRONMENT', 'HOST_PROCESS_CONTROL_ENV', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
-        'isCanonicalTimestamp', 'RefusalError', 'errorCause', 'parseJsonText', 'tryParseJson', 'hasErrorCode', 'isMissing', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
-        'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
-        'snapshotEnvironmentObservation',
-        'snapshotLifecyclePlan', 'inStackCommand',
-    ],
-} as const
-
 export type JsonSnapshot = null | boolean | number | string | JsonSnapshotArray | JsonSnapshotObject
 export interface JsonSnapshotArray extends ReadonlyArray<JsonSnapshot> {}
 export interface JsonSnapshotObject { readonly [key: string]: JsonSnapshot }

@@ -5,12 +5,6 @@
 import type { WorkOrderCriterion } from '../work-orders/contract.js'
 import type { CheckResult } from '../work-orders/store.js'
 
-export const mechanism = {
-    id: 'independent-grade',
-    module: 'packages/cockpit/src/grading/grade.ts',
-    exports: ['gradingDocument', 'gradingSchema', 'readGradingAnswer'],
-} as const
-
 export interface ChangedFile { readonly path: string; readonly status: string; readonly diff: string }
 export interface GradingSubject {
     readonly objective?: string

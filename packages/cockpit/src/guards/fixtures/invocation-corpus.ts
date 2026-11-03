@@ -1,10 +1,5 @@
 import type { ParsedInvocation, InvocationWord } from '../invocation-parser.js'
 
-export const mechanism = {
-    id: 'guard-invocation-corpus', module: 'packages/cockpit/src/guards/fixtures/invocation-corpus.ts',
-    exports: ['invocationCorpus', 'shellPayload', 'nativeShellPayload'],
-} as const
-
 const rows = [
     { name: 'separate push', candidate: 'git push origin feature; git push origin main', control: 'git push origin feature; printf main', decision: 'deny' },
     { name: 'timeout values', candidate: 'timeout -s TERM -k 5 60 git reset --hard', control: 'printf "timeout -s TERM -k 5 60 git reset --hard"', decision: 'ask' },

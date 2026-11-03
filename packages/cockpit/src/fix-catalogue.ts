@@ -1,12 +1,6 @@
 import { dirname, isAbsolute, normalize } from 'node:path'
 import type { Diagnostic } from './environment/contract.js'
 
-export const mechanism = {
-    id: 'executable-remedy-catalogue',
-    module: 'packages/cockpit/src/fix-catalogue.ts',
-    exports: ['admitDiagnosticFix', 'formatShellCommand', 'cockpitCommand', 'initCommand', 'bindConfigPath'],
-} as const
-
 // A printed command has to run as printed. Nothing goes in front of npx: the guard asks before a
 // wrapped command such as `env -u NAME …`, and Codex and OpenCode treat an ask as a denial. Every
 // configured command refuses without --config, so a remedy written where the path is unknown names

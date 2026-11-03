@@ -27,24 +27,20 @@ import {
 } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 
-export const mechanism = {
-    id: 'env-schema-observation',
-    module: 'packages/cockpit/src/environment/env-schema-observation.ts',
-    exports: ['VARLOCK_INSTALL_URL', 'observeEnvSchemas', 'envSchemaToolMissing', 'isEnvSchemaObservation', 'observationDeclarations'],
-} as const
+const OWNER = 'env-schema-observation'
 
 const ENV_SCHEMA_FILE = '.env.schema'
 export const VARLOCK_INSTALL_URL = 'https://varlock.dev'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'env-schema', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY, isIssued: isEnvSchemaObservation, issuedAt: observationIssuedAt },
+    { id: 'env-schema', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY, isIssued: isEnvSchemaObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('env-schema observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('env-schema observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -251,7 +247,7 @@ export async function observeEnvSchemas(
     if (!isCanonicalTimestamp(observedAt)) throw new RefusalError('env-schema observation timestamp is not canonical')
     const common = {
         code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: input.stackId,
         source: 'env-schema',
         applicability: { state: 'required' as const, posture: 'environment' },
@@ -298,7 +294,7 @@ export function envSchemaToolMissing(check: {
     readonly verdict: string
     readonly measured?: JsonSnapshot
 }): readonly string[] {
-    if (check.owner !== mechanism.id || check.verdict !== 'pass' || !Array.isArray(check.measured)) return []
+    if (check.owner !== OWNER || check.verdict !== 'pass' || !Array.isArray(check.measured)) return []
     return check.measured.flatMap((entry) => isRecord(entry) && entry.state === 'tool-missing' && typeof entry.sibling === 'string'
         ? [entry.sibling] : [])
 }

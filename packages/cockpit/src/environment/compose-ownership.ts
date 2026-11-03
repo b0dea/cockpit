@@ -7,12 +7,6 @@
 import { createHash } from 'node:crypto'
 import { parseDocument, stringify } from 'yaml'
 
-export const mechanism = {
-    id: 'compose-ownership',
-    module: 'packages/cockpit/src/environment/compose-ownership.ts',
-    exports: ['COMPOSE_OWNERSHIP_FILE', 'renderComposeOwnership'],
-} as const
-
 /** Published beside cockpit.toml; the cockpit's own Compose files are passed first. */
 export const COMPOSE_OWNERSHIP_FILE = 'compose.cockpit.yml'
 

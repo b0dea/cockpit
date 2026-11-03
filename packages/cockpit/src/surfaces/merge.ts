@@ -4,12 +4,6 @@ import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../env
 import { SurfaceDeclaration, SurfaceOverlay, type SurfaceDeclaration as SurfaceDeclarationValue } from '../schema.js'
 import type { SurfaceFeature } from './contract.js'
 
-export const mechanism = {
-    id: 'surface-merge',
-    module: 'packages/cockpit/src/surfaces/merge.ts',
-    exports: ['surfaceDeclarationSha256', 'mergeSurfaceDeclarations'],
-} as const
-
 export interface ActiveSurfaceOverride {
     readonly name: string
     readonly feature: SurfaceFeature

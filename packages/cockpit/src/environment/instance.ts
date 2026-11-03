@@ -1,12 +1,6 @@
 import type { CheckoutId, StackId } from './contract.js'
 import { RefusalError } from './contract.js'
 
-export const mechanism = {
-    id: 'environment-instance-resolution',
-    module: 'packages/cockpit/src/environment/instance.ts',
-    exports: ['resolveInstance', 'selectDestructiveInstance'],
-} as const
-
 export interface InstanceCandidate {
     readonly stackId: StackId
     readonly checkoutId: CheckoutId

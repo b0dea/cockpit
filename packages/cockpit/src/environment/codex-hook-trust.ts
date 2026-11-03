@@ -13,12 +13,6 @@ import { parse as parseToml, TomlError } from 'smol-toml'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
 import { RefusalError, tryParseJson, errorCause, hasErrorCode } from './contract.js'
 
-export const mechanism = {
-    id: 'codex-hook-trust',
-    module: 'packages/cockpit/src/environment/codex-hook-trust.ts',
-    exports: ['inspectCodexHookTrust'],
-} as const
-
 const HOOKS_PATH = '.codex/hooks.json'
 const MAX_FILE_BYTES = 4 * 1024 * 1024
 // Codex's event keys. Events it runs without a matcher drop the matcher from the identity; the

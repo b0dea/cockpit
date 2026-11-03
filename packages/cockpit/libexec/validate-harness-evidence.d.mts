@@ -164,7 +164,6 @@ export interface SelftestEvidenceValidationResult {
 }
 
 export const PROBE_EVIDENCE_ROOT: '.cockpit/local/probes'
-export const IMPLEMENTED_MECHANISMS: readonly { id: string; exports: readonly string[] }[]
 export function validateEvidenceManifest(
     manifest: unknown,
     root?: string,

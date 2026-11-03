@@ -19,12 +19,6 @@ import {
     type SurfaceDiagnostic,
 } from './ownership.js'
 
-export const mechanism = {
-    id: 'surface-render',
-    module: 'packages/cockpit/src/surfaces/render.ts',
-    exports: ['surfaceModelSha256', 'renderSurfaceSet', 'composeHookSettings'],
-} as const
-
 export type SurfaceInputEvidence =
     | Readonly<{ kind: 'guide'; root: string; path: string; sha256: string; identity: string }>
     | Readonly<{ kind: 'mcp'; root: string; path: string; sha256: string; identity: string }>

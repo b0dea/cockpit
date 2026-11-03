@@ -7,12 +7,6 @@ import { basename, isAbsolute, join, normalize } from 'node:path'
 import { deriveSiblingVariable } from '../schema.js'
 import { hasErrorCode } from '../environment/contract.js'
 
-export const mechanism = {
-    id: 'compose-scaffold',
-    module: 'packages/cockpit/src/init/scaffold.ts',
-    exports: ['COMPOSE_FILE_NAMES', 'SCAFFOLD_BACKING_SERVICES', 'renderComposeScaffold', 'writeComposeScaffold'],
-} as const
-
 /** The names Compose looks for; any one of them already present means the product has a Compose file. */
 export const COMPOSE_FILE_NAMES = Object.freeze(['compose.yml', 'compose.yaml', 'docker-compose.yml', 'docker-compose.yaml'])
 

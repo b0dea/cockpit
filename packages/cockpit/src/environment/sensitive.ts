@@ -1,11 +1,5 @@
 import { RefusalError } from './contract.js'
 
-export const mechanism = {
-    id: 'environment-sensitive-data',
-    module: 'packages/cockpit/src/environment/sensitive.ts',
-    exports: ['isSensitiveField', 'redactSensitiveText', 'redactSensitiveMessage'],
-} as const
-
 const SENSITIVE_FIELD = /(?:authorization|password|passwd|token|secret|credential|private[_-]?key|api[_-]?key)/i
 const SENSITIVE_ASSIGNMENT = /((?:authorization|password|passwd|token|secret|credential|private[_-]?key|api[_-]?key)[a-z0-9_-]*[\\"']*\s*[=:]\s*(?:bearer\s+)?)[^\r\n]*/ig
 

@@ -15,12 +15,6 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { DECIDERS, WORK_GRADING } from '../schema.js'
 import { WORK_ORDER_ID, WorkOrderFrontMatter } from './contract.js'
 
-export const mechanism = {
-    id: 'work-order-store',
-    module: 'packages/cockpit/src/work-orders/store.ts',
-    exports: ['WORK_RECORD_DIRECTORY', 'createWorkStore', 'outputTail', 'WorkRecord'],
-} as const
-
 export const WORK_RECORD_DIRECTORY = '.cockpit/work-orders'
 const RECORD_LIMIT_BYTES = 1_048_576
 const OUTPUT_TAIL_BYTES = 4_096

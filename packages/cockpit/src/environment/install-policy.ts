@@ -9,12 +9,6 @@ import {
     type InstallPolicyProjection,
 } from './install-policy-observation.js'
 
-export const mechanism = {
-    id: 'install-policy-resolution',
-    module: 'packages/cockpit/src/environment/install-policy.ts',
-    exports: ['resolveInstallPolicies', 'renderGuardProjectCommand', 'GUARD_PROJECT_COMMAND_RENDERED_BYTES'],
-} as const
-
 export const GUARD_PROJECT_COMMAND_RENDERED_BYTES = 32_768
 
 export function renderGuardProjectCommand(argv: readonly string[]):

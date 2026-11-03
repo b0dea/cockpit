@@ -17,12 +17,6 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { readBoundedInput } from '../config/load.js'
 
-export const mechanism = {
-    id: 'runtime-measurement-record',
-    module: 'packages/cockpit/src/environment/runtime-measurement-record.ts',
-    exports: ['readLocalRuntimeMeasurements', 'recordLocalRuntimeMeasurement'],
-} as const
-
 const MEASUREMENTS_PATH = 'machine/runtime-measurements.json'
 const FORMAT = 'cockpit-runtime-measurements/v1'
 const ROW_LIMIT = 32

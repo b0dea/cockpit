@@ -7,12 +7,6 @@ import { INHERITED_TOOL_ENVIRONMENT, snapshotJson, tryParseJson } from '../envir
 import { reservedPathSegment, SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
 import { harnessFact } from './harness-registry.js'
 
-export const mechanism = {
-    id: 'mcp-declaration-collection',
-    module: 'packages/cockpit/src/surfaces/mcp.ts',
-    exports: ['parseMcpDeclarationFile', 'collectMcpDeclarations', 'hasTargetMcpServers', 'mcpApprovalDigest'],
-} as const
-
 const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
 const ServerName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128)
 const RelativePath = z.string().min(1).max(4096).refine(path => !isAbsolute(path)

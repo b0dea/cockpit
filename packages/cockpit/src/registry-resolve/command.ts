@@ -7,12 +7,6 @@ import type { Diagnostic } from '../diagnostics.js'
 import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from './registry.js'
 import { renderResolvedRegistryShell } from './render-shell.js'
 
-export const mechanism = {
-    id: 'registry-resolution',
-    module: 'packages/cockpit/src/registry-resolve/command.ts',
-    exports: ['registryResolveCommand'],
-} as const
-
 const FORMAT_VERSION = '1'
 // The release workflow stamps the exact commit; every source build, including a tarball packed
 // from a checkout, carries this value instead, as the package manifest in the repository does.

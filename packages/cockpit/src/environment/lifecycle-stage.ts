@@ -33,21 +33,11 @@ import {
 import { stackId as deriveStackId } from './identity.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 
-export const mechanism = {
-    id: 'lifecycle-stage',
-    module: 'packages/cockpit/src/environment/lifecycle-stage.ts',
-    exports: [
-        'recordLifecycleStarted', 'recordLifecycleSeeded', 'resolveLifecycleStage',
-        'observeStateSeed', 'isLifecycleStageObservation', 'authenticateLifecycleStageAuthority',
-        'projectLifecycleStage', 'consumeLifecycleStageProjection',
-        'decodeLifecycleRecord', 'findStackUnderEarlierName', 'earlierNameRefusalMessage',
-        'observationDeclarations',
-    ],
-} as const
+const OWNER = 'lifecycle-stage'
 
 export const observationDeclarations = Object.freeze([{
     id: 'state-seed',
-    owner: mechanism.id,
+    owner: OWNER,
     postures: ['environment'],
     stages: [
         { stage: 'bootstrap', disposition: 'not-applicable', reason: 'the first seed has not completed' },
@@ -361,7 +351,7 @@ function sameBinding(left: LifecycleAuthorityBinding, right: LifecycleAuthorityB
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('lifecycle stage observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('lifecycle stage observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -415,7 +405,7 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
     issuedAuthorities.set(authority, bindingAfter)
     const observation = issueObservation({
         code: ENVIRONMENT_CODES.STATE_UNSEEDED,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: input.stackId,
         source: lifecycleAddress.path,
         observed: { state: 'available', value: seeded, observedAt: input.observedAt },

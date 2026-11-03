@@ -19,23 +19,19 @@ import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep 
 import { EnvironmentFile, Sibling, type EnvironmentFile as EnvironmentFileDeclaration } from '../schema.js'
 import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId, RefusalError, hasErrorCode } from './contract.js'
 
-export const mechanism = {
-    id: 'environment-template-seeding',
-    module: 'packages/cockpit/src/environment/templates.ts',
-    exports: ['inspectEnvironmentKeys', 'planEnvironmentSeed', 'seedEnvironmentInstanceSync', 'observeSiblingPresence', 'observeEnvironmentKeys', 'observeTemplateHealth', 'isTemplateObservation', 'observationDeclarations'],
-} as const
+const OWNER = 'environment-template-seeding'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'environment-key-freshness', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
-    { id: 'secret-file-presence', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
-    { id: 'sibling-presence', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SIBLING_MISSING, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
+    { id: 'environment-key-freshness', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
+    { id: 'secret-file-presence', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
+    { id: 'sibling-presence', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SIBLING_MISSING, isIssued: isTemplateObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('template observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('template observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -67,7 +63,7 @@ export async function observeSiblingPresence(input: { readonly stackId: StackId;
     } catch (error) {
         if (!hasErrorCode(error, 'ENOENT')) throw new RefusalError('sibling presence could not be observed')
     }
-    return issueObservation({ code: ENVIRONMENT_CODES.SIBLING_MISSING, owner: mechanism.id, stackId: owned.stackId as StackId, source: path,
+    return issueObservation({ code: ENVIRONMENT_CODES.SIBLING_MISSING, owner: OWNER, stackId: owned.stackId as StackId, source: path,
         observed: { state: 'available', value: present, observedAt: owned.observedAt }, expectation: { kind: 'equal', value: true },
         applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'restore the declared sibling checkout' })
 }
@@ -330,7 +326,7 @@ export async function observeEnvironmentKeys(input: {
     const fresh = inspection.kind === 'fresh'
     return Object.freeze([
         issueObservation({
-            code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: mechanism.id, stackId: owned.stackId as StackId, source,
+            code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: inspection.kind === 'unreadable' || inspection.kind === 'malformed'
                 ? { state: 'failed', reason: `${inspection.file} environment file could not be projected`, observedAt: owned.observedAt }
                 : { state: 'available', value: fresh, observedAt: owned.observedAt },
@@ -338,7 +334,7 @@ export async function observeEnvironmentKeys(input: {
             remedy: 'synchronize the instance key names with its tracked template',
         }),
         issueObservation({
-            code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: mechanism.id, stackId: owned.stackId as StackId, source,
+            code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: { state: 'available', value: presence, observedAt: owned.observedAt }, expectation: { kind: 'equal', value: true },
             applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
         }),
@@ -372,13 +368,13 @@ export async function observeTemplateHealth(input: {
     }
     if (environmentFileCount === 0) {
         add(issueObservation({
-            code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: mechanism.id, stackId: input.stackId,
+            code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: OWNER, stackId: input.stackId,
             source: input.siblingRoot, observed: { state: 'available', value: true, observedAt: input.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
             freshness: { state: 'current' }, remedy: 'synchronize the instance key names with its tracked template',
         }))
         add(issueObservation({
-            code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: mechanism.id, stackId: input.stackId,
+            code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: OWNER, stackId: input.stackId,
             source: input.siblingRoot, observed: { state: 'available', value: true, observedAt: input.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
             freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',

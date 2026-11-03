@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const SCRIPT = fileURLToPath(new URL('../../../../scripts/run-changed-tests.mjs', import.meta.url))
-const ARCHITECTURE = 'packages/cockpit/src/architecture-contract.test.ts'
+const ARCHITECTURE = 'packages/cockpit/src/architecture.test.ts'
 const roots: string[] = []
 
 afterEach(() => {
@@ -60,6 +60,14 @@ describe('changed adjacent-owner test runner', () => {
                 'packages/cockpit/src/nested/second.test.ts'])
         },
     )
+
+    it('runs the architecture test when its dependency rules change', () => {
+        const fixture = repository({ '.dependency-cruiser.mjs': 'before\n', 'packages/cockpit/src/other.test.ts': 'other\n' })
+        writeFileSync(join(fixture.root, '.dependency-cruiser.mjs'), 'after\n')
+        const result = fixture.run()
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([ARCHITECTURE])
+    })
 
     it('finds exact transitive owners of a changed test-support module', () => {
         const path = 'packages/cockpit/test-support/factory.ts'

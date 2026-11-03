@@ -10,12 +10,6 @@
 
 import { cockpitCommand, type ConfiguredCommand } from '../fix-catalogue.js'
 
-export const mechanism = {
-    id: 'consumer-instructions',
-    module: 'packages/cockpit/src/surfaces/consumer-instructions.ts',
-    exports: ['renderConsumerInstructions'],
-} as const
-
 export interface ConsumerInstructionsInput {
     readonly name: string
     readonly configFile: string

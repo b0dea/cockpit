@@ -19,20 +19,6 @@ import { classifyResolvedRuntimeLiterals } from './runtime.js'
 import { isSensitiveField, redactSensitiveText } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
 
-export const mechanism = {
-    id: 'environment-evidence',
-    module: 'packages/cockpit/src/environment/evidence.ts',
-    exports: [
-        'createEnvironmentSnapshot',
-        'STABILITY_CAPTURE_OUTPUT_LIMIT_BYTES',
-        'createStabilityCapturePlan',
-        'authenticateStabilityCapture',
-        'captureRuntimeEvidence',
-        'isRuntimeEvidenceAuthentic',
-        'compareEnvironmentSnapshot',
-    ],
-} as const
-
 const SHA256 = /^[a-f0-9]{64}$/
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const CONTAINER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/

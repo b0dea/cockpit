@@ -4,12 +4,6 @@
 import type { CockpitConfig } from '../schema.js'
 import { ENVIRONMENT_CODES, type EnvironmentDiagnostic, RefusalError } from './contract.js'
 
-export const mechanism = {
-    id: 'environment-declaration',
-    module: 'packages/cockpit/src/environment/declaration.ts',
-    exports: ['declaredRuntime', 'declaresNothingToRun', 'runtimeNotDeclared', 'serviceNotDeclared', 'DeclarationRefusalError'],
-} as const
-
 export type DeclaredRuntime = 'compose' | 'none'
 
 export function declaredRuntime(environment: Pick<CockpitConfig['environment'], 'compose_files'>): DeclaredRuntime {

@@ -8,12 +8,6 @@
 // message to cockpit maintainers; to the consumer both are noise that costs context and reads
 // as an instruction they cannot act on.
 
-export const mechanism = {
-    id: 'development-markers',
-    module: 'packages/cockpit/src/surfaces/development-markers.ts',
-    exports: ['stripDevelopmentMarkers'],
-} as const
-
 // Each pattern also eats the blank line that followed the marker, so removal leaves no gap.
 const MARKERS: readonly RegExp[] = [
     /^<!-- cockpit:verified version=\S+ -->\n(?:\n)?/gm,

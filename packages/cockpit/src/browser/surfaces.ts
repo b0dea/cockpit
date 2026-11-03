@@ -16,12 +16,6 @@ import { collectMcpDeclarations, mcpApprovalDigest, type McpDeclaration } from '
 import { isPackageDescendant } from './package-paths.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
 
-export const mechanism = {
-    id: 'browser-surfaces',
-    module: 'packages/cockpit/src/browser/surfaces.ts',
-    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'measuredBrowserHarnessVersions', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'withBrowserProjectOperationAdmission'],
-} as const
-
 export type BrowserTestPackage = Readonly<{
     directory: string
     manifest: { readonly bytes: string; readonly sha256: string }

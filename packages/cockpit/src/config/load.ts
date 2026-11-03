@@ -17,12 +17,6 @@ import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../au
 import { CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
-export const mechanism = {
-    id: 'configuration-loading',
-    module: 'packages/cockpit/src/config/load.ts',
-    exports: ['loadCockpitConfig', 'loadAutonomyPolicy', 'evaluatorTools', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
-} as const
-
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
 
 export type BoundedInputRead =

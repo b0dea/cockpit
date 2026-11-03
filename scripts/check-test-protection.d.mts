@@ -1,8 +1,3 @@
-export const mechanism: Readonly<{
-    id: 'test-protection'
-    module: 'scripts/check-test-protection.mjs'
-    exports: readonly ['classifyTestProtection', 'runTestProtectionCli']
-}>
 export interface TestProtectionFinding {
     readonly path: string
     readonly reason: string

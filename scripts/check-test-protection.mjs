@@ -2,11 +2,6 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const mechanism = {
-    id: 'test-protection', module: 'scripts/check-test-protection.mjs',
-    exports: ['classifyTestProtection', 'runTestProtectionCli'],
-}
-
 const ACK = 'COCKPIT_TEST_WEAKENING_ACK'
 const protectedPaths = new Set([
     'scripts/check-test-protection.mjs',

@@ -6,12 +6,6 @@
 import { isCanonicalTimestamp, type HolderId, type StackId } from './contract.js'
 import { readState, transactState, type StateNamespace } from './state.js'
 
-export const mechanism = {
-    id: 'environment-seed',
-    module: 'packages/cockpit/src/environment/seed.ts',
-    exports: ['readSeededAt', 'recordSeeded', 'seedDue'],
-} as const
-
 /** The instant of the last successful seed, null when none is recorded, undefined when the record is unreadable. */
 export async function readSeededAt(namespace: StateNamespace, stackId: StackId): Promise<string | null | undefined> {
     const record = await readState(namespace.paths.dataOutcome(stackId))

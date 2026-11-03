@@ -22,12 +22,6 @@ import {
 } from './runtime.js'
 import type { DrainReservationRequest } from './claims.js'
 
-export const mechanism = {
-    id: 'lifecycle-planning',
-    module: 'packages/cockpit/src/environment/lifecycle.ts',
-    exports: ['admitUpProgress', 'planAdmittedUp', 'planSleep', 'planDown', 'planResetLifecycle', 'consumeLifecycleIssuance'],
-} as const
-
 const SHA256 = /^[a-f0-9]{64}$/
 const SERVICE_ID = /^[a-z0-9][a-z0-9_.-]*$/
 const MAX_BASIS_BYTES = 1_048_576

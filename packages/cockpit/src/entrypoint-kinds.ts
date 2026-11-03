@@ -1,9 +1,3 @@
-export const mechanism = {
-    id: 'entrypoint-kind-vocabulary',
-    module: 'packages/cockpit/src/entrypoint-kinds.ts',
-    exports: ['ENTRYPOINT_KINDS', 'isEntrypointKind'],
-} as const
-
 export const ENTRYPOINT_KINDS = Object.freeze([
     'entrypoint',
     'origin',

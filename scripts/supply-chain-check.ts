@@ -27,12 +27,6 @@ function yamlFailure(error: unknown): string {
     return at ? `${error.code} at line ${at.line}, column ${at.col}` : error.code
 }
 
-export const mechanism = {
-    id: 'supply-chain-readiness',
-    module: 'scripts/supply-chain-check.ts',
-    exports: ['expectedPackageFiles', 'inspectSupplyChain', 'runSupplyChainCheck', 'generateSbom'],
-}
-
 type Json = Record<string, any>
 interface LockNode { path: string; version?: string; hasInstallScript: boolean; bin: unknown; allowScript?: true }
 export interface SupplyChainDiagnostic { readonly code: string; readonly path: string; readonly message: string }
@@ -47,17 +41,22 @@ const REVIEWED_EXECUTABLE_LOCK_NODES: readonly LockNode[] = Object.freeze([
     {"path": "node_modules/@changesets/cli", "version": "3.0.3", "hasInstallScript": false, "bin": {"changeset": "bin.js"}},
     {"path": "node_modules/@typescript/old", "version": "6.0.3", "hasInstallScript": false, "bin": {"tsc": "bin/tsc", "tsserver": "bin/tsserver"}},
     {"path": "node_modules/@typescript/typescript6", "version": "6.0.2", "hasInstallScript": false, "bin": {"tsc6": "bin/tsc6"}},
+    {"path": "node_modules/acorn", "version": "8.19.0", "hasInstallScript": false, "bin": {"acorn": "bin/acorn"}},
+    {"path": "node_modules/dependency-cruiser", "version": "18.7.0", "hasInstallScript": false, "bin": {"depcruise": "bin/dependency-cruiser.mjs", "depcruise-baseline": "bin/depcruise-baseline.mjs", "depcruise-fmt": "bin/depcruise-fmt.mjs", "depcruise-wrap-stream-in-html": "bin/wrap-stream-in-html.mjs", "dependency-cruise": "bin/dependency-cruiser.mjs", "dependency-cruiser": "bin/dependency-cruiser.mjs"}},
     {"path": "node_modules/esbuild", "version": "0.28.2", "hasInstallScript": true, "bin": {"esbuild": "bin/esbuild"}, "allowScript": true},
     {"path": "node_modules/esprima", "version": "4.0.1", "hasInstallScript": false, "bin": {"esparse": "bin/esparse.js", "esvalidate": "bin/esvalidate.js"}},
     {"path": "node_modules/fsevents", "version": "2.3.3", "hasInstallScript": true, "bin": null, "allowScript": true},
     {"path": "node_modules/gray-matter/node_modules/js-yaml", "version": "3.15.2", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.js"}},
     {"path": "node_modules/human-id", "version": "4.2.2", "hasInstallScript": false, "bin": {"human-id": "dist/cli.js"}},
     {"path": "node_modules/js-yaml", "version": "5.5.0", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.mjs"}},
+    {"path": "node_modules/json5", "version": "2.2.3", "hasInstallScript": false, "bin": {"json5": "lib/cli.js"}},
     {"path": "node_modules/katex", "version": "0.16.47", "hasInstallScript": false, "bin": {"katex": "cli.js"}},
     {"path": "node_modules/markdown-it", "version": "15.0.1", "hasInstallScript": false, "bin": {"markdown-it": "bin/markdown-it.mjs"}},
     {"path": "node_modules/markdownlint-cli2", "version": "0.23.3", "hasInstallScript": false, "bin": {"markdownlint-cli2": "markdownlint-cli2-bin.mjs"}},
     {"path": "node_modules/markdownlint-cli2/node_modules/js-yaml", "version": "5.4.1", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.mjs"}},
     {"path": "node_modules/nanoid", "version": "3.3.20", "hasInstallScript": false, "bin": {"nanoid": "bin/nanoid.cjs"}},
+    {"path": "node_modules/regexp-tree", "version": "0.1.27", "hasInstallScript": false, "bin": {"regexp-tree": "bin/regexp-tree"}},
+    {"path": "node_modules/resolve", "version": "1.22.13", "hasInstallScript": false, "bin": {"resolve": "bin/resolve"}},
     {"path": "node_modules/rolldown", "version": "1.2.15", "hasInstallScript": false, "bin": {"rolldown": "bin/cli.mjs"}},
     {"path": "node_modules/rulesync", "version": "43.1.2", "hasInstallScript": false, "bin": {"rulesync": "dist/cli/index.js"}},
     {"path": "node_modules/semver", "version": "7.8.5", "hasInstallScript": false, "bin": {"semver": "bin/semver.js"}},
@@ -65,6 +64,7 @@ const REVIEWED_EXECUTABLE_LOCK_NODES: readonly LockNode[] = Object.freeze([
     {"path": "node_modules/typescript", "version": "7.0.2", "hasInstallScript": false, "bin": {"tsc": "bin/tsc"}},
     {"path": "node_modules/vite", "version": "8.3.5", "hasInstallScript": false, "bin": {"vite": "bin/vite.js"}},
     {"path": "node_modules/vitest", "version": "5.0.5", "hasInstallScript": false, "bin": {"vitest": "vitest.mjs"}},
+    {"path": "node_modules/watskeburt", "version": "6.0.0", "hasInstallScript": false, "bin": {"watskeburt": "dist/run-cli.js"}},
     {"path": "node_modules/which", "version": "2.0.2", "hasInstallScript": false, "bin": {"node-which": "bin/node-which"}},
     {"path": "node_modules/why-is-node-running", "version": "3.2.1", "hasInstallScript": false, "bin": {"why-is-node-running": "cli.js"}},
     {"path": "node_modules/yaml", "version": "2.9.1", "hasInstallScript": false, "bin": {"yaml": "bin.mjs"}},

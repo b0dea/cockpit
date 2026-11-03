@@ -56,21 +56,17 @@ import type { LocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
 import { composeProcessEnvironment } from './compose-environment.js'
 
-export const mechanism = {
-    id: 'runtime-planning',
-    module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'createRuntimeServicePlan', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'observeRuntimeExecution', 'isRuntimeObservation', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'isVersionFloor', 'versionAtLeast', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
-} as const
+const OWNER = 'runtime-planning'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'runtime-availability', owner: mechanism.id, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'runtime-measurement', owner: mechanism.id, postures: ['environment', 'mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'mount-posture', owner: mechanism.id, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-availability', owner: OWNER, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-measurement', owner: OWNER, postures: ['environment', 'mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'mount-posture', owner: OWNER, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 export const runtimeHealthObservationDeclarations = Object.freeze([
-    { id: 'runtime-mount-materialization', owner: mechanism.id, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'runtime-port-family', owner: mechanism.id, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'ports are leased after the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-mount-materialization', owner: OWNER, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-port-family', owner: OWNER, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'ports are leased after the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
@@ -94,7 +90,7 @@ const issuedRuntimePlans = new WeakMap<object, RuntimeObservationContract>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('runtime observation is malformed')
+    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('runtime observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -139,7 +135,7 @@ export function observeRuntimeExecution(input: {
     if (!observedAt || !isCanonicalTimestamp(observedAt)) throw new RefusalError('runtime execution evidence is not authentic')
     const runtimeAvailable = outcome.kind === 'complete'
     const observations = [issueObservation({
-        code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, owner: mechanism.id, stackId, source: step.argv0,
+        code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, owner: OWNER, stackId, source: step.argv0,
         observed: { state: 'available', value: runtimeAvailable, observedAt }, expectation: { kind: 'equal', value: true },
         applicability: { state: 'required', posture: 'mounted' }, freshness: { state: 'current' }, remedy: 'restore the declared runtime executable and retry the bounded probe',
     })]
@@ -173,7 +169,7 @@ export function observeRuntimeExecution(input: {
             : { state: 'failed', reason: `runtime mount output is malformed or unreadable${mountCause}`, observedAt }
     }
     observations.push(issueObservation({
-        code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, owner: mechanism.id, stackId, source: step.id,
+        code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, owner: OWNER, stackId, source: step.id,
         observed: mountObserved, expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'mounted' },
         freshness: { state: 'current' }, remedy: 'restore the declared checkout mount sources',
     }))
@@ -181,7 +177,7 @@ export function observeRuntimeExecution(input: {
         const startedAt = outcome.receipt?.startedAt
         const duration = startedAt ? Date.parse(observedAt) - Date.parse(startedAt) : Number.NaN
         observations.push(issueObservation({
-            code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED, owner: mechanism.id, stackId, source: step.id,
+            code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED, owner: OWNER, stackId, source: step.id,
             observed: Number.isSafeInteger(duration) && duration >= 0
                 ? { state: 'available', value: duration, observedAt }
                 : { state: 'failed', reason: 'runtime receipt timestamps are incoherent', observedAt },
@@ -659,7 +655,7 @@ export function observeRuntimeMeasurement(admission: RuntimeMeasurementAdmission
     }
     return issueObservation({
         code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId,
         // An admitted runtime names the measurement that admitted it, so doctor says which runtime is measured.
         source: admission.kind === 'admitted' ? admission.measurement : runtime.operatingSystem,
@@ -1699,7 +1695,7 @@ export function admitRuntimeTopology(input: {
         const observations = Object.freeze([
             issueObservation({
                 code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-                owner: mechanism.id,
+                owner: OWNER,
                 stackId: contract.stackId,
                 source: plan.step.argv0,
                 observed: { state: 'available', value: true, observedAt: finishedAt },
@@ -1710,7 +1706,7 @@ export function admitRuntimeTopology(input: {
             }),
             issueObservation({
                 code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
-                owner: mechanism.id,
+                owner: OWNER,
                 stackId: contract.stackId,
                 source: plan.step.id,
                 observed: { state: 'available', value: true, observedAt: finishedAt },
@@ -2646,7 +2642,7 @@ export function observeRuntimeMountMaterialization(input: {
     if (!topology) throw new RefusalError('runtime mount evidence is not authentic')
     const fail = (reason: string) => issueObservation({
         code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: topology.stackId,
         source: topology.runtime.projectName,
         observed: { state: 'unavailable', reason, observedAt: typeof observedAt === 'string' && isCanonicalTimestamp(observedAt) ? observedAt : new Date().toISOString() },
@@ -2677,7 +2673,7 @@ export function observeRuntimeMountMaterialization(input: {
         if (!expected || JSON.stringify(expected) !== JSON.stringify(contract.inspection.bindMounts)) {
             return issueObservation({
                 code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
-                owner: mechanism.id,
+                owner: OWNER,
                 stackId: topology.stackId,
                 source: `${topology.runtime.projectName}:${contract.service.id}`,
                 observed: { state: 'available', value: false, observedAt },
@@ -2691,7 +2687,7 @@ export function observeRuntimeMountMaterialization(input: {
     if (seen.size !== topology.services.size) return fail('runtime mount evidence is incomplete or unauthenticated')
     return issueObservation({
         code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: topology.stackId,
         source: `${topology.runtime.projectName}:runtime-mounts`,
         observed: { state: 'available', value: true, observedAt },
@@ -2748,7 +2744,7 @@ export async function observeRuntimePortFamily(input: {
     const now = new Date().toISOString()
     const unavailable = (reason: string, observedAt = now) => issueObservation({
         code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
-        owner: mechanism.id,
+        owner: OWNER,
         stackId: topology.stackId,
         source: topology.runtime.projectName,
         observed: { state: 'unavailable', reason, observedAt },
@@ -2807,7 +2803,7 @@ export async function observeRuntimePortFamily(input: {
                 ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack`
                 : `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has no stack listener`)
             return issueObservation({
-                code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
+                code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
                 source: `${topology.runtime.projectName}:runtime-ports`,
                 observed: { state: 'available', value: false, observedAt: observed.observedAt },
                 expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
@@ -2836,7 +2832,7 @@ export async function observeRuntimePortFamily(input: {
             return unavailable('retained port lease changed during service revalidation', observed.observedAt)
         }
         return issueObservation({
-            code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
+            code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
             source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value: true, observedAt: observed.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
             freshness: { state: 'current' }, remedy: 'restore the retained port lease and the exact declared runtime publication',
@@ -2887,7 +2883,7 @@ export function observeRuntimeServiceColdStart(input: {
         const observedAt = new Date(finishedAt).toISOString()
         return issueObservation({
             code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED,
-            owner: mechanism.id,
+            owner: OWNER,
             stackId: topology.stackId,
             source,
             observed: Number.isSafeInteger(duration) && duration >= 0

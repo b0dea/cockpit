@@ -119,12 +119,6 @@ import { loadOperatorPolicy, runResetOperatorApplication } from './environment/o
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 
-export const mechanism = {
-    id: 'command-dispatch',
-    module: 'packages/cockpit/src/cli.ts',
-    exports: ['runCli'],
-} as const
-
 export interface CliIo {
     stdout: Pick<NodeJS.WriteStream, 'write'>
     stderr: Pick<NodeJS.WriteStream, 'write'>

@@ -37,15 +37,6 @@ import {
     type SelftestProbeSpecification,
 } from '../surfaces/selftest.js'
 
-export const mechanism = {
-    id: 'surface-selftest-application',
-    module: 'packages/cockpit/src/environment/selftest-application.ts',
-    exports: [
-        'runSurfaceSelftestApplication', 'runConfiguredSurfaceSelftestApplication',
-        'runConfiguredSurfaceSelftestOutcome', 'runSelftestOperatorCommand',
-    ],
-} as const
-
 export interface ConfiguredSurfaceSelftestCommandInput {
     readonly configPath: string
     readonly probeSpecificationsPath: string

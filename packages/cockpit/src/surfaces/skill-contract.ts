@@ -24,13 +24,6 @@ import { GUARD_SURFACE_TARGETS, harnessFact, type GuardSurfaceTarget } from './h
 /** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
 export const SHIPPED_SETUP_SKILL = 'cockpit-setup' as const
 
-export const mechanism = {
-    id: 'skill-contract',
-    module: 'packages/cockpit/src/surfaces/skill-contract.ts',
-    exports: ['SHIPPED_SETUP_SKILL', 'inspectSkillSet', 'inspectRenderedSkillSet', 'isAdmittedSkillCollection',
-        'extendInspectedSkillStandingCosts', 'projectInspectedSkillOutputs', 'isInspectedBootstrapOutputs'],
-} as const
-
 export interface SkillContractDiagnostic {
     readonly severity: 'error'
     readonly code: string

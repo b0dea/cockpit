@@ -1,11 +1,6 @@
 import { admitDiagnosticFix, type ExecutableFix, type FixContext } from './fix-catalogue.js'
 import type { Diagnostic } from './diagnostics.js'
 
-export const mechanism = {
-    id: 'generated-repair-proposal', module: 'packages/cockpit/src/repair.ts',
-    exports: ['proposeGeneratedEnvironmentRepair'],
-} as const
-
 interface RepairInput {
     readonly changes: readonly Readonly<{ operation: 'write' | 'remove'; path: string }>[]
     readonly repairAuthority?: Readonly<{ kind: 'generated-environment-repair' }>

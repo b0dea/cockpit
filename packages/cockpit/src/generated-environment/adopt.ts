@@ -26,12 +26,6 @@ import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { nodeAuthority, readAnchoredEntry, readAnchoredFile, relocateAnchoredFile, restoreAnchoredFile,
     type PublicationAdapters } from './transaction.js'
 
-export const mechanism = {
-    id: 'surface-adoption-command',
-    module: 'packages/cockpit/src/generated-environment/adopt.ts',
-    exports: ['runSyncAdoption'],
-} as const
-
 export interface SyncAdoptionInput {
     readonly configPath: string
     readonly adopt: readonly string[]

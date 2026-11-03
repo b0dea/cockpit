@@ -1,9 +1,3 @@
-export const mechanism = {
-    id: 'resolved-registry-shell-rendering',
-    module: 'packages/cockpit/src/registry-resolve/render-shell.ts',
-    exports: ['renderResolvedRegistryShell'],
-} as const
-
 export interface ResolvedRegistryShellModel {
     formatVersion: string
     cockpitSourceRevision: string

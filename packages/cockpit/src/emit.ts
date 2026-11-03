@@ -2,12 +2,6 @@ import { stringify } from 'smol-toml'
 import type { CockpitConfig } from './schema.js'
 import type { DocumentedSibling, Gap } from './registry-resolve/registry.js'
 
-export const mechanism = {
-    id: 'toml-emission',
-    module: 'packages/cockpit/src/emit.ts',
-    exports: ['emitToml', 'emitGaps', 'toSiblingRows'],
-} as const
-
 /**
  * Render a config as `cockpit.toml`.
  *
