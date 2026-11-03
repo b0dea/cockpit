@@ -3,6 +3,7 @@
 // skill collection or choose a different declaration shape.
 import type { SurfaceDeclaration } from '../schema.js'
 import type { SurfaceTarget } from './contract.js'
+import { GUARD_SURFACE_TARGETS } from './harness-registry.js'
 import { tryParseJson } from '../environment/contract.js'
 
 export const CORE_EVALUATOR_ASSET = 'agents/evaluator.agent.md' as const
@@ -40,7 +41,8 @@ const SHELL_TOOL: Readonly<Partial<Record<SurfaceTarget, string>>> = Object.free
 })
 
 function toolEquivalenceLine(tools: readonly SurfaceTarget[]): string {
-    const names = tools.flatMap(tool => SHELL_TOOL[tool] ?? [])
+    // Listed in the harness registry's order, so the sentence does not depend on how `tools` is spelled.
+    const names = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target)).flatMap(target => SHELL_TOOL[target] ?? [])
     if (names.length === 0) return 'Use your shell tool.'
     const last = names.at(-1)!
     return `Use ${names.length === 1 ? last : `${names.slice(0, -1).join(', ')}${names.length > 2 ? ',' : ''} or ${last}`}.`

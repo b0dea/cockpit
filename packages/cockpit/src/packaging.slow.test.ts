@@ -163,10 +163,10 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const help = execFileSync(process.execPath, [launcher, '--help'], options)
         expect(help).not.toContain('guard-evaluate')
         const refusal = spawnSync(process.execPath, [launcher, 'guard-evaluate', '--harness', 'claudecode'], { ...options, input: '{}' })
-        expect(refusal.status).toBe(0)
-        expect(JSON.parse(refusal.stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
-        // Human mode keeps stderr for diagnostics; the invocation record lives only in the --json envelope.
-        expect(refusal.stderr).toBe('')
+        // The route answers in the harness's native spelling: a refusal exits 2 and says why on stderr.
+        expect(refusal.status).toBe(2)
+        expect(refusal.stdout).toBe('')
+        expect(refusal.stderr).toMatch(/^cockpit guard: .+\n$/)
         expect(packedFiles().filter(path => path.endsWith('/guards/invocation-parser.js'))).toEqual(['dist/guards/invocation-parser.js'])
         expect(packedFiles().filter(path => path.endsWith('/guards/evaluator.js'))).toEqual(['dist/guards/evaluator.js'])
         for (const path of packedFiles().filter(path => path.startsWith('surfaces/') && /\.(md|json)$/.test(path))) {

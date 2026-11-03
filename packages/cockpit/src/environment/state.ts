@@ -101,6 +101,8 @@ const holderIdentity = /^holder:[a-f0-9]{64}:session$/
 const bootstrapHolderIdentity = /^bootstrap-holder:[a-f0-9]{64}:session$/
 const lockOwnerIdentity = /^(?:holder:[a-f0-9]{64}:session|bootstrap-holder:[a-f0-9]{64}:session)$/
 const surfaceTargets = new Set<string>(SURFACE_TARGETS)
+// The setup skill is at most three files per tool, published for every listed tool.
+const BOOTSTRAP_PUBLISHED_MAX = 3 * SURFACE_TARGETS.length
 const bootstrapStages = ['surface-previewed', 'surface-published', 'draft-prepared', 'draft-observed', 'environment-verified'] as const
 const BootstrapPathSchema = z.string().min(1).max(4_096)
     .regex(/^(?!\/)(?!.*\\)(?!.*[\x00-\x1f\x7f])[^/]+(?:\/[^/]+)*$/)
@@ -195,7 +197,7 @@ const BootstrapStateRecordSchema = z.object({
         sources: z.array(BootstrapDigestRowSchema).min(1).max(16),
         commandSha256: z.string().regex(digest),
         previewSha256: z.string().regex(digest),
-        published: z.array(BootstrapDigestRowSchema).max(3),
+        published: z.array(BootstrapDigestRowSchema).max(BOOTSTRAP_PUBLISHED_MAX),
         destination: BootstrapPathSchema.nullable(),
         artifactBytes: z.string().max(262_144).nullable(),
         artifactSha256: z.string().regex(digest).nullable(),
@@ -1454,9 +1456,9 @@ export async function refreshBootstrapPublication(
     let stableInput: typeof input
     try {
         const expectedSources = BootstrapDigestRowSchema.array().min(1).max(16).safeParse(input.expectedSources)
-        const expectedPublished = BootstrapDigestRowSchema.array().max(3).safeParse(input.expectedPublished)
+        const expectedPublished = BootstrapDigestRowSchema.array().max(BOOTSTRAP_PUBLISHED_MAX).safeParse(input.expectedPublished)
         const sources = BootstrapDigestRowSchema.array().min(1).max(16).safeParse(input.sources)
-        const published = BootstrapDigestRowSchema.array().max(3).safeParse(input.published)
+        const published = BootstrapDigestRowSchema.array().max(BOOTSTRAP_PUBLISHED_MAX).safeParse(input.published)
         if (!expectedSources.success || !expectedPublished.success || !sources.success || !published.success
             || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0
             || !digest.test(input.expectedCommandSha256) || !digest.test(input.expectedPreviewSha256) || !digest.test(input.previewSha256)
