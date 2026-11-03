@@ -506,9 +506,8 @@ async function runInitStages(
         const priorAddress = other.value.paths.bootstrap(target)
         const prior = await readState(priorAddress)
         if (prior.kind === 'complete') {
-            return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null, diagnostics: [{
-                ...diagnostic('INIT_TARGET_CHANGED', `bootstrap state is already bound to ${target}`, input.root),
-                fix: `to resume the init started for ${target}, run ${initCommand({ root: input.root, target })} with the options you started it with (a root that was removed and recreated starts again from the preview); to use --target ${input.tools.join(',')} instead, ask the person who owns this machine before you delete ${formatShellCommand([priorAddress.path])}, which holds only that init's progress, then run ${initCommand({ root: input.root, target: input.tools.join(',') })}` }] }
+            return refused('INIT_TARGET_CHANGED', `bootstrap state is already bound to ${target}`, input.root,
+                `to resume the init started for ${target}, run ${initCommand({ root: input.root, target })} with the options you started it with (a root that was removed and recreated starts again from the preview); to use --target ${input.tools.join(',')} instead, ask the person who owns this machine before you delete ${formatShellCommand([priorAddress.path])}, which holds only that init's progress, then run ${initCommand({ root: input.root, target: input.tools.join(',') })}`)
         }
         if (prior.kind === 'refusal') return stateFailure(prior)
     }
@@ -527,9 +526,8 @@ async function runInitStages(
     let discarded: BootstrapStateRecord | undefined
     if (current !== null && current.value.stage !== 'surface-previewed' && await publicationGone(input.root, current, adapters)) {
         // A reset would rewrite answers that the restart is about to discard.
-        if (input.resetAnswer !== undefined) return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
-            diagnostics: [{ ...diagnostic('INIT_ANSWER_RESET_UNAVAILABLE', `none of the files init published into ${input.root}, nor cockpit.toml, exist any more, so its recorded answers no longer apply`, address.path),
-                fix: `run ${initCommand({ root: input.root, target: input.tools.join(','), args: '--json' })} without --reset-answer: init starts again from the preview` }] }
+        if (input.resetAnswer !== undefined) return refused('INIT_ANSWER_RESET_UNAVAILABLE', `none of the files init published into ${input.root}, nor cockpit.toml, exist any more, so its recorded answers no longer apply`, address.path,
+            `run ${initCommand({ root: input.root, target: input.tools.join(','), args: '--json' })} without --reset-answer: init starts again from the preview`)
         restarted = { severity: 'info', code: 'INIT_STATE_RESTARTED', target: address.path,
             message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated, or they were deleted), so init starts again from the preview; the answers recorded there are discarded once the fresh preview is accepted` }
         discarded = current
@@ -619,8 +617,7 @@ async function initStagesFrom(
         if (reset.kind === 'refusal') {
             const code = reset.code.replace('BOOTSTRAP_', 'INIT_')
             const fix = code === 'INIT_ANSWER_RESET_UNAVAILABLE' ? resetUnavailableFix(input, current) : undefined
-            return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
-                diagnostics: [{ ...diagnostic(code, reset.message, reset.target), ...(fix === undefined ? {} : { fix }) }] }
+            return refused(code, reset.message, reset.target, fix)
         }
         const publicPreview = { ...reset.preview }
         if (reset.kind === 'pending') return { kind: 'pending', status: 0, artifact: null, destination: null,
