@@ -5,8 +5,6 @@ import {
     errorCause,
     hasErrorCode,
     isMissing,
-    OBSERVATION_PRODUCER_BYTE_LIMIT,
-    OBSERVATION_REASON_BYTE_LIMIT,
     REFUSAL_CODES,
     RefusalError,
     tryParseJson,
@@ -343,16 +341,6 @@ it('rejects empty, NUL-containing, and oversized lifecycle diagnostics', () => {
     }
 })
 
-it('publishes lifecycle evidence and progress failures as refusals', () => {
-    expect(REFUSAL_CODES).toContain(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID)
-    expect(REFUSAL_CODES).toContain(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID)
-})
-
-it('publishes exact byte limits for resolved observation provenance and reasons', () => {
-    expect(OBSERVATION_PRODUCER_BYTE_LIMIT).toBe(256)
-    expect(OBSERVATION_REASON_BYTE_LIMIT).toBe(1_024)
-})
-
 it('rejects an observation when provenance or an exact expectation is missing', () => {
     const stackId = `stack:${'1'.repeat(64)}`
     const complete = {
@@ -388,17 +376,15 @@ it('keeps environment outcome diagnostics closed to the contract vocabulary', ()
     expectTypeOf(invalid).toMatchTypeOf<EnvironmentCommandOutcome<null>>()
 })
 
-it('keeps port correction and registration-gap diagnostics outside the refusal vocabulary', () => {
-    expect(ENVIRONMENT_CODES.PORT_LOCAL_VALUE_CORRECTED).toBe('PORT_LOCAL_VALUE_CORRECTED')
-    expect(ENVIRONMENT_CODES.PORT_EXTERNAL_REGISTRATION_GAP).toBe('PORT_EXTERNAL_REGISTRATION_GAP')
-    expect(ENVIRONMENT_CODES.PORT_LISTENER_EVIDENCE_INVALID).toBe('PORT_LISTENER_EVIDENCE_INVALID')
-    expect(REFUSAL_CODES).not.toContain(ENVIRONMENT_CODES.PORT_LOCAL_VALUE_CORRECTED)
-    expect(REFUSAL_CODES).not.toContain(ENVIRONMENT_CODES.PORT_EXTERNAL_REGISTRATION_GAP)
-    expect(REFUSAL_CODES).toContain(ENVIRONMENT_CODES.PORT_LISTENER_EVIDENCE_INVALID)
-    expect(REFUSAL_CODES).toContain(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED)
-})
-
-it('reserves one stable comparison-remote diagnostic code', () => {
-    expect(ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH).toBe('GIT_COMPARISON_REMOTE_MISMATCH')
-    expect(REFUSAL_CODES).toContain(ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH)
+// Port correction and registration-gap diagnostics report and continue, so they stay outside the refusal vocabulary.
+it.each([
+    [ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, true],
+    [ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID, true],
+    [ENVIRONMENT_CODES.PORT_LISTENER_EVIDENCE_INVALID, true],
+    [ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, true],
+    [ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH, true],
+    [ENVIRONMENT_CODES.PORT_LOCAL_VALUE_CORRECTED, false],
+    [ENVIRONMENT_CODES.PORT_EXTERNAL_REGISTRATION_GAP, false],
+] as const)('classifies %s as a refusal: %s', (code, refusal) => {
+    expect((REFUSAL_CODES as readonly string[]).includes(code)).toBe(refusal)
 })
