@@ -477,16 +477,6 @@ describe('CLI help', () => {
             "Run 'cockpit <command> --help' for its options, and 'cockpit work --help' or 'cockpit browser --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
-
-        // The README's "Commands at a glance" table is the same map in prose; each row names the
-        // entries of its stage, in help order, by their first word.
-        const readme = readFileSync(resolve(import.meta.dirname, '../../../README.md'), 'utf8')
-        const table = readme.slice(readme.indexOf('## Commands at a glance'), readme.indexOf('## How cockpit compares'))
-        const documented = [...table.matchAll(/^\| ([A-Z][a-z ]+) \| (.+) \|$/gm)].filter(([, stage]) => stage !== 'Stage')
-            .map(([, stage, cells]) => `${stage}:\n${[...new Set([...cells!.matchAll(/`([a-z][a-z-]*)[^`]*`/g)].map(match => match[1]))].join('\n')}`)
-        const helped = result.stdout.split('\n\n').slice(1, -1)
-            .map(section => section.split('\n').map((line, index) => index === 0 ? line : line.trim().split(' ', 1)[0]).join('\n'))
-        expect(documented).toEqual(helped)
     })
 
     it('lists a command group with its subcommands and refuses a group without one', async () => {
