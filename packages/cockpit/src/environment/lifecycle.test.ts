@@ -6,7 +6,6 @@ const owners = vi.hoisted(() => ({
     stages: new WeakMap<object, unknown>(),
     topologies: new WeakSet<object>(),
     ports: new WeakMap<object, unknown>(),
-    reclaims: new WeakMap<object, unknown>(),
     services: new WeakSet<object>(),
 }))
 
@@ -25,13 +24,6 @@ vi.mock('./ports.js', () => ({
     consumePortLeaseProjection: (value: object) => {
         const result = owners.ports.get(value)
         owners.ports.delete(value)
-        return result
-    },
-}))
-vi.mock('./reclaim.js', () => ({
-    consumeReclaimTargetProjection: (value: object) => {
-        const result = owners.reclaims.get(value)
-        owners.reclaims.delete(value)
         return result
     },
 }))
@@ -115,12 +107,10 @@ function serviceEvidence(service: string, container = service === 'db' ? 'a'.rep
 }
 
 function reclaim(purpose: 'down' | 'reset', targetIds = ['volume:data']) {
-    const projection = Object.freeze({})
-    owners.reclaims.set(projection, Object.freeze({
+    return {
         purpose, stackId, configSha256: '5'.repeat(64), planDigest: '7'.repeat(64),
-        commitments: Object.freeze(targetIds.map((targetId) => Object.freeze({ targetId, format: 'cockpit-reclaim-target/v1', sha256: '8'.repeat(64), body: '{}' }))),
-    }))
-    return projection
+        commitments: targetIds.map((targetId) => ({ targetId, format: 'cockpit-reclaim-target/v1', sha256: '8'.repeat(64), body: '{}' })),
+    }
 }
 
 describe('lifecycle planning', () => {
@@ -455,7 +445,7 @@ describe('lifecycle planning', () => {
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
 
-    it('rejects wrong-stack owner projections, a copied topology and copied port and reclaim projections', () => {
+    it('rejects wrong-stack owner projections, a copied topology and copied port projections', () => {
         const wrongStage = projections()
         owners.stages.set(wrongStage.stage, Object.freeze({ stackId: `stack:${'9'.repeat(64)}`, stage: 'steady' }))
         expect(planUp({ lifecycleStage: wrongStage.stage as never, runtime: wrongStage.runtime as never, ports: wrongStage.ports as never, progress: null, completedServices: [], operationGeneration: generation }))
@@ -466,10 +456,6 @@ describe('lifecycle planning', () => {
             .toMatchObject({ kind: 'refusal' })
         const copiedPorts = projections()
         expect(planSleep({ runtime: copiedPorts.runtime as never, ports: { ...copiedPorts.ports } as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
-            .toMatchObject({ kind: 'refusal' })
-        const copiedReclaim = projections({ change: 'unchanged' })
-        const reclaimProjection = reclaim('down')
-        expect(planDown({ runtime: copiedReclaim.runtime as never, ports: copiedReclaim.ports as never, reclaim: { ...reclaimProjection } as never, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 }))
             .toMatchObject({ kind: 'refusal' })
     })
 
@@ -503,9 +489,9 @@ describe('lifecycle planning', () => {
 
     it('reports invalid reclaim evidence before co-tenant policy', () => {
         const shared = projections({ holders: 2, change: 'unchanged' })
-        const authentic = reclaim('down')
+        // A reset's target set offered to down.
         expect(planDown({
-            runtime: shared.runtime as never, ports: shared.ports as never, reclaim: { ...authentic } as never,
+            runtime: shared.runtime as never, ports: shared.ports as never, reclaim: reclaim('reset') as never,
             operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
         })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
@@ -539,11 +525,10 @@ describe('lifecycle planning', () => {
             operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
         })
         const second = projections({ change: 'unchanged' })
-        const changed = reclaim('down', ['volume:other'])
-        owners.reclaims.set(changed, Object.freeze({
+        const changed = {
             purpose: 'down', stackId, configSha256: '5'.repeat(64), planDigest: '9'.repeat(64),
-            commitments: Object.freeze([Object.freeze({ targetId: 'volume:other', format: 'cockpit-reclaim-target/v1', sha256: 'a'.repeat(64), body: '{"changed":true}' })]),
-        }))
+            commitments: [{ targetId: 'volume:other', format: 'cockpit-reclaim-target/v1', sha256: 'a'.repeat(64), body: '{"changed":true}' }],
+        }
         const right = planDown({
             runtime: second.runtime as never, ports: second.ports as never, reclaim: changed as never,
             operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,

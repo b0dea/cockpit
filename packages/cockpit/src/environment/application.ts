@@ -184,22 +184,13 @@ import {
     type DrainReservationRequest,
 } from './claims.js'
 import {
-    admitReclaimFailure,
-    consumeReclaimCompleted,
-    consumeReclaimFailure,
+    executeReclaimAction,
     keptTeardownResources,
     planReset,
     planTeardown,
-    projectResetActionTargets,
-    projectRecoveredResetActionTargets,
-    projectTeardownActionTargets,
     reconcileReclaimAction,
-    reconcileAbsentReclaimAction,
-    redeemAbsentReclaimAction,
-    redeemReclaimAction,
     type PlanResetInput,
     type PlanTeardownInput,
-    type ReclaimDiscoverySnapshot,
     type ResetPreview,
     type ResetPlanResult,
     type ResetTargetInput,
@@ -3688,82 +3679,42 @@ async function executeDestructivePlan(
     let plan = firstPlan
     // The latest discovery: what the stack still holds once the last removal is reconciled.
     let observed = plannedFrom
-    while (plan.actionAuthority !== null) {
+    while (plan.action !== null) {
         const recovered = availableReservation ?? await recoverDrainReservation({ namespace: context.namespace, request })
         availableReservation = undefined
         if (recovered.kind !== 'complete') return forwardedRefusal(recovered.diagnostics)
         const attempt = await reserveDrainAttempt({ namespace: context.namespace, authority: recovered.authority })
         if (attempt.kind !== 'complete') return forwardedRefusal(attempt.diagnostics)
-        const absent = redeemAbsentReclaimAction({ actionAuthority: plan.actionAuthority, attempt: attempt.authority })
-        if (absent) {
-            const postAction = await observeDestructiveReclaim(context, adapters)
-            if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
-            observed = postAction
-            const reconciled = await reconcileAbsentReclaimAction({ authority: absent.authority,
-                discovery: purpose === 'down' ? postAction.down.discovery : postAction.reset.discovery })
-            if (reconciled.kind !== 'complete' || !reconciled.authority) return reconciled.kind === 'refusal'
-                ? forwardedRefusal(reconciled.diagnostics) : destructiveRepairRequired(context)
-            const authority = consumeReclaimCompleted(reconciled.authority)
-            if (!authority) return destructiveRepairRequired(context)
-            if (purpose === 'down' && reconciled.continuation === null) {
-                const invalidated = await invalidateCompletedLifecycle(context, request.operationBasis, request.generation, 'down')
-                if (invalidated) return invalidated
-            }
-            const published = await publishDrainOutcomeRecord(context, authority)
-            if (published) return published
-            if (reconciled.continuation === null) break
-            const coordination = await readState(context.namespace.paths.coordination(context.stackId))
-            if (coordination.kind !== 'complete') return destructiveRepairRequired(context)
-            const next = purpose === 'down'
-                ? await planTeardown({ ...postAction.down, coordinationRecord: coordination.value,
-                    expectedDiscoveryDigest: request.planDigest, continuation: reconciled.continuation })
-                : await planReset({ ...postAction.reset, coordinationRecord: coordination.value,
-                    expectedCoordinationRevision: coordination.value.revision,
-                    confirmationDigest: request.planDigest, continuation: reconciled.continuation })
-            if (next.kind !== 'complete') return next.kind === 'refusal'
-                ? forwardedRefusal(next.diagnostics) : destructiveRepairRequired(context)
-            plan = next
-            continue
-        }
-        const execution = await redeemReclaimAction({ actionAuthority: plan.actionAuthority, attempt: attempt.authority })
-        if (!execution) return destructiveRepairRequired(context)
-        const outcome = await adapters.execute(execution.step)
-        if (outcome.kind === 'refusal') {
-            const admitted = admitReclaimFailure({ authority: execution.authority, outcome })
-            if (admitted.kind !== 'complete') return destructiveRepairRequired(context)
-            const authority = consumeReclaimFailure(admitted.authority)
-            if (!authority) return destructiveRepairRequired(context)
-            const fence = execution.step.executionFence
-            if (!fence) return destructiveRepairRequired(context)
-            const published = await publishDestructiveOutcome(context, authority, fence)
+        const ran = await executeReclaimAction({ action: plan.action, attempt: attempt.authority, execute: (step) => adapters.execute(step) })
+        if (ran.kind === 'unavailable') return destructiveRepairRequired(context)
+        if (ran.kind === 'not-started') {
+            const published = await publishDestructiveOutcome(context, ran.authority, ran.fence)
             return published ?? forwardedRefusal([{
-                severity: 'error', code: outcome.code,
+                severity: 'error', code: ran.code,
                 message: 'destructive action did not start', target: context.stackId,
             }])
         }
         const postAction = await observeDestructiveReclaim(context, adapters)
         if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
         observed = postAction
-        const reconciled = reconcileReclaimAction({
-            authority: execution.authority,
-            outcome,
-            discovery: (purpose === 'down' ? postAction.down.discovery : postAction.reset.discovery) as ReclaimDiscoverySnapshot,
+        const reconciled = await reconcileReclaimAction({
+            executed: ran.executed,
+            discovery: purpose === 'down' ? postAction.down.discovery : postAction.reset.discovery,
         })
-        if (reconciled.kind === 'refusal' || reconciled.authority === null) return destructiveRepairRequired(context)
-        const authority = consumeReclaimCompleted(reconciled.authority)
-        if (!authority) return destructiveRepairRequired(context)
-        const fence = execution.step.executionFence
-        if (!fence) return destructiveRepairRequired(context)
+        if (reconciled.kind === 'refusal') {
+            // An already-absent target ran nothing, so the owner's reason is the whole story.
+            return ran.executed.receipt === null ? forwardedRefusal(reconciled.diagnostics) : destructiveRepairRequired(context)
+        }
         if (purpose === 'down' && reconciled.continuation === null) {
             const invalidated = await invalidateCompletedLifecycle(context, request.operationBasis, request.generation, 'down')
             if (invalidated) return invalidated
         }
-        const published = await publishDestructiveOutcome(context, authority, fence)
+        const fence = ran.executed.fence
+        const published = fence === null
+            ? await publishDrainOutcomeRecord(context, reconciled.authority)
+            : await publishDestructiveOutcome(context, reconciled.authority, fence)
         if (published) return published
-        if (reconciled.continuation === null) {
-            plan = { ...plan, actionAuthority: null, continuation: null, remaining: 0 }
-            break
-        }
+        if (reconciled.continuation === null) break
         // The discovery that reconciled this removal plans the next; only the coordination record
         // moved since, by the outcome just published, so it is read again.
         const coordination = await readState(context.namespace.paths.coordination(context.stackId))
@@ -3871,13 +3822,11 @@ async function downWithContext(context: DestructiveRunContext, adapters: DownCom
     try {
         const prepared = await prepareDown(context, adapters, recovered)
         if ('diagnostics' in prepared) return prepared
-        const projection = projectTeardownActionTargets(prepared.preview)
-        if (!projection) return destructivePreconditionRefusal(context, undefined)
         const basis = destructivePlanningBasis(persistedRequest)
         const lifecycle = planDown({
             runtime: prepared.runtime,
             ports: prepared.ports,
-            reclaim: projection,
+            reclaim: prepared.preview.envelope,
             operationGeneration: basis.generation,
             runtimeStopValidForMs: basis.runtimeStopValidForMs,
             reclaimValidForMs: basis.reclaimValidForMs,
@@ -3989,7 +3938,7 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
                 confirmationDigest: session.preview.digest,
                 consent: session.preview.consent,
             })
-            if (noop.kind !== 'complete' || !noop.noop || noop.actionAuthority !== null) {
+            if (noop.kind !== 'complete' || !noop.noop || noop.action !== null) {
                 return noop.kind === 'refusal' ? forwardedRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
             }
             const finalInspection = await inspectDestructiveDrainRecovery({ namespace: session.context.namespace,
@@ -4006,13 +3955,11 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
             recoveryAuthority: recovered.authority, operatorApproval: session.preview }) : undefined
         if (recoveryPlan && recoveryPlan.kind !== 'complete') return recoveryPlan.kind === 'refusal'
             ? forwardedRefusal(recoveryPlan.diagnostics) : destructiveRepairRequired(session.context)
-        const projection = recoveryPlan ? projectRecoveredResetActionTargets(recoveryPlan) : projectResetActionTargets(session.preview)
-        if (!projection) return destructiveRepairRequired(session.context)
         const basis = destructivePlanningBasis(persistedRequest)
         const lifecycle = planResetLifecycle({
             runtime: observation.runtime,
             ports: observation.ports,
-            reclaim: projection,
+            reclaim: recoveryPlan ? recoveryPlan.envelope : session.preview.envelope,
             operationGeneration: basis.generation,
             runtimeStopValidForMs: basis.runtimeStopValidForMs,
             reclaimValidForMs: basis.reclaimValidForMs,

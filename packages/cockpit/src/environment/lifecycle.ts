@@ -8,7 +8,7 @@ import {
 } from './contract.js'
 import { consumeLifecycleStageProjection, type LifecycleStageProjection } from './lifecycle-stage.js'
 import { consumePortLeaseProjection, type PortLeaseProjection } from './ports.js'
-import { consumeReclaimTargetProjection, type ReclaimTargetEnvelope, type ReclaimTargetProjection } from './reclaim.js'
+import type { ReclaimTargetEnvelope } from './reclaim.js'
 import {
     isRuntimeTopologyEvidence,
     isRuntimeServiceEvidence,
@@ -435,8 +435,8 @@ function planDestructive(
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, `${verb} planning evidence is invalid`, verb)
     }
     const evidence = consumePlannerEvidence(input.runtime, input.ports)
-    const reclaim = consumeReclaimTargetProjection(input.reclaim)
-    if (!evidence || !reclaim || reclaim.purpose !== verb || reclaim.stackId !== evidence.runtime.semantics.stackId
+    const reclaim = input.reclaim
+    if (!evidence || reclaim.purpose !== verb || reclaim.stackId !== evidence.runtime.semantics.stackId
         || reclaim.configSha256 !== evidence.runtime.semantics.configSha256
         || verb === 'reset' && reclaim.commitments.length === 0
         || !unique(reclaim.commitments, ({ targetId }) => targetId)
@@ -462,7 +462,7 @@ function planDestructive(
 interface DestructivePlanningInput {
     readonly runtime: RuntimeLifecycleProjection
     readonly ports: PortLeaseProjection
-    readonly reclaim: ReclaimTargetProjection
+    readonly reclaim: ReclaimTargetEnvelope
     readonly operationGeneration: string
     readonly runtimeStopValidForMs: number
     readonly reclaimValidForMs: number

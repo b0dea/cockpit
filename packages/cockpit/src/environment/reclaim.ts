@@ -4,7 +4,6 @@ import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import {
     decodeCoordinationRecord,
     consumeFailedReclaimRecovery,
@@ -40,6 +39,8 @@ import {
     type CockpitId,
     type EnvironmentCode,
     type EnvironmentDiagnostic,
+    type ExecutionFence,
+    type ExecutionReceipt,
     type ExecutionStep,
     type FilesystemAncestorIdentity,
     type FilesystemCheck,
@@ -77,169 +78,65 @@ const INSPECTION_OBJECT_BUDGET = 16_384
 const INSPECTION_CHUNK = Math.min(64, Math.floor(OUTPUT_LIMIT / INSPECTION_OBJECT_BUDGET))
 // [executable, --host, endpoint, <type>, inspect, --format, <format>, ...ids]
 const INSPECTION_ARGV_PREFIX = 7
-const admittedDiscoveries = new WeakSet<object>()
-const discoveryAuthorities = new WeakMap<object, DiscoveryAuthority>()
-const consumedDiscoveryReceipts = new Set<string>()
-const previewDiscoveryReceipts = new Map<string, readonly string[]>()
-const resetContinuations = new WeakMap<object, ResetContinuationAuthority>()
-const consumedContinuations = new WeakSet<object>()
-const consentAuthorities = new WeakMap<object, { readonly digest: string; readonly receipts: readonly string[]; readonly issuedAt: string }>()
-const consumedConsents = new WeakSet<object>()
-const teardownContinuations = new WeakMap<object, TeardownContinuationAuthority>()
-const consumedTeardownContinuations = new WeakSet<object>()
-const consumedExecutionReceipts = new WeakSet<object>()
-// A reconciliation discovery that proved one action of a continuing drain, kept for that drain's
-// next plan. It started after the action finished, so it is as fresh as a second discovery would
-// be; re-listing the whole daemon between every action is what made `down` take minutes.
-const reconciledContinuationDiscoveries = new WeakMap<object, DiscoveryAuthority>()
-const pendingResetActions = new WeakMap<object, PendingResetAction>()
-const pendingTeardownActions = new WeakMap<object, PendingTeardownAction>()
-const consumedPendingTeardownActions = new WeakSet<object>()
-const pendingReclaimExecutions = new WeakMap<object, PendingReclaimExecution>()
-const pendingAbsentReclaimActions = new WeakMap<object, PendingAbsentReclaimAction>()
-const absentReclaimExecutions = new WeakMap<object, {
-    readonly pending: PendingAbsentReclaimAction
-    readonly reservation: DrainReservation
-    readonly attempt: NonNullable<DrainReservation['attempt']>
-    readonly execution: ReclaimDrainExecutionAuthority
-}>()
-const issuedReclaimCompleted = new WeakMap<object, DrainOutcomeAuthority>()
-const issuedReclaimFailures = new WeakMap<object, DrainOutcomeAuthority>()
-const issuedResetPreviews = new WeakMap<object, ReclaimTargetEnvelope>()
-const issuedResetRecoveryPlans = new WeakMap<object, ReclaimTargetEnvelope>()
-const issuedTeardownPlans = new WeakMap<object, ReclaimTargetEnvelope>()
-const issuedTargetProjections = new WeakMap<object, ReclaimTargetEnvelope>()
-const selectionProbePlans = new WeakMap<object, DockerSelectionProbePlan>()
-const consumedSelectionProbePlans = new WeakSet<object>()
-const selectionAuthorities = new WeakMap<object, DockerSelectionAuthority>()
-const consumedSelectionAuthorities = new WeakSet<object>()
-const plannedDiscoverySteps = new WeakMap<object, { readonly authority: DockerSelectionAuthority; readonly kind: Exclude<ReclaimResourceKind, 'cache'> }>()
-const consumedPlannedDiscoverySteps = new WeakSet<object>()
 const DAEMON_ENV = /^(?:DOCKER|BUILDX|CONTAINER|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY)(?:_|$)/i
 const SAFE_ENV = new Set(['PATH', 'TMPDIR', 'LANG', 'LC_ALL'])
+// A discovery may legitimately contain thousands of resources. Each inspection launches a Docker
+// client, so one shared bound covers every resource kind rather than letting each kind
+// independently saturate the daemon.
+const MAX_CONCURRENT_INSPECTIONS = 4
+const DISCOVERY_KINDS = ['container', 'network', 'volume', 'image', 'build-cache'] as const
 
-interface DiscoveryAuthority {
-    readonly stackId: StackId
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly receipts: readonly string[]
-    readonly kinds: readonly ReclaimResourceKind[]
-    readonly selection: DockerSelection
-    readonly selectionAuthority: object
-    readonly startedAt: string
-    readonly finishedAt: string
-    readonly imagesInspected: boolean
-    readonly volumesInspected: boolean
-    readonly networksInspected: boolean
-}
+type Executor = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
-interface DockerSelection {
+export interface DockerSelection {
     readonly context: string
     readonly endpoint: string
 }
 
-interface DockerSelectionProbePlan {
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly context: string
-    readonly steps: readonly ExecutionStep[]
-    readonly host?: string
-}
-
-interface DockerSelectionAuthority {
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly selection: DockerSelection
-    readonly receipts: readonly string[]
+/** One complete discovery of a stack's runtime resources, as `discoverReclaim` observed it. */
+export interface ReclaimDiscovery extends ReclaimDiscoverySnapshot {
     readonly startedAt: string
-    readonly finishedAt: string
+    readonly stackId: StackId
+    readonly selection: DockerSelection
 }
 
-interface ResetContinuationAuthority {
-    readonly consentDigest: string
-    readonly completedTargetId: string
-    readonly issuedAt: string
-    readonly runtimeDigest: string
-    readonly targetIds: readonly string[]
-    readonly removedTargetIds: readonly string[]
-    readonly targetIdentities: readonly ReclaimTargetIdentity[]
+/** What a person or the planner itself approved: the digest, and the discovery it was read from. */
+export interface ReclaimConsent {
+    readonly digest: string
+    readonly observedAt: string
 }
 
-interface TeardownContinuationAuthority {
-    readonly discoveryDigest: string
-    readonly completedTargetId: string
-    readonly issuedAt: string
-    readonly runtimeDigest: string
-    readonly targetIds: readonly string[]
-    readonly removedTargetIds: readonly string[]
-    readonly targetIdentities: readonly ReclaimTargetIdentity[]
-}
-
-interface PendingTeardownAction {
-    readonly step: ExecutionStep
-    readonly target: ClassifiedReclaimResource
-    readonly cache: DependencyCacheAuthority | undefined
-    readonly coordinationRecord: StateRecord
-    readonly planDigest: string
-    readonly continuation: object
-    readonly targetIds: readonly string[]
-    readonly removedTargetIds: readonly string[]
-    readonly targetIdentities: readonly ReclaimTargetIdentity[]
-}
-
-interface PendingResetAction {
-    readonly step: ExecutionStep
-    readonly target: ResetTargetAuthority
-    readonly coordinationRecord: StateRecord
-    readonly planDigest: string
-    readonly continuation: object
-    readonly targetIds: readonly string[]
-    readonly removedTargetIds: readonly string[]
-    readonly targetIdentities: readonly ReclaimTargetIdentity[]
-}
-
-interface PendingReclaimExecution {
-    readonly step: ExecutionStep
-    readonly targetId: string
-    readonly reservation: DrainReservation
-    readonly continuation: object
-    readonly targetIds: readonly string[]
-    readonly removedTargetIds: readonly string[]
-    readonly attempt: NonNullable<DrainReservation['attempt']>
-    readonly execution: ReclaimDrainExecutionAuthority
-    readonly targetIdentities: readonly ReclaimTargetIdentity[]
-}
-
-interface PendingAbsentReclaimAction {
+/**
+ * The remaining committed target set of a drain after one action, carried from that action's plan
+ * to the next. `drain` is the key the claims owner binds the action's execution to.
+ */
+export interface ReclaimContinuation {
     readonly purpose: 'down' | 'reset'
+    readonly digest: string
+    readonly completedTargetId: string
+    readonly runtimeDigest: string
+    readonly targetIds: readonly string[]
+    readonly removedTargetIds: readonly string[]
+    readonly targetIdentities: readonly ReclaimTargetIdentity[]
+    /** A discovery that plans the next action must start no earlier than this. */
+    readonly freshAfter: string
+    readonly drain: object
+}
+
+/** The one removal a plan permits, executed only by `executeReclaimAction` under a reserved attempt. */
+export interface PlannedReclaimAction {
     readonly stackId: StackId
     readonly configSha256: string
+    /** Null when the interrupted target is already absent and only its removal is recorded. */
+    readonly step: ExecutionStep | null
     readonly coordinationRecord: StateRecord
-    readonly planDigest: string
-    readonly runtime: DiscoveryAuthority
-    readonly continuation: object
-    readonly targetId: string
-    readonly targetIds: readonly string[]
-    readonly removedTargetIds: readonly string[]
-    readonly targetIdentities: readonly ReclaimTargetIdentity[]
-    readonly remainingTargets: (discovery: ReclaimDiscoverySnapshot) => Promise<readonly string[] | undefined>
+    readonly continuation: ReclaimContinuation
+    readonly observedAt: string
+    /** For an absent target: the actionable target ids a later discovery still shows. */
+    readonly remainingTargets?: (discovery: ReclaimDiscovery) => Promise<readonly string[] | undefined>
 }
 
-function issueAbsentReclaimAction(input: Omit<PendingAbsentReclaimAction, 'continuation'>, runtimeDigest: string): object {
-    const continuation = {}
-    const common = { completedTargetId: input.targetId, issuedAt: new Date().toISOString(), runtimeDigest,
-        targetIds: input.targetIds, removedTargetIds: input.removedTargetIds, targetIdentities: input.targetIdentities }
-    if (input.purpose === 'down') teardownContinuations.set(continuation, { ...common, discoveryDigest: input.planDigest })
-    else resetContinuations.set(continuation, { ...common, consentDigest: input.planDigest })
-    const authority = {}
-    pendingAbsentReclaimActions.set(authority, Object.freeze({ ...input, continuation }))
-    return authority
-}
-
-type ReclaimTargetIdentity = ResetVolumeTargetIdentity | TeardownRuntimeTargetIdentity | PathTargetIdentity
+export type ReclaimTargetIdentity = ResetVolumeTargetIdentity | TeardownRuntimeTargetIdentity | PathTargetIdentity
 
 interface ResetVolumeTargetIdentity {
     readonly medium: 'runtime'
@@ -387,8 +284,7 @@ function snapshotClassificationInput(value: unknown): {
         || !Array.isArray(input.declaredCacheIds) || input.declaredCacheIds.length > MAX_RESOURCES
         || input.declaredCacheIds.some((id) => typeof id !== 'string' || !(BUILD_CACHE_ID.test(id) || SHA256.test(id)))
         || new Set(input.declaredCacheIds).size !== input.declaredCacheIds.length
-        || input.discovery === null || typeof input.discovery !== 'object' || Array.isArray(input.discovery)
-        || !exactKeys(input.discovery, ['observedAt', 'producer', 'resources'])) return undefined
+        || input.discovery === null || typeof input.discovery !== 'object' || Array.isArray(input.discovery)) return undefined
     const discovery = input.discovery as Record<string, unknown>
     if (typeof discovery.observedAt !== 'string' || !isCanonicalTimestamp(discovery.observedAt)
         || discovery.producer !== 'runtime-resource-discovery'
@@ -537,16 +433,6 @@ export function keptTeardownResources(input: ClassifyReclaimInput): readonly Kep
         }))
 }
 
-export interface ReclaimDiscoveryPlanInput {
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly stackId: StackId
-    readonly cockpitId: CockpitId
-    readonly timeoutMs: number
-    readonly selectionAuthority: object
-}
-
 function safeEnvironment(value: unknown): Readonly<Record<string, string>> | undefined {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
     const entries = Object.entries(value)
@@ -555,44 +441,7 @@ function safeEnvironment(value: unknown): Readonly<Record<string, string>> | und
     return Object.fromEntries(entries.filter(([key]) => SAFE_ENV.has(key)).sort(([a], [b]) => lexical(a, b)))
 }
 
-export interface DockerSelectionProbeInput {
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly timeoutMs: number
-    readonly context: string
-    /** A local DOCKER_HOST, selected through Docker's `default` context, which reports it exactly. */
-    readonly host?: string
-}
-
 const contextSelectionFormat = '{"context":{{json .Name}},"endpoint":{{json .Endpoints.docker.Host}}}'
-
-export function createDockerSelectionSteps(rawInput: DockerSelectionProbeInput): readonly ExecutionStep[] | undefined {
-    const captured = captureDataInput(rawInput)?.value
-    if (captured === null || typeof captured !== 'object' || Array.isArray(captured)) return undefined
-    const input = captured as unknown as DockerSelectionProbeInput
-    const executable = resolvedDockerExecutable(input.executable)
-    const env = safeEnvironment(input.env)
-    const host = input.host
-    if (executable === undefined || env === undefined || !DOCKER_SELECTOR.test(input.context)
-        || host !== undefined && (admitLocalDockerEndpoint(host) === undefined || input.context !== 'default')
-        || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
-    // Only the selection reads DOCKER_HOST; discovery and actions address the admitted endpoint
-    // with --host, so the rest of the plan keeps a daemon-free environment.
-    const selectionEnv = host === undefined ? env : { ...env, DOCKER_HOST: host }
-    const steps = [
-        exactStep('runtime:select:context', [executable.canonicalPath, 'context', 'inspect', input.context, '--format', contextSelectionFormat],
-            executable, input.cwd, selectionEnv, input.timeoutMs, [], { selectionKind: 'context' }),
-    ]
-    if (steps.some((step) => step === undefined)) return undefined
-    const complete = steps as readonly ExecutionStep[]
-    selectionProbePlans.set(complete, Object.freeze({
-        executable, cwd: input.cwd, env,
-        context: input.context, steps: complete,
-        ...(host === undefined ? {} : { host }),
-    }))
-    return complete
-}
 
 function selectionRow(bytes: Buffer): Record<string, unknown> | undefined {
     const text = bytes.toString('utf8')
@@ -602,51 +451,6 @@ function selectionRow(bytes: Buffer): Record<string, unknown> | undefined {
         return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
     } catch {
         // Unparseable docker output is unproven; the caller refuses the discovery.
-        return undefined
-    }
-}
-
-export function admitDockerSelection(
-    steps: readonly ExecutionStep[],
-    evidence: readonly { readonly step: ExecutionStep; readonly outcome: ExecuteProbeOutcome }[],
-): object | undefined {
-    try {
-        const plan = selectionProbePlans.get(steps)
-        if (plan === undefined || consumedSelectionProbePlans.has(steps) || evidence.length !== 1) return undefined
-        const receipts: string[] = []
-        let startedAt = ''
-        let finishedAt = ''
-        const rows: Record<string, unknown>[] = []
-        for (let index = 0; index < plan.steps.length; index += 1) {
-            const expected = plan.steps[index]!
-            const item = evidence[index]!
-            if (item.step !== expected) return undefined
-            const admitted = authenticatedExecutionOutcome(item.outcome, expected)
-            if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            const row = selectionRow(admitted.stdout)
-            if (row === undefined) return undefined
-            rows.push(row)
-            startedAt = startedAt === '' || lexical(admitted.receipt.startedAt, startedAt) < 0 ? admitted.receipt.startedAt : startedAt
-            finishedAt = lexical(admitted.receipt.finishedAt, finishedAt) > 0 ? admitted.receipt.finishedAt : finishedAt
-            receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
-        }
-        const [context] = rows
-        if (context === undefined || !exactKeys(context, ['context', 'endpoint'])
-            || context.context !== plan.context
-            || typeof context.endpoint !== 'string' || admitLocalDockerEndpoint(context.endpoint) === undefined
-            || plan.host !== undefined && context.endpoint !== plan.host
-            || !isCanonicalTimestamp(startedAt) || !isCanonicalTimestamp(finishedAt)
-            || Date.parse(finishedAt) < Date.parse(startedAt) || Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
-        const token = { kind: 'docker-selection' }
-        selectionAuthorities.set(token, Object.freeze({
-            executable: plan.executable, cwd: plan.cwd, env: plan.env,
-            selection: Object.freeze({ context: plan.context, endpoint: context.endpoint }),
-            receipts: Object.freeze(receipts.sort(lexical)), startedAt, finishedAt,
-        }))
-        consumedSelectionProbePlans.add(steps)
-        return token
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -739,7 +543,7 @@ function dockerResource(value: unknown, kind: Exclude<ReclaimResourceKind, 'cach
 }
 
 function inspectionSteps(
-    authority: DiscoveryAuthority,
+    authority: DiscoveryRuntime,
     type: 'image' | 'volume' | 'network' | 'container',
     format: string,
     ids: readonly string[],
@@ -798,120 +602,6 @@ function imageInspectionFormat(): string {
     return `{"id":{{json .Id}},"labels":{{with (index .Config "Labels")}}{"${REQUIRED_LABELS.stack}":${label(REQUIRED_LABELS.stack)},"${REQUIRED_LABELS.config}":${label(REQUIRED_LABELS.config)},"${REQUIRED_LABELS.owner}":${label(REQUIRED_LABELS.owner)}}{{else}}{}{{end}}}`
 }
 
-export function createImageInspectionSteps(discovery: ReclaimDiscoverySnapshot): readonly ExecutionStep[] | undefined {
-    const authority = discoveryAuthorities.get(discovery)
-    if (!admittedDiscoveries.has(discovery) || authority === undefined || authority.kinds.length !== 1 || authority.kinds[0] !== 'image') return undefined
-    const images = discovery.resources.filter(({ kind }) => kind === 'image').map(({ id }) => id)
-    const steps = inspectionSteps(authority, 'image', imageInspectionFormat(), images, {
-        resourceKind: 'image-inspection', dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint,
-    })
-    return steps.every((step) => step !== undefined) ? (steps as ExecutionStep[]) : undefined
-}
-
-export function admitImageInspections(
-    discovery: ReclaimDiscoverySnapshot,
-    evidence: readonly { readonly step: ExecutionStep; readonly outcome: ExecuteProbeOutcome }[],
-): ReclaimDiscoverySnapshot | undefined {
-    try {
-        const authority = discoveryAuthorities.get(discovery)
-        const steps = createImageInspectionSteps(discovery)
-        if (authority === undefined || steps === undefined || !Array.isArray(evidence) || evidence.length !== steps.length) return undefined
-        const labels = new Map<string, Readonly<Record<string, string>>>()
-        const receipts = [...authority.receipts]
-        let finishedAt = authority.finishedAt
-        for (let index = 0; index < steps.length; index += 1) {
-            const expected = steps[index]!
-            const item = evidence[index]!
-            if (digestValue(item.step) !== digestValue(expected)) return undefined
-            const admitted = authenticatedExecutionOutcome(item.outcome, expected)
-            if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            const ids = inspectedIds(expected)
-            const rows = inspectionRows(admitted.stdout, ids)
-            if (rows === undefined) return undefined
-            for (const [position, record] of rows.entries()) {
-                const resourceId = ids[position]!
-                const observedLabels = exactKeys(record, ['id', 'labels']) ? dockerLabels(record.labels) : undefined
-                if (record.id !== resourceId || observedLabels === undefined || labels.has(resourceId)) return undefined
-                labels.set(resourceId, observedLabels)
-            }
-            finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
-            receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
-        }
-        const snapshot = {
-            observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
-            resources: discovery.resources.map((resource) => snapshotResource({ ...resource, labels: labels.get(resource.id) ?? resource.labels })!),
-        }
-        admittedDiscoveries.add(snapshot)
-        discoveryAuthorities.set(snapshot, Object.freeze({
-            ...authority, receipts: Object.freeze(receipts.sort(lexical)), finishedAt, imagesInspected: true,
-        }))
-        return snapshot
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
-    }
-}
-
-export function createVolumeInspectionSteps(discovery: ReclaimDiscoverySnapshot): readonly ExecutionStep[] | undefined {
-    const authority = discoveryAuthorities.get(discovery)
-    if (!admittedDiscoveries.has(discovery) || authority === undefined || authority.kinds.length !== 1 || authority.kinds[0] !== 'volume') return undefined
-    // Only a volume this stack labels can become a target, so only its generation is read.
-    const owned = discovery.resources.filter(({ labels }) => labels[REQUIRED_LABELS.stack] === authority.stackId)
-    const steps = inspectionSteps(authority, 'volume',
-        `{"name":{{json .Name}},"generation":{{with .Labels}}{{json (or (index . "dev.b0dea.cockpit.generation-id") "")}}{{else}}""{{end}}}`,
-        owned.map(({ id }) => id), { resourceKind: 'volume-inspection' })
-    return steps.every((step) => step !== undefined) ? (steps as ExecutionStep[]) : undefined
-}
-
-export function admitVolumeInspections(
-    discovery: ReclaimDiscoverySnapshot,
-    evidence: readonly { readonly step: ExecutionStep; readonly outcome: ExecuteProbeOutcome }[],
-): ReclaimDiscoverySnapshot | undefined {
-    try {
-        const authority = discoveryAuthorities.get(discovery)
-        const steps = createVolumeInspectionSteps(discovery)
-        if (authority === undefined || steps === undefined || evidence.length !== steps.length) return undefined
-        const generations = new Map<string, string>()
-        const receipts = [...authority.receipts]
-        let finishedAt = authority.finishedAt
-        for (let index = 0; index < steps.length; index += 1) {
-            const expected = steps[index]!
-            const item = evidence[index]!
-            if (digestValue(item.step) !== digestValue(expected)) return undefined
-            const admitted = authenticatedExecutionOutcome(item.outcome, expected)
-            if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            const ids = inspectedIds(expected)
-            const rows = inspectionRows(admitted.stdout, ids)
-            if (rows === undefined) return undefined
-            for (const [position, record] of rows.entries()) {
-                if (!exactKeys(record, ['name', 'generation'])) return undefined
-                const { name, generation } = record
-                if (name !== ids[position] || typeof generation !== 'string'
-                    || generation.length > 128 || generation.includes('\0') || generations.has(name)) return undefined
-                if (generation !== '' && !SHA256.test(generation)) return undefined
-                generations.set(name, generation)
-            }
-            finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
-            receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
-        }
-        const snapshot = {
-            observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
-            resources: discovery.resources.map((resource) => {
-                const generation = generations.get(resource.id)
-                return snapshotResource({ ...resource, ...(generation === undefined || generation === '' ? {} : { generation }) })!
-            }),
-        }
-        admittedDiscoveries.add(snapshot)
-        discoveryAuthorities.set(snapshot, Object.freeze({
-            ...authority, receipts: Object.freeze(receipts.sort(lexical)), finishedAt, volumesInspected: true,
-        }))
-        return snapshot
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
-    }
-}
-
 // Members are the attached endpoint ids, so a network can be told apart from the containers that
 // hold it; container ids are hex, so the space-separated list is a safe JSON string.
 function networkInspectionFormat(): string {
@@ -937,7 +627,7 @@ function networkHolderFormat(): string {
 
 const NETWORK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/
 
-function networkHolderSteps(authority: DiscoveryAuthority, names: readonly string[], labels: Readonly<Record<string, string>>): readonly (ExecutionStep | undefined)[] {
+function networkHolderSteps(authority: DiscoveryRuntime, names: readonly string[], labels: Readonly<Record<string, string>>): readonly (ExecutionStep | undefined)[] {
     const steps: (ExecutionStep | undefined)[] = []
     for (let start = 0; start < names.length; start += INSPECTION_CHUNK) {
         const chunk = names.slice(start, start + INSPECTION_CHUNK)
@@ -949,12 +639,6 @@ function networkHolderSteps(authority: DiscoveryAuthority, names: readonly strin
         ))
     }
     return steps
-}
-
-function matchingDiscoveryAuthorities(left: DiscoveryAuthority, right: DiscoveryAuthority): boolean {
-    return left.selectionAuthority === right.selectionAuthority
-        && JSON.stringify([left.stackId, left.executable, left.cwd, left.env, left.selection])
-            === JSON.stringify([right.stackId, right.executable, right.cwd, right.env, right.selection])
 }
 
 function holderRows(stdout: Buffer): readonly { readonly id: string; readonly networks: readonly string[] }[] | undefined {
@@ -975,260 +659,313 @@ function holderRows(stdout: Buffer): readonly { readonly id: string; readonly ne
     return rows.length > MAX_RESOURCES || new Set(rows.map(({ id }) => id)).size !== rows.length ? undefined : rows
 }
 
-export function createNetworkInspectionSteps(
-    discovery: ReclaimDiscoverySnapshot,
-    containers: ReclaimDiscoverySnapshot,
-): readonly ExecutionStep[] | undefined {
-    const authority = discoveryAuthorities.get(discovery)
-    const containerAuthority = discoveryAuthorities.get(containers)
-    if (!admittedDiscoveries.has(discovery) || !admittedDiscoveries.has(containers)
-        || authority === undefined || containerAuthority === undefined
-        || authority.kinds.length !== 1 || authority.kinds[0] !== 'network'
-        || containerAuthority.kinds.length !== 1 || containerAuthority.kinds[0] !== 'container'
-        || !matchingDiscoveryAuthorities(authority, containerAuthority)) return undefined
-    const selection = { dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint }
-    const networkSteps = inspectionSteps(authority, 'network', networkInspectionFormat(),
-        discovery.resources.map(({ id }) => id), { resourceKind: 'network-inspection', ...selection })
-    const names = [...new Set(discovery.resources.map(({ name }) => name))].sort(lexical)
-    if (names.some((name) => !NETWORK_NAME.test(name))) return undefined
-    const containerSteps = networkHolderSteps(authority, names, { resourceKind: 'network-holder-listing', ...selection })
-    const steps = [...networkSteps, ...containerSteps]
-    return steps.every((step) => step !== undefined) ? (steps as ExecutionStep[]) : undefined
+export interface ReclaimDiscoveryInput {
+    readonly executable: ResolvedExecutable
+    readonly cwd: string
+    readonly env: Readonly<Record<string, string>>
+    readonly stackId: StackId
+    readonly cockpitId: CockpitId
+    readonly timeoutMs: number
+    readonly context: string
+    /** A local DOCKER_HOST, selected through Docker's `default` context, which reports it exactly. */
+    readonly host?: string
 }
 
-export function admitNetworkInspections(
-    discovery: ReclaimDiscoverySnapshot,
-    containers: ReclaimDiscoverySnapshot,
-    evidence: readonly { readonly step: ExecutionStep; readonly outcome: ExecuteProbeOutcome }[],
-): ReclaimDiscoverySnapshot | undefined {
-    try {
-        const authority = discoveryAuthorities.get(discovery)
-        const containerAuthority = discoveryAuthorities.get(containers)
-        const steps = createNetworkInspectionSteps(discovery, containers)
-        if (authority === undefined || containerAuthority === undefined || steps === undefined
-            || !Array.isArray(evidence) || evidence.length !== steps.length) return undefined
-        const containersById = new Map(containers.resources.map((container) => [container.id, container]))
-        const holders = new Map<string, Set<string>>()
-        const inspectedNetworks = new Set<string>()
-        const hold = (networkId: string, containerId: string) => {
-            holders.set(networkId, (holders.get(networkId) ?? new Set()).add(containerId))
+interface DiscoveryRuntime {
+    readonly executable: ResolvedExecutable
+    readonly cwd: string
+    readonly env: Readonly<Record<string, string>>
+    readonly timeoutMs: number
+    readonly stackId: StackId
+    readonly cockpitId: CockpitId
+    readonly selection: DockerSelection
+}
+
+interface Timed<T> {
+    readonly value: T
+    readonly startedAt: string
+    readonly finishedAt: string
+}
+
+type DiscoveryRefusal = { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
+
+/** Complete, empty-stderr output of one step, or nothing. */
+function cleanOutput(outcome: ExecuteProbeOutcome): Extract<ExecuteProbeOutcome, { kind: 'complete' }> | undefined {
+    return outcome.kind === 'complete' && outcome.stderr.byteLength === 0 ? outcome : undefined
+}
+
+function utf8(bytes: Buffer): string | undefined {
+    const text = bytes.toString('utf8')
+    return Buffer.from(text, 'utf8').equals(bytes) ? text : undefined
+}
+
+function boundedExecutor(execute: Executor, concurrency: number): Executor {
+    let active = 0
+    const waiters: Array<() => void> = []
+    return async (step) => {
+        if (active < concurrency) active += 1
+        else await new Promise<void>(resolveWaiter => waiters.push(resolveWaiter))
+        try {
+            return await execute(step)
+        } finally {
+            const next = waiters.shift()
+            if (next) next()
+            else active -= 1
         }
-        const receipts = [...authority.receipts, ...containerAuthority.receipts]
-        let finishedAt = lexical(authority.finishedAt, containerAuthority.finishedAt) < 0
-            ? containerAuthority.finishedAt : authority.finishedAt
-        for (let index = 0; index < steps.length; index += 1) {
-            const expected = steps[index]!
-            const item = evidence[index]!
-            if (digestValue(item.step) !== digestValue(expected)) return undefined
-            const admitted = authenticatedExecutionOutcome(item.outcome, expected)
-            if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            if (expected.labels.resourceKind === 'network-inspection') {
-                const ids = inspectedIds(expected)
-                const rows = inspectionRows(admitted.stdout, ids)
-                if (rows === undefined) return undefined
-                for (const [position, record] of rows.entries()) {
-                    const resourceId = ids[position]!
-                    if (!exactKeys(record, ['id', 'members']) || record.id !== resourceId
-                        || typeof record.members !== 'string' || inspectedNetworks.has(resourceId)) return undefined
-                    const members = record.members.split(' ').filter(Boolean)
-                    if (members.length > MAX_RESOURCES || members.some((member) => !RESOURCE_ID.test(member))) return undefined
-                    inspectedNetworks.add(resourceId)
-                    for (const member of members) hold(resourceId, member)
-                }
-            } else {
-                if (expected.labels.resourceKind !== 'network-holder-listing') return undefined
-                const rows = holderRows(admitted.stdout)
-                if (rows === undefined) return undefined
-                for (const row of rows) {
-                    // A created but never started container (as an interrupted Compose recreate leaves
-                    // its replacement) still names its networks, so it holds every discovered network
-                    // of that name; refusing the whole discovery left `down` unable to remove the
-                    // stack that `up` had started.
-                    for (const name of row.networks) {
-                        for (const network of discovery.resources) if (network.name === name) hold(network.id, row.id)
-                    }
-                }
-            }
-            finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
-            receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
-        }
-        const snapshot = {
-            observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
-            resources: discovery.resources.map((resource) => snapshotResource({
-                ...resource, referenced: [...holders.get(resource.id) ?? []].some((holder) => !sameStackHolder(resource, containersById.get(holder))),
-            })!),
-        }
-        admittedDiscoveries.add(snapshot)
-        discoveryAuthorities.set(snapshot, Object.freeze({
-            ...authority, receipts: Object.freeze(receipts.sort(lexical)), finishedAt, networksInspected: true,
-        }))
-        return snapshot
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
     }
 }
 
-export function createReclaimDiscoverySteps(rawInput: ReclaimDiscoveryPlanInput): readonly ExecutionStep[] | undefined {
-    const capturedInput = captureDataInput(rawInput)
-    const captured = capturedInput?.value
-    if (captured === null || typeof captured !== 'object' || Array.isArray(captured)) return undefined
-    const input = captured as unknown as ReclaimDiscoveryPlanInput
-    const rawAuthority = capturedInput!.opaque.selectionAuthority
+async function selectDocker(
+    input: ReclaimDiscoveryInput,
+    executable: ResolvedExecutable,
+    env: Readonly<Record<string, string>>,
+    execute: Executor,
+): Promise<Timed<DockerSelection> | undefined> {
+    // Only the selection reads DOCKER_HOST; discovery and actions address the admitted endpoint
+    // with --host, so every other step keeps a daemon-free environment.
+    const selectionEnv = input.host === undefined ? env : { ...env, DOCKER_HOST: input.host }
+    const step = exactStep('runtime:select:context', [executable.canonicalPath, 'context', 'inspect', input.context, '--format', contextSelectionFormat],
+        executable, input.cwd, selectionEnv, input.timeoutMs, [], { selectionKind: 'context' })
+    if (step === undefined) return undefined
+    const outcome = cleanOutput(await execute(step))
+    const row = outcome === undefined ? undefined : selectionRow(outcome.stdout)
+    if (outcome === undefined || row === undefined || !exactKeys(row, ['context', 'endpoint'])
+        || row.context !== input.context
+        || typeof row.endpoint !== 'string' || admitLocalDockerEndpoint(row.endpoint) === undefined
+        || input.host !== undefined && row.endpoint !== input.host) return undefined
+    return { value: { context: input.context, endpoint: row.endpoint }, startedAt: outcome.receipt.startedAt, finishedAt: outcome.receipt.finishedAt }
+}
+
+async function listResources(
+    runtime: DiscoveryRuntime,
+    kind: Exclude<ReclaimResourceKind, 'cache'>,
+    execute: Executor,
+): Promise<Timed<readonly ReclaimResource[]> | undefined> {
+    const step = exactStep(`runtime:discover:${kind}`,
+        [runtime.executable.canonicalPath, ...runtimeCommand(kind, runtime.selection, runtime.stackId)],
+        runtime.executable, runtime.cwd, runtime.env, runtime.timeoutMs, [], {
+            stackId: runtime.stackId, cockpitId: runtime.cockpitId, resourceKind: kind,
+            dockerContext: runtime.selection.context, dockerEndpoint: runtime.selection.endpoint,
+        }, [], OUTPUT_LIMIT)
+    if (step === undefined) return undefined
+    const outcome = cleanOutput(await execute(step))
+    const text = outcome === undefined ? undefined : utf8(outcome.stdout)
+    if (outcome === undefined || text === undefined) return undefined
+    const resources: ReclaimResource[] = []
+    for (const line of text.split('\n')) {
+        if (line.length === 0) continue
+        // Unparseable docker output is unproven; the discovery fails closed.
+        const parsed = tryParseJson(line)
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+        const owned = dockerResource(parsed, kind)
+        if (owned === undefined) return undefined
+        // An image prints one row per tag. The one tag Compose gives an image it builds is this
+        // stack's own name for it, so that image is removable; a second tag means some other name
+        // was given to it, and that name may still be needed. Treating any tag as a reference
+        // kept every image the stack built. A container still using an image keeps it by
+        // Docker's own refusal to remove it.
+        const duplicate = resources.find(({ id }) => id === owned.id)
+        if (duplicate !== undefined && kind === 'image') {
+            if (duplicate.bytes !== owned.bytes) return undefined
+            resources.splice(resources.indexOf(duplicate), 1, { ...duplicate, referenced: true, name: [duplicate.name, owned.name].sort(lexical)[0]! })
+            continue
+        }
+        resources.push(owned)
+    }
+    if (resources.length > MAX_RESOURCES || new Set(resources.map(({ id }) => id)).size !== resources.length) return undefined
+    return { value: resources.sort((a, b) => lexical(a.id, b.id)), startedAt: outcome.receipt.startedAt, finishedAt: outcome.receipt.finishedAt }
+}
+
+/** Runs one kind's inspection steps; an oversized object names its chunk instead of failing anonymously. */
+async function runInspections(
+    steps: readonly (ExecutionStep | undefined)[],
+    kind: string,
+    execute: Executor,
+): Promise<readonly { readonly step: ExecutionStep; readonly outcome: Extract<ExecuteProbeOutcome, { kind: 'complete' }> }[] | DiscoveryRefusal | undefined> {
+    if (steps.some((step) => step === undefined)) return undefined
+    const attempts = await Promise.allSettled((steps as ExecutionStep[]).map(async (step) => ({ step, outcome: await execute(step) })))
+    if (attempts.some(({ status }) => status === 'rejected')) return undefined
+    const evidence = attempts.map((attempt) => (attempt as PromiseFulfilledResult<{ step: ExecutionStep; outcome: ExecuteProbeOutcome }>).value)
+    const overflow = evidence.map(({ step, outcome }) => inspectionOverflow(step, outcome)).find((message) => message !== undefined)
+    if (overflow !== undefined) return refusal(ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, overflow, kind)
+    const clean = evidence.map(({ step, outcome }) => ({ step, outcome: cleanOutput(outcome) }))
+    return clean.every(({ outcome }) => outcome !== undefined)
+        ? clean as { step: ExecutionStep; outcome: Extract<ExecuteProbeOutcome, { kind: 'complete' }> }[] : undefined
+}
+
+async function inspectImages(runtime: DiscoveryRuntime, images: readonly ReclaimResource[], execute: Executor) {
+    const evidence = await runInspections(inspectionSteps(runtime, 'image', imageInspectionFormat(), images.map(({ id }) => id), {
+        resourceKind: 'image-inspection', dockerContext: runtime.selection.context, dockerEndpoint: runtime.selection.endpoint,
+    }), 'image', execute)
+    if (evidence === undefined || 'diagnostics' in evidence) return evidence
+    const labels = new Map<string, Readonly<Record<string, string>>>()
+    for (const { step, outcome } of evidence) {
+        const ids = inspectedIds(step)
+        const rows = inspectionRows(outcome.stdout, ids)
+        if (rows === undefined) return undefined
+        for (const [position, record] of rows.entries()) {
+            const resourceId = ids[position]!
+            const observedLabels = exactKeys(record, ['id', 'labels']) ? dockerLabels(record.labels) : undefined
+            if (record.id !== resourceId || observedLabels === undefined || labels.has(resourceId)) return undefined
+            labels.set(resourceId, observedLabels)
+        }
+    }
+    return { value: images.map((resource) => snapshotResource({ ...resource, labels: labels.get(resource.id) ?? resource.labels })!), finishedAt: latest(evidence) }
+}
+
+async function inspectVolumes(runtime: DiscoveryRuntime, volumes: readonly ReclaimResource[], execute: Executor) {
+    // Only a volume this stack labels can become a target, so only its generation is read.
+    const owned = volumes.filter(({ labels }) => labels[REQUIRED_LABELS.stack] === runtime.stackId)
+    const evidence = await runInspections(inspectionSteps(runtime, 'volume',
+        `{"name":{{json .Name}},"generation":{{with .Labels}}{{json (or (index . "dev.b0dea.cockpit.generation-id") "")}}{{else}}""{{end}}}`,
+        owned.map(({ id }) => id), { resourceKind: 'volume-inspection' }), 'volume', execute)
+    if (evidence === undefined || 'diagnostics' in evidence) return evidence
+    const generations = new Map<string, string>()
+    for (const { step, outcome } of evidence) {
+        const ids = inspectedIds(step)
+        const rows = inspectionRows(outcome.stdout, ids)
+        if (rows === undefined) return undefined
+        for (const [position, record] of rows.entries()) {
+            if (!exactKeys(record, ['name', 'generation'])) return undefined
+            const { name, generation } = record
+            if (name !== ids[position] || typeof generation !== 'string'
+                || generation.length > 128 || generation.includes('\0') || generations.has(name)) return undefined
+            if (generation !== '' && !SHA256.test(generation)) return undefined
+            generations.set(name, generation)
+        }
+    }
+    return {
+        value: volumes.map((resource) => {
+            const generation = generations.get(resource.id)
+            return snapshotResource({ ...resource, ...(generation === undefined || generation === '' ? {} : { generation }) })!
+        }),
+        finishedAt: latest(evidence),
+    }
+}
+
+async function inspectNetworks(runtime: DiscoveryRuntime, networks: readonly ReclaimResource[], containers: readonly ReclaimResource[], execute: Executor) {
+    const selection = { dockerContext: runtime.selection.context, dockerEndpoint: runtime.selection.endpoint }
+    const names = [...new Set(networks.map(({ name }) => name))].sort(lexical)
+    if (names.some((name) => !NETWORK_NAME.test(name))) return undefined
+    const evidence = await runInspections([
+        ...inspectionSteps(runtime, 'network', networkInspectionFormat(), networks.map(({ id }) => id), { resourceKind: 'network-inspection', ...selection }),
+        ...networkHolderSteps(runtime, names, { resourceKind: 'network-holder-listing', ...selection }),
+    ], 'network', execute)
+    if (evidence === undefined || 'diagnostics' in evidence) return evidence
+    const containersById = new Map(containers.map((container) => [container.id, container]))
+    const holders = new Map<string, Set<string>>()
+    const inspectedNetworks = new Set<string>()
+    const hold = (networkId: string, containerId: string) => {
+        holders.set(networkId, (holders.get(networkId) ?? new Set()).add(containerId))
+    }
+    for (const { step, outcome } of evidence) {
+        if (step.labels.resourceKind === 'network-inspection') {
+            const ids = inspectedIds(step)
+            const rows = inspectionRows(outcome.stdout, ids)
+            if (rows === undefined) return undefined
+            for (const [position, record] of rows.entries()) {
+                const resourceId = ids[position]!
+                if (!exactKeys(record, ['id', 'members']) || record.id !== resourceId
+                    || typeof record.members !== 'string' || inspectedNetworks.has(resourceId)) return undefined
+                const members = record.members.split(' ').filter(Boolean)
+                if (members.length > MAX_RESOURCES || members.some((member) => !RESOURCE_ID.test(member))) return undefined
+                inspectedNetworks.add(resourceId)
+                for (const member of members) hold(resourceId, member)
+            }
+        } else {
+            const rows = holderRows(outcome.stdout)
+            if (rows === undefined) return undefined
+            for (const row of rows) {
+                // A created but never started container (as an interrupted Compose recreate leaves
+                // its replacement) still names its networks, so it holds every discovered network
+                // of that name; refusing the whole discovery left `down` unable to remove the
+                // stack that `up` had started.
+                for (const name of row.networks) {
+                    for (const network of networks) if (network.name === name) hold(network.id, row.id)
+                }
+            }
+        }
+    }
+    return {
+        value: networks.map((resource) => snapshotResource({
+            ...resource, referenced: [...holders.get(resource.id) ?? []].some((holder) => !sameStackHolder(resource, containersById.get(holder))),
+        })!),
+        finishedAt: latest(evidence),
+    }
+}
+
+function latest(evidence: readonly { readonly outcome: Extract<ExecuteProbeOutcome, { kind: 'complete' }> }[]): string | undefined {
+    return evidence.map(({ outcome }) => outcome.receipt.finishedAt).sort(lexical).at(-1)
+}
+
+function sameSelection(left: DockerSelection, right: DockerSelection): boolean {
+    return left.context === right.context && left.endpoint === right.endpoint
+}
+
+async function discoverReclaimRound(
+    input: ReclaimDiscoveryInput,
+    executable: ResolvedExecutable,
+    env: Readonly<Record<string, string>>,
+    execute: Executor,
+): Promise<ReclaimDiscovery | DiscoveryRefusal | undefined> {
+    // The selection is read before and after the listings, and again after the inspections, so the
+    // context's endpoint cannot have moved to another daemon while this stack was being read.
+    const planned = await selectDocker(input, executable, env, execute)
+    if (planned === undefined) return undefined
+    const runtime: DiscoveryRuntime = {
+        executable, cwd: input.cwd, env, timeoutMs: input.timeoutMs,
+        stackId: input.stackId, cockpitId: input.cockpitId, selection: planned.value,
+    }
+    const listed = await Promise.all(DISCOVERY_KINDS.map((kind) => listResources(runtime, kind, execute)))
+    if (listed.some((value) => value === undefined)) return undefined
+    const lists = listed as Timed<readonly ReclaimResource[]>[]
+    const listedAt = lists.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
+    const current = await selectDocker(input, executable, env, execute)
+    if (current === undefined || !sameSelection(current.value, planned.value)
+        || Date.parse(current.startedAt) < Date.parse(listedAt)
+        || Date.parse(current.finishedAt) - Date.parse(listedAt) > 30_000) return undefined
+    const [containers, networks, volumes, images, buildCache] = lists.map(({ value }) => value) as [
+        readonly ReclaimResource[], readonly ReclaimResource[], readonly ReclaimResource[], readonly ReclaimResource[], readonly ReclaimResource[],
+    ]
+    const inspect = boundedExecutor(execute, MAX_CONCURRENT_INSPECTIONS)
+    const inspected = await Promise.all([
+        inspectNetworks(runtime, networks, containers, inspect),
+        inspectVolumes(runtime, volumes, inspect),
+        inspectImages(runtime, images, inspect),
+    ])
+    const refused = inspected.find((value): value is DiscoveryRefusal => value !== undefined && 'diagnostics' in value)
+    if (refused) return refused
+    if (inspected.some((value) => value === undefined)) return undefined
+    const [inspectedNetworks, inspectedVolumes, inspectedImages] = inspected as { value: ReclaimResource[]; finishedAt: string | undefined }[]
+    const resources = [...containers, ...inspectedNetworks!.value, ...inspectedVolumes!.value, ...inspectedImages!.value, ...buildCache]
+        .sort((left, right) => lexical(left.id, right.id))
+    if (resources.length > MAX_RESOURCES || new Set(resources.map(({ id }) => id)).size !== resources.length) return undefined
+    const startedAt = lists.map(({ startedAt: listStarted }) => listStarted).sort(lexical)[0]!
+    const finishedAt = [listedAt, ...inspected.map((value) => (value as { finishedAt: string | undefined }).finishedAt)]
+        .filter((value): value is string => value !== undefined).sort(lexical).at(-1)!
+    if (Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
+    const confirmed = await selectDocker(input, executable, env, execute)
+    if (confirmed === undefined || !sameSelection(confirmed.value, planned.value)
+        || Date.parse(confirmed.startedAt) < Date.parse(finishedAt)) return undefined
+    return { observedAt: finishedAt, producer: 'runtime-resource-discovery', resources, startedAt, stackId: input.stackId, selection: planned.value }
+}
+
+/**
+ * Lists and inspects this stack's runtime resources on the selected Docker context. Discovery
+ * lists resources and then inspects what it listed, and a listed resource can vanish in between,
+ * as Compose replacing one of this stack's containers does; the round then fails closed on an id
+ * that no longer exists, and inside a reserved drain that left the attempt for repair. One more
+ * complete round covers that race without admitting partial evidence.
+ */
+export async function discoverReclaim(input: ReclaimDiscoveryInput, execute: Executor): Promise<ReclaimDiscovery | DiscoveryRefusal | undefined> {
     const executable = resolvedDockerExecutable(input.executable)
     const env = safeEnvironment(input.env)
-    const authority = rawAuthority !== null && typeof rawAuthority === 'object'
-        ? selectionAuthorities.get(rawAuthority) : undefined
-    const selection = authority?.selection
-    if (executable === undefined || !STACK_ID.test(input.stackId) || !COCKPIT_ID.test(input.cockpitId)
-        || env === undefined || selection === undefined || authority === undefined
-        || rawAuthority === null || typeof rawAuthority !== 'object' || consumedSelectionAuthorities.has(rawAuthority)
-        || Object.hasOwn(captured, 'dockerContext') || Object.hasOwn(captured, 'dockerEndpoint') || Object.hasOwn(captured, 'buildxBuilder')
-        || JSON.stringify([executable, input.cwd, env]) !== JSON.stringify([authority.executable, authority.cwd, authority.env])
-        || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd
-        || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 30_000) return undefined
-    const steps = (['container', 'network', 'volume', 'image', 'build-cache'] as const).map((kind) => {
-        const argv = [executable.canonicalPath, ...runtimeCommand(kind, selection, input.stackId)] as [string, ...string[]]
-        return snapshotExecutionStep({
-            id: `runtime:discover:${kind}`,
-            argv,
-            argv0: executable.invocationPath,
-            cwd: input.cwd,
-            env,
-            timeoutMs: input.timeoutMs,
-            stdoutLimitBytes: OUTPUT_LIMIT,
-            stderrLimitBytes: 65_536,
-            paths: [],
-            ports: [],
-            labels: {
-                stackId: input.stackId, cockpitId: input.cockpitId, resourceKind: kind,
-                dockerContext: selection.context, dockerEndpoint: selection.endpoint,
-            },
-            expected: [],
-            consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
-            filesystemChecks: [],
-            compensation: [],
-        })
-    })
-    if (steps.some((step) => step === undefined)) return undefined
-    consumedSelectionAuthorities.add(rawAuthority)
-    for (let index = 0; index < steps.length; index += 1) plannedDiscoverySteps.set(steps[index]!, Object.freeze({ authority, kind: (['container', 'network', 'volume', 'image', 'build-cache'] as const)[index]! }))
-    return steps as ExecutionStep[]
-}
-
-export function admitReclaimDiscovery(
-    step: ExecutionStep,
-    outcome: ExecuteProbeOutcome,
-    kind: Exclude<ReclaimResourceKind, 'cache'>,
-    currentSelectionAuthority: object,
-): ReclaimDiscoverySnapshot | undefined {
-    try {
-        const planned = plannedDiscoverySteps.get(step)
-        if (planned === undefined || planned.kind !== kind || consumedPlannedDiscoverySteps.has(step)) return undefined
-        const currentSelection = currentSelectionAuthority !== null && typeof currentSelectionAuthority === 'object'
-            ? selectionAuthorities.get(currentSelectionAuthority) : undefined
-        const executable = resolvedDockerExecutable({
-            canonicalPath: step.argv[0], invocationPath: step.argv0,
-            sha256: step.consumedFiles[0]?.sha256, executionMode: step.consumedFiles[0]?.executionMode,
-        })
-        const env = safeEnvironment(step.env)
-        const selection = planned.authority.selection
-        if (currentSelection === undefined || step.id !== `runtime:discover:${kind}` || step.labels.resourceKind !== kind
-            || step.labels.stackId === undefined || !STACK_ID.test(step.labels.stackId)
-            || step.labels.cockpitId === undefined || !COCKPIT_ID.test(step.labels.cockpitId)
-            || executable === undefined || env === undefined || selection === undefined
-            || JSON.stringify([currentSelection.executable, currentSelection.cwd, currentSelection.env, currentSelection.selection])
-                !== JSON.stringify([planned.authority.executable, planned.authority.cwd, planned.authority.env, planned.authority.selection])
-            || JSON.stringify(step.argv.slice(1)) !== JSON.stringify(runtimeCommand(kind, selection, step.labels.stackId))) return undefined
-        const admitted = authenticatedExecutionOutcome(outcome, step)
-        if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0
-            || Date.parse(currentSelection.startedAt) < Date.parse(admitted.receipt.finishedAt)
-            || Date.parse(currentSelection.finishedAt) - Date.parse(admitted.receipt.finishedAt) > 30_000
-            || Date.now() < Date.parse(currentSelection.finishedAt) || Date.now() - Date.parse(currentSelection.finishedAt) > 30_000) return undefined
-        const text = admitted.stdout.toString('utf8')
-        if (!Buffer.from(text, 'utf8').equals(admitted.stdout)) return undefined
-        const resources: ReclaimResource[] = []
-        for (const line of text.split('\n')) {
-            if (line.length === 0) continue
-            // Unparseable docker output is unproven; the caller refuses the discovery.
-            const parsed = tryParseJson(line)
-            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
-            const owned = dockerResource(parsed, kind)
-            if (owned === undefined) return undefined
-            // An image prints one row per tag. The one tag Compose gives an image it builds is this
-            // stack's own name for it, so that image is removable; a second tag means some other name
-            // was given to it, and that name may still be needed. Treating any tag as a reference
-            // kept every image the stack built. A container still using an image keeps it by
-            // Docker's own refusal to remove it.
-            const duplicate = resources.find(({ id }) => id === owned.id)
-            if (duplicate !== undefined && kind === 'image') {
-                if (duplicate.bytes !== owned.bytes) return undefined
-                resources.splice(resources.indexOf(duplicate), 1, { ...duplicate, referenced: true, name: [duplicate.name, owned.name].sort(lexical)[0]! })
-                continue
-            }
-            resources.push(owned)
-        }
-        if (resources.length > MAX_RESOURCES || new Set(resources.map(({ id }) => id)).size !== resources.length) return undefined
-        const snapshot = { observedAt: admitted.receipt.finishedAt, producer: 'runtime-resource-discovery' as const, resources: resources.sort((a, b) => lexical(a.id, b.id)) }
-        admittedDiscoveries.add(snapshot)
-        discoveryAuthorities.set(snapshot, Object.freeze({
-            stackId: step.labels.stackId as StackId, executable, cwd: step.cwd, env, selection,
-            selectionAuthority: currentSelectionAuthority,
-            kinds: Object.freeze([kind]), startedAt: admitted.receipt.startedAt, finishedAt: admitted.receipt.finishedAt,
-            imagesInspected: kind !== 'image',
-            volumesInspected: kind !== 'volume',
-            networksInspected: kind !== 'network',
-            receipts: Object.freeze([...planned.authority.receipts, ...currentSelection.receipts, digestValue({
-                step: step.id, executable, cwd: step.cwd, env,
-                startedAt: admitted.receipt.startedAt, finishedAt: admitted.receipt.finishedAt,
-                stdout: createHash('sha256').update(admitted.stdout).digest('hex'),
-            })].sort(lexical)),
-        }))
-        consumedPlannedDiscoverySteps.add(step)
-        return snapshot
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
-    }
-}
-
-export function combineReclaimDiscoveries(snapshots: readonly ReclaimDiscoverySnapshot[]): ReclaimDiscoverySnapshot | undefined {
-    try {
-        if (!Array.isArray(snapshots) || snapshots.length !== 5
-            || snapshots.some((snapshot) => !admittedDiscoveries.has(snapshot) || discoveryAuthorities.get(snapshot) === undefined)) return undefined
-        const resources = snapshots.flatMap(({ resources }) => resources).sort((left, right) => lexical(left.id, right.id))
-        if (resources.length > MAX_RESOURCES || new Set(resources.map(({ id }) => id)).size !== resources.length) return undefined
-        const authorities = snapshots.map((snapshot) => discoveryAuthorities.get(snapshot)!)
-        const first = authorities[0]!
-        const kinds = authorities.flatMap(({ kinds }) => kinds).sort(lexical)
-        const expectedKinds = ['build-cache', 'container', 'image', 'network', 'volume']
-        if (JSON.stringify(kinds) !== JSON.stringify(expectedKinds)
-            || authorities.some(({ kinds: authorityKinds, imagesInspected }) => authorityKinds[0] === 'image' && !imagesInspected)
-            || authorities.some(({ kinds: authorityKinds, volumesInspected }) => authorityKinds[0] === 'volume' && !volumesInspected)
-            || authorities.some(({ kinds: authorityKinds, networksInspected }) => authorityKinds[0] === 'network' && !networksInspected)
-            || authorities.some(({ selectionAuthority }) => selectionAuthority !== first.selectionAuthority)
-            || authorities.some((item) => JSON.stringify([item.stackId, item.executable, item.cwd, item.env, item.selection])
-                !== JSON.stringify([first.stackId, first.executable, first.cwd, first.env, first.selection]))) return undefined
-        const startedAt = authorities.map(({ startedAt }) => startedAt).sort(lexical)[0]!
-        const finishedAt = authorities.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
-        if (Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
-        const combined = { observedAt: finishedAt, producer: 'runtime-resource-discovery' as const, resources }
-        admittedDiscoveries.add(combined)
-        discoveryAuthorities.set(combined, Object.freeze({
-            stackId: first.stackId, executable: first.executable, cwd: first.cwd, env: first.env, selection: first.selection,
-            selectionAuthority: first.selectionAuthority,
-            kinds: Object.freeze(kinds), startedAt, finishedAt,
-            imagesInspected: true,
-            volumesInspected: true,
-            networksInspected: true,
-            receipts: Object.freeze([...new Set(authorities.flatMap(({ receipts }) => receipts))].sort(lexical)),
-        }))
-        consumedSelectionAuthorities.add(first.selectionAuthority)
-        return combined
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
-    }
+    if (executable === undefined || env === undefined || !DOCKER_SELECTOR.test(input.context)
+        || input.host !== undefined && (admitLocalDockerEndpoint(input.host) === undefined || input.context !== 'default')
+        || !STACK_ID.test(input.stackId) || !COCKPIT_ID.test(input.cockpitId)
+        || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
+    return await discoverReclaimRound(input, executable, env, execute)
+        ?? await discoverReclaimRound(input, executable, env, execute)
 }
 
 export interface ResetTargetInput {
@@ -1282,6 +1019,7 @@ type ResetTargetAuthority =
       }
 
 export interface PlanResetInput extends ClassifyReclaimInput {
+    readonly discovery: ReclaimDiscovery
     readonly expectedCoordinationRevision: number
     readonly requesterHolderId: string | null
     /** Compose volume keys, matched within `composeProject`; Docker's volume name is not one. */
@@ -1293,11 +1031,10 @@ export interface PlanResetInput extends ClassifyReclaimInput {
     readonly cwd: string
     readonly env: Readonly<Record<string, string>>
     readonly timeoutMs: number
-    readonly selectionAuthority?: object
     readonly confirmationDigest?: string
-    readonly consent?: object
+    readonly consent?: ReclaimConsent
     readonly coordinationAddress?: StateAddress
-    readonly continuation?: object
+    readonly continuation?: ReclaimContinuation
     readonly recoveryAuthority?: DrainReservationAuthority
     readonly operatorApproval?: ResetPreview
 }
@@ -1308,32 +1045,33 @@ export interface ResetPreview {
     readonly coordinationRevision: number
     readonly targets: readonly ResetTargetInput[]
     readonly noop: boolean
-    readonly consent: object
+    readonly consent: ReclaimConsent
+    /** The exact targets the digest commits, which the drain reservation records. */
+    readonly envelope: ReclaimTargetEnvelope
 }
 
 export type ResetPlanResult =
     | {
           readonly kind: 'complete'
-          readonly step: ExecutionStep | null
-          readonly actionAuthority: object | null
+          readonly action: PlannedReclaimAction | null
           readonly remaining: number
           readonly noop: boolean
           readonly digest: string
-          readonly continuation: object | null
+          readonly envelope: ReclaimTargetEnvelope
       }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
 export interface PlanTeardownInput extends ClassifyReclaimInput {
+    readonly discovery: ReclaimDiscovery
     readonly executable: ResolvedExecutable
     readonly cwd: string
     readonly env: Readonly<Record<string, string>>
     readonly timeoutMs: number
-    readonly selectionAuthority?: object
     readonly dependencyCaches?: readonly DependencyCacheDeclaration[]
     readonly pathExecutable?: ResolvedExecutable
     readonly expectedDiscoveryDigest?: string
-    readonly consent?: object
-    readonly continuation?: object
+    readonly consent?: ReclaimConsent
+    readonly continuation?: ReclaimContinuation
     readonly coordinationAddress?: StateAddress
     readonly recoveryAuthority?: DrainReservationAuthority
 }
@@ -1341,8 +1079,7 @@ export interface PlanTeardownInput extends ClassifyReclaimInput {
 export type TeardownPlanResult =
     | {
           readonly kind: 'complete'
-          readonly steps: readonly ExecutionStep[]
-          readonly actionAuthority: object | null
+          readonly action: PlannedReclaimAction | null
           readonly remaining: number
           readonly noop: boolean
           readonly discoveryDigest: string
@@ -1352,8 +1089,8 @@ export type TeardownPlanResult =
               readonly action: { readonly resourceId: string; readonly observedBytes: number | null } | null
               readonly actuallyReclaimed: number | null
           }
-          readonly consent: object | null
-          readonly continuation: object | null
+          readonly consent: ReclaimConsent | null
+          readonly envelope: ReclaimTargetEnvelope
       }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
@@ -1368,15 +1105,6 @@ function canonicalValue(value: unknown): unknown {
             .map(([key, item]) => [key, canonicalValue(item)]))
     }
     return value
-}
-
-function captureDataInput(raw: unknown): { readonly value: unknown; readonly opaque: Readonly<Record<string, unknown>> } | undefined {
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
-    const descriptors = Object.getOwnPropertyDescriptors(raw)
-    if (Reflect.ownKeys(descriptors).some((key) => typeof key !== 'string')
-        || Object.values(descriptors).some((descriptor) => !('value' in descriptor))) return undefined
-    const data = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    return { value: snapshotJson(data), opaque: { ...data } }
 }
 
 function digestValue(value: unknown): string {
@@ -1402,61 +1130,22 @@ async function removalExecutable(value: unknown): Promise<ResolvedExecutable | u
 
 // A discovery lists only one stack's resources, so a discovery of another stack would make this
 // one look empty: every planned target absent and every removal confirmed. It must name this stack.
-function sameRuntimeAuthority(
-    discovery: ReclaimDiscoverySnapshot,
-    stackId: StackId,
-    executable: ResolvedExecutable,
-    cwd: string,
-    env: Readonly<Record<string, string>>,
-    selection: DockerSelection,
-    currentSelection?: DockerSelectionAuthority,
-    continuation?: unknown,
-): DiscoveryAuthority | undefined {
-    const authority = discoveryAuthorities.get(discovery)
-    const reconciled = continuation !== null && typeof continuation === 'object'
-        && authority !== undefined && reconciledContinuationDiscoveries.get(continuation) === authority
-    const safeEnv = safeEnvironment(env)
-    return authority !== undefined && safeEnv !== undefined && authority.stackId === stackId
-        && JSON.stringify([authority.executable, authority.cwd, authority.env, authority.selection]) === JSON.stringify([executable, cwd, safeEnv, selection])
-        && (currentSelection === undefined || JSON.stringify([currentSelection.executable, currentSelection.cwd, currentSelection.env, currentSelection.selection])
-            === JSON.stringify([executable, cwd, safeEnv, selection])
-            && Date.parse(currentSelection.startedAt) >= Date.parse(authority.finishedAt)
-            && Date.now() >= Date.parse(currentSelection.finishedAt) && Date.now() - Date.parse(currentSelection.finishedAt) <= 30_000)
-        && (reconciled || authority.receipts.every((receipt) => !consumedDiscoveryReceipts.has(receipt)))
-        ? authority : undefined
+function discoveryOfStack(discovery: ReclaimDiscovery, stackId: StackId): boolean {
+    return discovery.stackId === stackId
 }
 
-function consumeAuthority(authority: DiscoveryAuthority): void {
-    for (const receipt of authority.receipts) consumedDiscoveryReceipts.add(receipt)
+// The plan acts only on a discovery read after the approved one, so what is removed is what the
+// approved digest names in the daemon's current state, not a replay of the state that was shown.
+function followsConsent(consent: ReclaimConsent | undefined, digest: string, discovery: ReclaimDiscovery): boolean {
+    return consent !== undefined && consent.digest === digest
+        && Date.parse(discovery.startedAt) > Date.parse(consent.observedAt)
 }
 
-function followsPreview(digest: string, authority: DiscoveryAuthority): boolean {
-    const previewReceipts = previewDiscoveryReceipts.get(digest)
-    return previewReceipts !== undefined && authority.receipts.every((receipt) => !previewReceipts.includes(receipt))
-}
-
-function recordPreview(digest: string, authority: DiscoveryAuthority): void {
-    previewDiscoveryReceipts.set(digest, Object.freeze([
-        ...new Set([...(previewDiscoveryReceipts.get(digest) ?? []), ...authority.receipts]),
-    ].sort(lexical)))
-}
-
-function issueConsent(digest: string, authority: DiscoveryAuthority | undefined): object {
-    const consent = { kind: 'reclaim-consent', digest }
-    if (authority !== undefined) consentAuthorities.set(consent, Object.freeze({
-        digest, receipts: authority.receipts, issuedAt: new Date().toISOString(),
-    }))
-    return consent
-}
-
-function consumeConsent(raw: unknown, digest: string, authority: DiscoveryAuthority): boolean {
-    if (raw === null || typeof raw !== 'object' || consumedConsents.has(raw)) return false
-    const consent = consentAuthorities.get(raw)
-    if (consent === undefined || consent.digest !== digest
-        || authority.receipts.some((receipt) => consent.receipts.includes(receipt))
-        || Date.parse(authority.startedAt) <= Date.parse(consent.issuedAt)) return false
-    consumedConsents.add(raw)
-    return true
+// After a removal, the discovery that reconciled it may plan the next one. After a removal that
+// never started, nothing proved the state since, so the discovery must follow the published failure.
+function followsContinuation(discovery: ReclaimDiscovery, continuation: ReclaimContinuation, failed: boolean, record: StateRecord): boolean {
+    return failed ? Date.parse(discovery.startedAt) > Date.parse(record.updatedAt)
+        : Date.parse(discovery.startedAt) >= Date.parse(continuation.freshAfter)
 }
 
 function exactStep(
@@ -1684,41 +1373,27 @@ async function rereadCoordination(
     return result.value
 }
 
-export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview | ResetPlanResult> {
+export async function planReset(input: PlanResetInput): Promise<ResetPreview | ResetPlanResult> {
     try {
-        const capturedInput = captureDataInput(rawInput)
-        const captured = capturedInput?.value
-        if (captured === undefined || captured === null || typeof captured !== 'object' || Array.isArray(captured)) {
-            return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset input is malformed or exceeds its bounds', 'reset')
-        }
-        const input = captured as unknown as PlanResetInput
-        const discovery = capturedInput!.opaque.discovery as ReclaimDiscoverySnapshot
-        const consent = capturedInput!.opaque.consent
-        const continuation = capturedInput!.opaque.continuation
-        const recoveryAuthority = capturedInput!.opaque.recoveryAuthority as DrainReservationAuthority | undefined
-        const currentSelectionToken = capturedInput!.opaque.selectionAuthority
-        const coordinationAddress = capturedInput!.opaque.coordinationAddress as StateAddress | undefined
+        const { discovery, consent, continuation, recoveryAuthority, operatorApproval } = input
         const runtimeExecutable = resolvedDockerExecutable(input.runtimeExecutable)
         const pathExecutable = await removalExecutable(input.pathExecutable)
         const env = safeEnvironment(input.env)
-        const discoveryAuthority = discoveryAuthorities.get(discovery)
-        const currentSelection = currentSelectionToken !== null && typeof currentSelectionToken === 'object'
-            ? selectionAuthorities.get(currentSelectionToken) : undefined
-        const selection = currentSelection?.selection ?? discoveryAuthority?.selection
-        if (runtimeExecutable === undefined || pathExecutable === undefined
-            || env === undefined || selection === undefined || discoveryAuthority === undefined
-            || Object.hasOwn(captured, 'dockerContext') || Object.hasOwn(captured, 'dockerEndpoint') || Object.hasOwn(captured, 'buildxBuilder')
+        if (runtimeExecutable === undefined || pathExecutable === undefined || env === undefined
             || !validExecutionInput(runtimeExecutable, input.cwd, input.env, input.timeoutMs)
             || !validExecutionInput(pathExecutable, input.cwd, input.env, input.timeoutMs)) {
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset execution authority is malformed', 'reset')
         }
+        if (!discoveryOfStack(discovery, input.stackId)) {
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset requires a fresh runtime discovery of this stack', 'reset-discovery')
+        }
+        const selection = discovery.selection
         const coordination = coordinationForDestruction(input)
         if ('refusal' in coordination) return coordination.refusal
         const coldPlanningAuthority = continuation === undefined && consent === undefined && recoveryAuthority !== undefined
             ? inspectFailedReclaimRecovery({ authority: recoveryAuthority, record: input.coordinationRecord! }) : undefined
         const coldPlanningRecovery = coldPlanningAuthority === undefined
             ? undefined : consumeFailedReclaimRecovery(coldPlanningAuthority)
-        const operatorApproval = capturedInput!.opaque.operatorApproval
         if ((recoveryAuthority !== undefined) !== (operatorApproval !== undefined)
             || operatorApproval !== undefined && coldPlanningRecovery === undefined) {
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
@@ -1728,17 +1403,14 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             ? undefined : committedTargetIdentities(coldPlanningRecovery)
         const observedAuthorities = await resetAuthorities(input)
         if (observedAuthorities === undefined) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset targets do not match current declarations and ownership evidence', 'reset-targets')
-        const continued = continuation === undefined ? undefined : resetContinuations.get(continuation as object)
-        if (continuation !== undefined && (continued === undefined || typeof continuation !== 'object' || continuation === null || consumedContinuations.has(continuation))) {
-            return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset continuation receipt is invalid or already consumed', 'reset-continuation')
+        if (continuation !== undefined && continuation.purpose !== 'reset') {
+            return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset continuation receipt is invalid', 'reset-continuation')
         }
+        const continued = continuation
         let authorities = observedAuthorities
         let continuedAfterFailure = false
         if (continued !== undefined) {
-            const continuedAuthority = discoveryAuthorities.get(discovery)
-            const match = matchReclaimDrainContinuation({
-                continuation: continuation as object, record: input.coordinationRecord!,
-            })
+            const match = matchReclaimDrainContinuation({ continuation: continued.drain, record: input.coordinationRecord! })
             if (match === 'unmatched') {
                 return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset continuation no longer matches the remaining consented target set', 'reset-continuation')
             }
@@ -1753,12 +1425,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             const completedRemainAbsent = continued.targetIdentities
                 .filter(({ targetId }) => completedTargetIds.has(targetId))
                 .every((identity) => targetIsAbsent(identity, discovery.resources))
-            // The discovery that reconciled this continuation's last action predates only the
-            // publication of that same outcome, which changes no runtime state.
-            const reconciled = continuedAuthority !== undefined
-                && reconciledContinuationDiscoveries.get(continuation as object) === continuedAuthority
-            if (continuedAuthority === undefined || Date.parse(continuedAuthority.startedAt) <= Date.parse(continued.issuedAt)
-                || !reconciled && Date.parse(continuedAuthority.startedAt) <= Date.parse(input.coordinationRecord!.updatedAt)
+            if (!followsContinuation(discovery, continued, continuedAfterFailure, input.coordinationRecord!)
                 || !completedRemainAbsent || remainingIdentities === undefined
                 || !sameTargetProjections(remainingIdentities, continued.targetIdentities, remainingTargetIds)) {
                 return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset continuation no longer matches the remaining consented target set', 'reset-continuation')
@@ -1778,7 +1445,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
                 'interrupted reset target is no longer declared', 'reset-targets')
         }
-        const digest = continued?.consentDigest ?? digestValue({
+        const digest = continued?.digest ?? digestValue({
             format: 'cockpit-reset-preview/v1', stackId: input.stackId, cockpitId: input.cockpitId,
             configSha256: input.configSha256,
             coordination: coordinationWorkBasis(input.coordinationRecord!, input.stackId),
@@ -1791,29 +1458,24 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         }
         const publicTargets = authorities.map(safeTarget)
         if (input.confirmationDigest === undefined) {
-            const previewAuthority = discoveryAuthorities.get(discovery)
-            if (previewAuthority !== undefined) recordPreview(digest, previewAuthority)
-            const preview = {
-                kind: 'preview' as const, digest, coordinationRevision: coordination.revision,
-                targets: publicTargets, noop: authorities.length === 0 && !coldCurrentAbsent,
-                consent: issueConsent(digest, previewAuthority),
-            }
             const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
             const targetIds = actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
             const identities = coldPlanningIdentities ?? resetTargetIdentities(targetIds, actionable)
             if (identities === undefined) {
                 return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be committed exactly', 'reset-targets')
             }
-            issuedResetPreviews.set(preview, reclaimTargetEnvelope(
-                'reset', input.stackId, input.configSha256, digest, targetCommitments(identities),
-            ))
-            return preview
+            return {
+                kind: 'preview' as const, digest, coordinationRevision: coordination.revision,
+                targets: publicTargets, noop: authorities.length === 0 && !coldCurrentAbsent,
+                consent: { digest, observedAt: discovery.observedAt },
+                envelope: reclaimTargetEnvelope('reset', input.stackId, input.configSha256, digest, targetCommitments(identities)),
+            }
         }
         if (!SHA256.test(input.confirmationDigest) || input.confirmationDigest !== digest) {
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset consent does not match the fresh complete preview', 'reset-confirmation')
         }
         const currentCoordination = input.coordinationRecord === null ? undefined
-            : await rereadCoordination(coordinationAddress, input.coordinationRecord, input.discovery.observedAt)
+            : await rereadCoordination(input.coordinationAddress, input.coordinationRecord, input.discovery.observedAt)
         if (currentCoordination === undefined) {
             return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'reset requires fresh coordination evidence read at the destructive boundary', input.stackId)
         }
@@ -1838,11 +1500,9 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 .every((identity) => targetIsAbsent(identity, discovery.resources)))
             && coldObservedIdentities !== undefined
             && sameTargetProjections(coldObservedIdentities, coldIdentities, coldRemainingTargetIds!)
-        const authority = sameRuntimeAuthority(discovery, input.stackId, runtimeExecutable, input.cwd, env, selection, currentSelection, continuation)
         const followsPersistedFailure = coldTargetsMatch
-            && Date.parse(authority?.startedAt ?? '') > Date.parse(coldRecovery!.freshAfter)
-        const approval = operatorApproval !== null && typeof operatorApproval === 'object'
-            ? issuedResetPreviews.get(operatorApproval) : undefined
+            && Date.parse(discovery.startedAt) > Date.parse(coldRecovery!.freshAfter)
+        const approval = operatorApproval?.envelope
         if (operatorApproval !== undefined && (!coldTargetsMatch || !approval
             || approval.purpose !== 'reset' || approval.stackId !== input.stackId || approval.configSha256 !== input.configSha256
             || digestValue(approval.commitments) !== digestValue(targetCommitments(coldIdentities!
@@ -1850,38 +1510,41 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
                 'approved reset preview does not match the exact remaining persisted targets', 'reset-confirmation')
         }
-        if (!admittedDiscoveries.has(discovery) || authority === undefined
-            || continued === undefined && !(coldTargetsMatch ? followsPersistedFailure : followsPreview(digest, authority))
-            || currentSelection === undefined || currentSelectionToken === null || typeof currentSelectionToken !== 'object'
-            || consumedSelectionAuthorities.has(currentSelectionToken)
-            || continued === undefined && !coldTargetsMatch && !consumeConsent(consent, digest, authority)) {
-            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset requires a fresh authenticated runtime discovery', 'reset-discovery')
+        if (continued === undefined && !(coldTargetsMatch ? followsPersistedFailure : followsConsent(consent, digest, discovery))) {
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset requires a fresh runtime discovery read after the approved preview', 'reset-discovery')
         }
-        if (operatorApproval !== undefined) issuedResetPreviews.delete(operatorApproval as object)
+        const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
+        const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
+        const removedTargetIds = coldTargetsMatch ? coldCompletedTargetIds! : continued === undefined
+            ? ([] as string[])
+            : continuedAfterFailure ? continued.removedTargetIds
+                : [...continued.removedTargetIds, continued.completedTargetId].sort(lexical)
+        const targetIdentities = continued?.targetIdentities ?? (coldTargetsMatch ? coldIdentities : resetTargetIdentities(targetIds, actionable))
+        if (targetIdentities === undefined) {
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be retained exactly', 'reset-targets')
+        }
+        const envelope = reclaimTargetEnvelope('reset', input.stackId, input.configSha256, digest,
+            targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities))
+        const continuationFor = (completedTargetId: string): ReclaimContinuation => ({
+            purpose: 'reset', digest, completedTargetId, runtimeDigest, targetIds, removedTargetIds, targetIdentities,
+            freshAfter: new Date().toISOString(), drain: {},
+        })
         if (coldTargetsMatch && coldCurrentAbsent) {
-            consumeAuthority(authority)
-            consumedSelectionAuthorities.add(currentSelectionToken as object)
-            const actionAuthority = issueAbsentReclaimAction({
-                purpose: 'reset', stackId: input.stackId, configSha256: input.configSha256,
-                coordinationRecord: currentCoordination, planDigest: digest, runtime: authority,
-                targetId: coldRecovery!.current.targetId, targetIds: coldReclaimTargetIds!,
-                removedTargetIds: coldCompletedTargetIds!, targetIdentities: coldIdentities!,
+            const action: PlannedReclaimAction = {
+                stackId: input.stackId, configSha256: input.configSha256, step: null,
+                coordinationRecord: currentCoordination, continuation: continuationFor(coldRecovery!.current.targetId),
+                observedAt: discovery.observedAt,
                 remainingTargets: async next => {
                     const current = await resetAuthorities({ ...input, discovery: next })
                     return current?.filter(candidate => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
                         .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
                 },
-            }, runtimeDigest)
-            const result = { kind: 'complete' as const, step: null, actionAuthority, remaining: digestTargetIds.length,
-                noop: false, digest, continuation: null }
-            issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId, input.configSha256,
-                digest, targetCommitments(coldIdentities!)))
-            return result
+            }
+            return { kind: 'complete' as const, action, remaining: digestTargetIds.length, noop: false, digest, envelope }
         }
         // Revalidation narrows cooperative races; portable process APIs cannot bind a daemon object or pathname descriptor through its final removal syscall.
-        const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
         const target = actionable[0]
-        if (target === undefined) return { kind: 'complete', step: null, actionAuthority: null, remaining: 0, noop: true, digest, continuation: null }
+        if (target === undefined) return { kind: 'complete', action: null, remaining: 0, noop: true, digest, envelope }
         const step = target.kind === 'host-path'
             ? exactStep(
                 `reset:host-path:${digestValue(target.identity).slice(0, 16)}`,
@@ -1903,37 +1566,12 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 { stackId: input.stackId, configSha256: input.configSha256, resetKind: target.kind, volume: target.identity },
             )
         if (step === undefined) return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'exact reset action could not cross the execution boundary', target.identity)
-        const actionAuthority = { kind: 'reset-action-authority' }
-        consumeAuthority(authority)
-        consumedSelectionAuthorities.add(currentSelectionToken as object)
-        if (continuation !== undefined) {
-            consumedContinuations.add(continuation as object)
-            reconciledContinuationDiscoveries.delete(continuation as object)
+        const action: PlannedReclaimAction = {
+            stackId: input.stackId, configSha256: input.configSha256, step,
+            coordinationRecord: currentCoordination, continuation: continuationFor(`${target.kind}:${target.identity}`),
+            observedAt: discovery.observedAt,
         }
-        const receipt = { kind: 'reset-continuation', digest: digestValue([digest, target.kind, target.identity]) }
-        const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
-        const removedTargetIds = coldTargetsMatch ? coldCompletedTargetIds! : continued === undefined
-            ? ([] as string[])
-            : continuedAfterFailure ? continued.removedTargetIds
-                : [...continued.removedTargetIds, continued.completedTargetId].sort(lexical)
-        const targetIdentities = continued?.targetIdentities ?? (coldTargetsMatch ? coldIdentities : resetTargetIdentities(targetIds, actionable))
-        if (targetIdentities === undefined) {
-            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be retained exactly', 'reset-targets')
-        }
-        resetContinuations.set(receipt, Object.freeze({
-            consentDigest: digest, completedTargetId: `${target.kind}:${target.identity}`,
-            issuedAt: new Date().toISOString(), runtimeDigest,
-            targetIds, removedTargetIds, targetIdentities,
-        }))
-        pendingResetActions.set(actionAuthority, Object.freeze({
-            step, target, coordinationRecord: currentCoordination, continuation: receipt,
-            planDigest: digest, targetIds, removedTargetIds, targetIdentities,
-        }))
-        const result = { kind: 'complete' as const, step: null, actionAuthority,
-            remaining: actionable.length - 1, noop: false, digest, continuation: null }
-        if (coldTargetsMatch) issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId,
-            input.configSha256, digest, targetCommitments(coldIdentities!)))
-        return result
+        return { kind: 'complete' as const, action, remaining: actionable.length - 1, noop: false, digest, envelope }
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, `reset input could not be inspected safely: ${errorCause(error)}`, 'reset')
     }
@@ -1994,34 +1632,21 @@ function actionableReclaimResources(resources: readonly ClassifiedReclaimResourc
         .sort((left, right) => lexical(`${left.kind}:${left.id}`, `${right.kind}:${right.id}`))
 }
 
-export async function planTeardown(rawInput: PlanTeardownInput): Promise<TeardownPlanResult> {
+export async function planTeardown(input: PlanTeardownInput): Promise<TeardownPlanResult> {
     try {
-        const capturedInput = captureDataInput(rawInput)
-        const captured = capturedInput?.value
-        if (captured === undefined || captured === null || typeof captured !== 'object' || Array.isArray(captured)) {
-            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown input is malformed or exceeds its bounds', 'teardown')
-        }
-        const input = captured as unknown as PlanTeardownInput
-        const discovery = capturedInput!.opaque.discovery as ReclaimDiscoverySnapshot
-        const consent = capturedInput!.opaque.consent
-        const inputContinuation = capturedInput!.opaque.continuation
-        const recoveryAuthority = capturedInput!.opaque.recoveryAuthority as DrainReservationAuthority | undefined
-        const currentSelectionToken = capturedInput!.opaque.selectionAuthority
-        const coordinationAddress = capturedInput!.opaque.coordinationAddress as StateAddress | undefined
+        const { discovery, consent, continuation: continued, recoveryAuthority } = input
         const executable = resolvedDockerExecutable(input.executable)
         const env = safeEnvironment(input.env)
-        const discoveryAuthority = discoveryAuthorities.get(discovery)
-        const currentSelection = currentSelectionToken !== null && typeof currentSelectionToken === 'object'
-            ? selectionAuthorities.get(currentSelectionToken) : undefined
-        const selection = currentSelection?.selection ?? discoveryAuthority?.selection
         const caches = await dependencyCacheAuthorities(input.dependencyCaches)
         const pathExecutable = input.dependencyCaches !== undefined && input.dependencyCaches.length > 0
             ? await removalExecutable(input.pathExecutable) : undefined
-        if (executable === undefined || selection === undefined || discoveryAuthority === undefined
-            || Object.hasOwn(captured, 'dockerContext') || Object.hasOwn(captured, 'dockerEndpoint') || Object.hasOwn(captured, 'buildxBuilder')
-            || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) {
+        if (executable === undefined || env === undefined || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown execution authority is malformed', 'teardown')
         }
+        if (!discoveryOfStack(discovery, input.stackId)) {
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown requires a fresh runtime discovery of this stack', 'teardown-discovery')
+        }
+        const selection = discovery.selection
         if (caches === undefined || input.dependencyCaches !== undefined && input.dependencyCaches.length > 0 && pathExecutable === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'dependency-cache reclaim authority is malformed or unconfined', 'teardown-cache')
         }
@@ -2037,26 +1662,21 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             id: cacheId, name: cacheId, kind: 'cache' as const, labels: {}, referenced: false, bytes: null,
         }))
         const observedDiscovery = {
-            ...input.discovery,
-            resources: [...input.discovery.resources, ...cacheResources],
+            observedAt: discovery.observedAt, producer: discovery.producer,
+            resources: [...discovery.resources, ...cacheResources],
         }
         const classified = classifyReclaim({ ...reclaimInput(input), discovery: observedDiscovery })
         if (classified.kind !== 'complete') return classified
-        const coldAuthority = inputContinuation === undefined && consent === undefined && recoveryAuthority !== undefined
+        const coldAuthority = continued === undefined && consent === undefined && recoveryAuthority !== undefined
             ? inspectFailedReclaimRecovery({ authority: recoveryAuthority, record: input.coordinationRecord }) : undefined
         const coldRecovery = coldAuthority === undefined ? undefined : consumeFailedReclaimRecovery(coldAuthority)
         const coldIdentities = coldRecovery === undefined ? undefined : committedTargetIdentities(coldRecovery)
-        const continued = inputContinuation === undefined ? undefined : teardownContinuations.get(inputContinuation as object)
-        if (inputContinuation !== undefined
-            && (continued === undefined || typeof inputContinuation !== 'object' || inputContinuation === null || consumedTeardownContinuations.has(inputContinuation))) {
-            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation receipt is invalid or already consumed', 'teardown-continuation')
+        if (continued !== undefined && continued.purpose !== 'down') {
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation receipt is invalid', 'teardown-continuation')
         }
         let continuedAfterFailure = false
         if (continued !== undefined) {
-            const continuedAuthority = discoveryAuthorities.get(discovery)
-            const match = matchReclaimDrainContinuation({
-                continuation: inputContinuation as object, record: input.coordinationRecord!,
-            })
+            const match = matchReclaimDrainContinuation({ continuation: continued.drain, record: input.coordinationRecord })
             if (match === 'unmatched') {
                 return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation no longer matches the remaining consented resources', 'teardown-continuation')
             }
@@ -2071,10 +1691,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             const completedRemainAbsent = continued.targetIdentities
                 .filter(({ targetId }) => completedTargetIds.has(targetId))
                 .every((identity) => targetIsAbsent(identity, discovery.resources))
-            const reconciled = continuedAuthority !== undefined
-                && reconciledContinuationDiscoveries.get(inputContinuation as object) === continuedAuthority
-            if (continuedAuthority === undefined || Date.parse(continuedAuthority.startedAt) <= Date.parse(continued.issuedAt)
-                || !reconciled && Date.parse(continuedAuthority.startedAt) <= Date.parse(input.coordinationRecord!.updatedAt)
+            if (!followsContinuation(discovery, continued, continuedAfterFailure, input.coordinationRecord!)
                 || !completedRemainAbsent || remainingIdentities === undefined
                 || !sameTargetProjections(remainingIdentities, continued.targetIdentities, remainingTargetIds)) {
                 return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation no longer matches the remaining consented resources', 'teardown-continuation')
@@ -2086,7 +1703,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if (freshTargetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown target identities could not be committed exactly', 'teardown-targets')
         }
-        const discoveryDigest = continued?.discoveryDigest ?? digestValue({
+        const discoveryDigest = continued?.digest ?? digestValue({
             format: 'cockpit-teardown-discovery/v1', stackId: input.stackId, cockpitId: input.cockpitId,
             configSha256: input.configSha256,
             coordination: coordinationWorkBasis(input.coordinationRecord, input.stackId),
@@ -2097,14 +1714,12 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if (continued !== undefined && continued.runtimeDigest !== runtimeDigest) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation does not match the original runtime authority', 'teardown-continuation')
         }
-        const previewAuthority = discoveryAuthorities.get(discovery)
-        if (input.expectedDiscoveryDigest === undefined && previewAuthority !== undefined) recordPreview(discoveryDigest, previewAuthority)
         if (input.expectedDiscoveryDigest !== undefined && input.expectedDiscoveryDigest !== discoveryDigest) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'fresh teardown discovery differs from the accepted snapshot', input.stackId)
         }
         let currentCoordination = input.coordinationRecord
         if (input.expectedDiscoveryDigest !== undefined) {
-            const current = await rereadCoordination(coordinationAddress, input.coordinationRecord, input.discovery.observedAt)
+            const current = await rereadCoordination(input.coordinationAddress, input.coordinationRecord, discovery.observedAt)
             const decodedCurrent = current === undefined ? undefined : decodeCoordinationRecord(current, input.stackId)
             if (decodedCurrent === undefined || decodedCurrent.holders.length > 1
                 || decodedCurrent.holders.length === 1 && (decodedCurrent.lease === null || decodedCurrent.lease.released)) {
@@ -2113,7 +1728,6 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             currentCoordination = current!
         }
         const first = actionable[0]
-        const authority = sameRuntimeAuthority(discovery, input.stackId, executable, input.cwd, input.env, selection, currentSelection, inputContinuation)
         const coldReclaimTargetIds = coldRecovery === undefined ? undefined
             : [...coldRecovery.completed, coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
         const coldCompletedTargetIds = coldRecovery?.completed.map(({ targetId }) => targetId)
@@ -2136,18 +1750,14 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             && coldObservedIdentities !== undefined
             && sameTargetProjections(coldObservedIdentities, coldIdentities, coldRemainingTargetIds!)
         const followsPersistedFailure = coldTargetsMatch
-            && Date.parse(authority?.startedAt ?? '') > Date.parse(coldRecovery!.freshAfter)
+            && Date.parse(discovery.startedAt) > Date.parse(coldRecovery!.freshAfter)
         if ((first !== undefined || coldCurrentAbsent) && input.expectedDiscoveryDigest !== undefined
-            && (!admittedDiscoveries.has(discovery) || authority === undefined
-                || currentSelection === undefined || currentSelectionToken === null || typeof currentSelectionToken !== 'object'
-                || consumedSelectionAuthorities.has(currentSelectionToken)
-                || continued === undefined && !(coldTargetsMatch ? followsPersistedFailure : followsPreview(discoveryDigest, authority))
-                || continued === undefined && !coldTargetsMatch && !consumeConsent(consent, discoveryDigest, authority))) {
-            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown requires a fresh authenticated runtime discovery', 'teardown-discovery')
+            && continued === undefined && !(coldTargetsMatch ? followsPersistedFailure : followsConsent(consent, discoveryDigest, discovery))) {
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown requires a fresh runtime discovery read after the accepted snapshot', 'teardown-discovery')
         }
         const absent = coldTargetsMatch && coldCurrentAbsent && input.expectedDiscoveryDigest !== undefined
         const step = absent || first === undefined || input.expectedDiscoveryDigest === undefined
-            ? undefined : teardownStep(first, { ...input, executable, env: env! }, selection, caches, pathExecutable)
+            ? undefined : teardownStep(first, { ...input, executable, env }, selection, caches, pathExecutable)
         if (!absent && first !== undefined && input.expectedDiscoveryDigest !== undefined && step === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'exact teardown action could not cross the execution boundary', first.id)
         }
@@ -2167,32 +1777,6 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if ([...Object.values(observed), ...Object.values(reclaimable)].some((value) => value === undefined)) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim byte accounting exceeds the safe integer range', 'teardown-accounting')
         }
-        if (step !== undefined || absent) {
-            consumeAuthority(authority!)
-            consumedSelectionAuthorities.add(currentSelectionToken as object)
-            if (inputContinuation !== undefined) {
-                consumedTeardownContinuations.add(inputContinuation as object)
-                reconciledContinuationDiscoveries.delete(inputContinuation as object)
-            }
-        }
-        const actionAuthority = absent ? issueAbsentReclaimAction({
-            purpose: 'down', stackId: input.stackId, configSha256: input.configSha256,
-            coordinationRecord: currentCoordination!, planDigest: discoveryDigest, runtime: authority!,
-            targetId: coldRecovery!.current.targetId, targetIds: coldReclaimTargetIds!,
-            removedTargetIds: coldCompletedTargetIds!, targetIdentities: coldIdentities!,
-            remainingTargets: async next => {
-                const nextCaches = await dependencyCacheAuthorities(input.dependencyCaches)
-                if (!nextCaches) return undefined
-                const cacheRows = nextCaches.filter(({ evidence }) => evidence.state === 'present').map(({ cacheId }) => ({
-                    id: cacheId, name: cacheId, kind: 'cache' as const, labels: {}, referenced: false, bytes: null,
-                }))
-                const classified = classifyReclaim({ ...reclaimInput(input), discovery: { ...next, resources: [...next.resources, ...cacheRows] } })
-                return classified.kind === 'complete' ? actionableReclaimResources(classified.resources)
-                    .map(({ kind, id }) => `${kind}:${id}`).sort(lexical) : undefined
-            },
-        }, runtimeDigest) : step === undefined || first === undefined ? null : { kind: 'teardown-action-authority' }
-        const continuation = step === undefined || first === undefined ? null
-            : { kind: 'teardown-continuation', digest: digestValue([discoveryDigest, first.kind, first.id]) }
         const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? freshTargetIds
         const removedTargetIds = coldTargetsMatch ? coldCompletedTargetIds! : continued === undefined
             ? ([] as string[])
@@ -2202,19 +1786,33 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if (targetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown target identities could not be retained exactly', 'teardown-targets')
         }
-        if (continuation !== null) teardownContinuations.set(continuation, Object.freeze({
-            discoveryDigest, completedTargetId: `${first.kind}:${first.id}`,
-            issuedAt: new Date().toISOString(), runtimeDigest,
-            targetIds, removedTargetIds, targetIdentities,
-        }))
-        if (actionAuthority !== null && continuation !== null) pendingTeardownActions.set(actionAuthority, Object.freeze({
-            step: step!, target: first!,
-            cache: first!.kind === 'cache' ? caches.find(({ cacheId }) => cacheId === first!.id) : undefined,
-            coordinationRecord: currentCoordination!, planDigest: discoveryDigest, continuation,
-            targetIds, removedTargetIds, targetIdentities,
-        }))
-        const result: TeardownPlanResult = {
-            kind: 'complete', steps: [], actionAuthority,
+        const continuationFor = (completedTargetId: string): ReclaimContinuation => ({
+            purpose: 'down', digest: discoveryDigest, completedTargetId, runtimeDigest, targetIds, removedTargetIds, targetIdentities,
+            freshAfter: new Date().toISOString(), drain: {},
+        })
+        const action: PlannedReclaimAction | null = absent ? {
+            stackId: input.stackId, configSha256: input.configSha256, step: null,
+            coordinationRecord: currentCoordination, continuation: continuationFor(coldRecovery!.current.targetId),
+            observedAt: discovery.observedAt,
+            remainingTargets: async next => {
+                const nextCaches = await dependencyCacheAuthorities(input.dependencyCaches)
+                if (!nextCaches) return undefined
+                const cacheRows = nextCaches.filter(({ evidence }) => evidence.state === 'present').map(({ cacheId }) => ({
+                    id: cacheId, name: cacheId, kind: 'cache' as const, labels: {}, referenced: false, bytes: null,
+                }))
+                const classified = classifyReclaim({ ...reclaimInput(input),
+                    discovery: { observedAt: next.observedAt, producer: next.producer, resources: [...next.resources, ...cacheRows] } })
+                return classified.kind === 'complete' ? actionableReclaimResources(classified.resources)
+                    .map(({ kind, id }) => `${kind}:${id}`).sort(lexical) : undefined
+            },
+        } : step === undefined || first === undefined ? null : {
+            stackId: input.stackId, configSha256: input.configSha256,
+            step,
+            coordinationRecord: currentCoordination, continuation: continuationFor(`${first.kind}:${first.id}`),
+            observedAt: discovery.observedAt,
+        }
+        return {
+            kind: 'complete', action,
             remaining: step === undefined ? actionable.length : actionable.length - 1,
             noop: actionable.length === 0 && !absent, discoveryDigest,
             byteAccounting: {
@@ -2222,21 +1820,13 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
                 action: first === undefined || step === undefined ? null : { resourceId: first.id, observedBytes: first.bytes },
                 actuallyReclaimed: null,
             },
-            consent: input.expectedDiscoveryDigest === undefined ? issueConsent(discoveryDigest, previewAuthority) : null,
-            continuation: null,
+            consent: input.expectedDiscoveryDigest === undefined ? { digest: discoveryDigest, observedAt: discovery.observedAt } : null,
+            envelope: reclaimTargetEnvelope('down', input.stackId, input.configSha256, discoveryDigest,
+                targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities)),
         }
-        issuedTeardownPlans.set(result, reclaimTargetEnvelope(
-            'down', input.stackId, input.configSha256, discoveryDigest, targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities),
-        ))
-        return result
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, `teardown input could not be inspected safely: ${errorCause(error)}`, 'teardown')
     }
-}
-
-declare const reclaimTargetProjectionBrand: unique symbol
-export interface ReclaimTargetProjection {
-    readonly [reclaimTargetProjectionBrand]: true
 }
 
 export interface ReclaimTargetCommitment extends DrainTargetCommitment {
@@ -2348,35 +1938,6 @@ function committedTargetIdentities(recovery: FailedReclaimRecovery): readonly Re
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
-}
-
-function issueTargetProjection(envelope: ReclaimTargetEnvelope): ReclaimTargetProjection {
-    const projection = {} as ReclaimTargetProjection
-    issuedTargetProjections.set(projection, envelope)
-    return projection
-}
-
-export function projectResetActionTargets(preview: ResetPreview): ReclaimTargetProjection | undefined {
-    const envelope = preview && typeof preview === 'object' ? issuedResetPreviews.get(preview) : undefined
-    return envelope === undefined ? undefined : issueTargetProjection(envelope)
-}
-
-export function projectRecoveredResetActionTargets(plan: ResetPlanResult): ReclaimTargetProjection | undefined {
-    const envelope = plan && typeof plan === 'object' ? issuedResetRecoveryPlans.get(plan) : undefined
-    return envelope === undefined ? undefined : issueTargetProjection(envelope)
-}
-
-export function projectTeardownActionTargets(plan: TeardownPlanResult): ReclaimTargetProjection | undefined {
-    const envelope = plan && typeof plan === 'object' ? issuedTeardownPlans.get(plan) : undefined
-    return envelope === undefined ? undefined : issueTargetProjection(envelope)
-}
-
-export function consumeReclaimTargetProjection(projection: ReclaimTargetProjection): ReclaimTargetEnvelope | undefined {
-    if (!projection || typeof projection !== 'object') return undefined
-    const envelope = issuedTargetProjections.get(projection)
-    if (envelope === undefined) return undefined
-    issuedTargetProjections.delete(projection)
-    return envelope
 }
 
 function canonicalLabels(labels: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
@@ -2503,171 +2064,6 @@ function teardownTargetIdentities(
         ? identities : undefined
 }
 
-export async function redeemReclaimAction(input: {
-    readonly actionAuthority: object
-    readonly attempt: DrainAttemptAuthority
-}): Promise<{ readonly step: ExecutionStep; readonly authority: object } | undefined> {
-    let actionAuthority: object | undefined
-    let attemptAuthority: DrainAttemptAuthority | undefined
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.actionAuthority!) || !('value' in descriptors.attempt!)) return undefined
-        actionAuthority = descriptors.actionAuthority!.value as object
-        attemptAuthority = descriptors.attempt!.value as DrainAttemptAuthority
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-    if (!actionAuthority || typeof actionAuthority !== 'object' || !attemptAuthority || typeof attemptAuthority !== 'object') return undefined
-    const reset = pendingResetActions.get(actionAuthority)
-    const teardown = pendingTeardownActions.get(actionAuthority)
-    const pending = reset ?? teardown
-    if (!pending) return undefined
-    const candidate = inspectDrainAttemptAuthority(attemptAuthority)
-    if (!candidate || candidate.attempt.status !== 'active' || candidate.attempt.currentStage !== 'reclaim') return undefined
-    const targetId = reset ? `${reset.target.kind}:${reset.target.identity}` : `${teardown!.target.kind}:${teardown!.target.id}`
-    const reclaimTargets = candidate.reservation.actions.filter(({ stage }) => stage === 'reclaim').map(({ targetId: id }) => id)
-    const action = candidate.reservation.actions[candidate.attempt.actionIndex]
-    if (candidate.reservation.purpose !== (reset ? 'reset' : 'down')
-        || candidate.reservation.stackId !== pending.step.labels.stackId
-        || candidate.reservation.configSha256 !== pending.step.labels.configSha256
-        || candidate.reservation.planDigest !== pending.planDigest
-        || candidate.attempt.reservationId !== candidate.reservation.reservationId
-        || candidate.attempt.purpose !== candidate.reservation.purpose
-        || candidate.attempt.generation !== candidate.reservation.generation
-        || candidate.attempt.actionIndex !== pending.removedTargetIds.length + 1
-        || action?.stage !== 'reclaim' || action.targetId !== targetId
-        || candidate.attempt.currentTarget !== targetId
-        || !sameStrings(reclaimTargets, pending.targetIds)) return undefined
-    const pathIdentity = pending.targetIdentities.find((identity): identity is PathTargetIdentity =>
-        identity.targetId === targetId && identity.medium === 'path')
-    const identityCheck = pathIdentity === undefined ? undefined : await identityBoundFilesystemCheck(pathIdentity)
-    if (pathIdentity !== undefined && identityCheck === undefined) return undefined
-    const validThroughMs = Date.parse(candidate.attempt.validThrough)
-    const remainingMs = validThroughMs - Date.now()
-    if (!Number.isSafeInteger(validThroughMs) || remainingMs < 1) return undefined
-    const step = snapshotExecutionStep({
-        ...pending.step,
-        timeoutMs: Math.min(pending.step.timeoutMs, remainingMs),
-        spawnNotAfter: candidate.attempt.validThrough,
-        filesystemChecks: identityCheck === undefined ? pending.step.filesystemChecks : [identityCheck],
-    })
-    if (step === undefined) return undefined
-    const targetIdentities = pending.targetIdentities
-    const resetContinuation = reset ? resetContinuations.get(pending.continuation) : undefined
-    const teardownContinuation = teardown ? teardownContinuations.get(pending.continuation) : undefined
-    if (reset && resetContinuation === undefined || teardown && teardownContinuation === undefined) return undefined
-    const execution = openReclaimDrainExecution({
-        authority: attemptAuthority, candidate,
-        planningRecord: pending.coordinationRecord, continuation: pending.continuation,
-    })
-    if (!execution) return undefined
-    const fence = inspectDrainExecutionFence(execution)
-    const fencedStep = fence && snapshotExecutionStep({ ...step, executionFence: fence })
-    if (!fencedStep) return undefined
-    pendingResetActions.delete(actionAuthority)
-    pendingTeardownActions.delete(actionAuthority)
-    consumedPendingTeardownActions.add(actionAuthority)
-    const authority = {}
-    pendingReclaimExecutions.set(authority, Object.freeze({
-        step: fencedStep, targetId,
-        reservation: candidate.reservation, attempt: candidate.attempt, execution, continuation: pending.continuation,
-        targetIds: pending.targetIds, removedTargetIds: pending.removedTargetIds,
-        targetIdentities,
-    }))
-    return { step: fencedStep, authority }
-}
-
-export const redeemTeardownAction = redeemReclaimAction
-
-export function redeemAbsentReclaimAction(input: {
-    readonly actionAuthority: object
-    readonly attempt: DrainAttemptAuthority
-}): { readonly authority: object } | undefined {
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.actionAuthority!)
-            || !('value' in descriptors.attempt!)) return undefined
-        const actionAuthority = descriptors.actionAuthority!.value as object
-        const attemptAuthority = descriptors.attempt!.value as DrainAttemptAuthority
-        const pending = pendingAbsentReclaimActions.get(actionAuthority)
-        const candidate = inspectDrainAttemptAuthority(attemptAuthority)
-        if (!pending || !candidate || candidate.attempt.status !== 'active'
-            || candidate.attempt.currentStage !== 'reclaim'
-            || candidate.reservation.purpose !== pending.purpose
-            || candidate.reservation.stackId !== pending.stackId
-            || candidate.reservation.configSha256 !== pending.configSha256
-            || candidate.reservation.planDigest !== pending.planDigest
-            || candidate.attempt.currentTarget !== pending.targetId
-            || candidate.attempt.actionIndex !== pending.removedTargetIds.length + 1
-            || !sameStrings(candidate.reservation.actions.filter(({ stage }) => stage === 'reclaim')
-                .map(({ targetId }) => targetId), pending.targetIds)) return undefined
-        const execution = openReclaimDrainExecution({ authority: attemptAuthority, candidate,
-            planningRecord: pending.coordinationRecord, continuation: pending.continuation })
-        if (!execution) return undefined
-        pendingAbsentReclaimActions.delete(actionAuthority)
-        const authority = {}
-        absentReclaimExecutions.set(authority, { pending, execution,
-            reservation: candidate.reservation, attempt: candidate.attempt })
-        return { authority }
-    } catch {
-        // Any failure leaves the authority unminted; the caller refuses a missing authority.
-        return undefined
-    }
-}
-
-export async function reconcileAbsentReclaimAction(input: {
-    readonly authority: object
-    readonly discovery: ReclaimDiscoverySnapshot
-}): Promise<ReconcileTeardownActionResult> {
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.authority!)
-            || !('value' in descriptors.discovery!)) throw new RefusalError('invalid input')
-        const authority = descriptors.authority!.value as object
-        const discovery = descriptors.discovery!.value as ReclaimDiscoverySnapshot
-        const issued = absentReclaimExecutions.get(authority)
-        if (!issued) throw new RefusalError('unissued absence action')
-        absentReclaimExecutions.delete(authority)
-        const { pending, reservation, attempt, execution } = issued
-        const observed = sameRuntimeAuthority(discovery, pending.runtime.stackId, pending.runtime.executable,
-            pending.runtime.cwd, pending.runtime.env, pending.runtime.selection)
-        if (!observed || !admittedDiscoveries.has(discovery)) throw new RefusalError('unissued absence discovery')
-        const remainder = reservation.actions.slice(attempt.actionIndex + 1)
-            .filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId)
-        const completed = new Set([...pending.removedTargetIds, pending.targetId])
-        const remaining = await pending.remainingTargets(discovery)
-        if (Date.parse(observed.startedAt) <= Date.parse(pending.runtime.finishedAt)
-            || Date.parse(observed.startedAt) < Date.parse(attempt.committedAt)
-            || Date.parse(observed.startedAt) > Date.parse(observed.finishedAt)
-            || Date.parse(observed.finishedAt) > Date.parse(attempt.validThrough)
-            || Date.parse(observed.finishedAt) > Date.now()
-            || !remaining || !sameStrings(remaining, remainder)
-            || !sameStrings([...completed, ...remainder].sort(lexical), pending.targetIds)
-            || !pending.targetIdentities.every(identity => completed.has(identity.targetId)
-                ? targetIsAbsent(identity, discovery.resources)
-                : remainder.includes(identity.targetId) && sameTargetIdentity(identity, discovery.resources))) {
-            throw new RefusalError('fresh absence evidence does not match the reserved target set')
-        }
-        consumeAuthority(observed)
-        const settled = settleReclaimDrainSuccess({ authority: execution,
-            fact: reclaimCompletionFact(reservation, attempt, observed.finishedAt, remainder) })
-        if (!settled) throw new RefusalError('absence completion authority is unavailable')
-        if (remainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, observed)
-        const resultAuthority = {}
-        issuedReclaimCompleted.set(resultAuthority, settled)
-        return { kind: 'complete', continuation: remainder.length === 0 ? null : pending.continuation,
-            authority: resultAuthority }
-    } catch (error) {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
-            `fresh discovery did not prove the exact interrupted removal and remaining target set: ${errorCause(error)}`, 'reclaim-reconciliation')
-    }
-}
-
-export type ReconcileTeardownActionResult =
-    | { readonly kind: 'complete'; readonly continuation: object | null; readonly authority: object | null }
-    | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
-
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
     return left.length === right.length && left.every((value, index) => value === right[index])
 }
@@ -2735,52 +2131,6 @@ function targetIsAbsent(identity: ReclaimTargetIdentity, resources: readonly Rec
             && (resource.kind !== identity.kind || resource.name !== identity.name))
 }
 
-export function admitReclaimFailure(input: {
-    readonly authority: object
-    readonly outcome: ExecuteProbeOutcome
-}): { readonly kind: 'complete'; readonly authority: object; readonly continuation: object } | { readonly kind: 'unavailable'; readonly reason: string } {
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.authority!) || !('value' in descriptors.outcome!)) {
-            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
-        }
-        const executionAuthority = descriptors.authority!.value as object
-        if (!executionAuthority || typeof executionAuthority !== 'object') {
-            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
-        }
-        const pending = pendingReclaimExecutions.get(executionAuthority)
-        const suppliedOutcome = descriptors.outcome!.value as ExecuteProbeOutcome
-        const outcome = pending ? authenticatedExecutionOutcome(suppliedOutcome, pending.step) : undefined
-        if (pending) pendingReclaimExecutions.delete(executionAuthority)
-        if (!pending || !outcome || outcome.kind !== 'refusal' || outcome.receipt !== undefined
-            || outcome.execution.started || outcome.execution.signal !== null || outcome.execution.exitCode === 0) {
-            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
-        }
-        const reset = resetContinuations.get(pending.continuation)
-        const teardown = teardownContinuations.get(pending.continuation)
-        if (reset === undefined && teardown === undefined) {
-            return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
-        }
-        const failedAt = new Date().toISOString()
-        const fact = { ...pending.attempt, failedAt } satisfies DrainAttemptFailure
-        const settled = settleReclaimDrainFailure({ authority: pending.execution, fact })
-        if (!settled) return { kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' }
-        const authority = {}
-        issuedReclaimFailures.set(authority, settled)
-        return { kind: 'complete', authority, continuation: pending.continuation }
-    } catch (error) {
-        return { kind: 'unavailable', reason: `reclaim failure evidence is unavailable: ${errorCause(error)}` }
-    }
-}
-
-export function consumeReclaimFailure(authority: object): DrainOutcomeAuthority | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const fact = issuedReclaimFailures.get(authority)
-    if (!fact) return undefined
-    issuedReclaimFailures.delete(authority)
-    return fact
-}
-
 function reclaimCompletionFact(
     reservation: DrainReservation,
     attempt: NonNullable<DrainReservation['attempt']>,
@@ -2809,73 +2159,141 @@ function reclaimCompletionFact(
     } satisfies ReclaimCompleted
 }
 
-export function reconcileReclaimAction(input: {
-    readonly authority: object
-    readonly outcome: ExecuteProbeOutcome
-    readonly discovery: ReclaimDiscoverySnapshot
-}): ReconcileTeardownActionResult {
-    let authority: object | undefined
-    let outcomeInput: ExecuteProbeOutcome | undefined
-    let discovery: ReclaimDiscoverySnapshot | undefined
-    try {
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 3 || !('value' in descriptors.authority!)
-            || !('value' in descriptors.outcome!) || !('value' in descriptors.discovery!)) throw new RefusalError('invalid input')
-        authority = descriptors.authority!.value as object
-        outcomeInput = descriptors.outcome!.value as ExecuteProbeOutcome
-        discovery = descriptors.discovery!.value as ReclaimDiscoverySnapshot
-    } catch (error) {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, `reclaim reconciliation input is malformed: ${errorCause(error)}`, 'reclaim-reconciliation')
-    }
-    if (authority === null || typeof authority !== 'object') {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim reconciliation authority is missing or stale', 'reclaim-reconciliation')
-    }
-    const pending = pendingReclaimExecutions.get(authority)
-    const discoveryAuthority = discovery !== null && typeof discovery === 'object' ? discoveryAuthorities.get(discovery) : undefined
-    if (!pending || !discoveryAuthority || !admittedDiscoveries.has(discovery)
-        || discoveryAuthority.stackId !== pending.reservation.stackId) {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim reconciliation authority is missing or stale', 'reclaim-reconciliation')
-    }
-    pendingReclaimExecutions.delete(authority)
-    const outcome = authenticatedExecutionOutcome(outcomeInput!, pending.step)
-    const expectedRemainder = pending.reservation.actions.slice(pending.attempt.actionIndex + 1)
-        .filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId)
-    const completedIds = new Set([...pending.removedTargetIds, pending.targetId])
-    const expectedRemainderIds = new Set(expectedRemainder)
-    const remainingEvidenceMatches = pending.targetIdentities.length === pending.targetIds.length
-        && pending.targetIdentities.every((identity) => completedIds.has(identity.targetId)
-            ? targetIsAbsent(identity, discovery!.resources)
-            : expectedRemainderIds.has(identity.targetId) && sameTargetIdentity(identity, discovery!.resources))
-    if (!outcome || outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0 || !outcome.receipt
-        || consumedExecutionReceipts.has(outcome.receipt)
-        || Date.parse(outcome.receipt.startedAt) < Date.parse(pending.attempt.committedAt)
-        || Date.parse(outcome.receipt.startedAt) > Date.parse(outcome.receipt.finishedAt)
-        || Date.parse(outcome.receipt.finishedAt) > Date.parse(pending.attempt.validThrough)
-        || Date.parse(outcome.receipt.finishedAt) > Date.parse(discoveryAuthority.startedAt)
-        || Date.parse(discoveryAuthority.startedAt) > Date.parse(discoveryAuthority.finishedAt)
-        || Date.parse(discoveryAuthority.finishedAt) > Date.parse(pending.attempt.validThrough)
-        || Date.parse(discoveryAuthority.finishedAt) > Date.now()
-        || !sameStrings([...completedIds, ...expectedRemainder].sort(lexical), pending.targetIds)
-        || !remainingEvidenceMatches) {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'fresh discovery did not prove the exact reserved removal set', 'reclaim-reconciliation')
-    }
-    consumedExecutionReceipts.add(outcome.receipt)
-    consumeAuthority(discoveryAuthority)
-    const fact = reclaimCompletionFact(pending.reservation, pending.attempt, discoveryAuthority.finishedAt, expectedRemainder)
-    const settled = settleReclaimDrainSuccess({ authority: pending.execution, fact })
-    if (!settled) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim completion authority is unavailable', 'reclaim-reconciliation')
-    if (expectedRemainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, discoveryAuthority)
-    const resultAuthority = {}
-    issuedReclaimCompleted.set(resultAuthority, settled)
-    return {
-        kind: 'complete', continuation: expectedRemainder.length === 0 ? null : pending.continuation, authority: resultAuthority,
-    }
+/** A removal the attempt admitted, with the drain execution it opened and what it observed. */
+export interface ExecutedReclaimAction {
+    readonly action: PlannedReclaimAction
+    readonly reservation: DrainReservation
+    readonly attempt: NonNullable<DrainReservation['attempt']>
+    readonly execution: ReclaimDrainExecutionAuthority
+    /** Null for an already-absent target, which runs nothing. */
+    readonly receipt: ExecutionReceipt | null
+    readonly fence: ExecutionFence | null
 }
 
-export function consumeReclaimCompleted(authority: object): DrainOutcomeAuthority | undefined {
-    if (!authority || typeof authority !== 'object') return undefined
-    const fact = issuedReclaimCompleted.get(authority)
-    if (!fact) return undefined
-    issuedReclaimCompleted.delete(authority)
-    return fact
+export type ReclaimActionExecution =
+    | { readonly kind: 'executed'; readonly executed: ExecutedReclaimAction }
+    /** The removal provably never started; its failure is settled and ready to publish, and the same target may be retried. */
+    | {
+          readonly kind: 'not-started'
+          readonly code: Extract<ExecuteProbeOutcome, { kind: 'refusal' }>['code']
+          readonly authority: DrainOutcomeAuthority
+          readonly fence: ExecutionFence
+          readonly continuation: ReclaimContinuation
+      }
+    | { readonly kind: 'unavailable' }
+
+/**
+ * Runs the planned removal under the reserved attempt: the attempt must name exactly this target
+ * of the committed target set, and the step runs fenced to the attempt's validity window.
+ */
+export async function executeReclaimAction(input: {
+    readonly action: PlannedReclaimAction
+    readonly attempt: DrainAttemptAuthority
+    readonly execute: Executor
+}): Promise<ReclaimActionExecution> {
+    const { action } = input
+    const { continuation } = action
+    const candidate = inspectDrainAttemptAuthority(input.attempt)
+    if (!candidate || candidate.attempt.status !== 'active' || candidate.attempt.currentStage !== 'reclaim') return { kind: 'unavailable' }
+    const targetId = continuation.completedTargetId
+    const reclaimTargets = candidate.reservation.actions.filter(({ stage }) => stage === 'reclaim').map(({ targetId: id }) => id)
+    const reserved = candidate.reservation.actions[candidate.attempt.actionIndex]
+    if (candidate.reservation.purpose !== continuation.purpose
+        || candidate.reservation.stackId !== action.stackId
+        || candidate.reservation.configSha256 !== action.configSha256
+        || candidate.reservation.planDigest !== continuation.digest
+        || candidate.attempt.reservationId !== candidate.reservation.reservationId
+        || candidate.attempt.purpose !== candidate.reservation.purpose
+        || candidate.attempt.generation !== candidate.reservation.generation
+        || candidate.attempt.actionIndex !== continuation.removedTargetIds.length + 1
+        || reserved?.stage !== 'reclaim' || reserved.targetId !== targetId
+        || candidate.attempt.currentTarget !== targetId
+        || !sameStrings(reclaimTargets, continuation.targetIds)) return { kind: 'unavailable' }
+    const open = () => openReclaimDrainExecution({
+        authority: input.attempt, candidate, planningRecord: action.coordinationRecord, continuation: continuation.drain,
+    })
+    const executedWith = (execution: ReclaimDrainExecutionAuthority, receipt: ExecutionReceipt | null, fence: ExecutionFence | null): ReclaimActionExecution => ({
+        kind: 'executed',
+        executed: { action, reservation: candidate.reservation, attempt: candidate.attempt, execution, receipt, fence },
+    })
+    if (action.step === null) {
+        const execution = open()
+        return execution ? executedWith(execution, null, null) : { kind: 'unavailable' }
+    }
+    const pathIdentity = continuation.targetIdentities.find((identity): identity is PathTargetIdentity =>
+        identity.targetId === targetId && identity.medium === 'path')
+    const identityCheck = pathIdentity === undefined ? undefined : await identityBoundFilesystemCheck(pathIdentity)
+    if (pathIdentity !== undefined && identityCheck === undefined) return { kind: 'unavailable' }
+    const validThroughMs = Date.parse(candidate.attempt.validThrough)
+    const remainingMs = validThroughMs - Date.now()
+    if (!Number.isSafeInteger(validThroughMs) || remainingMs < 1) return { kind: 'unavailable' }
+    const execution = open()
+    const fence = execution && inspectDrainExecutionFence(execution)
+    if (!execution || !fence) return { kind: 'unavailable' }
+    const step = snapshotExecutionStep({
+        ...action.step,
+        timeoutMs: Math.min(action.step.timeoutMs, remainingMs),
+        spawnNotAfter: candidate.attempt.validThrough,
+        filesystemChecks: identityCheck === undefined ? action.step.filesystemChecks : [identityCheck],
+        executionFence: fence,
+    })
+    if (!step) return { kind: 'unavailable' }
+    const outcome = await input.execute(step)
+    if (outcome.kind === 'refusal') {
+        // Only a removal that provably never started leaves the target as it was.
+        if (outcome.receipt !== undefined || outcome.execution.started || outcome.execution.signal !== null
+            || outcome.execution.exitCode === 0) return { kind: 'unavailable' }
+        const settled = settleReclaimDrainFailure({ authority: execution, fact: { ...candidate.attempt, failedAt: new Date().toISOString() } satisfies DrainAttemptFailure })
+        return settled ? { kind: 'not-started', code: outcome.code, authority: settled, fence, continuation } : { kind: 'unavailable' }
+    }
+    if (outcome.stderr.byteLength !== 0) return { kind: 'unavailable' }
+    return executedWith(execution, outcome.receipt, fence)
+}
+
+export type ReconcileReclaimActionResult =
+    | { readonly kind: 'complete'; readonly authority: DrainOutcomeAuthority; readonly continuation: ReclaimContinuation | null }
+    | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
+
+/**
+ * Settles an executed removal from a discovery read after it: every completed target must be
+ * absent and every remaining committed target unchanged, or the attempt stays for repair.
+ */
+export async function reconcileReclaimAction(input: {
+    readonly executed: ExecutedReclaimAction
+    readonly discovery: ReclaimDiscovery
+}): Promise<ReconcileReclaimActionResult> {
+    const { action, reservation, attempt, execution, receipt } = input.executed
+    const { discovery } = input
+    const { continuation } = action
+    const remainder = reservation.actions.slice(attempt.actionIndex + 1)
+        .filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId)
+    const completed = new Set([...continuation.removedTargetIds, continuation.completedTargetId])
+    // An already-absent target ran nothing, so the discovery must follow the one that planned it.
+    const freshAfter = receipt === null ? action.observedAt : receipt.finishedAt
+    const remaining = action.remainingTargets === undefined ? remainder : await action.remainingTargets(discovery)
+    if (discovery.stackId !== reservation.stackId
+        || receipt !== null && (Date.parse(receipt.startedAt) < Date.parse(attempt.committedAt)
+            || Date.parse(receipt.startedAt) > Date.parse(receipt.finishedAt)
+            || Date.parse(receipt.finishedAt) > Date.parse(attempt.validThrough)
+            || Date.parse(receipt.finishedAt) > Date.parse(discovery.startedAt))
+        || receipt === null && (Date.parse(discovery.startedAt) <= Date.parse(action.observedAt)
+            || Date.parse(discovery.startedAt) < Date.parse(attempt.committedAt))
+        || Date.parse(discovery.startedAt) > Date.parse(discovery.observedAt)
+        || Date.parse(discovery.observedAt) > Date.parse(attempt.validThrough)
+        || Date.parse(discovery.observedAt) > Date.now()
+        || !remaining || !sameStrings(remaining, remainder)
+        || !sameStrings([...completed, ...remainder].sort(lexical), continuation.targetIds)
+        || continuation.targetIdentities.length !== continuation.targetIds.length
+        || !continuation.targetIdentities.every((identity) => completed.has(identity.targetId)
+            ? targetIsAbsent(identity, discovery.resources)
+            : remainder.includes(identity.targetId) && sameTargetIdentity(identity, discovery.resources))) {
+        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'fresh discovery did not prove the exact reserved removal set', 'reclaim-reconciliation')
+    }
+    const settled = settleReclaimDrainSuccess({ authority: execution,
+        fact: reclaimCompletionFact(reservation, attempt, discovery.observedAt, remainder) })
+    if (!settled) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim completion authority is unavailable', 'reclaim-reconciliation')
+    return {
+        kind: 'complete', authority: settled,
+        continuation: remainder.length === 0 ? null : { ...continuation, freshAfter },
+    }
 }

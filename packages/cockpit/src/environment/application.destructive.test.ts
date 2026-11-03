@@ -14,7 +14,7 @@ const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'consumeLifecycleIssuance' | 'planDown' | 'planResetLifecycle'>>,
     runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'stopRuntime'>>,
     claims: {} as Partial<Pick<typeof import('./claims.js'), 'discardDrainReservationAuthority' | 'finalizeDrainOutcome' | 'prepareDrainOutcomePublication' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
-    reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'consumeReclaimCompleted' | 'keptTeardownResources' | 'planReset' | 'planTeardown' | 'projectRecoveredResetActionTargets' | 'projectResetActionTargets' | 'projectTeardownActionTargets' | 'reconcileReclaimAction' | 'redeemReclaimAction'>>,
+    reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'executeReclaimAction' | 'keptTeardownResources' | 'planReset' | 'planTeardown' | 'reconcileReclaimAction'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./lifecycle.js')>()
@@ -48,15 +48,11 @@ vi.mock('./reclaim.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./reclaim.js')>()
     return {
         ...actual,
-        consumeReclaimCompleted: (...args: Parameters<typeof actual.consumeReclaimCompleted>) => applicationOwners.reclaim.consumeReclaimCompleted?.(...args) ?? actual.consumeReclaimCompleted(...args),
+        executeReclaimAction: (...args: Parameters<typeof actual.executeReclaimAction>) => applicationOwners.reclaim.executeReclaimAction?.(...args) ?? actual.executeReclaimAction(...args),
         keptTeardownResources: (...args: Parameters<typeof actual.keptTeardownResources>) => applicationOwners.reclaim.keptTeardownResources?.(...args) ?? actual.keptTeardownResources(...args),
         planReset: (...args: Parameters<typeof actual.planReset>) => applicationOwners.reclaim.planReset?.(...args) ?? actual.planReset(...args),
         planTeardown: (...args: Parameters<typeof actual.planTeardown>) => applicationOwners.reclaim.planTeardown?.(...args) ?? actual.planTeardown(...args),
-        projectRecoveredResetActionTargets: (...args: Parameters<typeof actual.projectRecoveredResetActionTargets>) => applicationOwners.reclaim.projectRecoveredResetActionTargets?.(...args) ?? actual.projectRecoveredResetActionTargets(...args),
-        projectResetActionTargets: (...args: Parameters<typeof actual.projectResetActionTargets>) => applicationOwners.reclaim.projectResetActionTargets?.(...args) ?? actual.projectResetActionTargets(...args),
-        projectTeardownActionTargets: (...args: Parameters<typeof actual.projectTeardownActionTargets>) => applicationOwners.reclaim.projectTeardownActionTargets?.(...args) ?? actual.projectTeardownActionTargets(...args),
         reconcileReclaimAction: (...args: Parameters<typeof actual.reconcileReclaimAction>) => applicationOwners.reclaim.reconcileReclaimAction?.(...args) ?? actual.reconcileReclaimAction(...args),
-        redeemReclaimAction: (...args: Parameters<typeof actual.redeemReclaimAction>) => applicationOwners.reclaim.redeemReclaimAction?.(...args) ?? actual.redeemReclaimAction(...args),
     }
 })
 import {
@@ -263,8 +259,8 @@ describe('destructive application contracts', () => {
                 kind: 'preview', digest: '7'.repeat(64), coordinationRevision: 8,
                 targets: [], noop: true, consent: {},
             } as never : {
-                kind: 'complete', step: null, actionAuthority: null, remaining: 0,
-                noop: true, digest: '7'.repeat(64), continuation: null,
+                kind: 'complete', action: null, remaining: 0,
+                noop: true, digest: '7'.repeat(64), envelope: {},
             } as never
         }
         const reserve = vi.fn()
@@ -323,8 +319,8 @@ describe('destructive application contracts', () => {
                 kind: 'preview', digest: '7'.repeat(64), coordinationRevision: failedRecord.revision,
                 targets: [], noop: true, consent: {},
             } as never : {
-                kind: 'complete', step: null, actionAuthority: null, remaining: 0,
-                noop: true, digest: '7'.repeat(64), continuation: null,
+                kind: 'complete', action: null, remaining: 0,
+                noop: true, digest: '7'.repeat(64), envelope: {},
             } as never
         }
         const reserve = vi.fn()
@@ -377,8 +373,8 @@ describe('destructive application contracts', () => {
                     if (changed.kind !== 'complete') throw new Error('coordination race fixture was not published')
                 }
                 return {
-                    kind: 'complete', step: null, actionAuthority: null, remaining: 0,
-                    noop: true, digest: '7'.repeat(64), continuation: null,
+                    kind: 'complete', action: null, remaining: 0,
+                    noop: true, digest: '7'.repeat(64), envelope: {},
                 } as never
             }
             const execute = vi.fn()
@@ -407,11 +403,10 @@ describe('destructive application contracts', () => {
                 targets: Object.freeze([Object.freeze({ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' })]),
                 noop: false, consent,
             }) as never : Object.freeze({
-                kind: 'complete', step: null, actionAuthority: null, remaining: 0,
-                noop: false, digest: '3'.repeat(64), continuation: null,
+                kind: 'complete', action: null, remaining: 0,
+                noop: false, digest: '3'.repeat(64), envelope: {},
             }) as never
         }
-        applicationOwners.reclaim.projectResetActionTargets = () => Object.freeze({}) as never
         const request = Object.freeze({
             purpose: 'reset', stackId: context.stackId, holderId: context.holderId, requesterId: context.holderId,
             configSha256: '1'.repeat(64), planDigest: '3'.repeat(64), operationBasis: '2'.repeat(64),
@@ -492,7 +487,6 @@ describe('destructive application contracts', () => {
             noop: false, consent: Object.freeze({}),
         }) as never)
         applicationOwners.reclaim.planReset = planReset
-        applicationOwners.reclaim.projectResetActionTargets = () => Object.freeze({}) as never
         applicationOwners.lifecycle.planResetLifecycle = () => ({
             kind: 'refusal', diagnostics: [{ severity: 'error', code: 'CLAIM_CO_TENANT', message: 'co-tenant', target: context.stackId }],
         }) as never
@@ -520,14 +514,13 @@ describe('destructive application contracts', () => {
         applicationOwners.reclaim.planTeardown = async () => {
             teardownCalls += 1
             return teardownCalls === 1 ? {
-                kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, continuation: null,
+                kind: 'complete', action: {}, remaining: 1, noop: false,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, envelope: {},
             } as never : {
-                kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: {},
+                kind: 'complete', action: {}, remaining: 1, noop: false,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
             } as never
         }
-        applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
         // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
         applicationOwners.reclaim.keptTeardownResources = () => []
         const recoveredRequest = persistedDrainRequest(context, failedRecord)
@@ -541,14 +534,14 @@ describe('destructive application contracts', () => {
             events.push('attempt')
             return { kind: 'complete', authority: {} } as never
         }
-        applicationOwners.reclaim.redeemReclaimAction = async () => {
-            events.push('redeem')
-            return { step: { id: 'reclaim', executionFence: executionFence('recovered-down') }, authority: {} } as never
+        applicationOwners.reclaim.executeReclaimAction = async ({ execute }) => {
+            events.push('reclaim-action')
+            await execute({ id: 'reclaim' } as never)
+            return { kind: 'executed', executed: { receipt: {}, fence: executionFence('recovered-down') } } as never
         }
         applicationOwners.reclaim.reconcileReclaimAction = () => ({
             kind: 'complete', continuation: null, authority: {},
         }) as never
-        applicationOwners.reclaim.consumeReclaimCompleted = () => ({}) as never
         applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
         applicationOwners.claims.finalizeDrainOutcome = () => true
         const result = await runDown({ configPath }, {
@@ -563,7 +556,7 @@ describe('destructive application contracts', () => {
         expect(planDown).toHaveBeenCalledWith(expect.objectContaining({
             operationGeneration: '3'.repeat(64), runtimeStopValidForMs: 31_000, reclaimValidForMs: 47_000,
         }))
-        expect(events).toEqual(['attempt', 'redeem', 'execute'])
+        expect(events).toEqual(['attempt', 'reclaim-action', 'execute'])
         expect(result).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
     })
 
@@ -575,10 +568,9 @@ describe('destructive application contracts', () => {
         const recoveredRequest = persistedDrainRequest(context, failedRecord)
         const request = { ...recoveredRequest, expectedCoordinationRevision: failedRecord.revision }
         applicationOwners.reclaim.planTeardown = async () => ({
-            kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
-            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, continuation: null,
+            kind: 'complete', action: {}, remaining: 1, noop: false,
+            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, envelope: {},
         }) as never
-        applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
         applicationOwners.lifecycle.planDown = () => ({
             kind: 'drain', plan: { diagnostics: [] }, request: { ...request, operationBasis: '8'.repeat(64) },
         }) as never
@@ -626,14 +618,13 @@ describe('destructive application contracts', () => {
         applicationOwners.reclaim.planTeardown = async (input) => {
             plans.push(input as never)
             return plans.length === 1 ? {
-                kind: 'complete', steps: [], actionAuthority: {}, remaining: 2, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, continuation: null,
+                kind: 'complete', action: {}, remaining: 2, noop: false,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, envelope: {},
             } as never : {
-                kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: {},
+                kind: 'complete', action: {}, remaining: 1, noop: false,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
             } as never
         }
-        applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
         // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
         applicationOwners.reclaim.keptTeardownResources = () => []
         const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
@@ -643,7 +634,7 @@ describe('destructive application contracts', () => {
         }) as never
         applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.reclaim.redeemReclaimAction = async () => ({ step: { id: 'reclaim', executionFence: executionFence('reclaim-loop') }, authority: {} }) as never
+        applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('reclaim-loop') } }) as never
         const continuation = Object.freeze({})
         let reconciliations = 0
         applicationOwners.reclaim.reconcileReclaimAction = ({ discovery }) => {
@@ -651,7 +642,6 @@ describe('destructive application contracts', () => {
             reconciliations += 1
             return { kind: 'complete', continuation: reconciliations === 1 ? continuation : null, authority: {} } as never
         }
-        applicationOwners.reclaim.consumeReclaimCompleted = () => ({}) as never
         applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
         applicationOwners.claims.finalizeDrainOutcome = () => true
 
@@ -681,10 +671,9 @@ describe('destructive application contracts', () => {
         const { configPath, context, instance } = await destructiveFixture()
         const failedRecord = persistFailedDestructiveRecord(context, 'down')
         applicationOwners.reclaim.planTeardown = async () => ({
-            kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
-            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: null,
+            kind: 'complete', action: {}, remaining: 1, noop: false,
+            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
         }) as never
-        applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
         // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
         applicationOwners.reclaim.keptTeardownResources = () => []
         const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
@@ -694,9 +683,8 @@ describe('destructive application contracts', () => {
         }) as never
         applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.reclaim.redeemReclaimAction = async () => ({ step: { id: 'reclaim', executionFence: executionFence('never-started') }, authority: {} }) as never
+        applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('never-started') } }) as never
         applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, authority: {} }) as never
-        applicationOwners.reclaim.consumeReclaimCompleted = () => ({}) as never
         applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
         applicationOwners.claims.finalizeDrainOutcome = () => true
         const discovery = Object.freeze({ down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord: null }) })
@@ -720,10 +708,9 @@ describe('destructive application contracts', () => {
             const { configPath, context, instance } = await destructiveFixture()
             const failedRecord = persistFailedDestructiveRecord(context, 'down')
             applicationOwners.reclaim.planTeardown = async () => ({
-                kind: 'complete', steps: [], actionAuthority: null, remaining: 0, noop: true,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: null,
+                kind: 'complete', action: null, remaining: 0, noop: true,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
             }) as never
-            applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
             const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
             applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
             applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
@@ -774,17 +761,14 @@ describe('destructive application contracts', () => {
             noop: false, consent: Object.freeze({}),
         })
         const recoveredPlan = Object.freeze({
-            kind: 'complete', step: { id: 'reclaim' }, actionAuthority: Object.freeze({}), remaining: 1,
-            noop: false, digest: '5'.repeat(64), continuation: Object.freeze({}),
+            kind: 'complete', action: Object.freeze({}), remaining: 1,
+            noop: false, digest: '5'.repeat(64), envelope: Object.freeze({}),
         })
         const planReset = vi.fn(async (_input: Parameters<typeof import('./reclaim.js').planReset>[0]) => {
             resetCalls += 1
             return (resetCalls === 1 ? operatorPreview : recoveredPlan) as never
         })
         applicationOwners.reclaim.planReset = planReset
-        applicationOwners.reclaim.projectResetActionTargets = () => ({}) as never
-        const projectRecovered = vi.fn(() => Object.freeze({}) as never)
-        applicationOwners.reclaim.projectRecoveredResetActionTargets = projectRecovered
         const recoveredRequest = persistedDrainRequest(context, failedRecord)
         const request = { ...recoveredRequest, expectedCoordinationRevision: failedRecord.revision }
         const planResetLifecycle = vi.fn(() => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never)
@@ -804,15 +788,15 @@ describe('destructive application contracts', () => {
             events.push('attempt')
             return { kind: 'complete', authority: {} } as never
         }
-        applicationOwners.reclaim.redeemReclaimAction = async () => {
-            events.push('redeem')
-            return { step: { id: 'reclaim', executionFence: executionFence('recovered-reset') }, authority: {} } as never
+        applicationOwners.reclaim.executeReclaimAction = async ({ execute }) => {
+            events.push('reclaim-action')
+            await execute({ id: 'reclaim' } as never)
+            return { kind: 'executed', executed: { receipt: {}, fence: executionFence('recovered-reset') } } as never
         }
         applicationOwners.reclaim.reconcileReclaimAction = () => {
             events.push('reconcile')
             return { kind: 'complete', continuation: null, authority: {} } as never
         }
-        applicationOwners.reclaim.consumeReclaimCompleted = () => ({}) as never
         applicationOwners.claims.prepareDrainOutcomePublication = async () => {
             events.push('publish')
             return { kind: 'complete', value: {} } as never
@@ -841,13 +825,13 @@ describe('destructive application contracts', () => {
             operatorApproval: operatorPreview,
         }))
         expect(planReset.mock.calls[1]?.[0].operatorApproval).toBe(operatorPreview)
-        expect(projectRecovered).toHaveBeenCalledOnce()
-        expect(projectRecovered).toHaveBeenCalledWith(recoveredPlan)
+        // The drain commits the recovered plan's remaining targets, not the operator preview's.
+        expect(planResetLifecycle).toHaveBeenCalledWith(expect.objectContaining({ reclaim: recoveredPlan.envelope }))
         expect(recover).toHaveBeenCalledOnce()
         expect(recover).toHaveBeenCalledWith({ namespace: context.namespace, request: recoveredRequest })
         expect(discard).toHaveBeenCalledOnce()
         expect(discard).toHaveBeenCalledWith(recoveredAuthority)
-        expect(events).toEqual(['attempt', 'redeem', 'execute', 'reconcile', 'publish'])
+        expect(events).toEqual(['attempt', 'reclaim-action', 'execute', 'reconcile', 'publish'])
     })
 })
 afterEach(() => {

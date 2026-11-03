@@ -1654,8 +1654,11 @@ function planningRecordPrecedesAttempt(record: StateRecord, reservation: DrainRe
     const value = decodeCoordinationRecord(snapshot, reservation.stackId)
     if (value === undefined) return undefined
     if (value.drain == null) {
+        // A record from before the reservation plans only the first try of an action: once a try
+        // failed, a retry must be planned from the published failure, never from the original plan.
         return reservation.expectedCoordinationRevision === snapshot.revision
-            && reservation.coordinationRevision === snapshot.revision + 1 ? snapshot : undefined
+            && reservation.coordinationRevision === snapshot.revision + 1
+            && reservation.attempt.committedRevision === reservation.progressRevision + 1 ? snapshot : undefined
     }
     if (reservation.attempt.committedRevision !== snapshot.revision + 1) return undefined
     if (value.drain.attempt === null) {

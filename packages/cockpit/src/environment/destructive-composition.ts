@@ -26,22 +26,7 @@ import {
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
 } from './ports.js'
-import {
-    admitDockerSelection,
-    admitImageInspections,
-    admitNetworkInspections,
-    admitReclaimDiscovery,
-    admitVolumeInspections,
-    combineReclaimDiscoveries,
-    createDockerSelectionSteps,
-    createImageInspectionSteps,
-    createNetworkInspectionSteps,
-    createReclaimDiscoverySteps,
-    createVolumeInspectionSteps,
-    inspectionOverflow,
-    type ReclaimDiscoverySnapshot,
-    type ReclaimResourceKind,
-} from './reclaim.js'
+import { discoverReclaim, type ReclaimDiscovery } from './reclaim.js'
 import { readState } from './state.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycle-stage.js'
 import type { RuntimeMeasurementProbeAuthority } from './runtime.js'
@@ -58,33 +43,6 @@ export interface DestructiveCompositionInput {
 }
 
 type Executor = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-
-const MAX_CONCURRENT_RECLAIM_INSPECTIONS = 4
-
-function boundedExecutor(execute: Executor, concurrency: number): Executor {
-    let active = 0
-    const waiters: Array<() => void> = []
-    const acquire = async () => {
-        if (active < concurrency) {
-            active += 1
-            return
-        }
-        await new Promise<void>(resolveWaiter => waiters.push(resolveWaiter))
-    }
-    const release = () => {
-        const next = waiters.shift()
-        if (next) next()
-        else active -= 1
-    }
-    return async (step) => {
-        await acquire()
-        try {
-            return await execute(step)
-        } finally {
-            release()
-        }
-    }
-}
 
 type CapturedCompositionInput = Omit<DestructiveCompositionInput, 'env'> & {
     readonly env: Readonly<Record<string, string | undefined>>
@@ -166,25 +124,6 @@ function executionEnvironment(env: Readonly<Record<string, string | undefined>>)
     )
 }
 
-async function selectionAuthority(
-    input: CapturedCompositionInput,
-    executable: Awaited<ReturnType<typeof resolveDockerExecutable>> & { readonly state: 'available' },
-    cwd: string,
-    execute: Executor,
-): Promise<object | undefined> {
-    const steps = createDockerSelectionSteps({
-        executable: executable.value,
-        cwd,
-        env: executionEnvironment(input.env),
-        timeoutMs: input.timeoutMs,
-        context: input.dockerContext,
-        ...(input.env.DOCKER_HOST === undefined ? {} : { host: input.env.DOCKER_HOST }),
-    })
-    if (!steps) return undefined
-    const evidence = await Promise.all(steps.map(async (step) => ({ step, outcome: await execute(step) })))
-    return admitDockerSelection(steps, evidence)
-}
-
 export type DestructiveDaemonSelection =
     | Readonly<{ kind: 'complete'; dockerContext: string }>
     // Adapters whose load reports why no daemon was selected.
@@ -206,106 +145,34 @@ export async function selectDestructiveDaemon(
         : { kind: 'complete' as const, dockerContext: daemon.dockerContext }
 }
 
-async function inspectDiscovery(
-    discovery: ReclaimDiscoverySnapshot,
-    containerDiscovery: ReclaimDiscoverySnapshot,
-    kind: Exclude<ReclaimResourceKind, 'cache'>,
-    execute: Executor,
-): Promise<ReclaimDiscoverySnapshot | DestructiveObservationRefusal | undefined> {
-    if (kind !== 'image' && kind !== 'volume' && kind !== 'network') return discovery
-    const steps = kind === 'image'
-        ? createImageInspectionSteps(discovery)
-        : kind === 'volume'
-            ? createVolumeInspectionSteps(discovery)
-            : createNetworkInspectionSteps(discovery, containerDiscovery)
-    if (!steps) return undefined
-    const attempts = await Promise.allSettled(steps.map(async (step) => ({ step, outcome: await execute(step) })))
-    if (attempts.some(({ status }) => status === 'rejected')) return undefined
-    const evidence = attempts.map((attempt) => (attempt as PromiseFulfilledResult<Readonly<{
-        step: ExecutionStep
-        outcome: ExecuteProbeOutcome
-    }>>).value)
-    const overflow = evidence.map(({ step, outcome }) => inspectionOverflow(step, outcome)).find((message) => message !== undefined)
-    if (overflow !== undefined) {
-        return forwardedRefusal([{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, message: overflow, target: kind }])
-    }
-    return kind === 'image'
-        ? admitImageInspections(discovery, evidence)
-        : kind === 'volume'
-            ? admitVolumeInspections(discovery, evidence)
-            : admitNetworkInspections(discovery, containerDiscovery, evidence)
-}
-
-type ReclaimObservation = Awaited<ReturnType<typeof discoverReclaimRound>>
-
-// Discovery lists resources and then inspects what it listed. A listed resource can vanish in
-// between, as Compose replacing one of this stack's containers does, and the round then fails
-// closed on an id that no longer exists; inside a reserved drain that left the attempt for repair.
-// One more complete round, authenticated from scratch, covers that race without admitting partial
-// evidence.
 async function observeReclaim(
     input: CapturedCompositionInput,
     context: DestructiveRunContext,
     cwd: string,
     execute: Executor,
-): Promise<ReclaimObservation> {
-    return await discoverReclaimRound(input, context, cwd, execute)
-        ?? await discoverReclaimRound(input, context, cwd, execute)
-}
-
-async function discoverReclaimRound(
-    input: CapturedCompositionInput,
-    context: DestructiveRunContext,
-    cwd: string,
-    execute: Executor,
 ): Promise<Readonly<{
-    discovery: ReclaimDiscoverySnapshot
+    discovery: ReclaimDiscovery
     runtimeExecutable: Awaited<ReturnType<typeof resolveDockerExecutable>> & { readonly state: 'available' }
     pathExecutable: Awaited<ReturnType<typeof resolvePathRemovalExecutable>> & { readonly state: 'available' }
-    selectionAuthority: object
 }> | DestructiveObservationRefusal | undefined> {
     const [runtimeExecutable, pathExecutable] = await Promise.all([
         resolveDockerExecutable(input.env),
         resolvePathRemovalExecutable(),
     ])
     if (runtimeExecutable.state !== 'available' || pathExecutable.state !== 'available') return undefined
-    const plannedSelection = await selectionAuthority(input, runtimeExecutable, cwd, execute)
-    if (!plannedSelection) return undefined
-    const steps = createReclaimDiscoverySteps({
+    const discovery = await discoverReclaim({
         executable: runtimeExecutable.value,
         cwd,
         env: executionEnvironment(input.env),
         stackId: context.stackId,
         cockpitId: context.cockpitId,
         timeoutMs: input.timeoutMs,
-        selectionAuthority: plannedSelection,
-    })
-    if (!steps) return undefined
-    const outcomes = await Promise.all(steps.map(async (step) => ({ step, outcome: await execute(step) })))
-    const currentSelection = await selectionAuthority(input, runtimeExecutable, cwd, execute)
-    if (!currentSelection) return undefined
-    const kinds = ['container', 'network', 'volume', 'image', 'build-cache'] as const
-    const raw = kinds.map((kind) => {
-        const evidence = outcomes.find(({ step }) => step.labels.resourceKind === kind)
-        return evidence && admitReclaimDiscovery(evidence.step, evidence.outcome, kind, currentSelection)
-    })
-    if (raw.some((value) => value === undefined)) return undefined
-    const container = raw[0]!
-    // A discovery may legitimately contain thousands of resources. Each inspection launches
-    // a Docker client, so one shared bound must cover every resource kind rather than letting
-    // each kind independently saturate the daemon.
-    const inspect = boundedExecutor(execute, MAX_CONCURRENT_RECLAIM_INSPECTIONS)
-    const inspected = await Promise.all(raw.map((discovery, index) => (
-        inspectDiscovery(discovery!, container, kinds[index]!, inspect)
-    )))
-    const refused = inspected.find((value): value is DestructiveObservationRefusal => value !== undefined && 'diagnostics' in value)
-    if (refused) return refused
-    if (inspected.some((value) => value === undefined)) return undefined
-    const discovery = combineReclaimDiscoveries(inspected as readonly ReclaimDiscoverySnapshot[])
+        context: input.dockerContext,
+        ...(input.env.DOCKER_HOST === undefined ? {} : { host: input.env.DOCKER_HOST }),
+    }, execute)
     if (!discovery) return undefined
-    const actionSelection = await selectionAuthority(input, runtimeExecutable, cwd, execute)
-    if (!actionSelection) return undefined
-    return { discovery, runtimeExecutable, pathExecutable, selectionAuthority: actionSelection }
+    if ('diagnostics' in discovery) return forwardedRefusal(discovery.diagnostics)
+    return { discovery, runtimeExecutable, pathExecutable }
 }
 
 type DestructiveAdapters = DownCommandAdapters & ResetCommandAdapters
@@ -375,7 +242,6 @@ export function createDestructiveCommandAdapters(
             cwd,
             env: executionEnvironment(input.env),
             timeoutMs: input.timeoutMs,
-            selectionAuthority: reclaim.selectionAuthority,
         }
         return {
             instance: context.instance,

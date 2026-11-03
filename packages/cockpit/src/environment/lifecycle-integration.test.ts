@@ -30,24 +30,11 @@ import {
 } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import {
-    admitDockerSelection,
-    admitImageInspections,
-    admitReclaimDiscovery,
-    admitVolumeInspections,
-    combineReclaimDiscoveries,
-    createDockerSelectionSteps,
-    createImageInspectionSteps,
-    createReclaimDiscoverySteps,
-    createVolumeInspectionSteps,
-    createNetworkInspectionSteps,
-    admitNetworkInspections,
+    discoverReclaim,
     planReset,
     planTeardown,
-    projectResetActionTargets,
-    projectTeardownActionTargets,
-    type ReclaimDiscoverySnapshot,
     type ReclaimResource,
-    type ReclaimTargetProjection,
+    type ReclaimTargetEnvelope,
 } from './reclaim.js'
 import {
     createRuntimeAdapter,
@@ -191,15 +178,6 @@ function dockerRow(resource: ReclaimResource) {
     }
 }
 
-async function issueSelection(root: string, executable: ReturnType<typeof resolvedExecutable>) {
-    const steps = createDockerSelectionSteps({ executable, cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000, context: dockerContext })
-    if (!steps) throw new Error('Docker selection plan unavailable')
-    const evidence = await Promise.all(steps.map(async (step) => ({ step, outcome: await executeProbe(step) })))
-    const authority = admitDockerSelection(steps, evidence)
-    if (!authority) throw new Error('Docker selection evidence unavailable')
-    return authority
-}
-
 function resolvedExecutable(path: string, bytes: Buffer) {
     return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'verified-path' as const }
 }
@@ -225,67 +203,11 @@ async function issueReclaimDiscovery(root: string, resources: readonly ReclaimRe
     await writeFile(runtimePath, runtimeBytes, { mode: 0o700 })
     await chmod(runtimePath, 0o700)
     const executable = resolvedExecutable(runtimePath, runtimeBytes)
-    const selection = await issueSelection(root, executable)
-    const steps = createReclaimDiscoverySteps({
-        executable,
-        cwd: root,
-        env: { PATH: '/usr/bin:/bin' },
-        stackId,
-        cockpitId,
-        timeoutMs: 5_000,
-        selectionAuthority: selection,
-    })
-    if (!steps) throw new Error('reclaim discovery plan unavailable')
-    const observations = await Promise.all(steps.map(async (step) => ({
-        step,
-        outcome: await executeProbe(step),
-    })))
-    const observedSelection = await issueSelection(root, executable)
-    const snapshots: ReclaimDiscoverySnapshot[] = []
-    const rawSnapshots = new Map(observations.map(({ step, outcome }) => {
-        const kind = step.labels.resourceKind as typeof kinds[number]
-        const snapshot = admitReclaimDiscovery(step, outcome, kind, observedSelection)
-        if (!snapshot) throw new Error(`${kind} discovery evidence unavailable`)
-        return [kind, snapshot] as const
-    }))
-    const containerSnapshot = rawSnapshots.get('container')
-    if (!containerSnapshot) throw new Error('container discovery evidence unavailable')
-    for (const kind of kinds) {
-        let snapshot = rawSnapshots.get(kind)
-        if (!snapshot) throw new Error(`${kind} discovery evidence unavailable`)
-        if (kind === 'image') {
-            const inspections = createImageInspectionSteps(snapshot)
-            if (!inspections) throw new Error('image inspection plan unavailable')
-            const inspected = admitImageInspections(snapshot, await Promise.all(inspections.map(async (inspection) => ({
-                step: inspection, outcome: await executeProbe(inspection),
-            }))))
-            if (!inspected) throw new Error('image inspection evidence unavailable')
-            snapshot = inspected
-        }
-        if (kind === 'volume') {
-            const inspections = createVolumeInspectionSteps(snapshot)
-            if (!inspections) throw new Error('volume inspection plan unavailable')
-            const inspected = admitVolumeInspections(snapshot, await Promise.all(inspections.map(async (inspection) => ({
-                step: inspection, outcome: await executeProbe(inspection),
-            }))))
-            if (!inspected) throw new Error('volume inspection evidence unavailable')
-            snapshot = inspected
-        }
-        if (kind === 'network') {
-            const inspections = createNetworkInspectionSteps(snapshot, containerSnapshot)
-            if (!inspections) throw new Error('network inspection plan unavailable')
-            const inspected = admitNetworkInspections(snapshot, containerSnapshot, await Promise.all(inspections.map(async (inspection) => ({
-                step: inspection, outcome: await executeProbe(inspection),
-            }))))
-            if (!inspected) throw new Error('network inspection evidence unavailable')
-            snapshot = inspected
-        }
-        if (!snapshot) throw new Error(`${kind} inspection evidence unavailable`)
-        snapshots.push(snapshot)
-    }
-    const discovery = combineReclaimDiscoveries(snapshots)
-    if (!discovery) throw new Error('combined reclaim discovery unavailable')
-    return { discovery, executable, selection: await issueSelection(root, executable) }
+    const discovery = await discoverReclaim({
+        executable, cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000, context: dockerContext,
+    }, executeProbe)
+    if (!discovery || 'diagnostics' in discovery) throw new Error('reclaim discovery unavailable')
+    return { discovery, executable }
 }
 
 async function coordinationSnapshot(namespace: StateNamespace) {
@@ -314,7 +236,7 @@ async function issueUpInput(namespace: StateNamespace, topology: RuntimeTopology
     }
 }
 
-async function issueTeardownProjection(root: string, record: StateRecord): Promise<ReclaimTargetProjection> {
+async function issueTeardownProjection(root: string, record: StateRecord): Promise<ReclaimTargetEnvelope> {
     const cacheId = 'abcdefghijklmnopqrstuvwxy'
     const observed = await issueReclaimDiscovery(root, [
         { id: cacheId, name: 'synthetic-build-cache', kind: 'build-cache', labels: {}, referenced: false, bytes: 128 },
@@ -323,15 +245,14 @@ async function issueTeardownProjection(root: string, record: StateRecord): Promi
     const preview = await planTeardown({
         stackId, cockpitId, configSha256, coordinationRecord: record,
         declaredCacheIds: [cacheId], discovery: observed.discovery,
-        executable: observed.executable, selectionAuthority: observed.selection,
+        executable: observed.executable,
         cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 30_000,
     })
-    const projection = projectTeardownActionTargets(preview)
-    if (!projection) throw new Error('teardown target projection unavailable')
-    return projection
+    if (preview.kind !== 'complete') throw new Error('teardown target projection unavailable')
+    return preview.envelope
 }
 
-async function issueResetProjection(root: string, record: StateRecord): Promise<ReclaimTargetProjection> {
+async function issueResetProjection(root: string, record: StateRecord): Promise<ReclaimTargetEnvelope> {
     const volume = (key: string) => ({ ...ownershipLabels, 'com.docker.compose.project': composeProject, 'com.docker.compose.volume': key })
     const volumes: ReclaimResource[] = [
         { id: 'volume-1', name: `${composeProject}_alpha-data`, kind: 'volume', labels: volume('alpha-data'), referenced: false, bytes: 128, dataBearing: true, generation: sha('alpha generation') },
@@ -345,13 +266,11 @@ async function issueResetProjection(root: string, record: StateRecord): Promise<
         expectedCoordinationRevision: record.revision, requesterHolderId: holderId,
         declaredCacheIds: [], resettableVolumes: ['alpha-data', 'zeta-data'], composeProject, generatedHostPaths: [],
         discovery: observed.discovery, runtimeExecutable: observed.executable,
-        selectionAuthority: observed.selection,
         pathExecutable: { canonicalPath: removalPath, invocationPath: '/bin/rm', sha256: sha(removalBytes), executionMode: 'verified-path' },
         cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 30_000,
     })
-    const projection = preview.kind === 'preview' ? projectResetActionTargets(preview) : undefined
-    if (!projection) throw new Error('reset target projection unavailable')
-    return projection
+    if (preview.kind !== 'preview') throw new Error('reset target projection unavailable')
+    return preview.envelope
 }
 
 async function issueDrainInputs(namespace: StateNamespace, topology: RuntimeTopologyEvidence) {
@@ -388,30 +307,23 @@ describe('lifecycle owner integration', () => {
         expect(after.bytes.equals(before.bytes)).toBe(true)
     })
 
-    it('independently refuses copied and replayed teardown and reset target projections', async () => {
+    it('drains exactly the targets the reclaim owner committed, and refuses those committed for the other verb', async () => {
         for (const verb of ['down', 'reset'] as const) {
             const root = await temporaryRoot(`cockpit-lifecycle-integration-${verb}-authority-`)
             const namespace = await stateNamespace(root)
             const topology = await issueRuntimeTopology(root)
             await issuePortProjection(namespace)
             const { record } = await coordinationSnapshot(namespace)
-            const issueReclaim = () => verb === 'down'
-                ? issueTeardownProjection(root, record)
-                : issueResetProjection(root, record)
             const plan = verb === 'down' ? planDown : planResetLifecycle
 
-            const consumed = await issueReclaim()
-            const acceptedInputs = await issueDrainInputs(namespace, topology)
-            expect(plan({ ...acceptedInputs, reclaim: consumed, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 }))
-                .toMatchObject({ kind: 'drain' })
+            const committed = verb === 'down' ? await issueTeardownProjection(root, record) : await issueResetProjection(root, record)
+            const planned = plan({ ...await issueDrainInputs(namespace, topology), reclaim: committed, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 })
+            expect(planned).toMatchObject({ kind: 'drain', request: { planDigest: committed.planDigest } })
+            if (planned.kind === 'drain') expect(planned.request.actions.filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId))
+                .toEqual(committed.commitments.map(({ targetId }) => targetId))
 
-            const replayInputs = await issueDrainInputs(namespace, topology)
-            expect(plan({ ...replayInputs, reclaim: consumed, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 }))
-                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-
-            const authentic = await issueReclaim()
-            const copyInputs = await issueDrainInputs(namespace, topology)
-            expect(plan({ ...copyInputs, reclaim: { ...authentic } as never, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 }))
+            const other = verb === 'down' ? await issueResetProjection(root, record) : await issueTeardownProjection(root, record)
+            expect(plan({ ...await issueDrainInputs(namespace, topology), reclaim: other, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 }))
                 .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         }
     })

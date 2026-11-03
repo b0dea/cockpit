@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
 import {
@@ -11,22 +11,10 @@ import {
     recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt, settleRuntimeDrainSuccess,
 } from './claims.js'
 import {
-    admitReclaimDiscovery,
-    combineReclaimDiscoveries,
-    createDockerSelectionSteps,
-    admitDockerSelection,
-    createReclaimDiscoverySteps,
-    createImageInspectionSteps,
-    admitImageInspections,
-    createVolumeInspectionSteps,
-    admitVolumeInspections,
-    createNetworkInspectionSteps,
-    admitNetworkInspections,
+    discoverReclaim,
+    executeReclaimAction,
     planTeardown,
-    projectTeardownActionTargets,
-    consumeReclaimTargetProjection,
-    redeemTeardownAction,
-    type ReclaimDiscoverySnapshot,
+    type ReclaimDiscovery,
     type ReclaimResource,
 } from './reclaim.js'
 import { readState, selectStateRoot, transactState, type StateRecord } from './state.js'
@@ -59,8 +47,9 @@ const coordinationRecord = (root: string): StateRecord => {
 const resource = (overrides: Partial<ReclaimResource>): ReclaimResource => ({
     id: 'container-1', name: 'container-1', kind: 'container', labels, referenced: false, bytes: 10, ...overrides,
 })
-const discovery = (resources: readonly ReclaimResource[]): ReclaimDiscoverySnapshot => ({
+const discovery = (resources: readonly ReclaimResource[]): ReclaimDiscovery => ({
     observedAt: '2026-09-08T00:00:01.000Z', producer: 'runtime-resource-discovery', resources,
+    startedAt: '2026-09-08T00:00:00.000Z', stackId, selection: { context: dockerContext, endpoint: dockerEndpoint },
 })
 const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: ReclaimResource) => kind === 'build-cache'
     ? { ID: id, Reclaimable: !referenced, Size: bytes === null ? null : String(bytes) }
@@ -120,86 +109,10 @@ const authenticatedInput = async (
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
     const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path' as const }
-    const probes = createDockerSelectionSteps({ executable: docker,
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000, context: dockerContext,
-    })
-    if (probes === undefined) throw new Error('selection probes unavailable')
-    const selectionAuthority = admitDockerSelection(probes, await Promise.all(probes.map(async (step) => ({ step, outcome: await executeProbe(step) }))))
-    if (selectionAuthority === undefined) throw new Error('selection evidence rejected')
-    const steps = createReclaimDiscoverySteps({ executable: docker,
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000,
-        selectionAuthority,
-    })
-    if (steps === undefined) throw new Error('discovery plan unavailable')
-    const observations = await Promise.all([...groups.keys()].map(async (kind) => {
-        const step = steps.find((candidate) => candidate.labels.resourceKind === kind)
-        if (step === undefined) throw new Error('discovery step unavailable')
-        return { kind, step, outcome: await executeProbe(step) }
-    }))
-    const observationProbes = createDockerSelectionSteps({ executable: docker,
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000, context: dockerContext,
-    })
-    if (observationProbes === undefined) throw new Error('selection observation unavailable')
-    const observedSelection = admitDockerSelection(observationProbes, await Promise.all(observationProbes.map(async (step) => ({ step, outcome: await executeProbe(step) }))))
-    if (observedSelection === undefined) throw new Error('selection observation rejected')
-    const rawSnapshots = observations.map(({ kind, step, outcome }): ReclaimDiscoverySnapshot => {
-        const observed = admitReclaimDiscovery(step, outcome, kind, observedSelection)
-        if (observed === undefined) throw new Error('discovery evidence rejected')
-        return observed
-    })
-    const containerIndex = observations.findIndex(({ kind }) => kind === 'container')
-    const containerSnapshot = rawSnapshots[containerIndex]
-    if (containerSnapshot === undefined) throw new Error('container discovery evidence unavailable')
-    const snapshots = await Promise.all(rawSnapshots.map(async (observed, index): Promise<ReclaimDiscoverySnapshot> => {
-        const kind = observations[index]!.kind
-        if (kind === 'image') {
-            const inspections = createImageInspectionSteps(observed)
-            if (inspections === undefined) throw new Error('image inspection plan unavailable')
-            const evidence = await Promise.all(inspections.map(async (inspection) => ({
-                step: inspection, outcome: await executeProbe(inspection),
-            })))
-            if (evidence[0] !== undefined) {
-                const [command, ...arguments_] = evidence[0].step.argv
-                const brokenArgv: [string, ...string[]] = [command, ...arguments_.slice(0, -1), 'replacement-image']
-                const broken = { ...evidence[0].step, argv: brokenArgv }
-                expect(admitImageInspections(observed, [{ step: broken, outcome: evidence[0].outcome }, ...evidence.slice(1)])).toBeUndefined()
-            }
-            const inspected = admitImageInspections(observed, evidence)
-            if (inspected === undefined) throw new Error('image inspection evidence rejected')
-            return inspected
-        }
-        if (kind === 'volume') {
-            const inspections = createVolumeInspectionSteps(observed)
-            if (inspections === undefined) throw new Error('volume inspection plan unavailable')
-            const evidence = await Promise.all(inspections.map(async (inspection) => ({ step: inspection, outcome: await executeProbe(inspection) })))
-            if (evidence[0] !== undefined) {
-                const [command, ...arguments_] = evidence[0].step.argv
-                const broken = { ...evidence[0].step, argv: [command, ...arguments_.slice(0, -1), 'replacement-volume'] as [string, ...string[]] }
-                expect(admitVolumeInspections(observed, [{ step: broken, outcome: evidence[0].outcome }, ...evidence.slice(1)])).toBeUndefined()
-            }
-            const inspected = admitVolumeInspections(observed, evidence)
-            if (inspected === undefined) throw new Error('volume inspection evidence rejected')
-            return inspected
-        }
-        if (kind === 'network') {
-            const inspections = createNetworkInspectionSteps(observed, containerSnapshot)
-            if (inspections === undefined) throw new Error('network inspection plan unavailable')
-            const inspected = admitNetworkInspections(observed, containerSnapshot, await Promise.all(inspections.map(async (inspection) => ({
-                step: inspection, outcome: await executeProbe(inspection),
-            }))))
-            if (inspected === undefined) throw new Error('network inspection evidence rejected')
-            return inspected
-        }
-        return observed
-    }))
-    const combined = combineReclaimDiscoveries(snapshots)
-    if (combined === undefined) throw new Error('discovery evidence could not be combined')
-    const actionProbes = createDockerSelectionSteps({ executable: docker,
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000, context: dockerContext,
-    })
-    if (actionProbes === undefined) throw new Error('action selection probes unavailable')
-    const actionSelection = admitDockerSelection(actionProbes, await Promise.all(actionProbes.map(async (step) => ({ step, outcome: await executeProbe(step) }))))
-    if (actionSelection === undefined) throw new Error('action selection evidence rejected')
+    const combined = await discoverReclaim({
+        executable: docker, cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000, context: dockerContext,
+    }, executeProbe)
+    if (combined === undefined || 'diagnostics' in combined) throw new Error('discovery unavailable')
     const stateRoot = join(root, 'state')
     const cockpitRoot = join(stateRoot, 'cockpits', cockpitId.replaceAll(':', '_'))
     const path = join(cockpitRoot, 'records', 'coordination', `${stackId.replace(':', '_')}.json`)
@@ -208,7 +121,7 @@ const authenticatedInput = async (
     const coordinationAddress = { path, stateRoot, cockpitRoot, kind: 'coordination' as const, cockpitId, subjectId: stackId }
     return { root, value: {
         ...input(combined.resources, root), discovery: combined, executable: docker, cwd: root,
-        env: { PATH: '/usr/bin:/bin' }, coordinationAddress, selectionAuthority: actionSelection,
+        env: { PATH: '/usr/bin:/bin' }, coordinationAddress,
     } }
 }
 
@@ -224,21 +137,7 @@ describe('teardown replay', () => {
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
     })
 
-    it('refuses accessor-backed authority inputs before evaluating them', async () => {
-        const value = input([])
-        let reads = 0
-        Object.defineProperty(value, 'discovery', {
-            enumerable: true,
-            get: () => {
-                reads += 1
-                return discovery([])
-            },
-        })
-        expect(await planTeardown(value)).toEqual(expect.objectContaining({ kind: 'refusal' }))
-        expect(reads).toBe(0)
-    })
-
-    it('is byte-identical across discovery order and exposes only an opaque action authority', async () => {
+    it('is byte-identical across discovery order and acts only on the accepted snapshot', async () => {
         const resources = [
             resource({ id: 'network-1', name: 'network-1', kind: 'network', bytes: 30 }),
             resource({ id: 'container-1', bytes: 10 }),
@@ -248,32 +147,29 @@ describe('teardown replay', () => {
         try {
             const first = await planTeardown(firstInput.value)
             const second = await planTeardown(secondInput.value)
-            expect(Buffer.from(JSON.stringify(first))).toEqual(Buffer.from(JSON.stringify(second)))
-            expect(first).toEqual(expect.objectContaining({ kind: 'complete', remaining: 2, steps: [] }))
-            if (first.kind !== 'complete') return
+            if (first.kind !== 'complete' || second.kind !== 'complete') throw new Error(JSON.stringify([first, second]))
+            // The consent carries when its discovery finished; everything planned from the resources is identical.
+            const planned = (plan: typeof first) => JSON.stringify({ ...plan, consent: plan.consent?.digest })
+            expect(Buffer.from(planned(first))).toEqual(Buffer.from(planned(second)))
+            expect(first).toEqual(expect.objectContaining({ kind: 'complete', remaining: 2, action: null }))
+            // The preview's own discovery is the state the consent was given on, not the state now.
             expect(await planTeardown({
-                ...secondInput.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
-            })).toEqual(expect.objectContaining({ kind: 'refusal' }))
+                ...firstInput.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
+            })).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })] }))
             const fresh = await authenticatedInput(resources, firstInput.root)
             try {
-                // A receipt the planner never issued is refused even beside valid consent, rather
-                // than ignored; the same request without it is the control that proceeds.
+                const action = await planTeardown({ ...fresh.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined })
+                expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1 }))
+                if (action.kind !== 'complete') throw new Error(JSON.stringify(action))
+                expect(action.action?.step?.argv.slice(3)).toEqual(['container', 'rm', '--force', '--', 'container-1'])
+                // A continuation of a drain no attempt ran is refused rather than ignored; the same
+                // request without it is the control that proceeded.
                 expect(await planTeardown({
                     ...fresh.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
-                    continuation: Object.freeze({ kind: 'teardown-continuation', digest: first.discoveryDigest }),
+                    continuation: action.action!.continuation,
                 })).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                    code: 'RECLAIM_ACCOUNTING_MISMATCH', message: 'teardown continuation receipt is invalid or already consumed',
+                    code: 'RECLAIM_ACCOUNTING_MISMATCH', message: 'teardown continuation no longer matches the remaining consented resources',
                 })] })
-                const action = await planTeardown({ ...fresh.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined })
-                expect(action).toEqual(expect.objectContaining({
-                    kind: 'complete', actionAuthority: { kind: 'teardown-action-authority' }, continuation: null, remaining: 1, steps: [],
-                }))
-                if (action.kind !== 'complete') throw new Error(JSON.stringify(action))
-                expect(JSON.stringify(action)).not.toContain('container rm')
-                const recreated = await authenticatedInput(resources, firstInput.root)
-                expect(await planTeardown({
-                    ...recreated.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
-                })).toEqual(expect.objectContaining({ kind: 'refusal' }))
             } finally { await rm(fresh.root, { recursive: true, force: true }) }
         } finally { await rm(firstInput.root, { recursive: true, force: true }); await rm(secondInput.root, { recursive: true, force: true }) }
     })
@@ -284,7 +180,7 @@ describe('teardown replay', () => {
         const authenticated = await authenticatedInput([foreign, data])
         try {
             const result = await planTeardown(authenticated.value)
-            expect(result).toEqual(expect.objectContaining({ kind: 'complete', noop: true, steps: [] }))
+            expect(result).toEqual(expect.objectContaining({ kind: 'complete', noop: true }))
             if (result.kind !== 'complete') return
             expect(result.remaining).toBe(0)
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
@@ -333,7 +229,7 @@ describe('teardown replay', () => {
                 ...fresh.value, expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
             })
             expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1 }))
-            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: { kind: 'teardown-action-authority' } }))
+            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ action: expect.objectContaining({ step: expect.any(Object) }) }))
         } finally { await rm(initial.root, { recursive: true, force: true }) }
     })
 
@@ -357,7 +253,7 @@ describe('teardown replay', () => {
     it('returns a no-op with no destructive argv for empty discovery', async () => {
         const authenticated = await authenticatedInput([])
         try {
-            expect(await planTeardown(authenticated.value)).toEqual(expect.objectContaining({ kind: 'complete', noop: true, steps: [] }))
+            expect(await planTeardown(authenticated.value)).toEqual(expect.objectContaining({ kind: 'complete', noop: true }))
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
     })
 
@@ -386,7 +282,7 @@ describe('teardown replay', () => {
                 ...fresh.value, declaredCacheIds: [cacheId], expectedDiscoveryDigest: preview.discoveryDigest,
                 consent: preview.consent ?? undefined,
             })
-            expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0, steps: [], actionAuthority: { kind: 'teardown-action-authority' } }))
+            expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0, action: expect.objectContaining({ step: expect.any(Object) }) }))
             await writeFile(join(initial.root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: 'unix:///tmp/another.sock' })}\n`)
         } finally { await rm(initial.root, { recursive: true, force: true }) }
     })
@@ -415,21 +311,20 @@ describe('teardown replay', () => {
                 },
             }
             const preview = await planTeardown(request)
-            expect(preview).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1, steps: [] }))
+            expect(preview).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1 }))
             if (preview.kind !== 'complete') return
             const fresh = await authenticatedInput([], authenticated.root)
             const action = await planTeardown({
                 ...request, discovery: fresh.value.discovery, executable: fresh.value.executable,
-                selectionAuthority: fresh.value.selectionAuthority,
                 expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
             })
             expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0 }))
-            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: { kind: 'teardown-action-authority' } }))
+            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ action: expect.objectContaining({ step: expect.any(Object) }) }))
             expect((await lstat(cachePath)).isDirectory()).toBe(true)
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
     })
 
-    it('redeems a dependency-cache action only while its original inode remains', async () => {
+    it('removes a dependency cache only while its original inode remains', async () => {
         const setup = async () => {
             const authenticated = await authenticatedInput([])
             const holderId = `holder:${sha(`holder-${authenticated.root}`)}:session` as HolderId
@@ -464,14 +359,12 @@ describe('teardown replay', () => {
             const fresh = await authenticatedInput([], authenticated.root)
             const action = await planTeardown({
                 ...request, discovery: fresh.value.discovery, executable: fresh.value.executable,
-                selectionAuthority: fresh.value.selectionAuthority,
                 expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
                 coordinationAddress: namespace.value.paths.coordination(stackId),
             })
-            if (action.kind !== 'complete' || action.actionAuthority === null) throw new Error('cache action authority unavailable')
+            if (action.kind !== 'complete' || action.action === null) throw new Error('cache action unavailable')
             const targetId = `cache:${cacheId}`
-            const projection = projectTeardownActionTargets(preview)
-            const commitment = projection && consumeReclaimTargetProjection(projection)?.commitments.find((candidate) => candidate.targetId === targetId)
+            const commitment = preview.envelope.commitments.find((candidate) => candidate.targetId === targetId)
             if (!commitment) throw new Error('cache target commitment unavailable')
             const { targetId: committedTargetId, ...targetCommitment } = commitment
             const drainRequest = {
@@ -517,14 +410,16 @@ describe('teardown replay', () => {
             if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
             const reclaimAttempt = await reserveDrainAttempt({ namespace: namespace.value, authority: recovered.authority })
             if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
-            return { action, attempt: reclaimAttempt.authority, cachePath, root: authenticated.root }
+            return { action: action.action, attempt: reclaimAttempt.authority, cachePath, root: authenticated.root }
         }
 
         const valid = await setup()
         const replaced = await setup()
         try {
-            expect(await redeemTeardownAction({ actionAuthority: valid.action.actionAuthority!, attempt: valid.attempt })).toEqual(expect.any(Object))
-            expect(await redeemTeardownAction({ actionAuthority: valid.action.actionAuthority!, attempt: valid.attempt })).toBeUndefined()
+            expect(await executeReclaimAction({ action: valid.action, attempt: valid.attempt, execute: executeProbe })).toMatchObject({ kind: 'executed' })
+            await expect(lstat(valid.cachePath)).rejects.toMatchObject({ code: 'ENOENT' })
+            // One attempt admits one removal.
+            expect(await executeReclaimAction({ action: valid.action, attempt: valid.attempt, execute: executeProbe })).toEqual({ kind: 'unavailable' })
 
             const original = await lstat(replaced.cachePath)
             const replacement = `${replaced.cachePath}-replacement`
@@ -534,8 +429,10 @@ describe('teardown replay', () => {
             await rm(replaced.cachePath, { recursive: true })
             await rename(replacement, replaced.cachePath)
 
-            expect(await redeemTeardownAction({ actionAuthority: replaced.action.actionAuthority!, attempt: replaced.attempt })).toBeUndefined()
-            expect(replaced.action.continuation).toBeNull()
+            const execute = vi.fn(executeProbe)
+            expect(await executeReclaimAction({ action: replaced.action, attempt: replaced.attempt, execute })).toEqual({ kind: 'unavailable' })
+            expect(execute).not.toHaveBeenCalled()
+            expect((await lstat(replaced.cachePath)).ino).toBe(replacementIdentity.ino)
         } finally {
             await rm(valid.root, { recursive: true, force: true })
             await rm(replaced.root, { recursive: true, force: true })
