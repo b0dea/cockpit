@@ -44,6 +44,14 @@ secrets directory. That covers command and patch removals as well as writes, rem
 that contains an instance or the secrets directory, and staging a containing directory that could
 include an instance.
 
+Every `.env` and `.env.*` file at any depth is treated as holding secrets, declared or not: reading,
+writing, removing, staging or linking one is a hard denial through every guarded tool. The
+conventional documentation names `.env.example`, `.env.sample`, `.env.template` and `.env.schema`
+are exempt, and so is every declared environment `template`. The refusal says what to do instead:
+run what needs the values as `varlock run -- <cmd>`, which never prints them, or read the variable
+names from the `.env.schema`. Another name that starts with `.env`, such as `.envrc`, is not denied,
+but reading it prompts.
+
 Executable use of a declared hosted database or vendor host is denied at hostname boundaries.
 Matching examines executable, argument and environment-assignment-value roles; redirects,
 heredocs, comments and definitions do not count as executable host use. Host names are compared
@@ -227,8 +235,9 @@ cockpit commands in
 | `sync --adopt`, `sync --interactive`, `reset --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |
 
 A file such a command names, like `--criteria`, is checked as a read:
-the command may quote it in a refusal. A declared instance or a file below `.secrets` is denied,
-and an undeclared `.env` file, a symlink or a path outside the configured roots prompts.
+the command may quote it in a refusal. A declared instance, a file below `.secrets` or a `.env` or
+`.env.*` file that is not documentation is denied, and a symlink or a path outside the configured
+roots prompts.
 
 "Allowed" means the guard does not object. Claude Code also needs its own allow rule, which the
 generated settings carry for the commands the shipped skills use
@@ -263,8 +272,8 @@ hand over to npm do.
 
 ### Reading secrets and instances
 
-Every hard denial still applies first. Reading a declared instance or anything under a `.secrets`
-directory is denied under every spelling that resolves to it, including a case-folded spelling of
+Every hard denial still applies first. Reading a declared instance, a `.env` or `.env.*` file that
+is not documentation, or anything under a `.secrets` directory is denied under every spelling that resolves to it, including a case-folded spelling of
 the checkout itself, and so is a recursive search rooted at or below one. Shell reads also compare
 filesystem identity: a hard link to a declared instance, or to any file in the cockpit's
 `env/.secrets` directory, is denied like the file itself. The guard enumerates that directory on
@@ -277,7 +286,7 @@ These reads fall back to a prompt instead of being allowed:
 - a recursive search, whenever a declared instance or an `env/.secrets` file has a second hard link
   anywhere;
 - a search whose tree contains an existing instance, a `.secrets` directory at any depth, or a
-  `.env*` file that is not a declared template, since `grep -r` reads every file below it. The guard
+  `.env*` file that is neither a declared template nor one of the documentation names, since `grep -r` reads every file below it. The guard
   walks each searched tree to find them, without following links, and a tree too large for its
   bounded walk is not searched either. The reason names the path, so the agent can search a
   narrower one;
@@ -295,25 +304,29 @@ These reads fall back to a prompt instead of being allowed:
   recursive search is allowed only when every other command in the call is read-only too, and
   nothing in it can write an environment file first;
 - `git diff`, `git show`, and `git log` with patch output, whenever the repository's index holds a
-  `.env*` file that is not a declared template, a file below a `.secrets` directory or a declared
-  instance, unless the command names no revision and is limited with `-- <path>` to paths that hold
+  `.env*` file that is neither a declared template nor a documentation name, a file below a
+  `.secrets` directory or a declared instance, unless the command names no revision and is limited with `-- <path>` to paths that hold
   none (`git log` may name revisions, but not `--full-diff`). `--check` counts as printing content,
   and `git log -L<range>:<path>` is not read-only. A revision may name a blob, which prints whatever pathspec
   follows. Only the index is asked: a file committed once and since removed from it is still in
   history, and `git log -p` prints it. Run `git rm --cached` and rotate what it held;
-- a path that is a symlink or leaves one through `..`, lies outside the configured roots, or is an
-  undeclared `.env*` file. A declared environment `template` is read like any other file.
+- a path that is a symlink or leaves one through `..`, lies outside the configured roots, or has
+  another `.env*` name, such as `.envrc`. A declared environment `template` and the documentation
+  names are read like any other file.
 
 The guard hook sees shell commands and edits only. Claude Code's own Read, Grep and Glob tools never
 reach it, so `sync` also writes Claude `Read` deny rules into `.claude/settings.json`: one for every
-`.secrets` directory and one for every declared instance of every sibling, whether or not the
+`.env` and every `.env.*` file, one for every `.secrets` directory and one for every declared instance
+of every sibling, whether or not the
 sibling is mounted or granted to Claude. A sibling instance's rule is anchored on the path below the
 sibling's parent, so the committed file is identical on every clone; it can match more than the
 instance (any file with the same sibling-relative suffix), never less. An instance in the cockpit
 root itself is anchored at the project root. These rules match path spellings only: Claude's native
 tools cannot see filesystem identity, so a hard link or a symbolic link to an instance or secrets
 file, under a name outside the rules, stays readable to them. The guard's identity checks cover
-shell commands only.
+shell commands only. Claude applies a deny rule before any allow, so the `.env.*` rule cannot exempt
+the documentation names: Claude's own tools refuse `.env.example`, `.env.schema` and declared
+templates too, which `cat` in a shell still reads.
 
 ## Who decides
 

@@ -119,6 +119,8 @@ const GUARD_CONTROL_FILES = [
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
     '.cockpit/work-orders'] as const
 const SECRETS_ROOT = 'env/.secrets'
+// Environment files conventionally named for the variables they document, never their values.
+const DOTENV_DOCUMENTATION: ReadonlySet<string> = new Set(['.env.example', '.env.sample', '.env.template', '.env.schema'])
 /**
  * Bounds on the locations the policy and the path inspector carry, one per quantity, each set above
  * what an honest checkout holds so that only an unwalkable tree or a broken install reaches it.
@@ -685,6 +687,14 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
+    const templates = new Set(resolved.templates.map(fold))
+    // Documentation by its name or by the configuration; the guard checks spellings it was given, folded.
+    const documentation = (folded: string) => templates.has(folded) || DOTENV_DOCUMENTATION.has(posix.basename(folded))
+    // An undeclared `.env` or `.env.*` file is where a product keeps the values its schema names, so
+    // no tool reads or writes one by default: the guard only asked for `cat .env` and allowed an edit.
+    const dotenvSecret = (folded: string) => { const name = posix.basename(folded); return (name === '.env' || name.startsWith('.env.')) && !documentation(folded) }
+    const dotenvDenial = deny('Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
+        + 'Fix: run what needs its values as `varlock run -- <cmd>`, which never prints them, or read the variable names from the .env.schema.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
@@ -758,6 +768,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // spellings of a root that a case-insensitive volume resolves to it.
         const folded = fold(lexical)
         if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(staging && !folded.split('/').includes('.secrets') ? coveringStageDenial : secretDenial)
+        // Held first, so a declared instance's own denial, held after it, is the one reported.
+        if (mutating && dotenvSecret(folded)) hold(dotenvDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
             || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
@@ -844,7 +856,6 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (secretFile(evidence) || [secretRoot, ...controlDirectories].some((path) => is(path) || below(path) || covers(path))
             || [...resolved.instances.map((item) => item.path), ...controlFiles].some((path) => is(path) || covers(path))) hold(linkDenial)
     }
-    const templates = new Set(resolved.templates.map(fold))
     const searchedProtections = [secretRoot, ...resolved.instances.map((item) => item.path)]
     // Why the last inspected search was not safe, when one protected path is the reason.
     let searchBlocker: GuardDecision | undefined
@@ -862,6 +873,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // A search rooted at or below a protected path reads it as surely as `cat` does; only a
             // listing, which reports names, may name one.
             const protectedRead = folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))
+            if (kind !== 'listing' && dotenvSecret(folded)) hold(dotenvDenial)
             if (kind !== 'listing' && protectedRead) hold(readDenial)
             if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
                 safe = false
@@ -869,9 +881,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 return
             }
             pathCount++
-            // An undeclared `.env*` file is not a known instance, but it is not known to be data either.
-            // A declared template is: the configuration names it as the instance's documentation.
-            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !templates.has(folded)) safe = false
+            // Another `.env*` name, such as `.envrc`, is not known to hold secrets, nor to be data.
+            if (kind === 'read' && /^\.env/.test(posix.basename(folded)) && !documentation(folded)) safe = false
             // Unenumerated secrets leave every content read unproven, and a second hard link to a
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
@@ -893,7 +904,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 || sensitive.some((found) => within(fold(target), fold(found)) || within(fold(found), fold(target)))
             const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
             const present = reached.find((target) => identityOf(target) !== null && read(target))
-            const unseen = sensitive?.find((found) => !templates.has(fold(found)))
+            const unseen = sensitive?.find((found) => !documentation(fold(found)))
             if (present === undefined && sensitive !== null && unseen === undefined && chainReadOnly) return
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
@@ -914,7 +925,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (access.trackedContent) {
             const tracked = resolvedEvidence({ path: '.', cwd: access.cwd, operation: 'repository' })?.tracked as readonly string[] | null | undefined
             const limits = access.trackedContent.limitedTo?.map((spec) => fold(posix.resolve(access.cwd, spec)))
-            const exposed = tracked?.find((file) => !templates.has(fold(file)) && (limits === undefined || limits.some((limit) => within(fold(file), limit))))
+            const exposed = tracked?.find((file) => !documentation(fold(file)) && (limits === undefined || limits.some((limit) => within(fold(file), limit))))
             if (!tracked || exposed !== undefined || !chainReadOnly) {
                 safe = false
                 searchBlocker = ask(!tracked ? 'The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.'

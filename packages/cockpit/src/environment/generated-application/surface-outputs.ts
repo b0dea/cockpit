@@ -158,13 +158,17 @@ export function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'co
  * them: `//**` rules refused Read and Grep of sibling instances and of nested `.secrets` files, and
  * `/` rules refused root files, while the control stayed readable. Over-matching a deny is safe;
  * glob metacharacters in a path become `?` so a literal bracket cannot narrow the rule.
+ *
+ * Every `.env` and `.env.*` file is denied too, as the guard denies it. Claude applies a deny before
+ * any allow, so these rules cannot carve out the documentation names the guard exempts: Claude's own
+ * tools refuse `.env.example` and declared templates as well, which a shell `cat` still reads.
  */
 function claudeReadDenials(
     siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
 ): readonly string[] {
     const literal = (path: string) => path.replace(/[*?[\]\\!#()]/g, '?')
-    const rules = ['//**/.secrets/**', ...instanceReadPaths(siblings, instances)
+    const rules = ['//**/.secrets/**', '//**/.env', '//**/.env.*', ...instanceReadPaths(siblings, instances)
         .map(row => row.inRoot ? `/${literal(row.path)}` : `//**/${literal(row.path)}`)]
     return [...new Set(rules)].sort(compareCodeUnits)
 }

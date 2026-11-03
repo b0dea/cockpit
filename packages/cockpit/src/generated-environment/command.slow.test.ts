@@ -407,10 +407,10 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const registered = async (path: string) => JSON.parse(await readFile(join(root, path), 'utf8')).hooks.PreToolUse
         .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
     const hook = await registered('.claude/settings.json')
-    const invoke = (command: string, cwd = join(root, 'app'), registration = hook) => {
+    const invoke = (command: string | { tool_name: string; tool_input: object }, cwd = join(root, 'app'), registration = hook) => {
         const result = spawnSync('/bin/sh', ['-c', registration], {
             cwd, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
-            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }),
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', cwd, ...typeof command === 'string' ? { tool_name: 'Bash', tool_input: { command } } : command }),
         })
         expect(result.stderr).not.toContain('"invocation":')
         return result
@@ -429,6 +429,12 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(invoke('git push origin main').stdout).toContain('permissionDecision":"deny')
     expect(invoke('git reset --hard HEAD').stdout).toContain('permissionDecision":"ask')
     expect(invoke('git add .env').stdout).toContain('permissionDecision":"deny')
+    // An undeclared environment file is a secret by default; the conventional schema name is documentation.
+    expect(invoke({ tool_name: 'Edit', tool_input: { file_path: join(root, 'app/web/.env.local'), old_string: 'A=1', new_string: 'A=2' } }).stdout)
+        .toContain('permissionDecision":"deny","permissionDecisionReason":"Refusing to read or write an environment file')
+    expect(invoke('cat web/.env.local').stdout).toContain('permissionDecision":"deny')
+    await writeFile(join(root, 'app/.env.schema'), '# @required\nAPI_KEY=\n')
+    expect(invoke('cat .env.schema')).toMatchObject({ status: 0, stdout: '', stderr: '' })
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject({ status: 0, stdout: '', stderr: '' })
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)} --unknown`, root).stdout).toContain('permissionDecision":"ask')

@@ -590,7 +590,7 @@ describe('built-in read-only profile', () => {
             return decideLaunched(`npx --no cockpit grade --config cockpit.toml --criteria ${file}`, configured).decision
         }
         expect(reading('criteria/task.yaml')).toBe('allow')
-        expect(reading('.env')).toBe('ask')
+        expect(reading('.env')).toBe('deny')
         expect(reading('config/active.instance')).toBe('deny')
         expect(reading('env/.secrets/token')).toBe('deny')
         for (const malformed of [candidate('npx', ['--no']), candidate('npx', ['--no', 'cockpit'], '/outside'), candidate('sh', [])]) {
@@ -628,9 +628,9 @@ describe('built-in read-only profile', () => {
             'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src', 'tail -f src/a.ts',
             'git -c core.pager=cat log', 'git --git-dir=other log', 'git log --output=out.txt', 'git diff --output out.txt', 'git diff --ext-diff',
             'git show HEAD:config/active.instance', 'git branch topic', 'cockpit sync', 'cockpit check --unknown',
-            'git diff --no-index src/a.ts README.md', 'git diff -- .env.local', 'grep -C 5 needle src/a.ts', 'grep -A x needle src/a.ts',
+            'git diff --no-index src/a.ts README.md', 'grep -C 5 needle src/a.ts', 'grep -A x needle src/a.ts',
             // Undeclared environment files, paths outside the roots, writes, wrappers and mixed chains.
-            'cat .env.local', 'cat /etc/hosts', 'ls /tmp', 'cat src/a.ts > copy.txt', 'env ls', 'LANG=C ls', 'LS', 'ls; touch src/a.ts',
+            'cat .envrc', 'cat /etc/hosts', 'ls /tmp', 'cat src/a.ts > copy.txt', 'env ls', 'LANG=C ls', 'LS', 'ls; touch src/a.ts',
             // Any sed command but `p` can write, read another file or run a program.
             'sed -n 1,20w out.txt src/a.ts', "sed -n '1p;w out' src/a.ts", 'sed -i 1p src/a.ts', "sed 's/a/b/' src/a.ts", 'sed -n -f script.sed src/a.ts',
             'git branch -v topic', 'git rev-parse --git-path hooks', 'cat src/a$?', 'node --test', 'git fetch origin', 'git branch --set-upstream-to=origin/main main',
@@ -653,14 +653,6 @@ describe('built-in read-only profile', () => {
             ...(posix.resolve(request.cwd, request.path) === `${root}/$?/.git` ? { identity: '9:2' } : {}) })
         expect(evaluateGuard(parseGuardInput(shellPayload('git -C $? status')), policy(), statusRepository).decision).toBe('ask')
         expect(evaluateGuard(parseGuardInput(shellPayload("git -C '$?' status")), policy(), statusRepository).decision).toBe('allow')
-        // A declared template documents the instance's variables, so it is data, not an unknown `.env*` file.
-        const templated = { ...policy(), templates: [`${root}/.env.example`, `${other}/.env.example`] }
-        for (const command of ['cat .env.example', 'head -n 5 ../other/.env.example', 'grep KEY .ENV.EXAMPLE']) {
-            expect(evaluateGuard(parseGuardInput(shellPayload(command)), templated, withGit).decision, command).toBe('allow')
-        }
-        for (const command of ['cat .env.local', 'cat ../other/.env.local', 'cat .env.example.local']) {
-            expect(evaluateGuard(parseGuardInput(shellPayload(command)), templated, withGit).decision, command).toBe('ask')
-        }
     })
 
     it('lets a recursive search through only when no protected path can exist below it', () => {
@@ -697,9 +689,11 @@ describe('built-in read-only profile', () => {
             reason: 'A recursive search of .. would read ../packages/web/.secrets, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.' })
         expect(local('grep -r KEY ../other')).toEqual({ decision: 'ask',
             reason: 'A recursive search of ../other would read ../other/.env.local, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.' })
-        expect(local('grep -r KEY ../other/.env.local').decision).toBe('ask')
+        expect(local('grep -r KEY ../other/.env.local').decision).toBe('deny')
         expect(local('rg needle src').decision).toBe('allow')
         expect(walked([`${root}/.env.example`], [`${root}/.env.example`])('grep -rn KEY .').decision).toBe('allow')
+        // The conventional documentation names need no declaration, as for a direct read.
+        expect(walked([`${root}/.env.schema`, `${root}/apps/web/.env.sample`])('grep -rn KEY .').decision).toBe('allow')
         expect(walked(null)('rg needle src')).toEqual({ decision: 'ask',
             reason: 'A recursive search of src covers more than the guard walks to prove it reads no environment file or secrets directory. Search a narrower path.' })
     })
@@ -720,6 +714,7 @@ describe('built-in read-only profile', () => {
             expect(decide(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
         expect(tracking([`${root}/.env.example`], [`${root}/.env.example`])('git diff').decision).toBe('allow')
+        expect(tracking([`${root}/.env.schema`, `${root}/apps/web/.env.template`])('git diff').decision).toBe('allow')
         // The line-range form attaches its path to the option, where neither check would see it.
         for (const command of ['git log -L1,99:.env', 'git log -L1,99:config/active.instance']) expect(tracking([])(command).decision, command).not.toBe('allow')
         expect(tracking(null)('git log -p').reason).toBe('The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.')
@@ -766,6 +761,32 @@ describe('built-in read-only profile', () => {
             ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), symlink: true } : withGit(request)
         expect(evaluateGuard(parseGuardInput(shellPayload('git -C link/.. status')), policy(), leaving).decision).toBe('unavailable')
         expect(evaluateGuard(parseGuardInput(shellPayload('git -C . status')), policy(), leaving).decision).toBe('allow')
+    })
+
+    it('denies reads and writes of an environment file unless its name or a declared template marks it as documentation', () => {
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        const refusal = { decision: 'deny', reason: 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
+            + 'Fix: run what needs its values as `varlock run -- <cmd>`, which never prints them, or read the variable names from the .env.schema.' }
+        const judge = (input: object, configured = policy()) => evaluateGuard(parseGuardInput(input), configured, withGit)
+        // An undeclared `.env` at any depth is where a product keeps its values, so no tool reads or writes it.
+        for (const file of ['.env', 'apps/web/.env.local', '.ENV.Production', '.env.example.local']) {
+            for (const input of [payload('Write', { file_path: `${root}/${file}`, content: 'KEY=value' }), payload('Edit', { file_path: file, old_string: 'a', new_string: 'b' }),
+                shellPayload(`cat ${file}`), shellPayload(`head -n 1 ${file}`), shellPayload(`rg KEY ${file}`), shellPayload(`cp ${file} copy.txt`), shellPayload(`cp src/a.ts ${file}`),
+                shellPayload(`printf KEY=x > ${file}`)]) expect(judge(input), JSON.stringify(input)).toEqual(refusal)
+        }
+        for (const command of ['cat ../other/.env', 'git diff -- .env.local']) expect(judge(shellPayload(command)), command).toEqual(refusal)
+        // A listing reports names only, and `.envrc` is not one of the `.env` family, so it still asks rather than being denied.
+        expect(judge(shellPayload('ls .env')).decision).toBe('allow')
+        expect(judge(shellPayload('cat .envrc')).decision).toBe('ask')
+        // The conventional documentation names, and a declared template, are read and written like any file.
+        for (const file of ['.env.example', '.ENV.EXAMPLE', '.env.schema', 'apps/web/.env.sample', '.env.template']) {
+            for (const input of [payload('Write', { file_path: `${root}/${file}`, content: 'KEY=' }), shellPayload(`cat ${file}`), shellPayload(`rg KEY ${file}`)]) {
+                expect(judge(input).decision, JSON.stringify(input)).toBe('allow')
+            }
+        }
+        const templated = { ...policy(), templates: [`${root}/config/defaults.env.dist`, `${root}/.env.ci`] }
+        expect(judge(shellPayload('cat .env.ci'), templated).decision).toBe('allow')
+        expect(judge(shellPayload('cat .env.ci'))).toEqual(refusal)
     })
 
     it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {

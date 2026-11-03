@@ -101,8 +101,8 @@ describe('public surface publication transaction', () => {
             expect(synchronized.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'unapproved-server' }))
             expect(claude.mcpServers['approved-server']!.args).toEqual([expect.stringMatching(/^\.cockpit\/mcp\/[a-f0-9]{64}\.sh$/)])
             // Claude's Read, Grep and Glob bypass the guard hook, so the read denial is native: every
-            // secrets directory, and each declared instance by its clone-independent sibling suffix.
-            expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
+            // `.env` and `.env.*` file, every secrets directory, and each declared instance by its clone-independent sibling suffix.
+            expect(settings.permissions.deny).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
             // Claude's default mode runs no Bash without a rule, so the commands the skills tell an
             // agent to run are allowed by prefix. A policy-decided command such as sync or work accept is
             // allowed too, because the guard's ask still wins; always-person and destructive ones keep prompting.
@@ -171,7 +171,8 @@ describe('public surface publication transaction', () => {
             const denied = runGeneratedGuard(fixture.root, join(outside, '.env'))
             expect(denied.stdout, JSON.stringify(denied)).toContain('permissionDecision":"deny')
             expect(runGeneratedGuard(fixture.root, join(outside, '.env.example'))).toMatchObject({ status: 0, stdout: '' })
-            expect(runGeneratedGuard(fixture.root, join(fixture.root, '..', 'unlisted', '.env'))).toMatchObject({
+            // A documentation name, so the roots decide rather than the environment-file denial.
+            expect(runGeneratedGuard(fixture.root, join(fixture.root, '..', 'unlisted', '.env.example'))).toMatchObject({
                 status: 2, stderr: expect.stringContaining('Guard path escapes configured roots.'),
             })
         })
@@ -200,7 +201,7 @@ describe('public surface publication transaction', () => {
             expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as { permissions: { deny?: string[] } }
             // `/` anchors a rule at the project root; measured on Claude Code 2.1.314, 2026-10-30, with an unruled control beside it.
-            expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
+            expect(settings.permissions.deny).toEqual(['Read(//**/.env)', 'Read(//**/.env.*)', 'Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
         })
 
         // Without a declared endpoint the browser is a local launch: no playwright MCP server or

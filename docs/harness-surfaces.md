@@ -185,7 +185,7 @@ OpenCode's native `read`, `grep` and `glob` tools never reach a shell, so the ge
 restates each as the shell command that reads at least the same paths (`cat`, a recursive `grep`,
 and `ls`) and asks the guard about that. A refusal names the restated command, so an agent can
 narrow a search that would cover a secrets directory, a declared instance or an environment file
-that is not a declared template. The generated
+that is neither a declared template nor a documentation name such as `.env.example`. The generated
 `opencode.jsonc` also denies OpenCode's `read` permission for every `.secrets` directory and each
 declared instance, which holds even if the plugin does not load. It carries the `$schema` member
 OpenCode would otherwise insert at every start, which made later checks report

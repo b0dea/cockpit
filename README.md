@@ -125,7 +125,9 @@ so an agent started in the cockpit sees every repository's rules. See [Harness s
 ### A guard that fails closed
 
 Built-in denials cover pushes to `guards.protected_branches` (`main` and `master` by default), reads of
-anything under `.secrets` or a declared environment instance, and commands that reach a declared hosted
+anything under `.secrets` or a declared environment instance, reads and writes of `.env` and `.env.*`
+files other than `.env.example`, `.env.sample`, `.env.template`, `.env.schema` and declared templates,
+and commands that reach a declared hosted
 database or vendor host. A command the guard cannot prove read-only goes to a person, and input it
 cannot parse is refused. `[[guards.allow]]` admits your own commands for good. See
 [Safety and autonomy](docs/safety-and-autonomy.md).

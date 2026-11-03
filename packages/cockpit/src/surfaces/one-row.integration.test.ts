@@ -225,10 +225,13 @@ describe('one-row generated surface integration', () => {
         expect(evidence).not.toContain(credentialCanary)
         const generatedGuard = await readFile(join(added.root, '.cockpit/guards/bash-guard.sh'), 'utf8')
         expect(generatedGuard).not.toContain(credentialCanary)
-        for (const [fixture, path, decision] of [
-            [baseline, '.env.local', 'allow'],
-            [added, '.env.local', 'deny'],
-            [added, '.env.example', 'allow'],
+        // Every `.env.*` file is denied by default; the declared instance is denied under its own reason.
+        const dotenv = 'Refusing to read or write an environment file: `.env` and `.env.*` hold secrets unless named .env.example, .env.sample, .env.template or .env.schema, or declared as a template. '
+            + 'Fix: run what needs its values as `varlock run -- <cmd>`, which never prints them, or read the variable names from the .env.schema.'
+        for (const [fixture, path, reason] of [
+            [baseline, '.env.local', dotenv],
+            [added, '.env.local', 'Refusing mutation or staging of a declared environment instance.'],
+            [added, '.env.example', undefined],
         ] as const) {
             const guarded = spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
                 cwd: fixture.root,
@@ -238,9 +241,8 @@ describe('one-row generated surface integration', () => {
             })
             expect(guarded.error).toBeUndefined()
             expect(guarded.status, guarded.stderr).toBe(0)
-            if (decision === 'deny') expect(JSON.parse(guarded.stdout)).toEqual({ hookSpecificOutput: {
-                hookEventName: 'PreToolUse', permissionDecision: 'deny',
-                permissionDecisionReason: 'Refusing mutation or staging of a declared environment instance.',
+            if (reason) expect(JSON.parse(guarded.stdout)).toEqual({ hookSpecificOutput: {
+                hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason,
             } })
             else expect(guarded.stdout).toBe('')
             expect(guarded.stdout + guarded.stderr).not.toContain(credentialCanary)
