@@ -307,17 +307,16 @@ describe('lifecycle CLI composition', () => {
         expect(JSON.stringify(capture.output())).not.toMatch(/continuation|authority|decide/)
     })
 
-    it.each(['reset', 'baseline-record'] as const)('records %s human decline as cancellation and cleanup throw as failure', async verb => {
+    it('records reset human decline as cancellation and cleanup throw as failure', async () => {
         for (const throws of [false, true]) {
             const decide = vi.fn(async () => {
                 if (throws) throw new Error('synthetic cleanup failed')
                 return complete('unchanged')
             })
             const capture = captureIo(async () => false)
-            const io = { ...capture.io, confirmBaseline: async () => false }
             const begin = async () => ({ preview: complete('preview'), decide })
-            const status = await runCli([verb, '--config', '/synthetic/cockpit.toml', '--interactive'], io,
-                { beginOperatorReset: begin, beginOperatorBaselineRecord: begin }, { env: {} })
+            const status = await runCli(['reset', '--config', '/synthetic/cockpit.toml', '--interactive'], capture.io,
+                { beginOperatorReset: begin }, { env: {} })
             expect(status).toBe(throws ? 2 : 130)
             expect(decide).toHaveBeenCalledExactlyOnceWith('decline')
             expect(decide).not.toHaveBeenCalledWith('approve')

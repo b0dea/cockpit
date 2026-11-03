@@ -7,9 +7,8 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { type StackId } from './contract.js'
 import {
     authenticateStabilityCapture, captureRuntimeEvidence, compareEnvironmentSnapshot,
-    createEnvironmentSnapshot, createStabilityCapturePlan, environmentBaselineConfirmation,
-    isEnvironmentBaselineAuthentic, isRuntimeEvidenceAuthentic, recordEnvironmentBaseline, type AuthenticatedStabilityCapture,
-    type CapturedRuntimeEvidence, type EnvironmentBaseline,
+    createEnvironmentSnapshot, createStabilityCapturePlan, isRuntimeEvidenceAuthentic, type AuthenticatedStabilityCapture,
+    type CapturedRuntimeEvidence,
 } from './evidence.js'
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -103,20 +102,6 @@ describe('environment evidence authority', () => {
         expect(() => createEnvironmentSnapshot({ ...base, extra: true } as never)).toThrow('provenance')
         const { intendedState: _omitted, ...missingState } = base
         expect(() => createEnvironmentSnapshot(missingState as never)).toThrow('provenance')
-
-        const snapshot = generated()
-        const captured = await available()
-        const confirmation = environmentBaselineConfirmation(snapshot, captured)
-        let evidenceReads = 0
-        const record = { snapshot, confirmation, recordedAt: captured.observedAt } as {
-            snapshot: typeof snapshot; evidence: CapturedRuntimeEvidence; confirmation: string; recordedAt: string
-        }
-        Object.defineProperty(record, 'evidence', {
-            enumerable: true,
-            get: () => ++evidenceReads === 1 ? captured : { ...captured, configSha256: sha('altered') },
-        })
-        expect(recordEnvironmentBaseline(record).kind).toBe('refusal')
-        expect(evidenceReads).toBe(0)
     })
 
     it('closes every evidence boundary over null, revoked, extra, and missing nested data', async () => {
@@ -135,10 +120,6 @@ describe('environment evidence authority', () => {
             expect(compareEnvironmentSnapshot(snapshot, evidence, value as never).verdict).toBe('unavailable')
             expect(() => isRuntimeEvidenceAuthentic(value as never)).not.toThrow()
             expect(isRuntimeEvidenceAuthentic(value as never)).toBe(false)
-            expect(() => environmentBaselineConfirmation(value as never, evidence)).not.toThrow()
-            expect(environmentBaselineConfirmation(value as never, evidence)).toBe('')
-            expect(() => environmentBaselineConfirmation(snapshot, value as never)).not.toThrow()
-            expect(environmentBaselineConfirmation(snapshot, value as never)).toBe('')
         }
         const malformedEvidence = [
             { ...evidence, runtime: null },
@@ -151,8 +132,6 @@ describe('environment evidence authority', () => {
             expect(compareEnvironmentSnapshot(snapshot, value as never, evidence).verdict).toBe('unavailable')
             expect(() => isRuntimeEvidenceAuthentic(value as never)).not.toThrow()
             expect(isRuntimeEvidenceAuthentic(value as never)).toBe(false)
-            expect(() => environmentBaselineConfirmation(snapshot, value as never)).not.toThrow()
-            expect(environmentBaselineConfirmation(snapshot, value as never)).toBe('')
         }
         expect(() => captureRuntimeEvidence(null as never)).not.toThrow()
         expect(captureRuntimeEvidence(null as never).state).toBe('unavailable')
@@ -162,14 +141,6 @@ describe('environment evidence authority', () => {
         expect(captureRuntimeEvidence({ capture: proxy } as never).state).toBe('unavailable')
         expect(() => createEnvironmentSnapshot(null as never)).toThrow('environment snapshot provenance is invalid')
         expect(() => createEnvironmentSnapshot({ ...snapshot, intendedState: undefined } as never)).toThrow('environment snapshot provenance is invalid')
-        expect(() => recordEnvironmentBaseline(null as never)).not.toThrow()
-        expect(recordEnvironmentBaseline(null as never).kind).toBe('refusal')
-        expect(() => recordEnvironmentBaseline({ snapshot, evidence, confirmation: '', recordedAt: observedAt, ignoredDecision: 'accept' } as never)).not.toThrow()
-        expect(recordEnvironmentBaseline({ snapshot, evidence, confirmation: '', recordedAt: observedAt, ignoredDecision: 'accept' } as never).kind).toBe('refusal')
-        expect(() => recordEnvironmentBaseline({
-            snapshot, evidence, confirmation: '', recordedAt: observedAt,
-            previous: { artifact: 'environment-baseline', schemaVersion: 1, stackId, version: 1, recordedAt: null },
-        } as never)).not.toThrow()
     })
 
     it('rejects oversized evidence before reading its entries', async () => {
@@ -466,45 +437,6 @@ done
         const before = await available({ batch: sha('before') })
         const after = await available({ batch: sha('after'), config: sha('new-config') })
         expect(compareEnvironmentSnapshot(generated(), before, after)).toEqual(expect.objectContaining({ verdict: 'stale' }))
-    })
-
-    it('advances only fully valid baselines through non-replayable exact confirmation', async () => {
-        const snapshot = JSON.parse(JSON.stringify(generated())) as ReturnType<typeof generated>
-        const evidence = JSON.parse(JSON.stringify(await available())) as CapturedRuntimeEvidence
-        const confirmation = environmentBaselineConfirmation(snapshot, evidence)
-        const first = recordEnvironmentBaseline({ snapshot, evidence, confirmation, recordedAt: evidence.observedAt })
-        expect(first.kind).toBe('complete')
-        if (first.kind !== 'complete') return
-        expect(isEnvironmentBaselineAuthentic(first.result)).toBe(true)
-        expect(isEnvironmentBaselineAuthentic({ ...first.result })).toBe(false)
-        ;(snapshot.intendedState as { services: string[] }).services[0] = 'mutated'
-        ;(evidence.runtime as { version: string }).version = '99.0.0'
-        expect(first.result.snapshot.intendedState).toEqual({ services: ['api', 'worker'], posture: 'isolated' })
-        expect(first.result.evidence.runtime.version).toBe('27.1.2')
-        expect(Object.isFrozen(first.result.snapshot.intendedState)).toBe(true)
-        expect(Object.isFrozen(first.result.evidence.command.stepIds)).toBe(true)
-        const nextConfirmation = environmentBaselineConfirmation(first.result.snapshot, first.result.evidence, first.result)
-        const advancedAt = new Date(Date.parse(first.result.recordedAt) + 1).toISOString()
-        expect(recordEnvironmentBaseline({ snapshot: first.result.snapshot, evidence: first.result.evidence, confirmation: nextConfirmation, recordedAt: advancedAt, previous: first.result }).kind).toBe('complete')
-        expect(recordEnvironmentBaseline({ snapshot: first.result.snapshot, evidence: first.result.evidence, confirmation, recordedAt: first.result.recordedAt, previous: first.result }).kind).toBe('refusal')
-    })
-
-    it('rejects forged nested baseline fields, digests, chronology, and unsafe advancement', async () => {
-        const snapshot = generated()
-        const evidence = await available()
-        const first = recordEnvironmentBaseline({ snapshot, evidence, confirmation: environmentBaselineConfirmation(snapshot, evidence), recordedAt: evidence.observedAt })
-        if (first.kind !== 'complete') throw new Error('fixture baseline failed')
-        const mutations: EnvironmentBaseline[] = [
-            { ...first.result, artifact: 'wrong' as EnvironmentBaseline['artifact'] },
-            { ...first.result, snapshot: { ...snapshot, snapshotSha256: sha('forged') } },
-            { ...first.result, evidence: { ...evidence, evidenceSha256: sha('forged') } },
-            { ...first.result, recordedAt: '2026-09-07T11:00:00.000Z' },
-            { ...first.result, version: Number.MAX_SAFE_INTEGER },
-        ]
-        for (const previous of mutations) {
-            const confirmation = environmentBaselineConfirmation(snapshot, evidence, previous)
-            expect(recordEnvironmentBaseline({ snapshot, evidence, confirmation, recordedAt: evidence.observedAt, previous }).kind).toBe('refusal')
-        }
     })
 
     it('never retains secret-bearing runtime bytes or sensitive intended values', async () => {

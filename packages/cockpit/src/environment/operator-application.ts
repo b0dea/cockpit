@@ -13,7 +13,7 @@ import type {
 export const mechanism = {
     id: 'environment-operator-application',
     module: 'packages/cockpit/src/environment/operator-application.ts',
-    exports: ['runResetOperatorApplication', 'runBaselineOperatorApplication', 'runSyncOperatorApplication'],
+    exports: ['runResetOperatorApplication', 'runSyncOperatorApplication'],
 } as const
 
 export interface OperatorAdmission {
@@ -37,11 +37,6 @@ export interface OperatorSession {
 export interface ResetOperatorApplicationAdapters {
     readonly preview: (input: ResetCommandInput) => Promise<OperatorCommandOutcome>
     readonly begin: (input: ResetCommandInput) => Promise<OperatorSession | OperatorCommandOutcome>
-    readonly confirm: (preview: OperatorCommandOutcome) => Promise<boolean>
-}
-
-export interface BaselineOperatorApplicationAdapters {
-    readonly begin: (input: Readonly<{ configPath: string }>) => Promise<OperatorSession | OperatorCommandOutcome>
     readonly confirm: (preview: OperatorCommandOutcome) => Promise<boolean>
 }
 
@@ -87,33 +82,6 @@ export async function runResetOperatorApplication(
             ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
             'interactive reset requires terminal input',
             'reset',
-        )
-    }
-    const opened = await adapters.begin(input)
-    if (!('decide' in opened)) return opened
-    const approved = await adapters.confirm(opened.preview)
-    if (approved) return opened.decide('approve')
-    await opened.decide('decline')
-    return { status: EXIT_CODES.cancelled, diagnostics: [], result: null }
-}
-
-export async function runBaselineOperatorApplication(
-    input: Readonly<{ configPath: string }>,
-    admission: OperatorAdmission,
-    adapters: BaselineOperatorApplicationAdapters,
-): Promise<OperatorCommandOutcome> {
-    if (!admission.interactive || admission.json || admission.ci && admission.ci.length > 0) {
-        return refusal(
-            ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-            'interactive baseline recording requires a human terminal outside CI and JSON modes',
-            'environment-baseline',
-        )
-    }
-    if (!admission.terminal) {
-        return refusal(
-            ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-            'interactive baseline recording requires terminal input',
-            'environment-baseline',
         )
     }
     const opened = await adapters.begin(input)

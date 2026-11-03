@@ -131,7 +131,7 @@ To set cockpit up for your own product, start at [Getting started](docs/getting-
 | Set up | `init`, `setup`, `sibling add` / `sibling remove`, `registry-resolve` |
 | Generate and verify | `sync`, `check`, `selftest` |
 | Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
-| Diagnose | `doctor`, `baseline-record` *(experimental)* |
+| Diagnose | `doctor` |
 | Test and grade | `test-run`, `work`, `browser` |
 
 `cockpit --help` lists the same stages; `cockpit work --help` and `cockpit browser --help` list

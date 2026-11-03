@@ -206,10 +206,6 @@ function lifecycleSummary(command: string, result: Readonly<Record<string, unkno
         return `${escapeForTerminal(`Reset would remove ${targets.length} ${targets.length === 1 ? 'target' : 'targets'} (${result.stackId}); plan ${result.planDigest}:`)}\n`
             + `${lines.join('')}Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n`
     }
-    if (command === 'baseline-record' && result.artifact === 'environment-baseline') {
-        if (typeof result.stackId !== 'string' || typeof result.version !== 'number' || typeof result.recordedAt !== 'string') return ''
-        return `${escapeForTerminal(`Recorded environment baseline version ${result.version} (${result.stackId}) at ${result.recordedAt}.`)}\n`
-    }
     const headline = Object.hasOwn(LIFECYCLE_CHANGES, command) && typeof result.change === 'string'
         && Object.hasOwn(LIFECYCLE_CHANGES[command]!, result.change) ? LIFECYCLE_CHANGES[command]![result.change] : undefined
     if (headline === undefined || typeof result.stackId !== 'string') return ''

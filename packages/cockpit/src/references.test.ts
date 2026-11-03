@@ -259,7 +259,6 @@ describe('reference pages', () => {
         expect(section('sync', 'check')).toContain('| `--adopt` | string | unset |')
         expect(section('sync', 'check')).toContain('Reads `cockpit.toml` from `--config`.')
         expect(section('init', 'setup')).toContain('Does not read `cockpit.toml`.')
-        expect(section('baseline-record', 'test-run')).toContain('Status: experimental. This interface may change before a stable release.')
         expect(cli).toContain('| 0 | success |\n| 2 | failure |\n| 130 | cancelled |')
         expect(cli).toContain('[Troubleshooting](troubleshooting.md#codes-with-a-fixed-remedy)')
         // Per-command code lists were derived from the source, erred towards too many, and buried

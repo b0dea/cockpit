@@ -817,8 +817,8 @@ validates the declared tags; deciding which requirements need tags is still a ma
 
 ## Health and evidence
 
-`preflight` is the blocking gate; `doctor` reports the same checks without repairing anything or
-changing the baseline. Before the first bring-up (`STATE_UNSEEDED`), while the stack sleeps
+`preflight` is the blocking gate; `doctor` reports the same checks without repairing anything.
+Before the first bring-up (`STATE_UNSEEDED`), while the stack sleeps
 (`STACK_NOT_RUNNING`), and for a cockpit that declares no runtime (`ENVIRONMENT_NOT_DECLARED`,
 `doctor` only), both still run every check that needs no running stack, such as Git state, sibling
 presence, the machine floor and the runtime measurement, and report the checks that need running
@@ -876,13 +876,6 @@ abort signal. Output is limited to 1 MiB of the container's stdout and 64 KiB of
 that, `logs` keeps the newest whole records that fit, sets `truncated` to `true` in the JSON result
 and warns with `LOGS_TRUNCATED`; lower `--tail` to stay under it. Output is returned after
 collection, including structured records in JSON mode, rather than streamed.
-
-`baseline-record` is experimental. It is the only command that writes an environment baseline, and
-it requires you to confirm one exact pair of snapshot and runtime-check results; `preflight`,
-`doctor` and `logs` cannot write or advance the baseline. `--interactive`, its only recording mode,
-shows the selected stack, the result hashes, the version and the observation time, then asks for
-approval in a terminal; it does not work in CI or JSON mode. After approval, the same process
-rechecks the runtime and source and writes that pair once; a later run cannot reuse the approval.
 
 ## Where the decisions live
 

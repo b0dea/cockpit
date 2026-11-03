@@ -7,8 +7,7 @@ import { loadCockpitConfig, consumeLoadedConfigProjection, type ConsumedLoadedCo
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     decodeLifecycleRecord,
-    type BaselineCommandAdapters,
-    type BaselineObservation,
+    type RuntimeEvidenceObservation,
     type LogObservation,
     type LogsCommandAdapters,
     type ReadinessRefusal,
@@ -37,18 +36,9 @@ import {
     captureRuntimeEvidence,
     createEnvironmentSnapshot,
     createStabilityCapturePlan,
-    environmentBaselineConfirmation,
-    isEnvironmentBaselineAuthentic,
-    type EnvironmentBaseline,
     type JsonValue,
 } from './evidence.js'
-import {
-    abortStateTransaction,
-    readState,
-    transactState,
-    type StateNamespace,
-    type StateRecord,
-} from './state.js'
+import { readState, type StateNamespace, type StateRecord } from './state.js'
 
 export const mechanism = {
     id: 'read-command-composition',
@@ -71,9 +61,7 @@ export interface ReadCommandCompositionInput {
 
 export interface ReadCommandAdapterComposition {
     readonly logs: LogsCommandAdapters
-    readonly baseline: BaselineCommandAdapters & {
-        readonly revalidate: (observation: BaselineObservation) => Promise<BaselineObservation>
-    }
+    readonly environment: Readonly<{ observe: (input: { readonly configPath: string }) => Promise<RuntimeEvidenceObservation> }>
 }
 
 type Executor = (
@@ -111,80 +99,12 @@ interface StableReadContext {
     readonly env: Readonly<Record<string, string>>
 }
 
-interface PendingBaseline {
-    readonly stackId: StackId
-    readonly namespace: StateNamespace
-    readonly cockpitId: string
-    readonly holderId: HolderId
-    readonly address: ReturnType<StateNamespace['paths']['baseline']>
-    readonly expected: StateRecord | null
-    readonly configSha256: string
-    readonly snapshotSha256: string
-    readonly evidenceSha256: string
-    readonly fingerprint: Readonly<{
-        source: string
-        runtime: string
-        cohort: string
-        predecessor: string
-        stability: string
-    }>
-}
-
-interface BaselineMeasurement {
-    readonly observation: BaselineObservation
-    readonly basis: PendingBaseline
-}
-
 function freezeJson(value: JsonValue): JsonValue {
     if (Array.isArray(value)) return Object.freeze(value.map(freezeJson))
     if (value !== null && typeof value === 'object') {
         return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, child]) => [key, freezeJson(child)])))
     }
     return value
-}
-
-function freezeBaseline(baseline: EnvironmentBaseline): EnvironmentBaseline {
-    return Object.freeze({
-        ...baseline,
-        snapshot: Object.freeze({
-            ...baseline.snapshot,
-            intendedState: freezeJson(baseline.snapshot.intendedState),
-        }),
-        evidence: Object.freeze({
-            ...baseline.evidence,
-            runtime: Object.freeze({ ...baseline.evidence.runtime }),
-            command: Object.freeze({
-                ...baseline.evidence.command,
-                stepIds: Object.freeze([...baseline.evidence.command.stepIds]) as unknown as readonly [string, string],
-            }),
-            observedBytes: Object.freeze({ ...baseline.evidence.observedBytes }),
-            stability: Object.freeze({ ...baseline.evidence.stability }),
-        }),
-    })
-}
-
-function baselineRevalidationFailure(error: unknown): RefusalError {
-    const reason = error instanceof RefusalError ? error.message : ''
-    if (['configuration projection is unavailable', 'configuration authority does not match',
-        'configuration and runtime authority do not match', 'compose artifacts are unavailable',
-        'compose artifacts changed during runtime observation'].includes(reason)) {
-        return new RefusalError('baseline config source changed')
-    }
-    if (['authenticated runtime topology is unavailable', 'runtime executable authority changed'].includes(reason)) {
-        return new RefusalError('baseline runtime topology changed')
-    }
-    if (['a complete stable runtime cohort is unavailable', 'runtime service cohort changed',
-        'runtime evidence subject is unavailable', 'lifecycle state changed during baseline observation'].includes(reason)) {
-        return new RefusalError('baseline runtime cohort changed')
-    }
-    if (['previous baseline is unavailable', 'previous baseline is malformed'].includes(reason)) {
-        return new RefusalError('baseline previous baseline changed')
-    }
-    if (['runtime evidence capture plan is unavailable:', 'runtime evidence capture is unavailable:',
-        'runtime evidence is unavailable:'].some((prefix) => reason.startsWith(prefix))) {
-        return new RefusalError('baseline runtime stability changed')
-    }
-    return new RefusalError('baseline revalidation is unavailable')
 }
 
 function captureInput(value: ReadCommandCompositionInput): CapturedInput | undefined {
@@ -264,8 +184,7 @@ async function composeArtifact(root: string, reference: string): Promise<Compose
             sha256: createHash('sha256').update(bytes).digest('hex'),
         })
     } catch {
-        // Callers refuse an unavailable artifact by a fixed message that baseline revalidation classifies as a
-        // changed config source; a cause here would fall outside that classification.
+        // An artifact that cannot be read carries no authority; callers refuse it as unavailable compose artifacts.
         return undefined
     } finally {
         try { await handle?.close() } catch { /* An unreadable artifact carries no authority. */ }
@@ -316,23 +235,11 @@ function exactCompletedTopology(context: StableReadContext): boolean {
         && topologyServices.every((service, index) => service === completedServices[index])
 }
 
-function baselineRecord(value: unknown, context: StableReadContext): EnvironmentBaseline | undefined {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-    const candidate = value as Partial<EnvironmentBaseline>
-    if (candidate.artifact !== 'environment-baseline' || candidate.schemaVersion !== 1
-        || candidate.stackId !== context.stackId || candidate.snapshot === undefined || candidate.evidence === undefined) return undefined
-    const baseline = value as EnvironmentBaseline
-    return environmentBaselineConfirmation(baseline.snapshot, baseline.evidence, baseline) === '' ? undefined : baseline
-}
-
 export function createReadCommandAdapters(
     rawInput: ReadCommandCompositionInput,
     execute: Executor,
 ): ReadCommandAdapterComposition {
     const input = captureInput(rawInput)
-    const pending = new Map<string, PendingBaseline>()
-    const previews = new WeakMap<object, PendingBaseline>()
-    const latestPreviews = new Map<string, PendingBaseline>()
 
     // `refuse` receives the lifecycle's own refusal, such as an unmeasured runtime, so a caller can
     // report it instead of a generic unavailable context.
@@ -471,19 +378,17 @@ export function createReadCommandAdapters(
         })
     }
 
-    const measureBaseline = async (): Promise<BaselineMeasurement> => {
-        if (!input) throw new RefusalError('baseline command composition is unavailable')
+    const observeEnvironment = async (request: { readonly configPath: string }): Promise<RuntimeEvidenceObservation> => {
+        if (!input || resolve(request.configPath) !== input.configPath) throw new RefusalError('environment configuration path does not match')
         const context = await prepare()
         if (!exactCompletedTopology(context)) {
             throw new RefusalError('a complete stable runtime cohort is unavailable')
         }
         let evidenceSubject: RuntimeServiceEvidence | undefined
-        const cohort: Readonly<{ readonly service: string; readonly containerId: string }>[] = []
         for (const completed of context.lifecycle.completedServices) {
             const service = await authenticateService(context.topology, completed.service, completed.containerId, execute)
             if (!service) throw new RefusalError('runtime service cohort changed')
             evidenceSubject = service
-            cohort.push(Object.freeze({ service: completed.service, containerId: service.containerId }))
         }
         if (!evidenceSubject) throw new RefusalError('runtime evidence subject is unavailable')
         const createdAt = new Date().toISOString()
@@ -517,13 +422,8 @@ export function createReadCommandAdapters(
         if (evidence.state !== 'available') throw new RefusalError(`runtime evidence is unavailable: ${evidence.reason}`)
         const after = await readState(context.namespace.paths.lifecycle(context.stackId))
         if (after.kind !== 'complete' || JSON.stringify(after.value) !== JSON.stringify(context.lifecycleRecord)) {
-            throw new RefusalError('lifecycle state changed during baseline observation')
+            throw new RefusalError('lifecycle state changed during environment observation')
         }
-        const address = context.namespace.paths.baseline(context.stackId)
-        const prior = await readState(address)
-        if (prior.kind !== 'complete' && prior.kind !== 'missing') throw new RefusalError('previous baseline is unavailable')
-        const previous = prior.kind === 'complete' ? baselineRecord(prior.value.value, context) : undefined
-        if (prior.kind === 'complete' && !previous) throw new RefusalError('previous baseline is malformed')
         const snapshot = createEnvironmentSnapshot({
             stackId: context.stackId,
             configSha256: context.configuration.runtimeSha256,
@@ -542,129 +442,7 @@ export function createReadCommandAdapters(
             observedBytes: Object.freeze({ ...evidence.observedBytes }),
             stability: Object.freeze({ ...evidence.stability }),
         })
-        const observation = Object.freeze({
-            snapshot: ownedSnapshot,
-            evidence: ownedEvidence,
-            ...(previous ? { previous: freezeBaseline(previous) } : {}),
-        })
-        const basis = Object.freeze({
-            stackId: context.stackId,
-            namespace: context.namespace,
-            cockpitId: context.cockpitId,
-            holderId: context.holderId,
-            address,
-            expected: prior.kind === 'complete' ? prior.value : null,
-            configSha256: context.configuration.runtimeSha256,
-            snapshotSha256: snapshot.snapshotSha256,
-            evidenceSha256: evidence.evidenceSha256,
-            // The fingerprint is compared across separate measurements, so it leaves out the batch id:
-            // each runtime observation mints a fresh one, and including it made every revalidation
-            // report a changed topology.
-            fingerprint: Object.freeze({
-                source: JSON.stringify(context.configuration.source),
-                runtime: JSON.stringify({
-                    stackId: context.topology.stackId,
-                    configSha256: context.topology.configSha256,
-                    runtimeVersion: context.topology.runtimeVersion,
-                    composeVersion: context.topology.composeVersion,
-                    executableSha256: context.topology.executableSha256,
-                    projectName: context.topology.projectName,
-                    cwd: context.topology.cwd,
-                    services: context.topology.services,
-                    composeFiles: context.composeFiles.map(({ reference, canonicalPath, sha256 }) => ({ reference, canonicalPath, sha256 })),
-                }),
-                cohort: JSON.stringify({ lifecycle: context.lifecycleRecord, services: cohort }),
-                predecessor: JSON.stringify(prior.kind === 'complete' ? prior.value : null),
-                stability: JSON.stringify({
-                    stackId: evidence.stackId,
-                    configSha256: evidence.configSha256,
-                    runtime: evidence.runtime,
-                    containerId: evidence.command.containerId,
-                    stability: evidence.stability,
-                }),
-            }),
-        })
-        return Object.freeze({ observation, basis })
-    }
-
-    const observeBaseline = async (request: { readonly configPath: string }): Promise<BaselineObservation> => {
-        if (!input || resolve(request.configPath) !== input.configPath) throw new RefusalError('baseline configuration path does not match')
-        const measured = await measureBaseline()
-        pending.delete(measured.basis.stackId)
-        latestPreviews.set(measured.basis.stackId, measured.basis)
-        previews.set(measured.observation, measured.basis)
-        return measured.observation
-    }
-
-    const revalidateBaseline = async (observation: BaselineObservation): Promise<BaselineObservation> => {
-        const basis = observation && typeof observation === 'object' ? previews.get(observation) : undefined
-        if (!basis) {
-            throw new RefusalError('baseline preview authority is unavailable')
-        }
-        previews.delete(observation)
-        if (latestPreviews.get(basis.stackId) !== basis) {
-            throw new RefusalError('baseline preview authority is unavailable')
-        }
-        latestPreviews.delete(basis.stackId)
-        pending.delete(basis.stackId)
-        await remeasureBaseline(basis)
-        pending.set(basis.stackId, basis)
-        return observation
-    }
-
-    // Revalidation and the write both re-measure the approved runtime; either refuses by naming
-    // what changed, whether a fingerprint moved or the measurement itself failed.
-    const remeasureBaseline = async (basis: PendingBaseline): Promise<void> => {
-        let fresh: BaselineMeasurement
-        try {
-            fresh = await measureBaseline()
-        } catch (error) {
-            throw baselineRevalidationFailure(error)
-        }
-        const changed = (Object.keys(basis.fingerprint) as (keyof PendingBaseline['fingerprint'])[])
-            .find((field) => basis.fingerprint[field] !== fresh.basis.fingerprint[field])
-        if (changed) {
-            const names: Record<keyof PendingBaseline['fingerprint'], string> = {
-                source: 'config source',
-                runtime: 'runtime topology',
-                cohort: 'runtime cohort',
-                predecessor: 'previous baseline',
-                stability: 'runtime stability',
-            }
-            throw new RefusalError(`baseline ${names[changed]} changed`)
-        }
-    }
-
-    const writeBaseline = async (baseline: EnvironmentBaseline): Promise<void> => {
-        if (!isEnvironmentBaselineAuthentic(baseline)) throw new RefusalError('baseline write authority is unavailable')
-        const basis = pending.get(baseline.stackId)
-        if (!basis
-            || baseline.snapshot.configSha256 !== basis.configSha256
-            || baseline.evidence.configSha256 !== basis.configSha256
-            || baseline.snapshot.snapshotSha256 !== basis.snapshotSha256
-            || baseline.evidence.evidenceSha256 !== basis.evidenceSha256) {
-            throw new RefusalError('baseline write authority is unavailable')
-        }
-        pending.delete(baseline.stackId)
-        await remeasureBaseline(basis)
-        const expected = JSON.stringify(basis.expected)
-        const result = await transactState(
-            basis.namespace,
-            basis.address,
-            { ownerId: basis.holderId },
-            async (current) => JSON.stringify(current) === expected
-                ? Object.freeze({
-                    format: 'cockpit-state/v1' as const,
-                    kind: 'baseline' as const,
-                    cockpitId: basis.cockpitId,
-                    subjectId: baseline.stackId,
-                    revision: current === null ? 0 : current.revision + 1,
-                    updatedAt: baseline.recordedAt,
-                    value: baseline as unknown as StateRecord['value'],
-                })
-                : abortStateTransaction(false),
-        )
-        if ('aborted' in result || result.kind !== 'complete') throw new RefusalError('baseline publication is not durable')
+        return Object.freeze({ snapshot: ownedSnapshot, evidence: ownedEvidence })
     }
 
     const logs: LogsCommandAdapters = Object.freeze({
@@ -672,8 +450,5 @@ export function createReadCommandAdapters(
         execute: (step: ExecutionStep, options: { readonly signal?: AbortSignal }) => execute(step, options),
         ...(input?.signal ? { signal: input.signal } : {}),
     })
-    const baseline: BaselineCommandAdapters & {
-        readonly revalidate: (observation: BaselineObservation) => Promise<BaselineObservation>
-    } = Object.freeze({ observe: observeBaseline, revalidate: revalidateBaseline, write: writeBaseline })
-    return Object.freeze({ logs, baseline })
+    return Object.freeze({ logs, environment: Object.freeze({ observe: observeEnvironment }) })
 }

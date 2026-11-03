@@ -21,10 +21,9 @@ from the guard adapters' decision encoding. The [CLI application](../../packages
 measures elapsed time; [invocation records](../../packages/cockpit/src/invocation.ts) validate the
 common completion fields.
 
-Declining an interactive reset or baseline waits for cleanup, then exits 130 with no result; if
-that cleanup throws, the run reports failure instead of cancellation. JSON mode, CI and
-non-terminal input cannot open an interactive confirmation, so a noninteractive reset stays a
-preview and baseline requires a terminal. The
+Declining an interactive reset waits for cleanup, then exits 130 with no result; if that cleanup
+throws, the run reports failure instead of cancellation. JSON mode, CI and non-terminal input
+cannot open an interactive confirmation, so a noninteractive reset stays a preview. The
 [operator application](../../packages/cockpit/src/environment/operator-application.ts) owns these
 boundaries.
 

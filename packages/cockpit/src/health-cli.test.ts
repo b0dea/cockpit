@@ -4,13 +4,12 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { runCli, type CliIo } from './cli.js'
 
-function captureIo(confirmBaseline?: CliIo['confirmBaseline']) {
+function captureIo() {
     let stdout = ''
     let stderr = ''
     const io: CliIo = {
         stdout: { write: (text) => ((stdout += text), true) },
         stderr: { write: (text) => ((stderr += text), true) },
-        ...(confirmBaseline ? { confirmBaseline } : {}),
     }
     return { io, output: () => ({ stdout, stderr }) }
 }
@@ -28,28 +27,6 @@ describe('health CLI boundary', () => {
         expect(JSON.parse(capture.output().stdout)).toMatchObject({
             diagnostics: [{ code: 'CONFIG_NOT_FOUND', target: '/synthetic/missing-cockpit.toml' }], result: null,
         })
-    })
-
-    it.each([
-        ['missing --interactive', ['baseline-record', '--config', '/synthetic/cockpit.toml']],
-        ['the removed --confirmation digest flag', [
-            'baseline-record', '--config', '/synthetic/cockpit.toml', '--interactive', '--confirmation', '4'.repeat(64),
-        ]],
-    ] as const)('refuses %s before baseline observation or writing', async (_name, args) => {
-        const beginOperatorBaselineRecord = vi.fn()
-        const baselineRecord = vi.fn()
-        const capture = captureIo(async () => true)
-
-        const status = await runCli(
-            args,
-            capture.io,
-            { beginOperatorBaselineRecord, 'baseline-record': baselineRecord },
-            { env: {} },
-        )
-
-        expect(status).toBe(2)
-        expect(beginOperatorBaselineRecord).not.toHaveBeenCalled()
-        expect(baselineRecord).not.toHaveBeenCalled()
     })
 
     it.each(['preflight', 'doctor'] as const)('binds %s to the production observation composition and fails on an unreadable config', async (verb) => {
@@ -172,111 +149,5 @@ describe('health CLI boundary', () => {
             configPath: '/synthetic/cockpit.toml',
             service: 'api', tail: 100, since: '15m', follow: true, json: false,
         })
-    })
-
-    it.each([
-        ['approve', true],
-        ['decline', false],
-    ] as const)('confirms one exact baseline observation interactively for %s', async (decision, approved) => {
-        const preview = Object.freeze({
-            kind: 'preview' as const, status: 0 as const, diagnostics: Object.freeze([]),
-            result: Object.freeze({ confirmation: '4'.repeat(64), stackId: `stack:${'1'.repeat(64)}` }),
-        })
-        const decide = vi.fn(async () => ({
-            kind: approved ? 'complete' as const : 'refusal' as const,
-            status: approved ? 0 as const : 2 as const,
-            diagnostics: Object.freeze([]), result: approved ? Object.freeze({
-                artifact: 'environment-baseline', schemaVersion: 1, stackId: `stack:${'1'.repeat(64)}`,
-                version: 2, recordedAt: '2026-09-26T00:00:00.000Z',
-            }) : null,
-        }))
-        const beginOperatorBaselineRecord = vi.fn(async () => Object.freeze({ preview, decide }))
-        const baselineRecord = vi.fn()
-        // Recording stays separate from read-only health: neither health handler runs.
-        const preflight = vi.fn()
-        const doctor = vi.fn()
-        const confirmBaseline = vi.fn(async (shown) => {
-            expect(shown).toBe(preview)
-            return approved
-        })
-        const capture = captureIo(confirmBaseline)
-
-        const status = await runCli(
-            ['baseline-record', '--config', '/synthetic/cockpit.toml', '--interactive'],
-            capture.io, { preflight, doctor, 'baseline-record': baselineRecord, beginOperatorBaselineRecord }, { env: {} },
-        )
-
-        expect(status).toBe(approved ? 0 : 130)
-        // A recorded baseline says so; printing nothing left a person unsure whether anything was written.
-        expect(capture.output().stdout).toBe(approved
-            ? `Recorded environment baseline version 2 (stack:${'1'.repeat(64)}) at 2026-09-26T00:00:00.000Z.\n` : '')
-        expect(baselineRecord).not.toHaveBeenCalled()
-        expect(preflight).not.toHaveBeenCalled()
-        expect(doctor).not.toHaveBeenCalled()
-        expect(beginOperatorBaselineRecord).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml' })
-        expect(confirmBaseline).toHaveBeenCalledOnce()
-        expect(decide).toHaveBeenCalledOnce()
-        expect(decide).toHaveBeenCalledWith(decision)
-    })
-
-    it.each([
-        ['piped input', { env: {} }, false],
-        ['CI', { env: { CI: '1' } }, true],
-    ] as const)('refuses interactive baseline in %s before observing', async (_name, runtime, callback) => {
-        const beginOperatorBaselineRecord = vi.fn()
-        const capture = captureIo(callback ? async () => true : undefined)
-        const status = await runCli(
-            ['baseline-record', '--config', '/synthetic/cockpit.toml', '--interactive'],
-            { ...capture.io, stdin: { isTTY: false } as NodeJS.ReadStream },
-            { beginOperatorBaselineRecord }, runtime,
-        )
-        expect(status).toBe(2)
-        expect(beginOperatorBaselineRecord).not.toHaveBeenCalled()
-    })
-
-    it('prints the bounded stale-baseline field after interactive approval', async () => {
-        const capture = captureIo(async () => true)
-        const status = await runCli(
-            ['baseline-record', '--config', '/synthetic/cockpit.toml', '--interactive'],
-            capture.io, { beginOperatorBaselineRecord: async () => Object.freeze({
-                preview: Object.freeze({
-                    kind: 'preview' as const, status: 0 as const, diagnostics: Object.freeze([]),
-                    result: Object.freeze({ confirmation: '4'.repeat(64), stackId: `stack:${'1'.repeat(64)}` }),
-                }),
-                decide: async () => Object.freeze({
-                    kind: 'refusal' as const, status: 2 as const, result: null,
-                    diagnostics: Object.freeze([Object.freeze({
-                        code: 'EVIDENCE_UNAVAILABLE' as const, severity: 'error' as const,
-                        message: 'baseline runtime topology changed',
-                    })]),
-                }),
-            }) as never }, { env: {} },
-        )
-        expect(status).toBe(2)
-        expect(capture.output().stderr).toContain('baseline runtime topology changed')
-    })
-
-    it('refuses interactive baseline in JSON mode before observing', async () => {
-        const beginOperatorBaselineRecord = vi.fn()
-        const capture = captureIo(async () => true)
-        const status = await runCli(
-            ['baseline-record', '--config', '/synthetic/cockpit.toml', '--interactive', '--json'],
-            capture.io, { beginOperatorBaselineRecord }, { env: {} },
-        )
-        expect(status).toBe(2)
-        expect(beginOperatorBaselineRecord).not.toHaveBeenCalled()
-        expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            result: null, diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE' }],
-        })
-    })
-
-    it('binds interactive baseline observation to the production evidence source', async () => {
-        const capture = captureIo(async () => true)
-        const status = await runCli(
-            ['baseline-record', '--config', '/synthetic/missing-cockpit.toml', '--interactive'],
-            capture.io, {}, { env: {} },
-        )
-        expect(status).toBe(2)
-        expect(capture.output().stderr).toContain('EVIDENCE_UNAVAILABLE')
     })
 })

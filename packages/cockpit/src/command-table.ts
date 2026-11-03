@@ -23,7 +23,6 @@ export type WorkHandlerIdentifier =
     | 'browser-drive' | 'browser-screenshot' | 'browser-debugger' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
-    | 'baseline-record'
     | 'check'
     | 'doctor'
     | 'down'
@@ -84,7 +83,6 @@ export interface CommandDefinition {
     handler: HandlerIdentifier
     options: NonNullable<ParseArgsConfig['options']>
     visibility: 'public'
-    experimental?: true
     ordinary: OrdinaryCommandMetadata
 }
 
@@ -420,20 +418,6 @@ export const commands: readonly CommandDefinition[] = [
         ordinary: ordinary('doctor'),
         options: {
             config: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
-        name: 'baseline-record',
-        stage: 'diagnose',
-        summary: 'Record an explicitly confirmed environment baseline',
-        handler: 'baseline-record',
-        visibility: 'public',
-        experimental: true,
-        ordinary: unavailable('baseline recording requires separate approval'),
-        options: {
-            config: { type: 'string' },
-            interactive: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
     },

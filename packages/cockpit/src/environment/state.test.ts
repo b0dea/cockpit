@@ -179,7 +179,7 @@ describe('selectStateRoot', () => {
         if (!history) throw new Error('expected lifecycle history address')
         const addresses = [
             namespace.paths.coordination(stackId), namespace.paths.lifecycle(stackId),
-            namespace.paths.dataOutcome(stackId), history, namespace.paths.baseline(stackId),
+            namespace.paths.dataOutcome(stackId), history,
             namespace.paths.cache(checkoutId, 'f'.repeat(64)),
         ]
         expectWindowsSafeStatePath(namespace.root, namespace.paths.stateLock)
@@ -379,7 +379,7 @@ describe('selectStateRoot', () => {
 
         expect(result.value.cockpitRoot).toBe(base)
         expect(Object.keys(result.value.paths).sort()).toEqual([
-            'baseline', 'cache', 'coordination', 'dataOutcome', 'installLock', 'lifecycle', 'stateLock',
+            'cache', 'coordination', 'dataOutcome', 'installLock', 'lifecycle', 'stateLock',
         ])
         expect(result.value.paths.coordination(stackId).path).toBe(join(base, 'records', 'coordination', `stack_${'b'.repeat(64)}.json`))
         expect(result.value.paths.lifecycle(stackId).path).toBe(join(base, 'records', 'lifecycle', `stack_${'b'.repeat(64)}.json`))
@@ -390,7 +390,6 @@ describe('selectStateRoot', () => {
         expect(result.value.paths.cache(checkoutId, 'a'.repeat(64)).path).toBe(
             join(base, 'cache', `checkout_${'c'.repeat(64)}`, `${'a'.repeat(64)}.json`),
         )
-        expect(result.value.paths.baseline(stackId).path).toBe(join(base, 'evidence', 'baselines', `stack_${'b'.repeat(64)}.json`))
     })
 })
 
@@ -767,7 +766,7 @@ describe('readState', () => {
         const reading = readState(mutable)
         Object.assign(mutable, {
             path: join(dirname(originalPath), 'mutated.json'),
-            kind: 'baseline',
+            kind: 'data-outcome',
             cockpitId: `cockpit:mutated:${'f'.repeat(64)}`,
             subjectId: `stack:${'f'.repeat(64)}`,
         })
@@ -778,7 +777,7 @@ describe('readState', () => {
         const malformedReading = readState(malformedAddress)
         Object.assign(malformedAddress, {
             path: join(dirname(originalPath), 'other.json'),
-            kind: 'baseline',
+            kind: 'data-outcome',
             cockpitId: `cockpit:other:${'e'.repeat(64)}`,
             subjectId: `stack:${'e'.repeat(64)}`,
         })

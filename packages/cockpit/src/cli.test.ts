@@ -1,7 +1,6 @@
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PassThrough, Readable } from 'node:stream'
@@ -224,7 +223,7 @@ describe('closed ordinary invocation metadata', () => {
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
-            ['sync'], ['reset'], ['baseline-record'], ['guard-evaluate', '--harness', 'claudecode'],
+            ['sync'], ['reset'], ['guard-evaluate', '--harness', 'claudecode'],
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
             ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
@@ -348,14 +347,6 @@ describe('CLI help', () => {
         }
     })
 
-    it('labels experimental command-specific help without labeling stable commands', async () => {
-        const experimental = await runInProcess(['baseline-record', '--help'])
-        expect(experimental.stdout).toContain('Status: experimental. This interface may change before a stable release.')
-        for (const args of [['check'], ['work', 'grade'], ['browser', 'drive']]) {
-            expect((await runInProcess([...args, '--help'])).stdout, args.join(' ')).not.toContain('Status: experimental.')
-        }
-    })
-
     it('tells `down --help` and `reset --help` readers which Docker daemon they delete from', async () => {
         // Both now pin the active context themselves; help that still asked for DOCKER_CONTEXT sent
         // readers to a `$(docker context show)` prefix the guard refuses.
@@ -466,8 +457,7 @@ describe('CLI help', () => {
             '  down              Stop and remove the stack (on the active local Docker context)\n' +
             '  reset             Preview a reset, or approve that exact preview interactively (on the active local Docker context)\n\n' +
             'Diagnose:\n' +
-            '  doctor            Report environment problems without changing anything\n' +
-            '  baseline-record   Record an explicitly confirmed environment baseline (experimental)\n\n' +
+            '  doctor            Report environment problems without changing anything\n\n' +
             'Test and grade:\n' +
             '  test-run          Run a declared product test gate and report which tests it selected\n' +
             '  work              Prepare, accept, execute, review and grade work orders\n' +

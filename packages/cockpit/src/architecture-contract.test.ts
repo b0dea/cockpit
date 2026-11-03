@@ -2572,7 +2572,6 @@ function applicationBoundaryViolations(
         'PreflightCommandInput', 'PreflightCommandAdapters', 'PreflightCommandResult',
         'DoctorCommandInput', 'DoctorCommandAdapters', 'DoctorCommandResult',
         'LogsCommandInput', 'LogsCommandAdapters', 'LogsCommandResult',
-        'BaselineCommandInput', 'BaselineCommandAdapters', 'BaselineCommandResult',
     ]
     const applicationTypes = exportedTypeDeclarations(sources.get(APPLICATION_MODULE) ?? '')
     if (lifecycleContracts.some((name) => !applicationTypes.has(name))) {
@@ -2592,7 +2591,7 @@ function applicationBoundaryViolations(
     for (const violation of facetOwnerViolation(
         sources,
         APPLICATION_MODULE,
-        ['runPreflight', 'runDoctor', 'runLogs', 'runBaselineRecord'],
+        ['runPreflight', 'runDoctor', 'runLogs'],
         'ARCH048_APPLICATION_OBSERVATION_HOME',
         analysis,
     )) violations.add(violation)
@@ -2647,7 +2646,6 @@ function applicationBoundaryViolations(
         'PreflightCommandResult',
         'DoctorCommandResult',
         'LogsCommandResult',
-        'BaselineCommandResult',
     ]) {
         const declaration = applicationTypes.get(resultName)
         if (!declaration) continue
@@ -3864,7 +3862,7 @@ describe('product architecture contract', () => {
 
     it('keeps environment command ownership in the application instead of pass-through modules', () => {
         const sources = productionSources()
-        for (const path of ['down', 'sleep', 'doctor', 'logs', 'preflight', 'reset', 'baseline']) {
+        for (const path of ['down', 'sleep', 'doctor', 'logs', 'preflight', 'reset']) {
             expect(sources.has(`packages/cockpit/src/${path}/command.ts`)).toBe(false)
         }
     })
@@ -4244,7 +4242,7 @@ describe('product architecture contract', () => {
         )
     })
 
-    it.each(['setup', 'up', 'sleep', 'down', 'reset', 'preflight', 'doctor', 'logs', 'baseline'])(
+    it.each(['setup', 'up', 'sleep', 'down', 'reset', 'preflight', 'doctor', 'logs'])(
         'classifies the root %s command directory as a command module',
         (verb) => {
             const sources = new Map([
@@ -4360,7 +4358,7 @@ describe('product architecture contract', () => {
         expect(facetOwnerViolation(new Map([[module, declared], [rogue, duplicate]]), module, facets, code)).toEqual([code])
     })
 
-    it.each(['runPreflight', 'runDoctor', 'runLogs', 'runBaselineRecord'])(
+    it.each(['runPreflight', 'runDoctor', 'runLogs'])(
         'requires %s to have exactly one application owner',
         (runner) => {
             const rogue = 'packages/cockpit/src/environment/rogue.ts'

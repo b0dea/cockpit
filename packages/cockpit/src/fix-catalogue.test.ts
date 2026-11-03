@@ -125,7 +125,7 @@ describe('executable remedy catalogue', () => {
 // install, every configured command refuses without --config, and down and reset refuse until the
 // Docker daemon is named.
 describe('printed cockpit commands', () => {
-    const VERBS = 'sibling add|sibling remove|runtime measure|baseline-record|setup|sync|check|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
+    const VERBS = 'sibling add|sibling remove|runtime measure|setup|sync|check|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
     // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
     const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
     const runnable = new RegExp(`(?:npx --no |\\./node_modules/\\.bin/)cockpit (${SCANNED})(?![\\w-])`, 'g')
@@ -152,7 +152,7 @@ describe('printed cockpit commands', () => {
     }
 
     it('spell every configured command from npx itself, with no wrapper or environment prefix', () => {
-        for (const verb of VERBS.split('|').filter(verb => verb !== 'baseline-record') as ConfiguredCommand[]) {
+        for (const verb of VERBS.split('|') as ConfiguredCommand[]) {
             expect(cockpitCommand(verb, { config: '/synthetic/cockpit.toml' })).toMatch(new RegExp(`^npx --no cockpit ${verb} --config `))
         }
         for (const [before, reason] of [['env -u DOCKER_CONTEXT ', 'a wrapper prefix'], ['run `env FOO=1 ', 'a wrapper prefix'],
@@ -319,13 +319,13 @@ describe('printed cockpit commands', () => {
         await writeFile(join(root, 'answers.toml'), '')
         const env = { PATH: process.env.PATH ?? '', HOME: root }
         const io = { confirmInit: async () => undefined, answerInitQuestion: async () => undefined, confirmReset: async () => false,
-            confirmBaseline: async () => false, confirmWorkOrder: async () => undefined, confirmSelftestExecutable: async () => undefined,
+            confirmWorkOrder: async () => undefined, confirmSelftestExecutable: async () => undefined,
             confirmSelftestProbeSpecifications: async () => undefined, confirmStaleRemoval: async () => undefined }
 
         let reached = false
         const stop = () => { reached = true; throw new Error('stopped before work') }
         const stubs = Object.fromEntries([...new Set(cliCommands.map(command => command.handler)),
-            'beginOperatorWorkApplication', 'beginOperatorReset', 'beginOperatorBaselineRecord'].map(name => [name, stop])) as CliHandlerOverrides
+            'beginOperatorWorkApplication', 'beginOperatorReset'].map(name => [name, stop])) as CliHandlerOverrides
         // Relative paths in a printed command resolve against the reader's cockpit root.
         const cwd = process.cwd()
         process.chdir(root)

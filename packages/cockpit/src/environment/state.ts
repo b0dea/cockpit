@@ -95,7 +95,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
 
 const STATE_FORMAT = 'cockpit-state/v1'
 export const SERIALIZED_RECORD_BYTE_LIMIT = 1_048_576
-const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome', 'cache', 'baseline'] as const
+const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome', 'cache'] as const
 const safeSegment = /^[a-z0-9][a-z0-9._-]*$/
 const digest = /^[a-f0-9]{64}$/
 const cockpitIdentity = /^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/
@@ -252,7 +252,6 @@ export interface StateNamespace {
         readonly stateLock: string
         readonly installLock: (cacheId: string) => string
         readonly cache: (checkoutId: CheckoutId, cacheIdentitySha256: string) => StateAddress
-        readonly baseline: (stackId: StackId) => StateAddress
     }
 }
 
@@ -566,17 +565,6 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
                 checksum,
             )
         },
-        baseline: (stackId) => {
-            const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
-            return address(
-                join(cockpitRoot, 'evidence', 'baselines', `${identitySegment(subjectId)}.json`),
-                root,
-                cockpitRoot,
-                'baseline',
-                cockpitId,
-                subjectId,
-            )
-        },
     })
     const value: StateNamespace = Object.freeze({ root, cockpitRoot, paths })
     issuedNamespaces.add(value)
@@ -804,7 +792,6 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         const stateLock = own(paths, 'stateLock')
         const installLock = own(paths, 'installLock')
         const cache = own(paths, 'cache')
-        const baseline = own(paths, 'baseline')
         if (
             typeof coordination !== 'function'
             || typeof lifecycle !== 'function'
@@ -812,14 +799,13 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             || typeof stateLock !== 'string'
             || typeof installLock !== 'function'
             || typeof cache !== 'function'
-            || typeof baseline !== 'function'
         ) return undefined
         // Recover captured authority only from its original path functions and exact namespace fields.
         const issued = issuedNamespacePaths.get(coordination)
         if (issued && root === issued.root && cockpitRoot === issued.cockpitRoot
             && lifecycle === issued.paths.lifecycle && dataOutcome === issued.paths.dataOutcome
             && stateLock === issued.paths.stateLock && installLock === issued.paths.installLock
-            && cache === issued.paths.cache && baseline === issued.paths.baseline) return issued
+            && cache === issued.paths.cache) return issued
         return Object.freeze({
             root,
             cockpitRoot,
@@ -830,7 +816,6 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
                 stateLock,
                 installLock,
                 cache,
-                baseline,
             }),
         }) as StateNamespace
     } catch {
@@ -1022,9 +1007,6 @@ function expectedAddressPath(address: StateAddress | BootstrapStateAddress): str
         || address.kind === 'data-outcome'
     ) {
         return join(address.cockpitRoot, 'records', address.kind, `${identitySegment(address.subjectId)}.json`)
-    }
-    if (address.kind === 'baseline') {
-        return join(address.cockpitRoot, 'evidence', 'baselines', `${identitySegment(address.subjectId)}.json`)
     }
     if (address.kind === 'cache' && address.qualifier && digest.test(address.qualifier)) {
         return join(address.cockpitRoot, 'cache', identitySegment(address.subjectId), `${address.qualifier}.json`)

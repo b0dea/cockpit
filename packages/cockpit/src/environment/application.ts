@@ -244,13 +244,7 @@ import {
     type LogRequest,
     type RestartWindow,
 } from './logs.js'
-import {
-    environmentBaselineConfirmation,
-    recordEnvironmentBaseline,
-    type CapturedRuntimeEvidence,
-    type EnvironmentBaseline,
-    type EnvironmentSnapshot,
-} from './evidence.js'
+import type { CapturedRuntimeEvidence, EnvironmentSnapshot } from './evidence.js'
 
 export const mechanism = {
     id: 'environment-application',
@@ -259,7 +253,7 @@ export const mechanism = {
         'setupEnvironment', 'issueSetupRunContext', 'runSetup',
         'issueLifecycleRunContext', 'noticeLifecycleRun', 'withLifecycleConfiguration', 'decodeLifecycleRecord', 'revalidateService', 'runUp', 'runSession', 'runSleep',
         'issueDestructiveRunContext', 'runDown', 'runReset', 'beginOperatorReset',
-        'runPreflight', 'runDoctor', 'runLogs', 'runBaselineRecord', 'beginOperatorBaselineRecord',
+        'runPreflight', 'runDoctor', 'runLogs',
         'prepareGuardEvaluationPolicy',
         'runGuardEvaluationApplication',
     ],
@@ -4793,41 +4787,10 @@ export type LogsCommandResult = EnvironmentCommandOutcome<Readonly<{
     result: Readonly<{ json: boolean; records: readonly LogRecord[]; truncated: boolean }>
 }>
 
-export interface BaselineCommandInput {
-    readonly configPath: string
-    readonly confirmation: string
-    readonly recordedAt: string
-}
-
-export interface BaselineObservation {
+/** The resolved intent and the measured runtime of the running stack, which a product gate reads. */
+export interface RuntimeEvidenceObservation {
     readonly snapshot: EnvironmentSnapshot
     readonly evidence: CapturedRuntimeEvidence
-    readonly previous?: EnvironmentBaseline
-}
-
-export interface BaselineCommandAdapters {
-    readonly observe: (input: { readonly configPath: string }) => Promise<BaselineObservation>
-    readonly revalidate: (observation: BaselineObservation) => Promise<BaselineObservation>
-    readonly write: (baseline: EnvironmentBaseline) => Promise<void>
-}
-
-export type BaselineCommandResult = EnvironmentCommandOutcome<EnvironmentBaseline>
-
-export interface OperatorBaselineSession {
-    readonly preview: Readonly<{
-        readonly kind: 'preview'
-        readonly status: 0
-        readonly diagnostics: readonly EnvironmentDiagnostic[]
-        readonly result: Readonly<{
-            readonly stackId: EnvironmentBaseline['stackId']
-            readonly version: number
-            readonly observedAt: string
-            readonly snapshotSha256: string
-            readonly evidenceSha256: string
-            readonly confirmation: string
-        }>
-    }>
-    decide(decision: 'approve' | 'decline'): Promise<BaselineCommandResult>
 }
 
 interface HealthEvaluation {
@@ -5558,146 +5521,3 @@ export async function runLogs(
     return Object.freeze({ kind: 'complete', status: 0, diagnostics, result })
 }
 
-export async function runBaselineRecord(
-    input: BaselineCommandInput,
-    adapters: BaselineCommandAdapters,
-): Promise<BaselineCommandResult> {
-    const captured = ownDataValues(input, ['configPath', 'confirmation', 'recordedAt'])
-    const configPath = captured?.configPath
-    const confirmation = captured?.confirmation
-    const recordedAt = captured?.recordedAt
-    if (typeof configPath !== 'string' || typeof confirmation !== 'string' || typeof recordedAt !== 'string') {
-        return baselineOperatorRefusal('baseline request must contain exact public options')
-    }
-    let observed: BaselineObservation
-    try {
-        observed = await adapters.observe(Object.freeze({ configPath }))
-    } catch (error) {
-        return baselineOperatorRefusal(baselineObservationMessage(error))
-    }
-    const evidence = ownDataValues(observed, ['snapshot', 'evidence'], ['previous'])
-    if (!evidence) {
-        return baselineOperatorRefusal('baseline evidence observation must be readable')
-    }
-    try {
-        const current = await adapters.revalidate(observed)
-        if (current !== observed) return baselineOperatorRefusal('baseline evidence changed after confirmation')
-    } catch (error) {
-        return baselineOperatorRefusal(baselineRevalidationMessage(error))
-    }
-    const admitted = recordEnvironmentBaseline(Object.freeze({
-        snapshot: evidence.snapshot as EnvironmentSnapshot,
-        evidence: evidence.evidence as CapturedRuntimeEvidence,
-        confirmation,
-        recordedAt,
-        ...(evidence.previous === undefined ? {} : { previous: evidence.previous as EnvironmentBaseline }),
-    }))
-    if (admitted.kind !== 'complete') return admitted
-    try {
-        await adapters.write(admitted.result)
-        return admitted
-    } catch (error) {
-        return baselineOperatorRefusal(
-            `environment baseline durability is indeterminate: ${errorCause(error)}`,
-            ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            admitted.result.stackId,
-        )
-    }
-}
-
-export async function beginOperatorBaselineRecord(
-    input: Pick<BaselineCommandInput, 'configPath'>,
-    adapters: BaselineCommandAdapters,
-): Promise<OperatorBaselineSession | Extract<BaselineCommandResult, { kind: 'refusal' }>> {
-    const captured = ownDataValues(input, ['configPath'])
-    if (typeof captured?.configPath !== 'string') {
-        return baselineOperatorRefusal('baseline request must contain exact public options')
-    }
-    let observation: BaselineObservation
-    try {
-        observation = await adapters.observe(Object.freeze({ configPath: captured.configPath }))
-    } catch (error) {
-        return baselineOperatorRefusal(baselineObservationMessage(error))
-    }
-    const observed = ownDataValues(observation, ['snapshot', 'evidence'], ['previous'])
-    if (!observed) return baselineOperatorRefusal('baseline evidence observation must be readable')
-    const snapshot = snapshotJson(observed.snapshot) as EnvironmentSnapshot | undefined
-    const evidence = snapshotJson(observed.evidence) as CapturedRuntimeEvidence | undefined
-    const previous = observed.previous === undefined
-        ? undefined : snapshotJson(observed.previous) as EnvironmentBaseline | undefined
-    if (!snapshot || !evidence || observed.previous !== undefined && !previous) {
-        return baselineOperatorRefusal('baseline evidence observation must be readable')
-    }
-    const confirmation = environmentBaselineConfirmation(snapshot, evidence, previous)
-    if (!confirmation) return baselineOperatorRefusal('baseline evidence cannot be confirmed')
-    let pending = true
-    return Object.freeze({
-        preview: Object.freeze({
-            kind: 'preview' as const, status: 0 as const, diagnostics: Object.freeze([]),
-            result: Object.freeze({
-                stackId: snapshot.stackId, version: (previous?.version ?? 0) + 1,
-                observedAt: evidence.observedAt,
-                snapshotSha256: snapshot.snapshotSha256,
-                evidenceSha256: evidence.evidenceSha256, confirmation,
-            }),
-        }),
-        decide: async (decision: 'approve' | 'decline'): Promise<BaselineCommandResult> => {
-            if (!pending || decision !== 'approve') {
-                pending = false
-                return baselineOperatorRefusal(decision === 'decline' ? 'baseline recording was declined' : 'baseline operator session is unavailable')
-            }
-            pending = false
-            try {
-                const current = await adapters.revalidate(observation)
-                if (current !== observation) return baselineOperatorRefusal('baseline evidence changed after confirmation')
-            } catch (error) {
-                return baselineOperatorRefusal(baselineRevalidationMessage(error))
-            }
-            const admitted = recordEnvironmentBaseline(Object.freeze({
-                snapshot, evidence, confirmation, recordedAt: new Date().toISOString(),
-                ...(previous === undefined ? {} : { previous }),
-            }))
-            if (admitted.kind !== 'complete') return admitted.kind === 'refusal'
-                ? admitted : baselineOperatorRefusal('baseline evidence cannot be admitted')
-            const baseline = admitted.result
-            try {
-                await adapters.write(baseline)
-                return admitted
-            } catch (error) {
-                return Object.freeze({
-                    kind: 'refusal', status: 2, result: null,
-                    diagnostics: Object.freeze([applicationDiagnostic(
-                        ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-                        `environment baseline durability is indeterminate: ${errorCause(error)}`, baseline.stackId,
-                    )]),
-                })
-            }
-        },
-    })
-}
-
-function baselineObservationMessage(error: unknown): string {
-    return `baseline evidence observation is unavailable: ${errorCause(error)}`
-}
-
-function baselineRevalidationMessage(error: unknown): string {
-    const message = error instanceof RefusalError ? error.message : ''
-    return [
-        'baseline config source changed',
-        'baseline runtime topology changed',
-        'baseline runtime cohort changed',
-        'baseline previous baseline changed',
-        'baseline runtime stability changed',
-    ].includes(message) ? message : 'baseline evidence changed after confirmation'
-}
-
-function baselineOperatorRefusal(
-    message: string,
-    code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-    target = 'environment-baseline',
-): Extract<BaselineCommandResult, { kind: 'refusal' }> {
-    return Object.freeze({
-        kind: 'refusal', status: 2, result: null,
-        diagnostics: Object.freeze([applicationDiagnostic(code, message, target)]),
-    })
-}

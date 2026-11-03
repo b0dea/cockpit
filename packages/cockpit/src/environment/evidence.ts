@@ -29,10 +29,7 @@ export const mechanism = {
         'authenticateStabilityCapture',
         'captureRuntimeEvidence',
         'isRuntimeEvidenceAuthentic',
-        'isEnvironmentBaselineAuthentic',
         'compareEnvironmentSnapshot',
-        'environmentBaselineConfirmation',
-        'recordEnvironmentBaseline',
     ],
 } as const
 
@@ -51,7 +48,6 @@ const PROCESS_SCRIPT = 'IFS= read -r stat < /proc/1/stat; pid=${stat%% *}; rest=
 // -H follows a symlink named as a content path: /proc/1/exe is one, and without -H find skips it,
 // hashes nothing, and the capture fails with an empty corpus on every real container.
 const CONTENT_SCRIPT = 'tmp=${TMPDIR:-/tmp}/cockpit-content-$$; cockpit_hash_failure=$tmp.failed; export cockpit_hash_failure; trap \'rm -f "$tmp.raw" "$tmp.sorted" "$tmp.failed"\' EXIT HUP INT TERM; find -H "$@" -type f -exec sh -c \'sha256sum -- "$@" || { : > "$cockpit_hash_failure"; exit 1; }\' sh {} + > "$tmp.raw"; [ ! -e "$tmp.failed" ] && [ -s "$tmp.raw" ]; LC_ALL=C sort "$tmp.raw" > "$tmp.sorted"; sha256sum "$tmp.sorted"'
-const issuedEnvironmentBaselines = new WeakSet<object>()
 
 type JsonPrimitive = null | boolean | number | string
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue }
@@ -513,16 +509,6 @@ export function compareEnvironmentSnapshot(
     return Object.freeze({ verdict: 'stable', processIdentity, contentHash, diagnostics })
 }
 
-export interface EnvironmentBaseline {
-    readonly artifact: 'environment-baseline'
-    readonly schemaVersion: 1
-    readonly stackId: StackId
-    readonly version: number
-    readonly recordedAt: string
-    readonly snapshot: EnvironmentSnapshot
-    readonly evidence: CapturedRuntimeEvidence
-}
-
 function validSnapshot(value: unknown): value is EnvironmentSnapshot {
     if (value === null || typeof value !== 'object' || Array.isArray(value)
         || !exactKeys(value, ['artifact', 'schemaVersion', 'stackId', 'configSha256', 'createdAt', 'creationSource', 'intendedState', 'snapshotSha256'])) return false
@@ -625,93 +611,4 @@ function validEvidence(value: unknown): value is CapturedRuntimeEvidence {
 export function isRuntimeEvidenceAuthentic(rawEvidence: CapturedRuntimeEvidence): boolean {
     const evidence = ownedObject<CapturedRuntimeEvidence>(rawEvidence)
     return evidence !== undefined && validEvidence(evidence)
-}
-
-function validBaseline(value: unknown): value is EnvironmentBaseline {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)
-        || !exactKeys(value, ['artifact', 'schemaVersion', 'stackId', 'version', 'recordedAt', 'snapshot', 'evidence'])) return false
-    const previous = value as EnvironmentBaseline
-    return typeof previous.artifact === 'string' && typeof previous.schemaVersion === 'number'
-        && typeof previous.stackId === 'string' && typeof previous.version === 'number'
-        && typeof previous.recordedAt === 'string' && previous.snapshot !== null && typeof previous.snapshot === 'object'
-        && previous.evidence !== null && typeof previous.evidence === 'object'
-        && previous.artifact === 'environment-baseline' && previous.schemaVersion === 1
-        && STACK_ID.test(previous.stackId) && Number.isSafeInteger(previous.version)
-        && previous.version >= 1 && previous.version < Number.MAX_SAFE_INTEGER && validInstant(previous.recordedAt)
-        && validSnapshot(previous.snapshot) && validEvidence(previous.evidence)
-        && previous.stackId === previous.snapshot.stackId && previous.stackId === previous.evidence.stackId
-        && previous.snapshot.configSha256 === previous.evidence.configSha256
-        && instantMs(previous.snapshot.createdAt) <= instantMs(previous.evidence.observedAt)
-        && instantMs(previous.recordedAt) >= instantMs(previous.snapshot.createdAt) && instantMs(previous.recordedAt) >= instantMs(previous.evidence.observedAt)
-}
-
-export function isEnvironmentBaselineAuthentic(value: unknown): value is EnvironmentBaseline {
-    try {
-        return value !== null && typeof value === 'object' && issuedEnvironmentBaselines.has(value)
-            && validBaseline(value)
-    } catch {
-        // A throwing accessor or proxy trap means the baseline is not authentic.
-        return false
-    }
-}
-
-function freezeSnapshot(snapshot: EnvironmentSnapshot): EnvironmentSnapshot {
-    return Object.freeze({ ...snapshot, intendedState: sanitize(snapshot.intendedState) })
-}
-
-function freezeEvidence(evidence: CapturedRuntimeEvidence): CapturedRuntimeEvidence {
-    return Object.freeze({
-        ...evidence,
-        runtime: Object.freeze({ ...evidence.runtime }),
-        command: Object.freeze({ ...evidence.command, stepIds: Object.freeze([...evidence.command.stepIds]) as unknown as readonly [string, string] }),
-        observedBytes: Object.freeze({ ...evidence.observedBytes }),
-        stability: Object.freeze({ ...evidence.stability }),
-    })
-}
-
-export function environmentBaselineConfirmation(rawSnapshot: EnvironmentSnapshot, rawEvidence: CapturedRuntimeEvidence, rawPrevious?: EnvironmentBaseline): string {
-    const snapshot = ownedObject<EnvironmentSnapshot>(rawSnapshot)
-    const evidence = ownedObject<CapturedRuntimeEvidence>(rawEvidence)
-    const previous = rawPrevious === undefined ? undefined : ownedObject<EnvironmentBaseline>(rawPrevious)
-    if (snapshot === undefined || evidence === undefined || !validSnapshot(snapshot) || !validEvidence(evidence)
-        || (rawPrevious !== undefined && (previous === undefined || !validBaseline(previous)))) return ''
-    const predecessor = previous === undefined ? 'absent' : `${previous.version}:${previous.snapshot.snapshotSha256}:${previous.evidence.evidenceSha256}`
-    return digest(`record-environment-baseline\0${predecessor}\0${snapshot.snapshotSha256}\0${evidence.evidenceSha256}`)
-}
-
-export function recordEnvironmentBaseline(input: {
-    readonly snapshot: EnvironmentSnapshot
-    readonly evidence: CapturedRuntimeEvidence
-    readonly confirmation: string
-    readonly recordedAt: string
-    readonly previous?: EnvironmentBaseline
-}): EnvironmentCommandOutcome<EnvironmentBaseline> {
-    const owned = ownedObject<typeof input>(input)
-    if (owned === undefined || !exactKeys(owned, owned.previous === undefined
-        ? ['snapshot', 'evidence', 'confirmation', 'recordedAt']
-        : ['snapshot', 'evidence', 'confirmation', 'recordedAt', 'previous'])
-        || typeof owned.confirmation !== 'string' || typeof owned.recordedAt !== 'string') {
-        return refusal('baseline recording input is not readable', 'environment-baseline')
-    }
-    const expected = environmentBaselineConfirmation(owned.snapshot, owned.evidence, owned.previous)
-    if (owned.confirmation !== expected || !validInstant(owned.recordedAt) || !validSnapshot(owned.snapshot) || !validEvidence(owned.evidence)
-        || owned.snapshot.stackId !== owned.evidence.stackId || owned.snapshot.configSha256 !== owned.evidence.configSha256
-        || instantMs(owned.snapshot.createdAt) > instantMs(owned.evidence.observedAt)
-        || instantMs(owned.recordedAt) < instantMs(owned.snapshot.createdAt) || instantMs(owned.recordedAt) < instantMs(owned.evidence.observedAt)
-        || (owned.previous !== undefined && (!validBaseline(owned.previous) || owned.previous.stackId !== owned.snapshot.stackId
-            || owned.previous.snapshot.configSha256 !== owned.snapshot.configSha256
-            || instantMs(owned.recordedAt) <= instantMs(owned.previous.recordedAt)))) {
-        return refusal('baseline recording requires exact confirmation of one consistent evidence pair', 'environment-baseline')
-    }
-    const result = Object.freeze({
-        artifact: 'environment-baseline' as const,
-        schemaVersion: 1 as const,
-        stackId: owned.snapshot.stackId,
-        version: (owned.previous?.version ?? 0) + 1,
-        recordedAt: owned.recordedAt,
-        snapshot: freezeSnapshot(owned.snapshot),
-        evidence: freezeEvidence(owned.evidence),
-    })
-    issuedEnvironmentBaselines.add(result)
-    return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result })
 }

@@ -572,7 +572,7 @@ describe('sleep drain recovery ownership', () => {
         let releaseLock!: () => void
         const locked = new Promise<void>((resolve) => { reportLocked = resolve })
         const release = new Promise<void>((resolve) => { releaseLock = resolve })
-        const address = state.paths.baseline(stackId)
+        const address = state.paths.dataOutcome(stackId)
         const competing = transactState(state, address, {
             ownerId: holderA,
             beforePublish: async () => {
@@ -580,7 +580,7 @@ describe('sleep drain recovery ownership', () => {
                 await release
             },
         }, (current) => ({
-            format: 'cockpit-state/v1', kind: 'baseline', cockpitId: address.cockpitId,
+            format: 'cockpit-state/v1', kind: 'data-outcome', cockpitId: address.cockpitId,
             subjectId: stackId, revision: current === null ? 0 : current.revision + 1,
             updatedAt: new Date().toISOString(), value: {},
         }))

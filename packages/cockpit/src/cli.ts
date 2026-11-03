@@ -34,7 +34,6 @@ import {
     type SleepCommandInput,
     type UpCommandInput,
     beginOperatorReset as beginOperatorResetApplication,
-    beginOperatorBaselineRecord as beginOperatorBaselineRecordApplication,
     runDoctor as runDoctorApplication,
     runDown as runDownApplication,
     runLogs as runLogsApplication,
@@ -113,10 +112,7 @@ import {
     type SurfaceSelftestExecutableCandidate,
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './environment/selftest-application.js'
-import {
-    runBaselineOperatorApplication,
-    runResetOperatorApplication,
-} from './environment/operator-application.js'
+import { runResetOperatorApplication } from './environment/operator-application.js'
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 
@@ -133,7 +129,6 @@ export interface CliIo {
     confirmInit?: (preview: InitResult) => Promise<string | undefined>
     answerInitQuestion?: (question: NonNullable<InitResult['question']>) => Promise<string | undefined>
     confirmReset?: (preview: CommandOutcome) => Promise<boolean>
-    confirmBaseline?: (preview: CommandOutcome) => Promise<boolean>
     confirmWorkOrder?: (candidate: Readonly<{ digest: string; prompt: string }>) => Promise<string | undefined>
     confirmSelftestExecutable?: (candidate: SurfaceSelftestExecutableCandidate) => Promise<string | undefined>
     confirmSelftestProbeSpecifications?: (
@@ -161,7 +156,6 @@ export interface CommandOutcome {
 interface WorkCommandInput { readonly configPath: string; readonly request: WorkApplicationRequest }
 
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
-    'baseline-record': Readonly<{ configPath: string; confirmation: string; recordedAt: string }>
     check: GeneratedEnvironmentCommandInput
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
@@ -212,30 +206,21 @@ interface OperatorResetBinding {
     decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
 }
 
-interface OperatorBaselineBinding {
-    readonly preview: CommandOutcome
-    decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
-}
-
 interface OperatorWorkBinding { readonly digest: string; readonly prompt: string; decide(answer: string): Promise<CommandOutcome> }
 
 export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
     beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
-    beginOperatorBaselineRecord?: (input: { readonly configPath: string }) => Promise<OperatorBaselineBinding | CommandOutcome>
 }>
 
-type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorBaselineRecord' | 'beginOperatorWorkApplication'>
+type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorWorkApplication'>
 
 type HandlerRequest = {
-    [Identifier in Exclude<HandlerIdentifier, 'baseline-record'>]: {
+    [Identifier in HandlerIdentifier]: {
         handler: Identifier
         input: HandlerInputById[Identifier]
     }
-}[Exclude<HandlerIdentifier, 'baseline-record'>] | Readonly<{
-    handler: 'baseline-record'
-    input: Readonly<{ configPath: string }>
-}>
+}[HandlerIdentifier]
 
 interface ParsedCommandArguments {
     values: Record<string, string | boolean | (string | boolean)[] | undefined>
@@ -710,9 +695,9 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
 }
 
 
-function commandLines(rows: readonly Readonly<{ name: string; summary: string; experimental?: boolean }>[],
+function commandLines(rows: readonly Readonly<{ name: string; summary: string }>[],
     width = Math.max(...rows.map(row => row.name.length))): string[] {
-    return rows.map(row => `  ${row.name.padEnd(width)}  ${row.summary}${row.experimental ? ' (experimental)' : ''}`)
+    return rows.map(row => `  ${row.name.padEnd(width)}  ${row.summary}`)
 }
 
 function groupMembers(group: string): readonly CommandDefinition[] {
@@ -724,10 +709,9 @@ function groupMembers(group: string): readonly CommandDefinition[] {
 function renderHelp(): string {
     const entries = commands.flatMap(command => {
         const group = commandGroups.find(row => command.name.startsWith(`${row.name} `))
-        if (!group) return [{ stage: command.stage, name: command.name, summary: command.summary, experimental: command.experimental === true }]
+        if (!group) return [{ stage: command.stage, name: command.name, summary: command.summary }]
         if (groupMembers(group.name)[0] !== command) return []
-        return [{ stage: command.stage, name: group.name, summary: group.summary,
-            experimental: groupMembers(group.name).every(member => member.experimental === true) }]
+        return [{ stage: command.stage, name: group.name, summary: group.summary }]
     })
     const width = Math.max(...entries.map(entry => entry.name.length))
     const sections = commandStages.map(stage => [`${stage.title}:`,
@@ -739,7 +723,6 @@ function renderHelp(): string {
 function renderGroupHelp(group: Readonly<{ name: string; summary: string }>): string {
     const members = groupMembers(group.name)
     return [`Usage: cockpit ${group.name} <subcommand> [options]`, '', group.summary,
-        ...(members.every(member => member.experimental === true) ? ['', 'Status: experimental. This interface may change before a stable release.'] : []),
         '', 'Subcommands:', ...commandLines(members.map(member => ({ name: member.name.slice(group.name.length + 1), summary: member.summary }))), '',
         `Run 'cockpit ${group.name} <subcommand> --help' for its options.`, ''].join('\n')
 }
@@ -752,7 +735,7 @@ function renderCommandHelp(definition: CommandDefinition): string {
     })
     const width = Math.max(...optionLines.map(([usage]) => usage.length), '-h, --help'.length)
     return [`Usage: cockpit ${definition.name} ${definition.usage ?? '[options]'}`, '', definition.summary,
-        ...(definition.experimental ? ['', 'Status: experimental. This interface may change before a stable release.'] : []), '', 'Options:',
+        '', 'Options:',
         ...optionLines.map(([usage, note]) => `  ${usage.padEnd(width)}  ${note}`.trimEnd()),
         `  ${'-h, --help'.padEnd(width)}  Show this help`, ''].join('\n')
 }
@@ -1129,18 +1112,6 @@ async function decodeRequest(
         } } }
     }
 
-    if (handler === 'baseline-record') {
-        const values = parsed.values as { config?: string; interactive?: boolean; json?: boolean }
-        if (parsed.positionals.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'baseline-record accepts named inputs only')
-        }
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
-        if (!values.interactive) {
-            return usageOutcome('CLI_USAGE_INVALID', 'baseline-record requires --interactive', '--interactive')
-        }
-        return { handler, input: { configPath: values.config } }
-    }
-
     const values = parsed.values as {
         registry?: string
         'siblings-root'?: string
@@ -1283,14 +1254,6 @@ async function dispatchHandler(
     if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
     if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
     if (request.handler === 'sibling') return handlers.sibling?.(request.input) ?? unavailable()
-    if (request.handler === 'baseline-record') return runBaselineOperatorApplication(request.input, {
-        ...options,
-        terminal: io.confirmBaseline !== undefined || io.stdin?.isTTY === true,
-    }, {
-        begin: operators.beginOperatorBaselineRecord
-            ?? (async () => baselineOperatorRefusal('interactive baseline recording is unavailable')),
-        confirm: (preview) => confirmOperatorBaseline(io, preview),
-    })
     return unavailable()
 }
 
@@ -1310,22 +1273,6 @@ async function confirmOperatorReset(io: CliIo, preview: CommandOutcome): Promise
     }
 }
 
-function baselineOperatorRefusal(message: string): CommandOutcome {
-    return usageOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message, 'environment-baseline')
-}
-
-async function confirmOperatorBaseline(io: CliIo, preview: CommandOutcome): Promise<boolean> {
-    if (io.confirmBaseline) return io.confirmBaseline(preview)
-    if (!io.stdin) return false
-    io.stderr.write(renderHumanValue(preview.result))
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        return (await prompt.question('Record this exact environment baseline? [y/N] ')).trim().toLowerCase() === 'y'
-    } finally {
-        prompt.close()
-    }
-}
-
 function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
     const inherited = inheritedSessionId(runtime.env ?? process.env)
     const sessionId = inherited === undefined ? 'cockpit-cli' : inherited
@@ -1340,14 +1287,6 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
             if (sessionId === null) return operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID')
             const configPath = resolve(input.configPath)
             return beginOperatorResetApplication({ configPath }, await destructiveAdapters(configPath, runtime, sessionId))
-        },
-        beginOperatorBaselineRecord: (input) => {
-            if (sessionId === null) return Promise.resolve(baselineOperatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID'))
-            const configPath = resolve(input.configPath)
-            return beginOperatorBaselineRecordApplication(
-                { configPath },
-                readAdapters(configPath, runtime, sessionId).baseline,
-            )
         },
     }
 }

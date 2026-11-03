@@ -11,7 +11,6 @@ const applicationOwners = vi.hoisted(() => ({
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'collectLogs' | 'planLogs'>>,
     observations: {} as Partial<Pick<typeof import('./observations.js'), 'aggregateObservations' | 'projectDoctor'>>,
     gitObservation: {} as Partial<Pick<typeof import('./git-observation.js'), 'createComparisonRemoteRefStep' | 'createGitObservationStep' | 'observeComparisonRemoteRef' | 'observeComparisonRemoteRevalidation' | 'observeComparisonRemoteUrl' | 'observeGit'>>,
-    evidence: {} as Partial<Pick<typeof import('./evidence.js'), 'environmentBaselineConfirmation' | 'recordEnvironmentBaseline'>>,
 }))
 vi.mock('./logs.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./logs.js')>()
@@ -41,21 +40,11 @@ vi.mock('./git-observation.js', async (importOriginal) => {
         observeGit: (...args: Parameters<typeof actual.observeGit>) => applicationOwners.gitObservation.observeGit?.(...args) ?? actual.observeGit(...args),
     }
 })
-vi.mock('./evidence.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./evidence.js')>()
-    return {
-        ...actual,
-        environmentBaselineConfirmation: (...args: Parameters<typeof actual.environmentBaselineConfirmation>) => applicationOwners.evidence.environmentBaselineConfirmation?.(...args) ?? actual.environmentBaselineConfirmation(...args),
-        recordEnvironmentBaseline: (...args: Parameters<typeof actual.recordEnvironmentBaseline>) => applicationOwners.evidence.recordEnvironmentBaseline?.(...args) ?? actual.recordEnvironmentBaseline(...args),
-    }
-})
 import { loadCockpitConfig } from '../config/load.js'
 import {
     runPreflight,
     runDoctor,
     runLogs,
-    runBaselineRecord,
-    beginOperatorBaselineRecord,
     type HealthObservationSource,
     type HealthObservationSourceInput,
     type DoctorSurfaceOverrideInspection,
@@ -93,7 +82,6 @@ describe('observation application runners', () => {
     afterEach(() => {
         applicationOwners.observations = {}
         applicationOwners.gitObservation = {}
-        applicationOwners.evidence = {}
         applicationOwners.logs.planLogs = undefined
         applicationOwners.logs.collectLogs = undefined
     })
@@ -531,188 +519,6 @@ describe('observation application runners', () => {
         }), undefined, undefined)
         expect(applicationOwners.logs.collectLogs).toHaveBeenCalledWith(planned, execute, signal, undefined)
         expect(complete).toMatchObject({ kind: 'complete', result: { json: true, records } })
-    })
-
-    it('persists only an explicitly admitted baseline', async () => {
-        const baseline = Object.freeze({ artifact: 'environment-baseline' })
-        applicationOwners.evidence.recordEnvironmentBaseline = vi.fn(() => ({
-            kind: 'complete', status: 0, diagnostics: [], result: baseline,
-        })) as never
-        const write = vi.fn(async () => undefined)
-        const input = Object.freeze({
-            configPath: '/synthetic/cockpit.toml', confirmation: 'confirmed', recordedAt: '2026-09-26T00:00:00.000Z',
-        })
-        const observation = Object.freeze({ snapshot: {}, evidence: {} })
-        const observe = vi.fn(async () => observation) as never
-        const revalidate = vi.fn(async () => observation) as never
-
-        const result = await runBaselineRecord(input, { observe, revalidate, write } as never)
-
-        expect(observe).toHaveBeenCalledWith({ configPath: input.configPath })
-        expect(revalidate).toHaveBeenCalledWith(observation)
-        expect(applicationOwners.evidence.recordEnvironmentBaseline).toHaveBeenCalledWith(expect.objectContaining({
-            confirmation: 'confirmed', recordedAt: '2026-09-26T00:00:00.000Z',
-        }))
-        expect(write).toHaveBeenCalledOnce()
-        expect(write).toHaveBeenCalledWith(baseline)
-        expect(result).toMatchObject({ kind: 'complete', result: baseline })
-    })
-
-    it.each([
-        ['approve', 1],
-        ['decline', 0],
-    ] as const)('keeps the exact baseline admission in one operator session for %s', async (decision, writes) => {
-        const baseline = Object.freeze({
-            artifact: 'environment-baseline', stackId: `stack:${'1'.repeat(64)}`,
-            version: 1, recordedAt: '2026-09-26T00:00:00.000Z',
-            snapshot: Object.freeze({ stackId: `stack:${'1'.repeat(64)}`, snapshotSha256: '2'.repeat(64) }),
-            evidence: Object.freeze({ evidenceSha256: '3'.repeat(64), observedAt: '2026-09-25T23:59:59.000Z' }),
-        })
-        applicationOwners.evidence.environmentBaselineConfirmation = vi.fn(() => '4'.repeat(64)) as never
-        applicationOwners.evidence.recordEnvironmentBaseline = vi.fn(() => ({
-            kind: 'complete', status: 0, diagnostics: [], result: baseline,
-        })) as never
-        const observation = Object.freeze({ snapshot: baseline.snapshot, evidence: baseline.evidence })
-        const observe = vi.fn(async () => observation) as never
-        const revalidate = vi.fn(async () => observation) as never
-        const write = vi.fn(async () => undefined)
-
-        const opened = await beginOperatorBaselineRecord(
-            { configPath: '/synthetic/cockpit.toml' }, { observe, revalidate, write } as never,
-        )
-        if (!('decide' in opened)) throw new Error('operator baseline session was not issued')
-        expect(opened.preview).toMatchObject({
-            kind: 'preview', result: {
-                stackId: baseline.stackId, version: 1, confirmation: '4'.repeat(64),
-                snapshotSha256: '2'.repeat(64), evidenceSha256: '3'.repeat(64),
-            },
-        })
-        expect(applicationOwners.evidence.recordEnvironmentBaseline).not.toHaveBeenCalled()
-        const result = await opened.decide(decision)
-        expect(result.kind).toBe(decision === 'approve' ? 'complete' : 'refusal')
-        expect(write).toHaveBeenCalledTimes(writes)
-        expect(revalidate).toHaveBeenCalledTimes(writes)
-        if (writes) expect(revalidate).toHaveBeenCalledWith(observation)
-        if (writes) expect(write).toHaveBeenCalledWith(baseline)
-        expect(applicationOwners.evidence.recordEnvironmentBaseline).toHaveBeenCalledTimes(writes)
-        if (writes) expect(applicationOwners.evidence.recordEnvironmentBaseline).toHaveBeenCalledWith(expect.objectContaining({
-            recordedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-        }))
-        await expect(opened.decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
-        expect(write).toHaveBeenCalledTimes(writes)
-        expect(observe).toHaveBeenCalledOnce()
-    })
-
-    it('refuses changed baseline evidence after approval without admission or write', async () => {
-        applicationOwners.evidence.environmentBaselineConfirmation = vi.fn(() => '4'.repeat(64)) as never
-        const record = vi.fn()
-        applicationOwners.evidence.recordEnvironmentBaseline = record as never
-        const observation = Object.freeze({
-            snapshot: Object.freeze({ stackId: `stack:${'1'.repeat(64)}`, snapshotSha256: '2'.repeat(64) }),
-            evidence: Object.freeze({ evidenceSha256: '3'.repeat(64), observedAt: '2026-09-25T23:59:59.000Z' }),
-        })
-        const write = vi.fn()
-        const revalidate = vi.fn(async () => { throw new Error('runtime process identity changed') })
-        const opened = await beginOperatorBaselineRecord(
-            { configPath: '/synthetic/cockpit.toml' },
-            { observe: async () => observation, revalidate, write } as never,
-        )
-        if (!('decide' in opened)) throw new Error('operator baseline session was not issued')
-        await expect(opened.decide('approve')).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE' }],
-        })
-        expect(revalidate).toHaveBeenCalledWith(observation)
-        expect(record).not.toHaveBeenCalled()
-        expect(write).not.toHaveBeenCalled()
-    })
-
-    it.each([
-        'config source', 'runtime topology', 'runtime cohort', 'previous baseline', 'runtime stability',
-    ])('names changed %s in an operator baseline refusal', async (field) => {
-        applicationOwners.evidence.environmentBaselineConfirmation = vi.fn(() => '4'.repeat(64)) as never
-        const observation = Object.freeze({
-            snapshot: Object.freeze({ stackId: `stack:${'1'.repeat(64)}`, snapshotSha256: '2'.repeat(64) }),
-            evidence: Object.freeze({ evidenceSha256: '3'.repeat(64), observedAt: '2026-09-25T23:59:59.000Z' }),
-        })
-        const write = vi.fn()
-        const opened = await beginOperatorBaselineRecord(
-            { configPath: '/synthetic/cockpit.toml' },
-            { observe: async () => observation, revalidate: async () => { throw new RefusalError(`baseline ${field} changed`) }, write } as never,
-        )
-        if (!('decide' in opened)) throw new Error('operator baseline session was not issued')
-        await expect(opened.decide('approve')).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE', message: `baseline ${field} changed` }],
-        })
-        expect(write).not.toHaveBeenCalled()
-    })
-
-    it.each([
-        ['token-confirmed', (adapters: never) => runBaselineRecord({
-            configPath: '/synthetic/cockpit.toml', confirmation: 'confirmed', recordedAt: '2026-09-26T00:00:00.000Z',
-        }, adapters)],
-        ['operator', (adapters: never) => beginOperatorBaselineRecord({ configPath: '/synthetic/cockpit.toml' }, adapters)],
-    ] as const)('names why %s baseline observation failed', async (_entry, record) => {
-        const write = vi.fn()
-        const observe = async () => { throw new RefusalError('runtime evidence capture is unavailable: synthetic cause') }
-
-        await expect(record({ observe, revalidate: vi.fn(), write } as never)).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{
-                code: 'EVIDENCE_UNAVAILABLE', target: 'environment-baseline',
-                message: 'baseline evidence observation is unavailable: runtime evidence capture is unavailable: synthetic cause',
-            }],
-        })
-        expect(write).not.toHaveBeenCalled()
-    })
-
-    it('does not admit a token-confirmed baseline until the original observation is revalidated', async () => {
-        const record = vi.fn()
-        applicationOwners.evidence.recordEnvironmentBaseline = record as never
-        const observation = Object.freeze({ snapshot: {}, evidence: {} })
-        const write = vi.fn()
-        const result = await runBaselineRecord({
-            configPath: '/synthetic/cockpit.toml', confirmation: 'confirmed', recordedAt: '2026-09-26T00:00:00.000Z',
-        }, { observe: async () => observation, revalidate: async () => { throw new RefusalError('baseline previous baseline changed') }, write } as never)
-        expect(result).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'EVIDENCE_UNAVAILABLE', message: 'baseline previous baseline changed' }],
-        })
-        expect(record).not.toHaveBeenCalled()
-        expect(write).not.toHaveBeenCalled()
-    })
-
-    it('refuses a replacement revalidation result even when it repeats the preview fields', async () => {
-        applicationOwners.evidence.environmentBaselineConfirmation = vi.fn(() => '4'.repeat(64)) as never
-        const record = vi.fn()
-        applicationOwners.evidence.recordEnvironmentBaseline = record as never
-        const observation = Object.freeze({
-            snapshot: Object.freeze({ stackId: `stack:${'1'.repeat(64)}`, snapshotSha256: '2'.repeat(64) }),
-            evidence: Object.freeze({ evidenceSha256: '3'.repeat(64), observedAt: '2026-09-25T23:59:59.000Z' }),
-        })
-        const write = vi.fn()
-        const opened = await beginOperatorBaselineRecord(
-            { configPath: '/synthetic/cockpit.toml' },
-            { observe: async () => observation, revalidate: async () => ({ ...observation }), write } as never,
-        )
-        if (!('decide' in opened)) throw new Error('operator baseline session was not issued')
-        await expect(opened.decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
-        expect(record).not.toHaveBeenCalled()
-        expect(write).not.toHaveBeenCalled()
-    })
-
-    it('does not write a baseline rejected by the evidence owner', async () => {
-        const refusal = Object.freeze({
-            kind: 'refusal' as const, status: 2 as const, result: null,
-            diagnostics: Object.freeze([{ severity: 'error' as const, code: 'EVIDENCE_UNAVAILABLE' as const, message: 'invalid' }]),
-        })
-        applicationOwners.evidence.recordEnvironmentBaseline = vi.fn(() => refusal) as never
-        const observation = Object.freeze({ snapshot: {}, evidence: {} })
-        const observe = vi.fn(async () => observation) as never
-        const revalidate = vi.fn(async () => observation) as never
-        const write = vi.fn()
-
-        await expect(runBaselineRecord({
-            configPath: '/synthetic/cockpit.toml', confirmation: 'rejected', recordedAt: '2026-09-26T00:00:00.000Z',
-        }, { observe, revalidate, write })).resolves.toBe(refusal)
-        expect(write).not.toHaveBeenCalled()
     })
 
     it('runs the full comparison precursor for every configured sibling and combines nonpass results', async () => {

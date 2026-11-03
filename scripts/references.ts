@@ -518,7 +518,6 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
         + 'Each diagnostic message names what failed and how to fix it. Codes whose remedy never changes are listed in '
         + '[Troubleshooting](troubleshooting.md#codes-with-a-fixed-remedy).\n\n'
         + commands.map(command => `## cockpit ${command.name}\n\n${command.summary}.\n\n`
-            + ('experimental' in command && command.experimental ? 'Status: experimental. This interface may change before a stable release.\n\n' : '')
             + ('config' in command.options ? 'Reads `cockpit.toml` from `--config`.\n\n' : 'Does not read `cockpit.toml`.\n\n')
             + '| Flag | Type | Default |\n| --- | --- | --- |\n' + Object.entries(command.options).map(([flag, option]) =>
                 `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
@@ -542,7 +541,7 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
     const list = documentHeading('Command list')
         + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
         + commandStages.map(stage => `## ${stage.title}\n\n` + commands.filter(command => command.stage === stage.id)
-            .map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')).join('\n')
+            .map(command => `- ${code(`cockpit ${command.name}`)}: ${command.summary}.\n`).join('')).join('\n')
     return [
         { path: 'docs/cli-reference.md', bytes: cli },
         { path: 'docs/configuration-reference.md', bytes: configuration },

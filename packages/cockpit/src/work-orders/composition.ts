@@ -2436,10 +2436,10 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             evidence?: Readonly<{ snapshot: EnvironmentSnapshot; capture: () => Promise<RuntimeEvidence> }>
         }>> => {
             try {
-                const initial = await reads.baseline.observe({ configPath: captured.configPath })
+                const initial = await reads.environment.observe({ configPath: captured.configPath })
                 return Object.freeze({ stack: Object.freeze({ state: 'available' as const }), evidence: Object.freeze({
                     snapshot: initial.snapshot,
-                    capture: async () => (await reads.baseline.observe({ configPath: captured.configPath })).evidence,
+                    capture: async () => (await reads.environment.observe({ configPath: captured.configPath })).evidence,
                 }) })
             } catch (error) {
                 return Object.freeze({ stack: Object.freeze({ state: 'unavailable' as const,

@@ -38,7 +38,6 @@ import { holderId as deriveHolderId } from './environment/identity.js'
 import type { HealthObservationProducers, HealthObservationSource, HealthObservationSourceInput } from './environment/application.js'
 
 const application = vi.hoisted(() => ({
-    runBaselineRecord: vi.fn(),
     runDoctor: vi.fn(),
     runDown: vi.fn(),
     runLogs: vi.fn(),

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-    runBaselineOperatorApplication,
     runResetOperatorApplication,
     runSyncOperatorApplication,
     type GeneratedEnvironmentSyncHandlerInput,
@@ -59,27 +58,14 @@ describe('operator application admission', () => {
         expect(decide).toHaveBeenCalledWith('approve')
     })
 
-    it('refuses baseline in JSON mode before observing', async () => {
-        const begin = vi.fn()
-        const outcome = await runBaselineOperatorApplication(
-            { configPath: '/synthetic/cockpit.toml' },
-            { interactive: true, json: true, ci: undefined, terminal: true },
-            { begin, confirm: vi.fn() },
-        )
-
-        expect(outcome.status).toBe(2)
-        expect(begin).not.toHaveBeenCalled()
-    })
-
-    it.each(['reset', 'baseline'] as const)('awaits %s decline cleanup before returning an empty cancelled outcome', async verb => {
+    it('awaits reset decline cleanup before returning an empty cancelled outcome', async () => {
         let settle!: (value: typeof preview) => void
         const cleanup = new Promise<typeof preview>(resolve => { settle = resolve })
         const decide = vi.fn(() => cleanup)
         const confirm = vi.fn(async (shown) => { expect(shown).toBe(preview); return false })
         const adapters = { preview: vi.fn(), begin: vi.fn(async () => ({ preview, decide })), confirm }
-        const run = verb === 'reset' ? runResetOperatorApplication : runBaselineOperatorApplication
         let completed = false
-        const pending = run({ configPath: '/synthetic/cockpit.toml' },
+        const pending = runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
             { interactive: true, json: false, ci: undefined, terminal: true }, adapters)
             .then(outcome => { completed = true; return outcome })
         await vi.waitFor(() => expect(decide).toHaveBeenCalledWith('decline'))
@@ -90,12 +76,11 @@ describe('operator application admission', () => {
         expect(decide).not.toHaveBeenCalledWith('approve')
     })
 
-    it.each(['reset', 'baseline'] as const)('propagates %s decline cleanup errors instead of claiming cancellation', async verb => {
+    it('propagates reset decline cleanup errors instead of claiming cancellation', async () => {
         const failure = new Error('synthetic cleanup failed')
         const decide = vi.fn(async () => { throw failure })
         const adapters = { preview: vi.fn(), begin: vi.fn(async () => ({ preview, decide })), confirm: async () => false }
-        const run = verb === 'reset' ? runResetOperatorApplication : runBaselineOperatorApplication
-        await expect(run({ configPath: '/synthetic/cockpit.toml' },
+        await expect(runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
             { interactive: true, json: false, ci: undefined, terminal: true }, adapters)).rejects.toBe(failure)
         expect(decide).toHaveBeenCalledWith('decline')
     })

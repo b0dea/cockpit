@@ -7,7 +7,6 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { runLogs } from './application.js'
 import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
 import { planLogs } from './logs.js'
-import type { EnvironmentBaseline } from './evidence.js'
 import { RefusalError } from './contract.js'
 
 const sha = (value: string) => value.padEnd(64, value[0] ?? 'a').slice(0, 64)
@@ -59,7 +58,6 @@ const controls = vi.hoisted(() => ({
     configSha256: undefined as string | undefined,
     runtimeVersion: undefined as string | undefined,
     containerId: undefined as string | undefined,
-    predecessorChanged: false,
     processIdentitySha256: undefined as string | undefined,
     contentHash: undefined as string | undefined,
     captureContainerId: undefined as string | undefined,
@@ -70,8 +68,6 @@ const controls = vi.hoisted(() => ({
     lifecycleReads: 0,
     revalidatedServices: [] as string[],
     readinessPorts: [] as unknown[],
-    authenticBaselines: new WeakSet<object>(),
-    writes: [] as unknown[],
     executePreparation: false,
     readinessRefusal: undefined as undefined | readonly Record<string, unknown>[],
 }))
@@ -97,7 +93,6 @@ vi.mock('./lifecycle-composition.js', () => ({
             namespace: {
                 paths: {
                     lifecycle: () => ({ kind: 'lifecycle', path: '/state/lifecycle', cockpitId: lifecycleRecord.cockpitId, subjectId: stackId }),
-                    baseline: () => ({ kind: 'baseline', path: '/state/baseline', cockpitId: lifecycleRecord.cockpitId, subjectId: stackId }),
                 },
             },
             cockpitId: lifecycleRecord.cockpitId,
@@ -170,31 +165,7 @@ vi.mock('node:fs/promises', () => ({
 
 vi.mock('./state.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('./state.js')>(),
-    abortStateTransaction: vi.fn((value) => ({ aborted: true, value })),
-    readState: vi.fn(async (address: { kind: string }) => {
-        if (address.kind === 'baseline') return controls.predecessorChanged
-            ? { kind: 'complete', value: {
-                format: 'cockpit-state/v1', kind: 'baseline', cockpitId: lifecycleRecord.cockpitId,
-                subjectId: stackId, revision: 0, updatedAt: '2026-09-25T00:00:10.000Z',
-                value: {
-                    artifact: 'environment-baseline', schemaVersion: 1, stackId, version: 1,
-                    recordedAt: '2026-09-25T00:00:10.000Z',
-                    snapshot: {
-                        artifact: 'generated-environment-snapshot', schemaVersion: 1, stackId,
-                        configSha256: source.sha256, createdAt: '2026-09-25T00:00:08.000Z',
-                        creationSource: 'resolved-config', intendedState: {}, snapshotSha256: sha('8'),
-                    },
-                    evidence: {
-                        artifact: 'captured-runtime-evidence', schemaVersion: 1, stackId,
-                        configSha256: source.sha256, runtime: { name: 'docker', version: '27.1.2', executableSha256: topology.executableSha256 },
-                        observedAt: '2026-09-25T00:00:09.000Z', captureStartedAt: '2026-09-25T00:00:08.000Z',
-                        command: { batchId: topology.batchId, containerId, stepIds: ['process', 'content'], timeoutMs: 1000, stdoutLimitBytes: 10, stderrLimitBytes: 10 },
-                        observedBytes: { stdout: 1, stderr: 0 },
-                        stability: { processIdentitySha256: sha('5'), contentHash: sha('6') }, evidenceSha256: sha('7'),
-                    },
-                },
-            } }
-            : { kind: 'missing' }
+    readState: vi.fn(async () => {
         controls.lifecycleReads += 1
         const application = controls.generatedApplication
         const selectedBase = controls.generatedReplay ? { ...lifecycleRecord, value: { ...lifecycleRecord.value, generatedReplay: {
@@ -220,11 +191,6 @@ vi.mock('./state.js', async (importOriginal) => ({
         return controls.stateChanged && controls.lifecycleReads > 1
             ? { kind: 'complete', value: { ...selected, revision: 1 } }
             : { kind: 'complete', value: selected }
-    }),
-    transactState: vi.fn(async (_namespace, _address, _options, update) => {
-        const record = await update(null)
-        controls.writes.push(record)
-        return 'aborted' in record ? record : { kind: 'complete', value: record }
     }),
 }))
 
@@ -270,23 +236,8 @@ vi.mock('./evidence.js', async (importOriginal) => {
             artifact: 'generated-environment-snapshot', schemaVersion: 1, stackId: selectedStackId, configSha256,
             createdAt: '2026-09-25T00:00:08.000Z', creationSource: 'resolved-config', intendedState: {}, snapshotSha256: sha('8'),
         })),
-        environmentBaselineConfirmation: vi.fn(() => 'synthetic-confirmation'),
-        isEnvironmentBaselineAuthentic: vi.fn((value) => value !== null && typeof value === 'object' && controls.authenticBaselines.has(value)),
     }
 })
-
-// Each change lands between an approved observation and its use; the cohort row moves a fingerprint,
-// the service row makes the measurement itself fail.
-const baselineChanges = [
-    ['config source', () => { controls.configSha256 = sha('4') }, 'baseline config source changed'],
-    ['runtime topology', () => { controls.runtimeVersion = '28.0.0' }, 'baseline runtime topology changed'],
-    ['container cohort', () => { controls.containerId = sha('7') }, 'baseline runtime cohort changed'],
-    ['service revalidation', () => { controls.unavailableService = 'api' }, 'baseline runtime cohort changed'],
-    ['previous baseline', () => { controls.predecessorChanged = true }, 'baseline previous baseline changed'],
-    ['process identity', () => { controls.processIdentitySha256 = sha('8') }, 'baseline runtime stability changed'],
-    ['content identity', () => { controls.contentHash = sha('9') }, 'baseline runtime stability changed'],
-    ['capture availability', () => { controls.captureUnavailable = true }, 'baseline runtime stability changed'],
-] as const
 
 describe('production read command composition', () => {
     beforeEach(() => {
@@ -302,7 +253,6 @@ describe('production read command composition', () => {
         controls.configSha256 = undefined
         controls.runtimeVersion = undefined
         controls.containerId = undefined
-        controls.predecessorChanged = false
         controls.processIdentitySha256 = undefined
         controls.contentHash = undefined
         controls.captureContainerId = undefined
@@ -313,8 +263,6 @@ describe('production read command composition', () => {
         controls.lifecycleReads = 0
         controls.revalidatedServices.length = 0
         controls.readinessPorts.length = 0
-        controls.authenticBaselines = new WeakSet<object>()
-        controls.writes.length = 0
         controls.executePreparation = false
         controls.readinessRefusal = undefined
     })
@@ -532,7 +480,7 @@ describe('production read command composition', () => {
             }] })
     })
 
-    it('captures a complete runtime cohort and publishes only its explicitly returned baseline', async () => {
+    it('captures a complete runtime cohort as frozen environment evidence', async () => {
         const adapters = createReadCommandAdapters({
             configPath: source.path,
             env: { PATH: '/synthetic' },
@@ -540,27 +488,16 @@ describe('production read command composition', () => {
             timeoutMs: 5_000,
         }, vi.fn(async () => ({ kind: 'complete' })) as never)
 
-        const observed = await adapters.baseline.observe({ configPath: source.path })
+        const observed = await adapters.environment.observe({ configPath: source.path })
         expect(Object.isFrozen(observed)).toBe(true)
         expect(Object.isFrozen(observed.snapshot)).toBe(true)
         expect(Object.isFrozen(observed.snapshot.intendedState)).toBe(true)
         expect(Object.isFrozen(observed.evidence)).toBe(true)
         expect(Object.isFrozen(observed.evidence.command.stepIds)).toBe(true)
-        const baseline = {
-            artifact: 'environment-baseline', schemaVersion: 1, stackId, version: 1,
-            recordedAt: '2026-09-25T00:00:11.000Z', snapshot: observed.snapshot, evidence: observed.evidence,
-        } as unknown as EnvironmentBaseline
-        await expect(adapters.baseline.write(baseline)).rejects.toThrow('baseline write authority is unavailable')
-        await expect(adapters.baseline.revalidate(observed)).resolves.toBe(observed)
-        controls.authenticBaselines.add(baseline)
-        await adapters.baseline.write(baseline)
-
-        expect(controls.writes).toHaveLength(1)
-        expect(controls.writes[0]).toMatchObject({ kind: 'baseline', subjectId: stackId, value: baseline })
-        await expect(adapters.baseline.write(baseline)).rejects.toThrow('baseline write authority is unavailable')
+        expect(Object.keys(observed).sort()).toEqual(['evidence', 'snapshot'])
     })
 
-    it('revalidates every completed service before capturing baseline evidence', async () => {
+    it('revalidates every completed service before capturing environment evidence', async () => {
         controls.multipleServices = true
         controls.unavailableService = 'api'
         const adapters = createReadCommandAdapters({
@@ -570,90 +507,14 @@ describe('production read command composition', () => {
             timeoutMs: 5_000,
         }, vi.fn(async () => ({ kind: 'complete' })) as never)
 
-        await expect(adapters.baseline.observe({ configPath: source.path })).rejects.toThrow(
+        await expect(adapters.environment.observe({ configPath: source.path })).rejects.toThrow(
             'runtime service cohort changed',
         )
         expect(controls.revalidatedServices).toEqual(['api'])
         controls.unavailableService = undefined
         controls.revalidatedServices.length = 0
-        await expect(adapters.baseline.observe({ configPath: source.path })).resolves.toBeDefined()
+        await expect(adapters.environment.observe({ configPath: source.path })).resolves.toBeDefined()
         expect(controls.revalidatedServices).toEqual(['api', 'worker'])
-        expect(controls.writes).toHaveLength(0)
-    })
-
-    it('rejects a caller-forged baseline record after observation', async () => {
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-        }, vi.fn(async () => ({ kind: 'complete' })) as never)
-        const observed = await adapters.baseline.observe({ configPath: source.path })
-        const forged = {
-            artifact: 'environment-baseline', schemaVersion: 1, stackId, version: 1,
-            recordedAt: '2026-09-25T00:00:11.000Z', snapshot: observed.snapshot, evidence: observed.evidence,
-        } as unknown as EnvironmentBaseline
-
-        await expect(adapters.baseline.revalidate(observed)).resolves.toBe(observed)
-        await expect(adapters.baseline.write(forged)).rejects.toThrow('baseline write authority is unavailable')
-        expect(controls.writes).toHaveLength(0)
-    })
-
-    // The write re-measures the runtime, so a change after revalidation is named as revalidation
-    // names it, whether it moves a fingerprint or makes the measurement itself fail.
-    it.each(baselineChanges)('consumes write authority when %s changes after revalidation', async (_field, change, message) => {
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-        }, vi.fn(async () => ({ kind: 'complete' })) as never)
-        const observed = await adapters.baseline.observe({ configPath: source.path })
-        const baseline = {
-            artifact: 'environment-baseline', schemaVersion: 1, stackId, version: 1,
-            recordedAt: '2026-09-25T00:00:11.000Z', snapshot: observed.snapshot, evidence: observed.evidence,
-        } as unknown as EnvironmentBaseline
-        await adapters.baseline.revalidate(observed)
-        controls.authenticBaselines.add(baseline)
-        change()
-
-        await expect(adapters.baseline.write(baseline)).rejects.toThrow(message)
-        await expect(adapters.baseline.write(baseline)).rejects.toThrow('baseline write authority is unavailable')
-        expect(controls.writes).toHaveLength(0)
-    })
-
-    it('owns and freezes the complete preview returned to the operator', async () => {
-        controls.predecessorChanged = true
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-        }, vi.fn(async () => ({ kind: 'complete' })) as never)
-
-        const observed = await adapters.baseline.observe({ configPath: source.path })
-
-        expect(Object.isFrozen(observed.previous)).toBe(true)
-        expect(Object.isFrozen(observed.previous?.snapshot)).toBe(true)
-        expect(Object.isFrozen(observed.previous?.snapshot.intendedState)).toBe(true)
-        expect(Object.isFrozen(observed.previous?.evidence)).toBe(true)
-        expect(Object.isFrozen(observed.previous?.evidence.command.stepIds)).toBe(true)
-        await expect(adapters.baseline.revalidate(observed)).resolves.toBe(observed)
-    })
-
-    it.each(baselineChanges)('consumes the preview when %s changes after approval', async (_field, change, message) => {
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-        }, vi.fn(async () => ({ kind: 'complete' })) as never)
-        const observed = await adapters.baseline.observe({ configPath: source.path })
-        change()
-
-        await expect(adapters.baseline.revalidate(observed)).rejects.toThrow(message)
-        await expect(adapters.baseline.revalidate(observed)).rejects.toThrow('baseline preview authority is unavailable')
-        expect(controls.writes).toHaveLength(0)
     })
 
     it('fails closed when the runtime cohort is incomplete or lifecycle state changes during observation', async () => {
@@ -664,7 +525,7 @@ describe('production read command composition', () => {
             timeoutMs: 5_000,
         }, vi.fn(async () => ({ kind: 'complete' })) as never)
         controls.incomplete = true
-        await expect(adapters.baseline.observe({ configPath: source.path })).rejects.toThrow(
+        await expect(adapters.environment.observe({ configPath: source.path })).rejects.toThrow(
             'a complete stable runtime cohort is unavailable',
         )
         controls.incomplete = false
@@ -673,6 +534,5 @@ describe('production read command composition', () => {
         await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toThrow(
             'lifecycle state changed during log observation',
         )
-        expect(controls.writes).toHaveLength(0)
     })
 })
