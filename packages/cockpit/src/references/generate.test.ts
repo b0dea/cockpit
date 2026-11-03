@@ -448,7 +448,7 @@ describe('reference generation', () => {
             .toContain('Status: experimental. This interface may change before a stable release.')
     })
 
-    it('points each command diagnostic at its fixed remedy or troubleshooting section, and lists the rest without a guidance column', () => {
+    it('lists each command\'s codes under it and says once, for the page, what to do about each code with a fixed remedy or troubleshooting section', () => {
         const documentOwner = 'packages/cockpit/src/document/command.ts'
         const syncOwner = 'packages/cockpit/src/generated-environment/command.ts'
         const owned = (path: string) => new Set([path])
@@ -466,16 +466,17 @@ describe('reference generation', () => {
         const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
         expect(cli).not.toContain('see the message')
         const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
-        expect(documentSection).toContain('| Diagnostic | What to do |\n| --- | --- |\n'
-            + '| `FIXED_FAILURE` | repair the input |\n'
-            + '| `GUIDED_FAILURE` | [Troubleshooting](troubleshooting.md#guided-recovery-step-one) |\n'
-            + '\n| Other diagnostics |\n| --- |\n| `BARE_FAILURE` |\n')
+        expect(documentSection).toContain('\nDiagnostics ([what to do](#what-to-do)): `BARE_FAILURE`, `FIXED_FAILURE`, `GUIDED_FAILURE`.\n')
         const syncSection = cli.slice(cli.indexOf('## cockpit sync'), cli.indexOf('## cockpit check'))
-        expect(syncSection).toContain('| Diagnostic |\n| --- |\n| `OTHER_FAILURE` |\n')
-        expect(syncSection).not.toContain('What to do')
+        expect(syncSection).toContain('\nDiagnostics ([what to do](#what-to-do)): `OTHER_FAILURE`.\n')
+        for (const section of [documentSection, syncSection]) expect(section).not.toContain('| Diagnostic')
         // A code every command emits is listed once, before the commands, and not under each one.
-        expect(cli.slice(0, cli.indexOf('\n## cockpit '))).toContain('| Diagnostic |\n| --- |\n| `SHARED_FAILURE` |\n')
+        expect(cli.slice(0, cli.indexOf('\n## cockpit '))).toContain(': `SHARED_FAILURE`.\n')
         expect(cli.match(/`SHARED_FAILURE`/g)).toHaveLength(1)
+        // One table, after the commands, holds the guidance; a code with none there gets no row.
+        expect(cli.slice(cli.lastIndexOf('\n## ') + 1).trimEnd()).toBe('## What to do\n\n| Diagnostic | What to do |\n| --- | --- |\n'
+            + '| `FIXED_FAILURE` | repair the input |\n'
+            + '| `GUIDED_FAILURE` | [Troubleshooting](troubleshooting.md#guided-recovery-step-one) |')
         // The troubleshooting index is the full lookup table and keeps one row per code.
         expect(rendered.troubleshooting.bytes).toContain('| `GUIDED_FAILURE` | see the message |')
     })
@@ -521,7 +522,7 @@ describe('reference generation', () => {
         const everyCommand = cli.slice(0, cli.indexOf('\n## cockpit '))
         const section = (name: string) => {
             const start = cli.indexOf(`\n## cockpit ${name}\n`)
-            const next = cli.indexOf('\n## cockpit ', start + 1)
+            const next = cli.indexOf('\n## ', start + 1)
             return cli.slice(start, next === -1 ? undefined : next)
         }
         expect(section('sync')).toContain('`SURFACE_STATE_CONFLICT`')
@@ -616,9 +617,10 @@ describe('reference generation', () => {
             const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
             expect(documentSection).toContain('`DOCUMENT_GAP`')
             expect(cli).not.toContain('packages/cockpit/src/')
-            expect(documentSection).toContain('| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |')
+            expect(documentSection).toContain('`OUTPUT_EXISTS`')
+            expect(cli).toContain('| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |')
             // A gap's fix is chosen per gap, so neither the page nor the index presents one as the code's fix.
-            expect(documentSection).not.toContain('supply this value before treating the draft as valid')
+            expect(cli).not.toContain('supply this value before treating the draft as valid')
             expect(rendered.troubleshooting.bytes).toContain('| `DOCUMENT_GAP` | depends on what failed; see the message |')
         }
     })

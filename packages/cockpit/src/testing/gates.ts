@@ -115,7 +115,9 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     let before: string | undefined
     let stability: RunInput['stability'] = 'stable'
     const stabilityReasons: string[] = []
-    const needsRuntime = selected.some(id => registry.stages.find(stage => stage.id === id)!.requiresStack)
+    // Without an available stack every stage needing it is reported unavailable and never runs, so
+    // there is no runtime to hold stable; capturing one would only bury that reason under its own.
+    const needsRuntime = request.stack?.state === 'available' && selected.some(id => registry.stages.find(stage => stage.id === id)!.requiresStack)
     let runtimeBefore: RuntimeEvidence | undefined
     let runtimeFresh = true
     const capture = async (): Promise<RuntimeEvidence | undefined> => {

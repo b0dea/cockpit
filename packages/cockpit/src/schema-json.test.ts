@@ -782,6 +782,10 @@ describe('the published cockpit schema', () => {
             native_hook_policy: { path: 'hook-policy.txt', sha256: 'a'.repeat(64) },
         }
         expect(validate(testing), JSON.stringify(validate.errors)).toBe(false)
+        const { native_hooks: _hooks, ...undeclared } = testing
+        expect(validate(undeclared), JSON.stringify(validate.errors)).toBe(false)
+        const { native_hook_policy: _policy, ...inspected } = undeclared
+        expect(validate(inspected), JSON.stringify(validate.errors)).toBe(true)
     })
 
     it.each([

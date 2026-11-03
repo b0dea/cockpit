@@ -489,7 +489,7 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
 function unsatisfiedWorkDiagnostic(operation: 'test-run' | 'work-grade' | 'work-execute', message: string): Diagnostic {
     if (operation === 'test-run') return { severity: 'error', message,
         code: 'TEST_GATE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.TEST_GATE_UNSATISFIED,
-        fix: 'read result.verdict and result.observations: fix the product for FAIL, restore what a DEGRADED stage names, rerun a VOID gate once the tree is unchanged, and run the complete gate without --select for PASS' }
+        fix: 'the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged' }
     if (operation === 'work-grade') return { severity: 'error', message,
         code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
         fix: 'read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }

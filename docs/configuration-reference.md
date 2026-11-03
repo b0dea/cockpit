@@ -355,10 +355,10 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `stages` | Commands that make up the test gates. | array of table: [`[[testing.stages]]`](#testingstages) |  | required; 1–128 items |
 | `gates` | Named gates that run stages before handing back changes. | array of table: [`[[testing.gates]]`](#testinggates) |  | required; 1–128 items |
-| `native_hooks` | How the repository's own git hooks are handled. | table: [`[testing.native_hooks]`](#testingnative_hooks) |  | required |
+| `native_hooks` | How the repository's own git hooks are handled. | table: [`[testing.native_hooks]`](#testingnative_hooks) | `{"install":"inspect"}` |  |
 | `native_hook_policy` | Policy file for installing the repository's hooks; required for explicit-native. | table: [`[testing.native_hook_policy]`](#testingnative_hook_policy) |  |  |
 
-- Must match exactly one of `[{"properties":{"native_hooks":{"properties":{"install":{"enum":["inspect"]}}}},"not":{"required":["native_hook_policy"]}},{"properties":{"native_hooks":{"properties":{"install":{"enum":["explicit-native"]}},"required":["install"]}},"required":["native_hook_policy"]}]`.
+- Must match exactly one of `[{"properties":{"native_hooks":{"properties":{"install":{"enum":["inspect"]}}}},"not":{"required":["native_hook_policy"]}},{"properties":{"native_hooks":{"properties":{"install":{"enum":["explicit-native"]}},"required":["install"]}},"required":["native_hooks","native_hook_policy"]}]`.
 
 ### `[[testing.stages]]`
 

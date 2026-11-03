@@ -56,14 +56,14 @@ export function classifyRun(input: RunInput): RunClassification {
             degraded = true
             reasons.push(`${row.id}: execution interrupted or invalid (${row.signal ?? row.exitCode})`)
         } else {
+            // The authenticated exit status of a process that ran to completion proves the stage ran;
+            // its output does not. Grading silence as unproven made tsc --noEmit, node --check and quiet
+            // linters unable to satisfy a gate. A runner that selects no tests reports that through its
+            // own exit status, and a narrowed run is PARTIAL whatever it prints.
             if (first && selected.has(row.id)) executed++
             if (row.assertion !== 'passed' && row.assertion !== 'failed') {
                 degraded = true
                 reasons.push(`${row.id}: no structured assertion result`)
-            }
-            if (!Number.isSafeInteger(row.outputBytes) || row.outputBytes < 1) {
-                degraded = true
-                reasons.push(`${row.id}: execution output is silent or unavailable`)
             }
         }
     }

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExecutionStep } from '../environment/contract.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-environment/command.js'
+import { runCli } from '../cli.js'
 import { runWorkApplication } from './application.js'
 import { createConfiguredWorkApplicationComposition } from './composition.js'
 import { parseWorkOrder } from './contract.js'
@@ -661,13 +662,27 @@ describe('product test stages', () => {
         expect(Date.now() - started).toBeLessThan(4_500)
     }, 120_000)
 
-    it('judges a stage by its exit status when its output exceeds the capture limit', async () => {
+    it('judges a stage by its exit status whether it prints nothing or more than the capture limit', async () => {
+        const silent = await productStage('exit 0')
+        await expect(silent.run()).resolves.toMatchObject({ kind: 'complete', value: { verdict: 'PASS',
+            observations: [expect.objectContaining({ id: 'unit', exitCode: 0, outputBytes: 0 })] } })
         const passing = await productStage('/usr/bin/yes x | /usr/bin/head -c 200000\nexit 0')
         await expect(passing.run()).resolves.toMatchObject({ kind: 'complete', value: { verdict: 'PASS',
             observations: [expect.objectContaining({ id: 'unit', exitCode: 0, outputBytes: 200_000 })] } })
         const failing = await productStage('/usr/bin/yes x | /usr/bin/head -c 200000\nexit 3')
         await expect(failing.run()).resolves.toMatchObject({ kind: 'unsatisfied', reason: expect.stringMatching(/^FAIL/),
             value: { verdict: 'FAIL', observations: [expect.objectContaining({ id: 'unit', exitCode: 3 })] } })
+    }, 120_000)
+
+    it('tells a caller whose gate is DEGRADED by a stopped stack to start it, naming its configuration', async () => {
+        const { fixture } = await productStage('exit 0')
+        let stdout = ''
+        const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } }
+        expect(await runCli(['test-run', '--config', fixture.configPath, '--gate', 'stacked', '--json'], io, {}, { env: fixture.environment })).toBe(2)
+        const output = JSON.parse(stdout)
+        expect(output.diagnostics).toEqual([expect.objectContaining({ code: 'TEST_GATE_UNSATISFIED',
+            message: expect.stringMatching(/^DEGRADED: stack: stack unavailable: [^;]+$/) })])
+        expect(output.guidance).toEqual([{ code: 'TEST_GATE_UNSATISFIED', text: expect.stringContaining(`npx --no cockpit up --config ${fixture.configPath}`) }])
     }, 120_000)
 
     it('passes build-tool variables such as HOME to a stage and strips every other parent variable', async () => {

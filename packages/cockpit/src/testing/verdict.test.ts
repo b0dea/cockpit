@@ -14,6 +14,7 @@ describe('run verdicts', () => {
             expect(classifyRun(input({ scope }))).toMatchObject({ verdict: 'PARTIAL', satisfiesGate: false })
         }
         expect(classifyRun(input({ declared: ['unit', 'browser'] })).verdict).toBe('PARTIAL')
+        expect(classifyRun(input({ observations: [{ ...passed, outputBytes: 0 }] }))).toMatchObject({ verdict: 'PASS', satisfiesGate: true, reasons: [] })
     })
 
     it('orders executed failure above unavailable, drift, subset and pass in every mixture', () => {
@@ -36,7 +37,6 @@ describe('run verdicts', () => {
             { selected: ['unit', 'unit'] }, { observations: [passed, passed] },
             { observations: [{ ...passed, assertion: 'missing' as const }] },
             { observations: [{ ...passed, signal: 'SIGPIPE' }] },
-            { observations: [{ ...passed, outputBytes: 0 }] },
             { scope: 'unknown' as never }, { stability: 'unknown' as never },
             { stability: 'unavailable' as const },
         ]) expect(classifyRun(input(change))).toMatchObject({ verdict: 'DEGRADED', satisfiesGate: false })

@@ -1025,7 +1025,7 @@ export const Testing = z.object({
     }).strict()).min(1).max(128).describe('Named gates that run stages before handing back changes.'),
     native_hooks: z.object({
         install: z.enum(['inspect', 'explicit-native']).default('inspect').describe('Inspect the repository\'s hooks, or install them as the policy file declares.'),
-    }).strict().describe('How the repository\'s own git hooks are handled.'),
+    }).strict().default({ install: 'inspect' }).describe('How the repository\'s own git hooks are handled.'),
     native_hook_policy: z.object({
         path: SafeRelativePath.max(4096).describe('Policy file, relative to the cockpit.'),
         sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the policy file.'),
