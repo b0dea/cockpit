@@ -70,6 +70,11 @@ with `COMPOSE_TOPOLOGY_UNAVAILABLE` if Docker cannot produce it. It also checks:
   is then treated as ready;
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
 
+`doctor` reports a refusal from this check as itself, with its fix, not as the surface evidence it makes
+unavailable. `init` shows the port and healthcheck findings beside the drafted `cockpit.toml`, as
+warnings carrying the same fix; it never edits a Compose file, so apply the edit before or right after
+accepting.
+
 cockpit never edits your Compose files. To run the stack, `sync` writes `compose.cockpit.yml`, an
 override that belongs to cockpit and adds its ownership labels to every service, the default
 network and every named volume that is not `external`. Volumes also get a generation label, so

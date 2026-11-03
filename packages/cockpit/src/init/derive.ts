@@ -8,10 +8,11 @@
 // manifests are not parsed; their shape is too varied to read reliably.
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
+import { parse as parseToml } from 'smol-toml'
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
-import { errorCause, hasErrorCode } from '../environment/contract.js'
-import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
+import { errorCause, hasErrorCode, type Diagnostic } from '../environment/contract.js'
+import { assessComposeTopology, bindHolder, composeBindPath, composeProjectDirectory, composePublishedPorts, splitComposeShort, type ComposeServiceTopology } from '../environment/compose-topology.js'
 import { repositoryIdentity } from '../environment/repository-identity.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
 import { formatShellCommand, initCommand } from '../fix-catalogue.js'
@@ -657,4 +658,44 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
         reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"]` })
     return { facts, skipped }
+}
+
+/**
+ * What `check` would refuse or warn about in the Compose files a drafted cockpit.toml declares,
+ * judged by check's own rules over the files as written: a host port outside `ports.bases`, a service
+ * with no healthcheck. Init never edits a Compose file, so these are shown beside the draft, with
+ * check's fix, to be applied to the file before or right after the draft is accepted. Findings are
+ * warnings here because nothing is refused until check runs.
+ */
+export async function composeFindings(input: Readonly<{ root: string; draft: string }>): Promise<readonly Diagnostic[]> {
+    const unreadable = (reference: string, why: string): Diagnostic => ({ severity: 'warning', code: 'COMPOSE_FILE_UNREADABLE', target: reference,
+        message: `${reference} was not checked for the Compose findings check reports (a host port outside ports.bases, a missing healthcheck): ${why}`,
+        fix: 'make environment.compose_files name a readable Compose file inside the cockpit root, then run npx --no cockpit check --config <your cockpit.toml>' })
+    let draft: { environment?: { compose_files?: unknown }; ports?: { bases?: unknown } }
+    try { draft = parseToml(input.draft) as typeof draft }
+    catch (error) { return [unreadable('cockpit.toml', `the draft is not valid TOML (${errorCause(error)})`)] }
+    const references = draft.environment?.compose_files
+    if (!Array.isArray(references) || references.some(reference => typeof reference !== 'string')) return []
+    const services = new Map<string, ComposeServiceTopology>()
+    const unread: Diagnostic[] = []
+    for (const reference of references as string[]) {
+        const read = await readBounded(input.root, '.', reference)
+        if (read.kind !== 'text') { unread.push(unreadable(reference, read.kind === 'absent' ? 'it does not exist' : `it ${read.reason}`)); continue }
+        let document: { services?: Record<string, Record<string, unknown>> } | null
+        try { document = parseYaml(read.text) as typeof document }
+        catch (error) { unread.push(unreadable(reference, `it is not valid YAML (${error instanceof Error ? error.name : 'parse error'})`)); continue }
+        for (const [id, service] of Object.entries(document?.services ?? {})) {
+            const ports = composePublishedPorts(service?.ports)
+            if (ports === undefined || services.has(id)) continue
+            const health = service.healthcheck as { disable?: unknown; test?: unknown } | undefined
+            services.set(id, { id, ports, mountSources: [], build: service.build !== undefined,
+                image: typeof service.image === 'string' ? service.image : null,
+                healthcheck: health !== undefined && health !== null && health.disable !== true && !(Array.isArray(health.test) && health.test[0] === 'NONE') })
+        }
+    }
+    const bases = draft.ports?.bases
+    const found = await assessComposeTopology([...services.values()], { projectDirectory: composeProjectDirectory(input.root, references as string[]),
+        portVariables: bases !== null && typeof bases === 'object' ? Object.keys(bases) : [], siblings: [], hostPaths: [] })
+    return [...unread, ...found.filter(row => row.code === 'COMPOSE_PORT_NOT_LEASED' || row.code === 'COMPOSE_HEALTHCHECK_MISSING')
+        .map(row => ({ ...row, severity: 'warning' as const }))]
 }

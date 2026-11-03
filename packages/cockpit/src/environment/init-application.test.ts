@@ -65,6 +65,17 @@ describe('init application', () => {
         expect(existsSync(join(f.input.home!, 'state'))).toBe(false)
     })
 
+    it('shows the Compose findings of the draft beside it, on the first run and on a resumed one', async () => {
+        const f = fixture()
+        const finding = { severity: 'warning' as const, code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000', message: 'web publishes a fixed port', fix: 'publish it from a variable' }
+        const seen: string[] = []
+        const adapters: InitApplicationAdapters = { ...f.adapters, composeFindings: async ({ draft }) => { seen.push(draft); return [finding] } }
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
+        expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'artifact', diagnostics: [finding] })
+        expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'artifact', diagnostics: [finding] })
+        expect(seen).toEqual(['name = "synthetic"\n', 'name = "synthetic"\n'])
+    })
+
     it('persists the exact draft before returning it and resumes safely from every destination state', async () => {
         const f = fixture()
         const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }

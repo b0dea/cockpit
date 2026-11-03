@@ -158,6 +158,8 @@ export interface InitApplicationAdapters {
                 provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }> }>[]
             skipped: readonly Readonly<{ source: string; reason: string }>[]
         }>>
+    /** What check would report about the Compose files a drafted cockpit.toml declares; init never edits them, so it shows the edit. */
+    readonly composeFindings?: (input: Readonly<{ root: string; draft: string }>) => Promise<readonly Diagnostic[]>
     /**
      * Findings about prerequisites no init stage checks (the root's Git working tree, the cockpit's
      * own install, sibling remotes, committed secret files), and whether a runtime is declared.
@@ -854,7 +856,8 @@ async function initStagesFrom(
         if (persisted.kind !== 'complete') return stateFailure(persisted)
         current = persisted.value
         return { kind: 'artifact', status: 0, artifact: documented.artifact, destination,
-            diagnostics: documented.diagnostics, result: result('draft-prepared', projection, undefined, unconfirmedOf(documented)) }
+            diagnostics: [...documented.diagnostics, ...await adapters.composeFindings?.({ root: dirname(destination), draft: documented.artifact }) ?? []],
+            result: result('draft-prepared', projection, undefined, unconfirmedOf(documented)) }
     }
 
     const persistedConfiguration = current.value.greenfield
@@ -889,7 +892,7 @@ async function initStagesFrom(
             diagnostics: observed.diagnostics, result: result(current.value.stage, projection) }
         if (observed.kind === 'absent') {
             return { kind: 'artifact', status: 0, artifact: current.value.artifactBytes!, destination,
-                diagnostics: [], result: result('draft-prepared', projection, undefined, unconfirmedOf(currentDocument)) }
+                diagnostics: [...await adapters.composeFindings?.({ root: dirname(destination), draft: current.value.artifactBytes! }) ?? []], result: result('draft-prepared', projection, undefined, unconfirmedOf(currentDocument)) }
         }
         if (observed.sha256 !== current.value.artifactSha256) {
             return refused('INIT_DRAFT_CHANGED', 'existing cockpit.toml bytes differ from the persisted draft', destination)

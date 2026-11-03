@@ -11,6 +11,7 @@ import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
 import { cockpitCommand, initCommand } from '../fix-catalogue.js'
 import { classifyEstateObservation, draftFromEstate, observePublicEstate } from '../init/draft.js'
+import { composeFindings } from '../init/derive.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
 import { syncTeamGeneratedEnvironment } from './generated-application/sync.js'
 import { inspectInitReadiness } from './readiness-composition.js'
@@ -46,6 +47,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
             return outcome
         },
         classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+        composeFindings,
         observeDestination: async ({ path }) => {
             if (!existsSync(path)) return { kind: 'absent' }
             return { kind: 'available', sha256: createHash('sha256').update(await readFile(path)).digest('hex') }
@@ -135,6 +137,8 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     }
     const artifact = outcome
     expect(artifact.kind, JSON.stringify(artifact)).toBe('artifact')
+    // The Compose file publishes its port from a ports.bases variable, so check's findings have nothing to add beyond the healthcheck.
+    expect(artifact.diagnostics.map(row => row.code)).not.toContain('COMPOSE_PORT_NOT_LEASED')
     expect(await loadCockpitConfig(f.destination)).toMatchObject({ kind: 'refusal' })
     await writeFile(join(f.root, 'app/package.json'), JSON.stringify({ scripts: { start: 'node changed.mjs' } }))
     expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', status: 2,

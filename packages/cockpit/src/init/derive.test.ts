@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { deriveInferredFacts } from './derive.js'
+import { composeFindings, deriveInferredFacts } from './derive.js'
 import { Sibling, Testing } from '../schema.js'
 
 const scratch: string[] = []
@@ -290,5 +290,26 @@ describe('inferred interview answers', () => {
         expect(result.facts.filter(fact => fact.fields.includes('testing'))).toEqual([])
         expect(result.skipped).toContainEqual({ source: 'api', reason: expect.stringMatching(
             /^no test entry point was found, so no \[testing\] gate is proposed for api; looked for MODULE\.bazel.*package\.json test script.*Cargo\.toml$/) })
+    })
+})
+
+describe('Compose findings for a drafted cockpit.toml', () => {
+    it('reports check\'s port and healthcheck findings with its fix, and nothing for a leased, healthy service', async () => {
+        const root = estate({ 'compose.yml': [
+            'services:',
+            '  web:', '    image: synthetic.invalid/web:1', '    ports: ["127.0.0.1:3000:3000"]',
+            '  api:', '    image: synthetic.invalid/api:1', '    ports: ["127.0.0.1:${API_HOST_PORT:-4200}:4200"]',
+            '    healthcheck: { test: ["CMD", "true"] }', ''].join('\n') })
+        const draft = (bases: string) => `[environment]\ncompose_files = ["compose.yml"]\n[ports.bases]\n${bases}\n`
+        const found = await composeFindings({ root, draft: draft('API_HOST_PORT = 4200') })
+        expect(found).toEqual([
+            expect.objectContaining({ severity: 'warning', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000',
+                fix: 'publish it as "${WEB_HOST_PORT}:3000" in the Compose file and declare WEB_HOST_PORT under [ports.bases]' }),
+            expect.objectContaining({ severity: 'warning', code: 'COMPOSE_HEALTHCHECK_MISSING', target: 'compose:web' })])
+        // The same file is unleased for api until its variable is declared.
+        expect((await composeFindings({ root, draft: draft('') })).map(row => row.target)).toContain('compose:api:4200')
+        // A declared file that cannot be read is said, not skipped.
+        expect(await composeFindings({ root, draft: '[environment]\ncompose_files = ["missing.yml"]\n' })).toEqual([
+            expect.objectContaining({ code: 'COMPOSE_FILE_UNREADABLE', target: 'missing.yml' })])
     })
 })

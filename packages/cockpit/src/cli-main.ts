@@ -17,7 +17,7 @@ import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
-import { deriveInferredFacts } from './init/derive.js'
+import { composeFindings, deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
 import { nodeAuthority, readAnchoredBatches } from './generated-environment/transaction.js'
 import {
@@ -602,6 +602,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
             observeRoot: observeCockpitRoot,
             infer: deriveInferredFacts,
+            composeFindings,
             inspectReadiness: input => inspectInitReadiness(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
             observeDestination: async ({ path, byteLimit }) => {
                 const node = await nodeAuthority()
