@@ -1002,6 +1002,8 @@ export type ResetCommandResult =
 export type OperatorResetResult = EnvironmentCommandOutcome<Readonly<{
     stackId: StackId
     change: 'reset' | 'unchanged'
+    /** On `reset`: what the approved plan removed, as its preview listed them. */
+    targets?: readonly ResetTargetInput[]
 }>>
 
 export interface OperatorResetSession {
@@ -4110,11 +4112,13 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
         })
         if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
             ? destructiveRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
-        return await executeDestructivePlan(
+        const applied = await executeDestructivePlan(
             session.context, session.adapters, 'reset', lifecycle, actionablePlan, observation,
             recovered?.kind === 'complete' ? recovered : undefined,
             persistedRequest,
         ) as OperatorResetResult
+        return applied.kind === 'complete' ? Object.freeze({ ...applied, result: Object.freeze({ ...applied.result,
+            targets: publicResetPreview(session.context, session.preview).result.targets }) }) : applied
     } finally {
         if (recovered?.kind === 'complete') discardDrainReservationAuthority(recovered.authority)
     }

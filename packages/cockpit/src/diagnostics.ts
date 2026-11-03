@@ -179,7 +179,13 @@ const LIFECYCLE_CHANGES: Readonly<Record<string, Readonly<Record<string, string>
         unchanged: 'Nothing to stop: no session holds the stack',
     }),
     down: Object.freeze({ removed: 'Stack removed' }),
+    reset: Object.freeze({ unchanged: 'Nothing to reset' }),
 })
+
+function resetTargetLines(targets: readonly { kind?: unknown; identity?: unknown; declaration?: unknown }[]): string {
+    return targets.map(({ kind, identity, declaration }) =>
+        `  ${escapeForTerminal(`${String(kind)} ${String(identity)}${declaration === identity ? '' : ` (${String(declaration)})`}`)}\n`).join('')
+}
 
 // A successful up, sleep, down or preflight printed nothing in human mode, so a person could not
 // tell success from a command that never ran. One line says what happened; anything outside the
@@ -201,10 +207,16 @@ function lifecycleSummary(command: string, result: Readonly<Record<string, unkno
         if (typeof result.stackId !== 'string') return ''
         const targets = result.targets as readonly { kind?: unknown; identity?: unknown; declaration?: unknown }[]
         if (targets.length === 0) return `${escapeForTerminal(`Nothing to reset (${result.stackId}).`)}\n`
-        const lines = targets.map(({ kind, identity, declaration }) =>
-            `  ${escapeForTerminal(`${String(kind)} ${String(identity)}${declaration === identity ? '' : ` (${String(declaration)})`}`)}\n`)
         return `${escapeForTerminal(`Reset would remove ${targets.length} ${targets.length === 1 ? 'target' : 'targets'} (${result.stackId}); plan ${result.planDigest}:`)}\n`
-            + `${lines.join('')}Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n`
+            + `${resetTargetLines(targets)}Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n`
+    }
+    // An applied reset printed nothing, so a person could not tell that their data was gone.
+    if (command === 'reset' && result.change === 'reset' && Array.isArray(result.targets)) {
+        if (typeof result.stackId !== 'string') return ''
+        const targets = result.targets as readonly { kind?: unknown; identity?: unknown; declaration?: unknown }[]
+        return `${escapeForTerminal(`Reset removed ${targets.length} ${targets.length === 1 ? 'target' : 'targets'} (${result.stackId}):`)}\n`
+            + resetTargetLines(targets)
+            + 'The next up recreates the removed volumes and, where environment.seed is declared, runs the seed to fill them.\n'
     }
     const headline = Object.hasOwn(LIFECYCLE_CHANGES, command) && typeof result.change === 'string'
         && Object.hasOwn(LIFECYCLE_CHANGES[command]!, result.change) ? LIFECYCLE_CHANGES[command]![result.change] : undefined

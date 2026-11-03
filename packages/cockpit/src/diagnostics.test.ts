@@ -61,6 +61,10 @@ describe('diagnostic envelope', () => {
         ] })).toBe(`Reset would remove 2 targets (${stackId}); plan ${'d'.repeat(64)}:\n`
             + '  volume demo-1a2b_data (data)\n  container demo-1a2b-api-1\n'
             + 'Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n')
+        expect(review('reset', { stackId, change: 'reset', targets: [{ kind: 'volume', identity: 'demo-1a2b_data', declaration: 'data' }] }))
+            .toBe(`Reset removed 1 target (${stackId}):\n  volume demo-1a2b_data (data)\n`
+                + 'The next up recreates the removed volumes and, where environment.seed is declared, runs the seed to fill them.\n')
+        expect(review('reset', { stackId, change: 'unchanged' })).toBe(`Nothing to reset (${stackId}).\n`)
         // A result outside the known shape prints nothing rather than a guess.
         expect(review('up', { stackId, change: 'invented' })).toBe('')
     })

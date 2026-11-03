@@ -483,7 +483,7 @@ describe('destructive application contracts', () => {
         const result = await session.decide('approve')
 
         expect(events).toEqual(['reservation', 'attempt', 'runtime-stop', 'runtime-observe', 'publication', 'finalize'])
-        expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'reset' } })
+        expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'reset', targets: session.preview.result.targets } })
     })
 
     it('refuses co-tenancy before minting or executing a reset action', async () => {
