@@ -10,7 +10,7 @@ import { basename, dirname, join, posix, relative } from 'node:path'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep } from '../environment/contract.js'
 import type { ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { foldGuardSpelling, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
+import { foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
 
 export const mechanism = {
     id: 'guard-protected-locations', module: 'packages/cockpit/src/guards/protected-locations.ts',
@@ -55,7 +55,7 @@ export function guardInstalledDirectories(packageRoot: string, consumerRoot: str
         found.add(spelled).add(real)
         if (visited.has(real)) continue
         visited.add(real)
-        if (found.size > GUARD_PROTECTED_LOCATION_LIMIT) throw new Error(`guard package closure exceeds ${GUARD_PROTECTED_LOCATION_LIMIT} directories`)
+        if (found.size > GUARD_LOCATION_LIMITS.packageDirectories) throw new Error(`guard package closure exceeds ${GUARD_LOCATION_LIMITS.packageDirectories} directories`)
         const manifest = JSON.parse(readFileSync(join(real, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> }
         for (const name of Object.keys(manifest.dependencies ?? {})) pending.push(installedPackage(real, name))
     }
@@ -126,7 +126,7 @@ export function guardSearchDirectories(searchPath: string, allowedRoots: readonl
         try { candidates.push(realpathSync(spelled)) } catch (error) { if (!missing(error)) throw error }
         for (const candidate of candidates) if (inside(candidate)) found.add(candidate)
     }
-    if (found.size > GUARD_PROTECTED_LOCATION_LIMIT) throw new Error(`guard search path exceeds ${GUARD_PROTECTED_LOCATION_LIMIT} directories inside the allowed roots`)
+    if (found.size > GUARD_LOCATION_LIMITS.searchPathDirectories) throw new Error(`guard search path exceeds ${GUARD_LOCATION_LIMITS.searchPathDirectories} directories inside the allowed roots`)
     return [...found].sort()
 }
 
@@ -143,7 +143,7 @@ const sensitiveName = (name: string) => { const folded = foldGuardSpelling(name)
 /**
  * Every path at or below `path` whose case-folded name starts with `.env` or is `.secrets`, of any
  * type, without following links, as a recursive search would reach it; null once the walk passes
- * `entryLimit` entries or finds more than the protected location bound. A missing path has none.
+ * `entryLimit` entries or finds more than the sensitive path bound. A missing path has none.
  */
 export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT): readonly string[] | null {
     let status
@@ -156,7 +156,7 @@ export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH
         for (const entry of readdirSync(directory, { withFileTypes: true })) {
             if (++seen > entryLimit) return null
             const child = join(directory, entry.name)
-            if (sensitiveName(entry.name) && found.push(child) > GUARD_PROTECTED_LOCATION_LIMIT) return null
+            if (sensitiveName(entry.name) && found.push(child) > GUARD_LOCATION_LIMITS.sensitivePaths) return null
             if (entry.isDirectory()) pending.push(child)
         }
     }
@@ -167,6 +167,10 @@ export type GuardExecute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
 // A repository's index and work tree can each list hundreds of thousands of paths.
 const GIT_LIST_BYTES = 16_777_216
+// Ignored entries Git lists below a searched tree, each ignored directory once. Each costs at most a
+// check of its not-yet-seen ancestors for a repository boundary, the work of one step of the walk,
+// so the walk's budget bounds it.
+const GUARD_IGNORED_ENTRY_LIMIT = GUARD_SEARCH_ENTRY_LIMIT
 
 /**
  * The NUL-separated paths `git <args>` prints in `repository`, with an empty answer for exit 1, or
@@ -205,7 +209,7 @@ function repositoryAbove(directory: string): string | undefined {
 /**
  * The paths a default ripgrep search of `path` reads that are named `.env*`, lie below a `.secrets`
  * directory or are one of `watched`, each reported at its first such name, as Git lists what the
- * enclosing repository does not ignore; null past the protected location bound. Undefined when Git
+ * enclosing repository does not ignore; null past the sensitive path bound. Undefined when Git
  * did not answer or its list cannot stand for ripgrep's: outside a repository, through a
  * nested repository or submodule, below an `.ignore` or `.rgignore` file, which ripgrep reads and Git
  * does not, or when the search names an ignored directory, whose children ripgrep may still read.
@@ -231,24 +235,37 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
     // check-ignore takes no pathspec magic, so a name it would read as magic or a wildcard is walked.
     if (/^:|[*?[\\]/.test(below)) return undefined
     const scope = below === '' ? [] : [`:(literal)${below}`]
-    if (below !== '' && (await gitPaths(git, repository, ['check-ignore', '--no-index', '--', below], execute))?.length !== 0) return undefined
-    const prefix = below === '' ? '' : `${below}/`
-    const inside = watched.filter(item => item === path || item.startsWith(`${path}/`)).map(item => `:(icase,literal)${relative(repository, item)}`)
-    const [cached, others, ignored] = await Promise.all([
+    // `--directory` names an ignored directory once instead of reading everything below it, which
+    // ripgrep skips as well; listing every ignored entry, not only protected names, keeps each
+    // directory Git collapsed in view whatever its name.
+    const [named, cached, others, ignored] = await Promise.all([
+        below === '' ? [] : gitPaths(git, repository, ['check-ignore', '--no-index', '--', below], execute),
         gitPaths(git, repository, ['ls-files', '-z', '--stage', '--', ...scope], execute),
         gitPaths(git, repository, ['ls-files', '-z', '--others', '--exclude-per-directory=.gitignore', '--', ...scope], execute),
-        gitPaths(git, repository, ['ls-files', '-z', '--others', '--ignored', '--exclude-per-directory=.gitignore', '--',
-            ...['.ignore', '.rgignore', '.env*', '.env*/**', '.secrets/**'].map(name => `:(icase,glob)${prefix}**/${name}`), ...inside], execute),
+        gitPaths(git, repository, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-per-directory=.gitignore', '--', ...scope], execute),
     ])
-    if (cached === null || others === null || ignored === null || ignored.length > GUARD_PROTECTED_LOCATION_LIMIT) return undefined
-    const boundary = (directory: string) => ['.git', '.jj'].some(name => present(join(directory, name)))
-    for (const entry of ignored) {
-        if (entry.split('/').some(name => ['.ignore', '.rgignore'].includes(foldGuardSpelling(name)))) return undefined
-        // ripgrep stops applying the ignore files above a directory holding `.git` or `.jj`, which Git
-        // does not, so a protected file Git ignores is unread only when no such directory lies above it.
-        for (let directory = dirname(join(repository, entry)); directory !== repository; directory = dirname(directory)) {
-            if (boundary(directory)) return undefined
+    if (named?.length !== 0 || cached === null || others === null || ignored === null || ignored.length > GUARD_IGNORED_ENTRY_LIMIT) return undefined
+    const folded = new Set(watched.map(foldGuardSpelling))
+    const boundaries = new Map<string, boolean>()
+    // ripgrep stops applying the ignore files above a directory holding `.git` or `.jj`, which Git
+    // does not, so what Git ignores below such a directory may still be read.
+    const belowBoundary = (directory: string): boolean => {
+        if (directory === repository) return false
+        let known = boundaries.get(directory)
+        if (known === undefined) {
+            known = ['.git', '.jj'].some(name => present(join(directory, name))) || belowBoundary(dirname(directory))
+            boundaries.set(directory, known)
         }
+        return known
+    }
+    for (const entry of ignored) {
+        const names = entry.split('/').filter(Boolean)
+        if (names.some(name => ['.ignore', '.rgignore'].includes(foldGuardSpelling(name)))) return undefined
+        const absolute = join(repository, ...names)
+        if (absolute !== path && !absolute.startsWith(`${path}/`)) return undefined
+        // A collapsed directory may hold anything; a file matters only under a protected name.
+        const protectedEntry = entry.endsWith('/') || names.some(sensitiveName) || folded.has(foldGuardSpelling(absolute))
+        if (protectedEntry && belowBoundary(dirname(absolute))) return undefined
     }
     const listed: string[] = []
     for (const line of cached) {
@@ -262,7 +279,6 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
         if (entry.endsWith('/')) return undefined
         listed.push(entry)
     }
-    const folded = new Set(watched.map(foldGuardSpelling))
     const found = new Set<string>()
     for (const entry of listed) {
         if (entry.split('/').some(name => ['.ignore', '.rgignore'].includes(foldGuardSpelling(name)))) return undefined
@@ -273,21 +289,21 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
         const first = names.findIndex(sensitiveName)
         if (first >= 0) found.add(join(path, ...names.slice(0, first + 1)))
         else if (folded.has(foldGuardSpelling(absolute))) found.add(absolute)
-        if (found.size > GUARD_PROTECTED_LOCATION_LIMIT) return null
+        if (found.size > GUARD_LOCATION_LIMITS.sensitivePaths) return null
     }
     return [...found].sort()
 }
 
 /**
  * Every path `repository`'s index holds that is named `.env*`, lies below a `.secrets` or `.env*`
- * directory or is one of `watched`, or null past the protected location bound or when Git did not
+ * directory or is one of `watched`, or null past the sensitive path bound or when Git did not
  * answer. Only the index is asked: a file removed from it stays in history, which this does not walk.
  */
 export async function guardTrackedSensitivePaths(repository: string, watched: readonly string[], git: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null> {
     const inside = watched.map(path => relative(repository, path)).filter(path => path !== '' && !path.startsWith('..'))
     const tracked = await gitPaths(git, repository, ['ls-files', '-z', '--', ':(icase,glob)**/.env*', ':(icase,glob)**/.env*/**', ':(icase,glob)**/.secrets/**',
         ...inside.map(path => `:(icase,literal)${path}`)], execute)
-    return tracked === null || tracked.length > GUARD_PROTECTED_LOCATION_LIMIT ? null : tracked.map(path => join(repository, path)).sort()
+    return tracked === null || tracked.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : tracked.map(path => join(repository, path)).sort()
 }
 
 /**

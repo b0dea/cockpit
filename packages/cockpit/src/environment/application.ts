@@ -38,7 +38,7 @@ import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupRe
 import type { InstructionPointerResult } from './instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
-import { evaluateGuard, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
+import { evaluateGuard, GUARD_LOCATION_LIMITS, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { ordinarySessionCommand, resolveOrdinaryInvocation } from '../command-table.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
@@ -492,26 +492,39 @@ export async function runGuardEvaluationApplication(
         const instancePaths = policy.instances.map(item => item.path)
         const present = (path: string) => { try { lstatSync(path); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error } }
         const allowed = (path: string) => policy.allowedRoots.some(root => confinedPath(root, path))
+        // Each entry starts as the answer for Git not answering and is replaced by Git's.
         const unignored = new Map<string, readonly string[] | null | undefined>()
         const tracked = new Map<string, readonly string[] | null>()
+        const queries: Array<() => Promise<void>> = []
         for (const invocation of parsed.invocations) {
             const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: data.ripgrepConfigActive === true })
             if (access?.trackedContent && allowed(access.cwd) && !tracked.has(access.cwd)) {
-                tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe))
+                tracked.set(access.cwd, null)
+                queries.push(async () => { tracked.set(access.cwd, await guardTrackedSensitivePaths(access.cwd, instancePaths, git.value, adapters.execute ?? executeProbe)) })
             }
             for (const tree of access?.skipsIgnored ? access.trees : []) {
                 const path = resolve(access!.cwd, tree)
-                if (allowed(path) && !unignored.has(path) && present(path)) unignored.set(path, await guardUnignoredSensitivePaths(path, instancePaths, git.value, adapters.execute ?? executeProbe))
+                if (!allowed(path) || unignored.has(path) || !present(path)) continue
+                unignored.set(path, undefined)
+                queries.push(async () => { unignored.set(path, await guardUnignoredSensitivePaths(path, instancePaths, git.value, adapters.execute ?? executeProbe)) })
             }
         }
+        // A query starts up to four Git processes, so a command naming many trees is asked about a few
+        // at a time, and a failed one stops the rest from starting.
+        const worker = async () => {
+            for (let query = queries.shift(); query; query = queries.shift()) await query().catch((error: unknown) => { queries.length = 0; throw error })
+        }
+        await Promise.all([worker(), worker(), worker(), worker()])
+        const walks = new Map<string, readonly string[] | null>()
         const searched = (path: string, unignoredOnly: boolean): readonly string[] | null => {
             const listed = unignoredOnly ? unignored.get(path) : undefined
             if (listed !== undefined) return listed
-            const walked = guardSensitivePathsBelow(path)
+            let walked = walks.get(path)
+            if (walked === undefined) walks.set(path, walked = guardSensitivePathsBelow(path))
             // The walk names environment and secrets names; an ignore-aware search also needs the instances it reads.
             if (!unignoredOnly || walked === null) return walked
             const found = [...new Set([...walked, ...instancePaths.filter(item => confinedPath(path, item) && present(item))])].sort()
-            return found.length > GUARD_PROTECTED_LOCATION_LIMIT ? null : found
+            return found.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : found
         }
         const inspected = new Map<string, Stats>()
         const inspect: import('../guards/evaluator.js').PathInspection = request => {
