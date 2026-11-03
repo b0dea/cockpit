@@ -8,7 +8,7 @@ import { z } from 'zod'
 
 // One inert word, never a path or an option: the CLI, the guard and the store each admit it before it names a file.
 export const WORK_ORDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-export const WORK_ORDER_LIMITS = Object.freeze({ bytes: 65_536, criteria: 12, scope: 64, textBytes: 2_048, arguments: 32, argumentBytes: 2_048 })
+const WORK_ORDER_LIMITS = Object.freeze({ bytes: 65_536, criteria: 12, scope: 64, textBytes: 2_048, arguments: 32, argumentBytes: 2_048 })
 
 const PRINTABLE = /^[^\x00-\x08\x0b-\x1f\x7f]*$/
 const text = z.string().trim().min(1).refine(value => Buffer.byteLength(value) <= WORK_ORDER_LIMITS.textBytes && PRINTABLE.test(value),
@@ -23,7 +23,7 @@ const GateCheck = z.object({
     // A selected value that starts with `-` would reach the product's tool as an option of its own.
     select: z.string().max(4_096).regex(/^(?:spec|file|test|route):[^-]/, 'spec|file|test|route:<value>').optional(),
 }).strict()
-export const Check = z.union([GateCheck, z.array(argument).min(1).max(WORK_ORDER_LIMITS.arguments)])
+const Check = z.union([GateCheck, z.array(argument).min(1).max(WORK_ORDER_LIMITS.arguments)])
 export type WorkOrderCheck = z.infer<typeof Check>
 const Criterion = z.object({
     id: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,31}$/, 'a short identifier such as AC1'),

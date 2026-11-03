@@ -89,7 +89,7 @@ export function scanHeaders(lines: readonly string[]): Header[] {
 const isSiblingRow = (header: Header) => header.array && header.path === 'sibling'
 const isSiblingSubtable = (header: Header) => /^sibling\s*\./.test(header.path)
 
-export function locateSiblingTables(text: string): readonly SiblingTableLocation[] {
+function locateSiblingTables(text: string): readonly SiblingTableLocation[] {
     const lines = text.split('\n')
     const headers = scanHeaders(lines)
     const locations: SiblingTableLocation[] = []
@@ -113,7 +113,7 @@ export function locateSiblingTables(text: string): readonly SiblingTableLocation
 
 const quote = (value: string) => JSON.stringify(value)
 
-export function siblingTable(row: SiblingTableRow): string {
+function siblingTable(row: SiblingTableRow): string {
     return ['[[sibling]]',
         `slug = ${quote(row.slug)}`,
         `dir = ${quote(row.dir)}`,

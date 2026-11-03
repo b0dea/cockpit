@@ -36,7 +36,7 @@ function issueObservation(value: EnvironmentObservation): EnvironmentObservation
     return snapshot
 }
 
-export function isTemplateObservation(value: unknown): value is EnvironmentObservation {
+function isTemplateObservation(value: unknown): value is EnvironmentObservation {
     return value !== null && typeof value === 'object' && issuedObservations.has(value)
 }
 

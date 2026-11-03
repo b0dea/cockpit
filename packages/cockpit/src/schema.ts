@@ -41,7 +41,7 @@ export const AuthPosture = z.enum(['real', 'bypassed', 'none'])
 // What installs and tests a sibling. The cockpit owns the environment; the toolchain owns
 // the commands, and they are delegated rather than reimplemented. `none` is a real answer —
 // a directory of data has no install step and must not acquire one by default.
-export const Toolchain = z.enum(['node', 'python', 'ruby', 'go', 'rust', 'dotnet', 'none'])
+const Toolchain = z.enum(['node', 'python', 'ruby', 'go', 'rust', 'dotnet', 'none'])
 
 const SafeRelativePath = z
     .string()
@@ -56,7 +56,7 @@ const SurfacePath = SafeRelativePath.and(z.string().max(4096).regex(
 ))
 
 const LocalComposePath = SafeRelativePath.regex(/^[^:]+$/, 'expected a local compose file path')
-export const SafeUrlPath = z
+const SafeUrlPath = z
     .string()
     .regex(
         /^\/(?!\/)(?!\.{1,2}(?:\/|$))(?!.*\/\.{1,2}(?:\/|$))(?!.*[%\\?#\x00-\x20\x7f]).*$/,
@@ -137,7 +137,7 @@ export const EntrypointDerivative = z
 const CommandArgv = z.array(z.string().min(1)).min(1)
 
 // Unicode mode counts scalar values, excluding lone surrogate code units before UTF-8 encoding.
-export const GUARD_COMMAND_WORD_PATTERN = '^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])'
+const GUARD_COMMAND_WORD_PATTERN = '^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])'
 export const GuardCommandArgv = z.array(z.string().regex(new RegExp(GUARD_COMMAND_WORD_PATTERN, 'u'))).min(1).max(32)
 
 export const InstallPolicy = z
@@ -165,7 +165,7 @@ const PostureRequirement = z.object({
 })
 
 const DeclarationReason = z.string().min(1).max(4096).regex(/\S/)
-export const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
+const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
 // Where a declared value came from. A date records when its source was looked at, so it is
 // required wherever the source lies outside this configuration. The one exception is a value
 // declared by the configuration file itself, which the loader checks by path because the
@@ -251,7 +251,7 @@ const SiblingDerives = z.object({
 
 // A lane that touches live data or local hardware. Never in a default bring-up, never in CI,
 // and it asks before it acts.
-export const Gate = z.enum(['operator'])
+const Gate = z.enum(['operator'])
 
 export const OPERATOR_GATE_RISK_PATTERN = String.raw`\b(?:[lL][iI][vV][eE]|[pP][rR][oO][dD][uU][cC][tT][iI][oO][nN]|[hH][aA][rR][dD][wW][aA][rR][eE]|[sS][iI][mM][uU][lL][aA][tT][oO][rR])\b`
 const OPERATOR_GATE_RISK_RE = new RegExp(OPERATOR_GATE_RISK_PATTERN)
@@ -262,7 +262,7 @@ export function requiresOperatorGate(sibling: { mount: Mount; purpose: string })
 
 // Runtime supplies sibling variables to Compose, so declarations must never overlap variables
 // that can change Docker, Compose or the host process before cockpit's authenticated plan runs.
-export const SiblingVariable = z.string().regex(
+const SiblingVariable = z.string().regex(
     /^(?!(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$))[A-Z][A-Z0-9_]*$/,
     'expected an uppercase environment variable that is not a Docker, Compose or host process control',
 )
@@ -347,7 +347,7 @@ export const Sibling = z
 // Only host-published ports and browser-facing URLs carry the offset. Container-internal
 // DNS and ports never do — that invariant is what lets several stacks run side by side on
 // byte-identical service config with only the published edge differing.
-export const Ports = z
+const Ports = z
     .object({
         step: z.number().int().positive().default(100).describe('Offset between consecutive stacks\' published ports.'),
         count: z.number().int().positive().default(27).describe('Number of stacks that can run side by side.'),
@@ -423,7 +423,7 @@ export const Guards = z
 // agent rewrite the command of an approved server in a sibling's declaration file and the next
 // human sync start it. A server absent from it, or changed since, is generated disabled on every
 // harness, so the three cannot disagree about what may start.
-export const Mcp = z
+const Mcp = z
     .object({
         approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync reports for the server'))
             .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.'),
@@ -451,7 +451,7 @@ const Decider = z.enum(DECIDERS)
 export const WORK_GRADING = ['independent', 'checks', 'self'] as const
 export type WorkGrading = typeof WORK_GRADING[number]
 
-export const WorkGates = z
+const WorkGates = z
     .object({
         accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = "agent".'),
         amend: Decider.optional().describe('Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci.'),
@@ -673,7 +673,7 @@ export const Testing = z.object({
     }
 })
 
-export const CockpitMeta = z
+const CockpitMeta = z
     .object({
         name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Name of this cockpit.'),
         // Resolved from the MAIN checkout, never from the cwd's parent — a nested linked
@@ -705,7 +705,7 @@ function hasYamlOnlyMarkdownFrontmatter(path: string, bytes: string): boolean {
     } catch { return false } // The caller reports front matter that is not plain YAML; parser text would quote the file.
 }
 
-export const SurfaceSource = z.object({
+const SurfaceSource = z.object({
     path: SurfacePath.describe('Path of the source file.'),
     bytes: SurfaceBytes.describe('Full text of the source.'),
 }).strict().superRefine((source, ctx) => {
@@ -718,7 +718,7 @@ export const SurfaceSource = z.object({
     }
 })
 
-export const SurfaceOverrideReference = z.object({
+const SurfaceOverrideReference = z.object({
     name: SurfaceName.describe('Name of the core declaration being replaced.'),
     sha256: SurfaceSha256.describe('SHA-256 of the original core declaration, recorded so a later change to it is reported.'),
 }).strict()
@@ -780,7 +780,7 @@ const HarnessEmittedCapability = {
     mechanism: HarnessMechanism.describe('Code that emits the surface.'),
 } as const
 
-export const CustomHarnessCapability = z.discriminatedUnion('state', [
+const CustomHarnessCapability = z.discriminatedUnion('state', [
     z.object({
         ...HarnessEmittedCapability,
         state: z.literal('enforced').describe('Whether the harness enforces, only instructs, or lacks this capability.'),
@@ -811,7 +811,7 @@ export const CustomHarness = z.object({
     }
 })
 
-export const Surfaces = z.object({
+const Surfaces = z.object({
     // A list rather than per-tool switches so `tool add` and `tool remove` edit one line. A cockpit with
     // no guarded tool would render instructions and skills and enforce nothing, so one must be listed.
     tools: z.array(z.enum(SURFACE_TARGETS)).min(1).max(SURFACE_TARGETS.length).default([...DEFAULT_SURFACE_TOOLS])

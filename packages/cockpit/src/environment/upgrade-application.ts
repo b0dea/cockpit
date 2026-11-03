@@ -93,7 +93,7 @@ async function lockfilesAt(root: string): Promise<string[]> {
 }
 
 /** The `Upgrade:` lines of every changelog entry after `from` up to and including `to`. */
-export function upgradeNotes(changelog: string, from: string, to: string): string[] {
+function upgradeNotes(changelog: string, from: string, to: string): string[] {
     const notes: string[] = []
     let inRange = false
     for (const line of changelog.split('\n')) {

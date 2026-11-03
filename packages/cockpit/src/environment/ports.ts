@@ -46,7 +46,6 @@ import {
 
 const OWNER = 'environment-port-coordination'
 
-const issuedObservations = new WeakMap<object, number>()
 const issuedLeaseResults = new WeakMap<object, {
     readonly result: Extract<LeasePortFamilyResult, { kind: 'complete' }>
     readonly observedAt: string
@@ -76,12 +75,7 @@ const availableRetainedPortFamilies = new WeakSet<object>()
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
     if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('port observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
     return snapshot
-}
-
-export function isPortObservation(value: unknown): value is import('./contract.js').EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
 }
 
 export async function observePortFamily(input: {

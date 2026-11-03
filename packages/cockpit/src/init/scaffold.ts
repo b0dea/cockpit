@@ -8,7 +8,7 @@ import { deriveSiblingVariable } from '../schema.js'
 import { hasErrorCode } from '../environment/contract.js'
 
 /** The names Compose looks for; any one of them already present means the product has a Compose file. */
-export const COMPOSE_FILE_NAMES = Object.freeze(['compose.yml', 'compose.yaml', 'docker-compose.yml', 'docker-compose.yaml'])
+const COMPOSE_FILE_NAMES = Object.freeze(['compose.yml', 'compose.yaml', 'docker-compose.yml', 'docker-compose.yaml'])
 
 // Tags pinned to a major version, so a scaffold written today runs the same release line tomorrow.
 // The credentials are local-only defaults for a stack bound to loopback; the app reads the URL.

@@ -77,7 +77,7 @@ function storageIdentity(path: string): string {
     throw new RefusalError('browser seeded storage state must be a confined mode-600 regular file')
 }
 
-export function browserClientLimit(maxClients: number, policy: BrowserRuntimeInput['authentication']['policy']): number {
+function browserClientLimit(maxClients: number, policy: BrowserRuntimeInput['authentication']['policy']): number {
     return policy === 'serialized' ? 1 : maxClients
 }
 

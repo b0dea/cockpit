@@ -31,7 +31,7 @@ export const CORE_SKILL_ASSETS = Object.freeze([
 
 type CoreAsset = Readonly<{ bytes: string }>
 
-export function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): readonly string[] | undefined {
+function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): readonly string[] | undefined {
     const bytes = assets.get('skills/collection.json')?.bytes
     if (bytes === undefined) return undefined
     const parsed = tryParseJson(bytes)

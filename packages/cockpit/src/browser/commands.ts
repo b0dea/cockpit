@@ -124,7 +124,7 @@ function networkExposureCovers(exposure: string, origin: URL): boolean {
 }
 
 /** Copies a plain object's own enumerable data properties, refusing proxies, accessors and keys outside the named set, without running caller code. */
-export function ownDataRecord(value: unknown, required: readonly string[], optional: readonly string[]): Record<string, unknown> | undefined {
+function ownDataRecord(value: unknown, required: readonly string[], optional: readonly string[]): Record<string, unknown> | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)
             || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return undefined

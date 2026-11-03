@@ -1208,7 +1208,7 @@ export function observeGeneratedApplicationSurfaces(
     return observations
 }
 
-export function isGeneratedApplicationSurfaceObservation(value: unknown): value is EnvironmentObservation {
+function isGeneratedApplicationSurfaceObservation(value: unknown): value is EnvironmentObservation {
     return value !== null && typeof value === 'object' && issuedSurfaceObservations.has(value)
 }
 

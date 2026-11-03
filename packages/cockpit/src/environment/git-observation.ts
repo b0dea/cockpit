@@ -38,7 +38,7 @@ function issueObservation(value: EnvironmentObservation): EnvironmentObservation
     return snapshot
 }
 
-export function isGitObservation(value: unknown): value is EnvironmentObservation {
+function isGitObservation(value: unknown): value is EnvironmentObservation {
     return value !== null && typeof value === 'object' && issuedObservations.has(value)
 }
 

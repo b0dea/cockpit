@@ -117,8 +117,8 @@ export type CheckoutId = BrandedIdentity<'CheckoutId'>
 export type StackId = BrandedIdentity<'StackId'>
 export type HolderId = BrandedIdentity<'HolderId'>
 
-export const OBSERVATION_LIFECYCLE_STAGES = ['bootstrap', 'steady'] as const
-export const SETUP_ACTION_KINDS = ['clone', 'wire-remote', 'report'] as const
+const OBSERVATION_LIFECYCLE_STAGES = ['bootstrap', 'steady'] as const
+const SETUP_ACTION_KINDS = ['clone', 'wire-remote', 'report'] as const
 // Build tools and tool servers resolve their caches and locale from these; none carries a credential.
 // Every other parent variable stays out of product test stages, verification commands and MCP servers,
 // because they run repository code and the environment of an agent session routinely holds tokens.
@@ -983,13 +983,3 @@ export type EnvironmentCommandOutcome<Result> =
           result: null
           plan?: never
       }
-
-/**
- * The command `compose exec` runs for an in-stack operation. Its cwd is relative to the service's
- * working directory, as in the rendered healthcheck; `compose exec --workdir` accepts only an
- * absolute path, so passing the declared cwd there failed every in-stack probe ("Cwd must be an
- * absolute path"). `.` runs in the working directory and any other cwd changes into it first.
- */
-export function inStackCommand(cwd: string, argv: readonly string[]): readonly string[] {
-    return cwd === '.' ? argv : ['/bin/sh', '-c', 'cd -- "$0" && exec "$@"', cwd, ...argv]
-}

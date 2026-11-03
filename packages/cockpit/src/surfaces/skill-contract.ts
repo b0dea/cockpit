@@ -50,12 +50,6 @@ export interface AdmittedSkillCollection {
     readonly entrypoints: readonly Readonly<{ path: string; cap: number; metric: 'lines'; displacement: string }>[]
 }
 
-const admittedCollections = new WeakSet<object>()
-
-export function isAdmittedSkillCollection(value: unknown): value is AdmittedSkillCollection {
-    return typeof value === 'object' && value !== null && admittedCollections.has(value)
-}
-
 export type SkillContractResult =
     | Readonly<{
         kind: 'complete'
@@ -432,7 +426,6 @@ function inspectRendered(
             cap: skill.cap, metric: 'lines' as const, displacement: captured.declaredExtensions.includes(skill.name)
                 ? `skills/${skill.name}/${skill.procedure}` : `skills/${skill.procedure}` })),
     }
-    admittedCollections.add(collection)
     const result = {
         kind: 'complete' as const,
         status: 0 as const,
