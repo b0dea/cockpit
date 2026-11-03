@@ -85,7 +85,7 @@ import {
     readAnchoredFile,
     readAnchoredEntry,
     readAnchoredBatches,
-    readPersonaSource,
+    readAnchoredConfigSource,
     expectedState,
     portablePublicationPaths,
     admitPublicationPlan,
@@ -95,7 +95,7 @@ import {
     type AnchoredBatchReadResult,
     type PublicationMutation,
     type DirectoryIdentity,
-    type PersonaSourceIdentity,
+    type FileIdentity,
     type GeneratedStaleRemovalApprovalRequest,
     type GeneratedStaleRemovalApproval,
     type PublicationPlan,
@@ -222,8 +222,8 @@ interface PreparedEnvironment {
     readonly configPath: string
     readonly sourceSha256: string
     readonly runtimeSha256: string
-    readonly personaSource: Readonly<{ path: string; sha256: string }>
-    readonly personaSourceIdentity: PersonaSourceIdentity
+    readonly configSource: Readonly<{ path: string; sha256: string }>
+    readonly configSourceIdentity: FileIdentity
     readonly generation: string
     readonly generated: readonly OwnedBytes[]
     readonly owned: readonly OwnedBytes[]
@@ -244,9 +244,9 @@ interface PreparedEnvironment {
     readonly customSources: readonly CustomSourceIdentity[]
     // The team's adopted harness settings copies a merged surface was rendered from.
     readonly adoptedSources: readonly AdoptedSourceIdentity[]
-    readonly nativeHookPolicySource?: Readonly<{ path: string; sha256: string; identity: PersonaSourceIdentity }>
+    readonly nativeHookPolicySource?: Readonly<{ path: string; sha256: string; identity: FileIdentity }>
     // The declared Compose files the ownership override was rendered from, re-read before publication.
-    readonly composeSources: readonly Readonly<{ path: string; sha256: string; identity: PersonaSourceIdentity }>[]
+    readonly composeSources: readonly Readonly<{ path: string; sha256: string; identity: FileIdentity }>[]
     readonly surfaceAssets: readonly SurfaceAssetIdentity[]
     readonly warnings: readonly SurfaceGenerationWarning[]
     // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
@@ -394,7 +394,7 @@ interface SourceRootIdentity {
 interface AdoptedSourceIdentity {
     readonly path: string
     readonly sha256: string
-    readonly identity: PersonaSourceIdentity
+    readonly identity: FileIdentity
 }
 
 interface CustomSourceIdentity {
@@ -402,14 +402,14 @@ interface CustomSourceIdentity {
     readonly feature: SurfaceFeature
     readonly path: string
     readonly sha256: string
-    readonly identity: PersonaSourceIdentity
+    readonly identity: FileIdentity
     readonly maxBytes: number
 }
 
 interface SurfaceAssetIdentity {
     readonly path: SurfaceAssetPath
     readonly sha256: string
-    readonly identity: PersonaSourceIdentity
+    readonly identity: FileIdentity
 }
 
 interface CommandResult {
@@ -448,7 +448,7 @@ export interface ConsumedWorkApplicationAuthorities {
         readonly path: string
         readonly bytes: string
         readonly sha256: string
-        readonly identity: PersonaSourceIdentity
+        readonly identity: FileIdentity
         readonly restriction: 'instructed'
     }>
     readonly installedSkills: readonly Readonly<{
@@ -463,7 +463,7 @@ export interface ConsumedWorkApplicationAuthorities {
             readonly path: string
             readonly bytes: string
             readonly sha256: string
-            readonly identity: PersonaSourceIdentity
+            readonly identity: FileIdentity
         }>
     }>
     readonly testing: Readonly<{ readonly registry: GateRegistry }>
@@ -840,7 +840,7 @@ function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>, to
 async function selectedBootstrapAssets(
     node: ResolvedExecutable,
     adapters: GeneratedEnvironmentCommandAdapters,
-): Promise<readonly Readonly<{ path: SurfaceAssetPath; bytes: string; sha256: string; identity: PersonaSourceIdentity }>[] | undefined> {
+): Promise<readonly Readonly<{ path: SurfaceAssetPath; bytes: string; sha256: string; identity: FileIdentity }>[] | undefined> {
     const reads = await readAnchoredBatches(SURFACE_ROOT, SKILL_ASSETS.map(path => ({
         path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
     })), node, adapters)
@@ -1274,7 +1274,7 @@ async function safePath(root: string, path: string, allowMissing: boolean): Prom
 type OwnershipState = { readonly kind: 'missing' }
     | { readonly kind: 'invalid' }
     | { readonly kind: 'unsupported'; readonly format: string }
-    | { readonly kind: 'complete'; readonly manifest: OwnershipManifest; readonly bytes: string; readonly sha256: string; readonly identity: PersonaSourceIdentity }
+    | { readonly kind: 'complete'; readonly manifest: OwnershipManifest; readonly bytes: string; readonly sha256: string; readonly identity: FileIdentity }
 
 async function readOwnership(
     prepared: PreparedEnvironment,
@@ -1418,13 +1418,13 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const sourcePath = relative(root, loaded.result.source.path)
     const sourceTarget = await safePath(root, sourcePath, false)
     if (!sourceTarget) return refuse(
-        'GENERATED_PERSONA_SOURCE_UNAVAILABLE',
-        'the declared persona source is missing or crosses a symbolic-link boundary',
+        'GENERATED_CONFIG_SOURCE_UNAVAILABLE',
+        'the cockpit configuration file is missing or crosses a symbolic-link boundary',
         sourcePath,
     )
-    const source = await readPersonaSource(root, sourcePath, node, adapters)
+    const source = await readAnchoredConfigSource(root, sourcePath, node, adapters)
     if (!source) {
-        return refuse('GENERATED_PERSONA_SOURCE_UNAVAILABLE', 'the declared persona source is unreadable', sourcePath)
+        return refuse('GENERATED_CONFIG_SOURCE_UNAVAILABLE', 'the cockpit configuration file is unreadable', sourcePath)
     }
     const owned = [...generated].sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(owned.map(({ path }) => path)).size !== owned.length
@@ -1447,8 +1447,8 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
         runtimeSha256: loaded.result.runtimeSha256,
-        personaSource: { path: sourcePath, sha256: source.sha256 },
-        personaSourceIdentity: source.identity,
+        configSource: { path: sourcePath, sha256: source.sha256 },
+        configSourceIdentity: source.identity,
         generation,
         generated,
         owned,
@@ -1611,14 +1611,14 @@ function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'complete'
     }
 }
 
-function sourceIdentity(identity: PersonaSourceIdentity): string {
+function sourceIdentity(identity: FileIdentity): string {
     return JSON.stringify({ root: identity.root, chain: identity.chain, file: identity.file })
 }
 
 function readSurfaceAsset(
     path: SurfaceAssetPath,
     read: AnchoredBatchReadResult,
-): Readonly<{ path: SurfaceAssetPath; bytes: string; sha256: string; identity: PersonaSourceIdentity }> | undefined {
+): Readonly<{ path: SurfaceAssetPath; bytes: string; sha256: string; identity: FileIdentity }> | undefined {
     if (read.kind !== 'complete') return undefined
     try {
         return { path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes),
@@ -2784,7 +2784,7 @@ async function inputSourcesCurrent(
                 || config.isSymbolicLink() || String(config.dev) !== handler.configDevice || String(config.ino) !== handler.configInode
                 || module.kind !== 'complete' || module.sha256 !== handler.moduleSha256) return false
         }
-        const target = await safePath(prepared.root, prepared.personaSource.path, false)
+        const target = await safePath(prepared.root, prepared.configSource.path, false)
         if (!target) return false
         for (const expected of prepared.sourceRoots) {
             const status = await lstat(expected.root)
@@ -2827,7 +2827,7 @@ async function inputSourcesCurrent(
             if (deadline !== undefined && Date.now() >= deadline) return false
         }
         const reads = await readAnchoredBatches(prepared.root, [
-            { path: prepared.personaSource.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-persona' as const },
+            { path: prepared.configSource.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-file' as const },
             ...prepared.customSources.map(source => ({ path: source.path, maxBytes: source.maxBytes, action: 'read-file' as const })),
             ...(prepared.nativeHookPolicySource ? [{ path: prepared.nativeHookPolicySource.path,
                 maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }] : []),
@@ -2839,8 +2839,8 @@ async function inputSourcesCurrent(
         if ((deadline !== undefined && Date.now() >= deadline) || !reads || reads.kind !== 'complete'
             || reads.results.length !== composeOffset + prepared.composeSources.length) return false
         const source = reads.results[0]!
-        const expected = prepared.personaSourceIdentity
-        const localCurrent = source.kind === 'complete' && source.sha256 === prepared.personaSource.sha256
+        const expected = prepared.configSourceIdentity
+        const localCurrent = source.kind === 'complete' && source.sha256 === prepared.configSource.sha256
             && source.identity.root.dev === expected.root.dev && source.identity.root.ino === expected.root.ino
             && source.identity.file.dev === expected.file.dev && source.identity.file.ino === expected.file.ino
             && source.identity.chain.length === expected.chain.length
@@ -2891,7 +2891,7 @@ async function ownedInputOverlap(
 ): Promise<Readonly<{ kind: 'complete'; path?: string }> | Readonly<{ kind: 'invalid' }>> {
     const presentInputPaths = [
         prepared.configPath,
-        resolve(prepared.root, prepared.personaSource.path),
+        resolve(prepared.root, prepared.configSource.path),
         ...prepared.guideSources.observations.flatMap(observation => [observation.sourcePath, observation.contentPath]),
         ...prepared.sourceEvidence.filter((row): row is Extract<SurfaceInputEvidence, { kind: 'mcp' }> => row.kind === 'mcp')
             .map(evidence => resolve(evidence.root, evidence.path)),
@@ -2952,8 +2952,8 @@ async function ownedInputOverlap(
             const named = await lstat(path, { bigint: true })
             if (!opened.isDirectory() || !named.isDirectory() || named.isSymbolicLink()
                 || opened.dev !== named.dev || opened.ino !== named.ino) throw new RefusalError('directory identity changed')
-            if (path === prepared.root && (opened.dev !== BigInt(prepared.personaSourceIdentity.root.dev)
-                || opened.ino !== BigInt(prepared.personaSourceIdentity.root.ino))) throw new RefusalError('publication root identity changed')
+            if (path === prepared.root && (opened.dev !== BigInt(prepared.configSourceIdentity.root.dev)
+                || opened.ino !== BigInt(prepared.configSourceIdentity.root.ino))) throw new RefusalError('publication root identity changed')
             watches.push({ path, handle, dev: opened.dev, ino: opened.ino,
                 mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs })
         }
@@ -3266,7 +3266,7 @@ async function preparePublication(
         authority: { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath },
         generation: prepared.generation,
         sourceSha256: prepared.sourceSha256,
-        rootIdentity: prepared.personaSourceIdentity.root,
+        rootIdentity: prepared.configSourceIdentity.root,
         node: prepared.node,
         mode: 'sync',
         ledgerExpected: ownership.kind === 'missing' ? { kind: 'missing' }
@@ -3417,7 +3417,7 @@ export async function applyGeneratedEnvironmentRepair(
                 const checked = await checkCanonicalGeneratedEnvironment({ configPath: prepared.configPath }, prepared, adapters)
                 return checked.kind === 'complete' ? true : checked
             }
-            if (!await inputSourcesCurrent(prepared, adapters, deadline)) return refuse('GENERATED_SOURCE_CHANGED', 'a generated input changed before publication', stage === 'before-stage' ? prepared.personaSource.path : 'generated-environment')
+            if (!await inputSourcesCurrent(prepared, adapters, deadline)) return refuse('GENERATED_SOURCE_CHANGED', 'a generated input changed before publication', stage === 'before-stage' ? prepared.configSource.path : 'generated-environment')
             return true
         },
     })

@@ -68,7 +68,7 @@ export interface DirectoryIdentity {
     readonly ino: number
 }
 
-export interface PersonaSourceIdentity {
+export interface FileIdentity {
     readonly root: DirectoryIdentity
     readonly chain: readonly DirectoryIdentity[]
     readonly file: DirectoryIdentity
@@ -381,11 +381,11 @@ export type AnchoredRead = Readonly<{
     kind: 'complete'
     bytes: Buffer
     sha256: string
-    identity: PersonaSourceIdentity
+    identity: FileIdentity
 }> | Readonly<{ kind: 'missing' }> | Readonly<{ kind: 'invalid' }>
 
 export type AnchoredEntry = Readonly<{ kind: 'missing' | 'other' }>
-    | Readonly<{ kind: 'file'; bytes: Buffer; sha256: string; identity: PersonaSourceIdentity; mode: number }>
+    | Readonly<{ kind: 'file'; bytes: Buffer; sha256: string; identity: FileIdentity; mode: number }>
     | Readonly<{ kind: 'symlink'; target: string; identity: DirectoryIdentity }>
     | Readonly<{ kind: 'invalid' }>
 
@@ -395,9 +395,9 @@ export async function readAnchoredFile(
     maxBytes: number,
     node: NodeAuthority,
     adapters: PublicationAdapters,
-    action: 'read-file' | 'read-persona' = 'read-file',
     deadline?: number,
 ): Promise<AnchoredRead> {
+    const action = 'read-file' as const
     const target = confined(root, path)
     if (!target || constants.O_NOFOLLOW === undefined || !Number.isSafeInteger(maxBytes)
         || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) return { kind: 'invalid' }
@@ -652,7 +652,7 @@ export async function restoreAnchoredFile(
 interface AnchoredBatchReadRequest {
     readonly path: string
     readonly maxBytes: number
-    readonly action: 'read-file' | 'read-persona' | 'read-entry'
+    readonly action: 'read-file' | 'read-entry'
 }
 
 export type AnchoredBatchReadResult = AnchoredRead | AnchoredEntry
@@ -713,7 +713,7 @@ async function readAnchoredBatch(
         const single = requests[0]!
         const result = single.action === 'read-entry'
             ? await readAnchoredEntry(root, single.path, single.maxBytes, node, adapters)
-            : await readAnchoredFile(root, single.path, single.maxBytes, node, adapters, single.action, deadline)
+            : await readAnchoredFile(root, single.path, single.maxBytes, node, adapters, deadline)
         return result.kind === 'invalid' ? { kind: 'invalid', index: 0 }
             : { kind: 'complete', results: [result] }
     }
@@ -776,7 +776,7 @@ async function readAnchoredBatch(
                 || row.segments.some((segment, segmentIndex) => segment !== expected.segments[segmentIndex])) return undefined
             const boundKeys = ['nonce', 'action', 'segments', 'name', 'maxBytes', 'kind']
             if (row.kind === 'missing') {
-                if (expected.action === 'read-persona' || !exactKeys(row, boundKeys)) return undefined
+                if (!exactKeys(row, boundKeys)) return undefined
                 results.push({ kind: 'missing' })
                 continue
             }
@@ -857,14 +857,14 @@ export async function readAnchoredBatches(
     return { kind: 'complete', results }
 }
 
-export async function readPersonaSource(
+export async function readAnchoredConfigSource(
     root: string,
     path: string,
     node: NodeAuthority,
     adapters: PublicationAdapters,
     deadline?: number,
-): Promise<{ bytes: Buffer; sha256: string; identity: PersonaSourceIdentity } | undefined> {
-    const read = await readAnchoredFile(root, path, MAX_GENERATED_BYTES, node, adapters, 'read-persona', deadline)
+): Promise<{ bytes: Buffer; sha256: string; identity: FileIdentity } | undefined> {
+    const read = await readAnchoredFile(root, path, MAX_GENERATED_BYTES, node, adapters, deadline)
     return read.kind === 'complete'
         ? { bytes: read.bytes, sha256: read.sha256, identity: read.identity }
         : undefined
@@ -1497,7 +1497,7 @@ interface PublicationCheck {
     readonly path: string
     readonly maxBytes: number
     readonly expected: ExpectedEntryState
-    readonly identity?: PersonaSourceIdentity
+    readonly identity?: FileIdentity
 }
 
 interface PublicationRecord {
@@ -1531,7 +1531,7 @@ function sameExpected(left: ExpectedEntryState, right: ExpectedEntryState): bool
         && left.identity?.dev === right.identity?.dev && left.identity?.ino === right.identity?.ino
 }
 
-function sameIdentity(left: PersonaSourceIdentity, right: PersonaSourceIdentity): boolean {
+function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
     return left.root.dev === right.root.dev && left.root.ino === right.root.ino
         && left.file.dev === right.file.dev && left.file.ino === right.file.ino
         && left.chain.length === right.chain.length

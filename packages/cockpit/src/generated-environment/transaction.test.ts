@@ -15,7 +15,7 @@ import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import { stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
-import { admitPublicationPlan, authorizePublicationPlan, nodeAuthority, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
+import { admitPublicationPlan, authorizePublicationPlan, nodeAuthority, relocateAnchoredFile, readAnchoredConfigSource, restoreAnchoredFile,
     runPublicationPlan } from './transaction.js'
 
 const roots: string[] = []
@@ -488,7 +488,7 @@ describe('portable publication names', () => {
         await writeFile(join(root, source), bytes)
         const node = await nodeAuthority()
         if (!node) throw new Error('Node authority unavailable')
-        const read = await readPersonaSource(root, source, node, { execute: executeProbe })
+        const read = await readAnchoredConfigSource(root, source, node, { execute: executeProbe })
         expect(read?.bytes.toString()).toBe(bytes)
         await expect(relocateAnchoredFile(root, source, destination, 1024, digest(bytes), node, { execute: executeProbe }))
             .resolves.toMatchObject({ kind: 'complete' })

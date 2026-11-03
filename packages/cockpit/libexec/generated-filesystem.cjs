@@ -314,7 +314,7 @@ const readSource = entry => {
         walkSource(entry.segments, chain)
         before = fs.lstatSync(filename)
     } catch (error) {
-        if (entry.action !== 'read-persona' && error.code === 'ENOENT') {
+        if (error.code === 'ENOENT') {
             verifySourceChain(chain)
             return { kind: 'missing' }
         }
@@ -353,7 +353,7 @@ const readBatch = () => {
     const entries = []
     for (const entry of request.entries) {
         if (!entry || typeof entry !== 'object' || typeof entry.nonce !== 'string'
-            || !['read-persona', 'read-file', 'read-entry'].includes(entry.action)) throw new Error('batch-entry')
+            || !['read-file', 'read-entry'].includes(entry.action)) throw new Error('batch-entry')
         try {
             const result = readSource(entry)
             if (Buffer.byteLength(JSON.stringify({ version: 1, nonce: entry.nonce, action: entry.action, ...result }) + '\n') > limits.frameBytes) throw new Error('entry-frame')
@@ -719,7 +719,7 @@ try {
     limits = parseLimits(request.limits)
     identity()
     if (request.action === 'read-batch') readBatch()
-    else if (request.action === 'read-persona' || request.action === 'read-file' || request.action === 'read-entry') respond(readSource(request))
+    else if (request.action === 'read-file' || request.action === 'read-entry') respond(readSource(request))
     else if (request.action === 'relocate-file' || request.action === 'restore-file') relocate()
     else if (request.action === 'prepare-batch') prepareBatch()
     else if (['validate-batch', 'publish-batch', 'verify-batch', 'commit-batch'].includes(request.action)) publicationBatch()
