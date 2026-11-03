@@ -12,7 +12,7 @@ import { runSyncOperatorCommand } from './generated-environment/command.js'
 import { loadCockpitConfig } from './config/load.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
 import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './registry-resolve/command.js'
-import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/contract.js'
+import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
 import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './environment/selftest-application.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
@@ -424,14 +424,19 @@ describe('CLI help', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
-    it('reports the thrown error name and message from a failing handler', async () => {
-        const result = await runInProcess(['check', '--config', 'cockpit.toml'], {
-            check: async () => { throw new TypeError('synthetic handler failure') },
+    it('reports a failing handler by its error class, and by its text only when cockpit worded it', async () => {
+        const parsed = await runInProcess(['check', '--config', 'cockpit.toml'], {
+            check: async () => JSON.parse('SECRET_CANARY=private-value'),
         })
+        expect(parsed.status).toBe(2)
+        expect(parsed.stderr).toContain('CLI_INTERNAL_ERROR')
+        expect(parsed.stderr).toContain('failed unexpectedly (SyntaxError)')
+        expect(parsed.stderr).not.toContain('SECRET_CANARY')
 
-        expect(result.status).toBe(2)
-        expect(result.stderr).toContain('CLI_INTERNAL_ERROR')
-        expect(result.stderr).toContain('TypeError: synthetic handler failure')
+        const refused = await runInProcess(['check', '--config', 'cockpit.toml'], {
+            check: async () => { throw new RefusalError('synthetic handler refusal') },
+        })
+        expect(refused.stderr).toContain('failed unexpectedly (synthetic handler refusal)')
     })
 
     it('refuses document --output with --json instead of exiting 0 without writing', async () => {

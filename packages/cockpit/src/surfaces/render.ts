@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { isAbsolute, relative } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
-import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, tryParseJson } from '../environment/contract.js'
 import { CustomHarness, type CustomHarness as CustomHarnessValue } from '../schema.js'
 import { safeSurfacePath as safePath, type SurfaceFeature, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS, harnessFact } from './harness-registry.js'
@@ -203,7 +203,9 @@ export function composeHookSettings(values: readonly unknown[]): HookSettingsCom
 function hookJson(contributions: readonly Contribution[]): string | undefined {
     const values: unknown[] = []
     for (const contribution of contributions) {
-        try { values.push(JSON.parse(contribution.bytes)) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
+        const value = tryParseJson(contribution.bytes)
+        if (value === undefined) return undefined
+        values.push(value)
     }
     const composed = composeHookSettings(values)
     return composed.kind === 'complete' ? `${JSON.stringify(composed.value, null, 2)}\n` : undefined
@@ -661,8 +663,8 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         const byKey = new Map(members.map(member => [member.key, member]))
         if (openCodeLines.length > 0) {
             const current = byKey.get('instructions')
-            let instructions: unknown = []
-            if (current) try { instructions = JSON.parse(current.valueBytes) } catch { /* unparseable input is malformed; the caller refuses it. */ return refuse('SURFACE_INPUT_INVALID', 'OpenCode instructions are malformed') }
+            const instructions = current ? tryParseJson(current.valueBytes) : []
+            if (instructions === undefined) return refuse('SURFACE_INPUT_INVALID', 'OpenCode instructions are malformed')
             if (!Array.isArray(instructions) || instructions.some(value => typeof value !== 'string')) return refuse('SURFACE_PATH_CONFLICT', 'OpenCode instructions are not a string array')
             const values = [...new Set([...instructions, ...openCodeLines.map(row => row.bytes)])]
             byKey.set('instructions', { key: 'instructions', valueBytes: JSON.stringify(values) })

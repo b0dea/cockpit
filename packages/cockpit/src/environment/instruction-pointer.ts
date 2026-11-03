@@ -4,6 +4,7 @@ import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 
 import { readBoundedInput } from '../config/load.js'
+import { errorCause, hasErrorCode } from './contract.js'
 
 export const mechanism = {
     id: 'instruction-pointer', module: 'packages/cockpit/src/environment/instruction-pointer.ts',
@@ -67,7 +68,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
         const desired = block(target)
         let before: Awaited<ReturnType<typeof lstat>> | undefined
         try { before = await lstat(path) } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            if (!hasErrorCode(error, 'ENOENT')) throw error
         }
         if (before?.isSymbolicLink() || before && !before.isFile()) return { kind: 'refusal', path, reason: 'AGENTS.md is not an ordinary file' }
         const read = before ? await readBoundedInput(path) : undefined
@@ -119,6 +120,6 @@ export async function synchronizeInstructionPointer(input: Readonly<{
         }
         return { kind: 'written', path, target }
     } catch (error) {
-        return { kind: 'refusal', path, reason: error instanceof Error ? error.message : 'instruction pointer operation failed' }
+        return { kind: 'refusal', path, reason: errorCause(error) }
     }
 }

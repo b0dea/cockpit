@@ -106,7 +106,7 @@ describe('ordered automatic sweep', () => {
         expect(planWorkOrderSweep(input.capacity, input.observations.map((item) => ({ ...item, digest: 'stale' })), context)).toMatchObject({ kind: 'refusal', code: 'WO_SWEEP_OBSERVATION' })
         const plan = planWorkOrderSweep(input.capacity, input.observations, { ...context, apply: true })
         const writes: unknown[] = []
-        expect(await applyWorkOrderSweep(plan, { write: async (value: unknown) => { writes.push(value); throw new Error('disk refused') } })).toMatchObject({ kind: 'refusal', code: 'WO_SWEEP_WRITE_FAILED', message: expect.stringContaining('disk refused') })
+        expect(await applyWorkOrderSweep(plan, { write: async (value: unknown) => { writes.push(value); throw Object.assign(new Error('EACCES: permission denied, open'), { code: 'EACCES', syscall: 'open' }) } })).toMatchObject({ kind: 'refusal', code: 'WO_SWEEP_WRITE_FAILED', message: expect.stringContaining('EACCES: permission denied') })
         expect(writes).toHaveLength(1)
         expect(writes[0]).toMatchObject({ kind: 'reason' })
     })

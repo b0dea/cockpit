@@ -6,6 +6,7 @@ import {
     CRITERION_OUTCOMES, checkGradeCurrency, checkPreparedWorkOrderCurrency, isIssuedWorkOrderGrade, prepareWorkOrderVerification, verifyPreparedWorkOrder,
     type GradingDependencies, type GradingInput, type PreparedWorkOrderVerification, type WorkOrderGrade,
 } from './verifier.js'
+import { errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-completion',
@@ -88,6 +89,6 @@ export async function completeWorkOrder(input: GradingInput, dependencies: Compl
             return { completed: true, grade: verifiedGrade, record }
         })
     } catch (error) {
-        return { completed: false, reason: `Completion failed: ${error instanceof Error ? error.message : String(error)}`, ...(grade === undefined ? {} : { grade }) }
+        return { completed: false, reason: `Completion failed: ${errorCause(error)}`, ...(grade === undefined ? {} : { grade }) }
     }
 }

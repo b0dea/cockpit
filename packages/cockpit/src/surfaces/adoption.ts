@@ -6,8 +6,9 @@
  * decide which files are adopted (cockpit.toml's `[[surfaces.adopted]]` rows do), and it never
  * writes; the generated application publishes the merged bytes as an ordinary whole-file surface.
  */
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
+import { parse as parseToml, stringify as stringifyToml, TomlError } from 'smol-toml'
 
+import { parseJsonText } from '../environment/contract.js'
 import { ADOPTED_SURFACE_ROOT, type AdoptableSurfacePath } from './contract.js'
 import { composeHookSettings } from './render.js'
 
@@ -44,10 +45,18 @@ function refusal(file: string, key: string, reason: string): Extract<AdoptedSett
 }
 
 function parse(path: AdoptableSurfacePath, bytes: string, file: string): AdoptedSettingsInspection {
+    const invalid = (reason: string): AdoptedSettingsInspection => ({ kind: 'refusal', diagnostic: { code: 'SURFACE_ADOPTION_REFUSED', target: file,
+        message: `${reason}; fix it and re-run npx --no cockpit sync --config <your cockpit.toml>` } })
     let value: unknown
-    try { value = path === '.codex/config.toml' ? parseToml(bytes) : JSON.parse(bytes) } catch (error) {
-        return { kind: 'refusal', diagnostic: { code: 'SURFACE_ADOPTION_REFUSED', target: file,
-            message: `${file} is not valid ${path === '.codex/config.toml' ? 'TOML' : 'JSON'} (${error instanceof Error ? error.message.split('\n', 1)[0] : 'unparseable'}); fix it and re-run npx --no cockpit sync --config <your cockpit.toml>` } }
+    if (path === '.codex/config.toml') {
+        try { value = parseToml(bytes) } catch (error) {
+            if (!(error instanceof TomlError)) throw error
+            return invalid(`${file} is not valid TOML at line ${error.line}, column ${error.column}`)
+        }
+    } else {
+        const parsed = parseJsonText(bytes, file, 'one settings object')
+        if ('refusal' in parsed) return invalid(parsed.refusal)
+        value = parsed.value
     }
     if (!record(value)) return { kind: 'refusal', diagnostic: { code: 'SURFACE_ADOPTION_REFUSED', target: file,
         message: `${file} must hold one settings object at its root; fix it and re-run npx --no cockpit sync --config <your cockpit.toml>` } }

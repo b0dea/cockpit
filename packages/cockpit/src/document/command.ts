@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml'
 import { initCommand } from '../fix-catalogue.js'
 import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT, unboundHostOperation } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { errorCause, snapshotJson } from '../environment/contract.js'
+import { errorCause, snapshotJson, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
 import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
@@ -205,7 +205,7 @@ interface RepositorySources {
     readonly sources: readonly Readonly<{ path: string; sha256: string }>[]
 }
 
-class EstateSourceObservationError extends Error {
+class EstateSourceObservationError extends RefusalError {
     readonly target: string
     readonly fix: string
 
@@ -247,9 +247,8 @@ function boundedReasons(reasons: readonly string[]): string {
 function sourceDigest(manifest: string, bytes: Buffer): string | undefined {
     const digest = (value: Buffer | string) => createHash('sha256').update(value).digest('hex')
     if (manifest !== 'package.json') return digest(bytes)
-    let parsed: unknown
     // A package.json that is not JSON has no product entries to separate, so its raw bytes bind it.
-    try { parsed = JSON.parse(bytes.toString('utf8')) } catch { return digest(bytes) }
+    const parsed = tryParseJson(bytes.toString('utf8'))
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return digest(bytes)
     const product = productPackageManifest(parsed as Record<string, unknown>)
     return Object.keys(product).length === 0 ? undefined : digest(JSON.stringify(product))
@@ -287,7 +286,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
             bytes = await readFile(path)
         } catch (error) {
             if (error instanceof EstateSourceObservationError) throw error
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+            if (hasErrorCode(error, 'ENOENT')) continue
             throw sourceObservationError(repository, label, manifest, 'could not be inspected and read safely')
         }
         if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) {
@@ -363,14 +362,14 @@ function observationInput(input: EstateObservationInput): ObservationScope | und
 
 export async function observePublicEstate(input: EstateObservationInput): Promise<unknown> {
     const captured = observationInput(input)
-    if (!captured) throw new TypeError('public estate observation requires one canonical absolute root and optionally named repositories')
+    if (!captured) throw new RefusalError('public estate observation requires one canonical absolute root and optionally named repositories')
     const root = await realpath(captured.root)
-    if (root !== captured.root) throw new TypeError('public estate root is linked or non-canonical')
+    if (root !== captured.root) throw new RefusalError('public estate root is linked or non-canonical')
     const entries = captured.rootIsRepository ? [] : await estateDirectories(root, captured.repositories)
     const repositories: EstateRepositoryObservation[] = []
     if (captured.rootIsRepository) {
         const slug = basename(root)
-        if (!SAFE_NAME.test(slug)) throw new TypeError(`the repository directory name ${JSON.stringify(slug)} is not a valid sibling slug`)
+        if (!SAFE_NAME.test(slug)) throw new RefusalError(`the repository directory name ${JSON.stringify(slug)} is not a valid sibling slug`)
         const { runnable, reasons, sources } = await observeRepositorySources(root, '.')
         const source = sources[0]
         if (source) repositories.push(Object.freeze({ slug, path: '.', evidencePath: source.path, runnable,
@@ -399,7 +398,7 @@ export async function observeCockpitRoot(input: Readonly<{ root: string }>): Pro
         await lstat(resolve(input.root, '.git'))
         git = true
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        if (!hasErrorCode(error, 'ENOENT')) throw error
     }
     if (!git) return 'cockpit-root'
     const { sources } = await observeRepositorySources(input.root, '.')
@@ -412,9 +411,9 @@ async function estateDirectories(root: string, only?: readonly string[]) {
             && (only === undefined || only.includes(entry.name)))
         .sort((left, right) => left.name.localeCompare(right.name))
     if (only !== undefined && entries.length !== only.length) {
-        throw new TypeError(`a named estate repository is missing or not a plain directory: ${only.join(', ')}`)
+        throw new RefusalError(`a named estate repository is missing or not a plain directory: ${only.join(', ')}`)
     }
-    if (entries.length > 64) throw new TypeError('public estate contains more than 64 candidate repositories')
+    if (entries.length > 64) throw new RefusalError('public estate contains more than 64 candidate repositories')
     return Promise.all(entries.map(async entry => ({ name: entry.name, stat: await lstat(resolve(root, entry.name)) })))
 }
 
@@ -507,7 +506,7 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
                     }
                     manifests.push(manifest)
                 } catch (error) {
-                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+                    if (!hasErrorCode(error, 'ENOENT')) throw error
                 }
             }
             if (manifests.length === 0) continue

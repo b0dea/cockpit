@@ -1,4 +1,5 @@
 import { isProxy } from 'node:util/types'
+import { RefusalError } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'browser-proxy',
@@ -32,20 +33,20 @@ export function browserProxyAuthorityMatches(value: string, expectedPort: number
 export function resolveBrowserProxy(input: BrowserProxyInput) {
     if (!input || typeof input !== 'object' || isProxy(input)
         || Object.values(Object.getOwnPropertyDescriptors(input)).some((descriptor) => !('value' in descriptor))) {
-        throw new TypeError('browser proxy input must contain plain data')
+        throw new RefusalError('browser proxy input must contain plain data')
     }
     if (!port(input.serverPort) || !port(input.proxyPort) || input.serverPort === input.proxyPort) {
-        throw new TypeError('browser proxy needs distinct valid server and proxy ports')
+        throw new RefusalError('browser proxy needs distinct valid server and proxy ports')
     }
     const bind = input.bind ?? '127.0.0.1'
-    if (bind !== '127.0.0.1' && bind !== '::1') throw new TypeError('browser proxy control publication must remain on loopback until authenticated transport is available')
+    if (bind !== '127.0.0.1' && bind !== '::1') throw new RefusalError('browser proxy control publication must remain on loopback until authenticated transport is available')
     if (!Array.isArray(input.allowedHosts) || input.allowedHosts.length === 0 || input.allowedHosts.length > 64
         || isProxy(input.allowedHosts)
         || Reflect.ownKeys(input.allowedHosts).length !== input.allowedHosts.length + 1
         || Object.values(Object.getOwnPropertyDescriptors(input.allowedHosts)).some((descriptor) => !('value' in descriptor))
         || new Set(input.allowedHosts).size !== input.allowedHosts.length
         || !input.allowedHosts.every((host) => browserProxyAuthorityMatches(host, input.proxyPort))) {
-        throw new TypeError('browser proxy Host allowlist must contain exact hostname:port authorities')
+        throw new RefusalError('browser proxy Host allowlist must contain exact hostname:port authorities')
     }
     return Object.freeze({
         server: Object.freeze({ bind: '127.0.0.1' as const, port: input.serverPort, publish: false as const }),

@@ -3,6 +3,7 @@ import { planSiblingProjection, type ProjectionPlannerInput, type StandingCost }
 import { GUARD_SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { TESTING_STAGE_TIMEOUT_MAX_SECONDS } from '../schema.js'
 import { classifyRun, type RunClassification, type RunInput, type StageObservation, type StageResult } from './verdict.js'
+import { RefusalError, errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'testing-gate-registry',
@@ -56,7 +57,7 @@ const text = (value: string): boolean => typeof value === 'string' && value.leng
 
 export function createGateRegistry(input: GateDeclarations): GateRegistry {
     if (!Array.isArray(input.stages) || !Array.isArray(input.gates) || !input.stages.length || !input.gates.length
-        || input.stages.length > 128 || input.gates.length > 128) throw new Error('gate registry requires bounded nonempty stages and gates')
+        || input.stages.length > 128 || input.gates.length > 128) throw new RefusalError('gate registry requires bounded nonempty stages and gates')
     const stageIds = new Set(input.stages.map(stage => stage.id))
     if (stageIds.size !== input.stages.length || new Set(input.gates.map(gate => gate.id)).size !== input.gates.length
         || input.stages.some(stage => !NAME.test(stage.id) || !Array.isArray(stage.command) || !stage.command.length
@@ -67,7 +68,7 @@ export function createGateRegistry(input: GateDeclarations): GateRegistry {
                     || !argv.length || argv.length > 32 || !argv.every(text) || !argv.some(value => value.includes(SELECTOR_VALUE)))))
         || input.gates.some(gate => !NAME.test(gate.id) || !['targeted', 'full'].includes(gate.tier) || !text(gate.changes)
             || !Array.isArray(gate.stages) || !gate.stages.length || new Set(gate.stages).size !== gate.stages.length
-            || gate.stages.some((id: string) => !stageIds.has(id)))) throw new Error('gate registry contains invalid or duplicate declarations')
+            || gate.stages.some((id: string) => !stageIds.has(id)))) throw new RefusalError('gate registry contains invalid or duplicate declarations')
     const registry: GateRegistry = Object.freeze({ kind: 'bound', tiers,
         stages: Object.freeze(input.stages.map(stage => Object.freeze({ ...stage, command: Object.freeze([...stage.command]) as readonly [string, ...string[]],
             ...(stage.select === undefined ? {} : { select: Object.freeze(Object.fromEntries(Object.entries(stage.select)
@@ -101,15 +102,13 @@ export interface GateRun extends RunClassification {
     readonly observations: readonly StageObservation[]
 }
 
-function errorReason(error: unknown): string { return error instanceof Error ? error.message : String(error) }
-
 export async function runGate(registry: GateRegistry, request: GateRequest, deps: GateDependencies): Promise<GateRun> {
-    if (!issuedRegistries.has(registry) || registry.kind !== 'bound') throw new Error('gate execution requires an issued product-bound registry')
+    if (!issuedRegistries.has(registry) || registry.kind !== 'bound') throw new RefusalError('gate execution requires an issued product-bound registry')
     const gate = registry.gates.find(gate => gate.id === request.gate)
     const requested = request.stages ?? gate?.stages ?? []
-    if (!gate || !requested.length || requested.some(id => !gate.stages.includes(id))) throw new Error('gate selection is empty or unknown')
+    if (!gate || !requested.length || requested.some(id => !gate.stages.includes(id))) throw new RefusalError('gate selection is empty or unknown')
     const select = request.select === undefined ? null : Object.freeze({ ...request.select })
-    if (select && (!(SELECTOR_KINDS as readonly string[]).includes(select.kind) || !text(select.value))) throw new Error('gate selection has an invalid selector')
+    if (select && (!(SELECTOR_KINDS as readonly string[]).includes(select.kind) || !text(select.value))) throw new RefusalError('gate selection has an invalid selector')
     const selected = gate.stages.filter(id => requested.includes(id))
     const observations: StageObservation[] = []
     let before: string | undefined
@@ -122,19 +121,19 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     let runtimeFresh = true
     const capture = async (): Promise<RuntimeEvidence | undefined> => {
         try {
-            if (!deps.runtime) throw new Error('runtime stability capture not supplied')
+            if (!deps.runtime) throw new RefusalError('runtime stability capture not supplied')
             const startedAt = Date.now()
             const evidence = await deps.runtime.capture()
             if (evidence.state === 'available' && (Date.parse(evidence.captureStartedAt) < startedAt || Date.parse(evidence.observedAt) > Date.now())) runtimeFresh = false
             return evidence
         } catch (error) {
-            stabilityReasons.push(`runtime stability unavailable: ${errorReason(error)}`)
+            stabilityReasons.push(`runtime stability unavailable: ${errorCause(error)}`)
             stability = 'unavailable'
             return undefined
         }
     }
-    try { before = await deps.subject(); if (!/^[a-f0-9]{64}$/.test(before)) throw new Error('subject digest must be SHA-256') }
-    catch (error) { stability = 'unavailable'; stabilityReasons.push(`subject before: ${errorReason(error)}`) }
+    try { before = await deps.subject(); if (!/^[a-f0-9]{64}$/.test(before)) throw new RefusalError('subject digest must be SHA-256') }
+    catch (error) { stability = 'unavailable'; stabilityReasons.push(`subject before: ${errorCause(error)}`) }
     if (needsRuntime) runtimeBefore = await capture()
     for (const id of selected) {
         const stage = registry.stages.find(stage => stage.id === id)!
@@ -148,15 +147,15 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
         } else {
             const command = Object.freeze([...stage.command, ...(selection ?? []).map(value => value.replaceAll(SELECTOR_VALUE, select!.value))]) as readonly [string, ...string[]]
             try { result = await deps.runProductTool(Object.freeze({ gate: gate.id, stage: id, command, timeoutSeconds: stage.timeoutSeconds, select })) }
-            catch (error) { result = { kind: 'unavailable', reason: `product tooling could not run: ${errorReason(error)}` } }
+            catch (error) { result = { kind: 'unavailable', reason: `product tooling could not run: ${errorCause(error)}` } }
         }
         observations.push(Object.freeze({ ...result, id }))
     }
     try {
         const after = await deps.subject()
-        if (!/^[a-f0-9]{64}$/.test(after)) throw new Error('subject digest must be SHA-256')
+        if (!/^[a-f0-9]{64}$/.test(after)) throw new RefusalError('subject digest must be SHA-256')
         if (before !== undefined && before !== after && stability !== 'unavailable') stability = 'void'
-    } catch (error) { stability = 'unavailable'; stabilityReasons.push(`subject after: ${errorReason(error)}`) }
+    } catch (error) { stability = 'unavailable'; stabilityReasons.push(`subject after: ${errorCause(error)}`) }
     if (needsRuntime) {
         const runtimeAfter = await capture()
         if (deps.runtime && runtimeBefore && runtimeAfter) {
@@ -187,7 +186,7 @@ export type TierGuideResult = Readonly<{ kind: 'complete'; bytes: string; lines:
     | Readonly<{ kind: 'refusal'; reason: string; exceeded?: Readonly<{ target: string; value: number; cap: number }> }>
 
 export function renderTierGuide(registry: GateRegistry, projection: ProjectionPlannerInput): TierGuideResult {
-    if (!issuedRegistries.has(registry)) throw new Error('testing guide requires an issued registry')
+    if (!issuedRegistries.has(registry)) throw new RefusalError('testing guide requires an issued registry')
     const cell = (value: string) => value.replaceAll('|', '\\|').replaceAll('`', '')
     const rows = registry.tiers.map(tier => {
         const gates = registry.gates.filter(gate => gate.tier === tier.id)

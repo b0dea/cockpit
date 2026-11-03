@@ -10,7 +10,7 @@ import { realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { readAnchoredBatches } from '../generated-environment/transaction.js'
-import { snapshotExecutionStep, type Diagnostic, type ExecutionStep } from './contract.js'
+import { snapshotExecutionStep, type Diagnostic, type ExecutionStep, hasErrorCode } from './contract.js'
 import type { ResolvedExecutable } from './executable.js'
 import { redactSensitiveText } from './sensitive.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -318,7 +318,7 @@ async function canonicalPath(path: string): Promise<string> {
     try { return await realpath(path) }
     catch (error) {
         // Compose creates a missing bind source, so the nearest existing ancestor decides where it lands.
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(path) === path) throw error
+        if (!hasErrorCode(error, 'ENOENT') || dirname(path) === path) throw error
         return join(await canonicalPath(dirname(path)), basename(path))
     }
 }

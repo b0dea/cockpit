@@ -11,6 +11,8 @@ import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../envi
 import { MAX_COLD_START_SECONDS, type MachineFloor } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
 import {
+    tryParseJson,
+    RefusalError,
     DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
     errorCause,
@@ -104,7 +106,7 @@ const issuedRuntimePlans = new WeakMap<object, RuntimeObservationContract>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('runtime observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('runtime observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -128,25 +130,25 @@ export function observeRuntimeExecution(input: {
         plan = input.plan
         suppliedOutcome = input.outcome
         owned = snapshotJson(issuedRuntimePlans.get(plan))
-    } catch { throw new TypeError('runtime execution evidence is not authentic') }
+    } catch { throw new RefusalError('runtime execution evidence is not authentic') }
     const values = owned && typeof owned === 'object' && !Array.isArray(owned) ? owned as Readonly<Record<string, JsonSnapshot>> : undefined
     const contract = issuedRuntimePlans.get(plan)
     const step = plan?.steps?.[0]
     const outcome = step ? authenticatedExecutionOutcome(suppliedOutcome, step) : undefined
     if (!contract || !step || !outcome || typeof values?.stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(values.stackId)
         || !Number.isSafeInteger(values.coldStartLimitMillis) || (values.coldStartLimitMillis as number) < 1) {
-        throw new TypeError('runtime execution evidence is not authentic')
+        throw new RefusalError('runtime execution evidence is not authentic')
     }
     if (!Array.isArray(values.expectedMountSources) || values.expectedMountSources.length > 4_096
         || new Set(values.expectedMountSources).size !== values.expectedMountSources.length
         || values.expectedMountSources.some((path) => typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
-        throw new TypeError('runtime mount expectation is malformed')
+        throw new RefusalError('runtime mount expectation is malformed')
     }
     const stackId = values.stackId as StackId
     const coldStartLimitMillis = values.coldStartLimitMillis as number
     const expectedMountSources = values.expectedMountSources as readonly string[]
     const observedAt = outcome.receipt?.finishedAt
-    if (!observedAt || !isCanonicalTimestamp(observedAt)) throw new TypeError('runtime execution evidence is not authentic')
+    if (!observedAt || !isCanonicalTimestamp(observedAt)) throw new RefusalError('runtime execution evidence is not authentic')
     const runtimeAvailable = outcome.kind === 'complete'
     const observations = [issueObservation({
         code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, owner: mechanism.id, stackId, source: step.argv0,
@@ -164,7 +166,7 @@ export function observeRuntimeExecution(input: {
             const parsed = parseDocument(source).toJS() as { services?: Record<string, { volumes?: unknown[] }> }
             const values: string[] = []
             if (!parsed || typeof parsed !== 'object' || !parsed.services || typeof parsed.services !== 'object'
-                || Object.keys(parsed.services).length > 4_096) throw new Error('invalid services')
+                || Object.keys(parsed.services).length > 4_096) throw new RefusalError('invalid services')
             for (const service of Object.values(parsed.services)) {
                 if (!service || typeof service !== 'object' || !Array.isArray(service.volumes) || service.volumes.length > 4_096) continue
                 for (const volume of service.volumes) {
@@ -464,11 +466,11 @@ const MACHINE_FLOOR_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOC
 // Keep the filesystem query inside the bounded executor; a filesystem stall must not hold the CLI.
 const DISK_CAPACITY_COLLECTOR = `
 import { statfsSync } from 'node:fs'
-if (process.argv.length !== 2) throw new Error('Disk capacity requires one filesystem path')
+if (process.argv.length !== 2) throw new RefusalError('Disk capacity requires one filesystem path')
 const status = statfsSync(process.argv[1], { bigint: true })
 const bytes = status.bsize * status.bavail
 if (status.bsize <= 0n || status.bavail < 0n || bytes > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error('Available filesystem capacity is outside the supported byte range')
+    throw new RefusalError('Available filesystem capacity is outside the supported byte range')
 }
 process.stdout.write(bytes.toString() + '\\n')
 `
@@ -526,11 +528,8 @@ export function runtimeIdentity(input: DockerInfoIdentityInput): RuntimeIdentity
 const DOCKER_IDENTITY_FORMAT = '[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]'
 
 function dockerIdentityFields(text: string): readonly [string, string, string] | undefined {
-    let parsed: unknown
-    try { parsed = JSON.parse(text) } catch {
-        // Unparsable identity output yields no fields; the caller reports the probe as unauthenticated output.
-        return undefined
-    }
+    // Unparsable identity output yields no fields; the caller reports the probe as unauthenticated output.
+    const parsed = tryParseJson(text)
     if (!Array.isArray(parsed) || parsed.length !== 3) return undefined
     const [operatingSystem, name, osType] = parsed as unknown[]
     const bounded = (value: unknown, limit: number): value is string => typeof value === 'string'
@@ -575,7 +574,7 @@ const issuedRuntimeMeasurementProbeAuthorities = new WeakMap<object, Extract<Doc
 
 export function issueRuntimeMeasurementProbeAuthority(observation: DockerRuntimeObservation): RuntimeMeasurementProbeAuthority {
     if (!observation || typeof observation !== 'object' || observation.kind !== 'complete'
-        || !issuedDockerRuntimeObservations.has(observation)) throw new TypeError('runtime measurement probe evidence is not authentic')
+        || !issuedDockerRuntimeObservations.has(observation)) throw new RefusalError('runtime measurement probe evidence is not authentic')
     const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
     issuedRuntimeMeasurementProbeAuthorities.set(authority, observation)
     return authority
@@ -671,7 +670,7 @@ export function admitRuntimeMeasurement(
 export function observeRuntimeMeasurement(admission: RuntimeMeasurementAdmission, stackId: StackId): EnvironmentObservation {
     const runtime = admission && typeof admission === 'object' ? issuedRuntimeMeasurementAdmissions.get(admission) : undefined
     if (!runtime || typeof stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(stackId)) {
-        throw new TypeError('runtime measurement admission is not authentic')
+        throw new RefusalError('runtime measurement admission is not authentic')
     }
     return issueObservation({
         code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
@@ -2785,7 +2784,7 @@ export function observeRuntimeMountMaterialization(input: {
     const topologyValue = captured?.topology as RuntimeTopologyEvidence | undefined
     const topology = topologyValue && typeof topologyValue === 'object' ? issuedTopologyEvidence.get(topologyValue) : undefined
     const observedAt = captured?.observedAt
-    if (!topology) throw new TypeError('runtime mount evidence is not authentic')
+    if (!topology) throw new RefusalError('runtime mount evidence is not authentic')
     const fail = (reason: string) => issueObservation({
         code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
         owner: mechanism.id,
@@ -2886,7 +2885,7 @@ export async function observeRuntimePortFamily(input: {
     const captured = captureOwnValues(input, ['topology', 'services', 'namespace', 'listenerTimeoutMs', 'revalidate'])
     const topologyValue = captured?.topology as RuntimeTopologyEvidence | undefined
     const topology = topologyValue && typeof topologyValue === 'object' ? issuedTopologyEvidence.get(topologyValue) : undefined
-    if (!topology) throw new TypeError('runtime port evidence is not authentic')
+    if (!topology) throw new RefusalError('runtime port evidence is not authentic')
     const now = new Date().toISOString()
     const unavailable = (reason: string, observedAt = now) => issueObservation({
         code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
@@ -2995,7 +2994,7 @@ export function observeRuntimeServiceColdStart(input: {
         const captured = captureOwnValues(input, ['services'])
         const services = captured?.services
         if (!Array.isArray(services) || services.length < 1 || services.length > MAX_TOPOLOGY_SERVICES) {
-            throw new TypeError('runtime cold-start evidence is not authentic')
+            throw new RefusalError('runtime cold-start evidence is not authentic')
         }
         let topology: TopologyEvidenceContract | undefined
         let startedAt = Number.POSITIVE_INFINITY
@@ -3011,20 +3010,20 @@ export function observeRuntimeServiceColdStart(input: {
                 || !isRuntimeServiceEvidence(evidence)
                 || !isCanonicalTimestamp(contract.startStartedAt)
                 || !isCanonicalTimestamp(evidence.observedAt)) {
-                throw new TypeError('runtime cold-start evidence is not authentic')
+                throw new RefusalError('runtime cold-start evidence is not authentic')
             }
             topology ??= contract.topologyContract
             observedServices.add(evidence.service)
             const serviceStart = Date.parse(contract.startStartedAt)
             const serviceFinish = Date.parse(evidence.observedAt)
-            if (serviceStart > serviceFinish) throw new TypeError('runtime cold-start evidence is not authentic')
+            if (serviceStart > serviceFinish) throw new RefusalError('runtime cold-start evidence is not authentic')
             if (serviceStart < startedAt) {
                 startedAt = serviceStart
                 source = evidence.service
             }
             finishedAt = Math.max(finishedAt, serviceFinish)
         }
-        if (!topology) throw new TypeError('runtime cold-start evidence is not authentic')
+        if (!topology) throw new RefusalError('runtime cold-start evidence is not authentic')
         const duration = finishedAt - startedAt
         const observedAt = new Date(finishedAt).toISOString()
         return issueObservation({
@@ -3041,8 +3040,8 @@ export function observeRuntimeServiceColdStart(input: {
             remedy: 'restore the declared cold-start budget',
         })
     } catch (error) {
-        if (error instanceof TypeError && error.message === 'runtime cold-start evidence is not authentic') throw error
-        throw new TypeError('runtime cold-start evidence is not authentic')
+        if (error instanceof RefusalError && error.message === 'runtime cold-start evidence is not authentic') throw error
+        throw new RefusalError('runtime cold-start evidence is not authentic')
     }
 }
 

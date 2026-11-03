@@ -17,7 +17,7 @@ export const mechanism = {
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
         'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'DOCKER_CLIENT_ENVIRONMENT', 'HOST_PROCESS_CONTROL_ENV', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
-        'isCanonicalTimestamp', 'errorCause', 'parseJsonText', 'hasErrorCode', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
+        'isCanonicalTimestamp', 'RefusalError', 'errorCause', 'parseJsonText', 'tryParseJson', 'hasErrorCode', 'isMissing', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
         'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
         'snapshotLifecyclePlan', 'inStackCommand',
@@ -379,17 +379,24 @@ export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number]
 export type RefusalCode = typeof REFUSAL_CODES[number]
 export type EnvironmentDiagnostic = Diagnostic<EnvironmentCode>
 
-// A refusal names its cause in one bounded line. A system error (errno code plus syscall) carries
-// only the operation and the path, so its first line is surfaced. Any other message can echo the
-// bytes being parsed or a child's output, environment-file values among them, so only its class is
-// named. Only own data properties are read: a thrown value can be hostile, and describing it must
-// not throw again.
+// A refusal cockpit itself words. Its message is cockpit-authored text (fixed wording, paths and
+// identifiers, never parsed bytes or a child's output), so errorCause surfaces it.
+export class RefusalError extends Error {}
+
+// A refusal names its cause in one bounded line. A RefusalError is cockpit's own wording, and a system
+// error (errno code plus syscall) carries only the operation and the path, so their first line is
+// surfaced. Any other message can echo the bytes being parsed or a child's output, environment-file
+// values among them, so only its class is named. Only own data properties are read: a thrown value can
+// be hostile, and describing it must not throw again. A RefusalError gets the wider bound because its
+// wording often ends in the command that fixes it, which a cut would drop.
 export function errorCause(error: unknown): string {
     if (isProxy(error) || !(error instanceof Error)) return 'a non-error value was thrown'
     const own = (key: string): unknown => Object.getOwnPropertyDescriptor(error, key)?.value
     const message = own('message')
-    if (typeof own('code') === 'string' && typeof own('syscall') === 'string' && typeof message === 'string') {
-        return message.split(/\r?\n|\r/, 1)[0]!.slice(0, 240)
+    if (typeof message === 'string') {
+        const line = message.split(/\r?\n|\r/, 1)[0]!
+        if (error instanceof RefusalError) return line.slice(0, OBSERVATION_REASON_BYTE_LIMIT)
+        if (typeof own('code') === 'string' && typeof own('syscall') === 'string') return line.slice(0, 240)
     }
     return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
         : error instanceof RangeError ? 'RangeError' : 'Error'
@@ -408,10 +415,24 @@ export function parseJsonText(text: string, subject: string, expected: string): 
     }
 }
 
+// For callers that refuse malformed input in their own words: unparseable text is undefined, and the
+// parser's message, which quotes the bytes, is never read.
+export function tryParseJson(text: string): unknown {
+    try { return JSON.parse(text) }
+    catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        return undefined
+    }
+}
+
 export function hasErrorCode(error: unknown, ...codes: readonly string[]): boolean {
     if (isProxy(error) || !(error instanceof Error)) return false
     const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
     return typeof code === 'string' && codes.includes(code)
+}
+
+export function isMissing(error: unknown): boolean {
+    return hasErrorCode(error, 'ENOENT', 'ENOTDIR')
 }
 
 const canonicalTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/

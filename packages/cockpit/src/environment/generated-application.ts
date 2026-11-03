@@ -82,7 +82,7 @@ import {
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, errorCause, parseJsonText, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, parseJsonText, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId, RefusalError, tryParseJson, hasErrorCode } from './contract.js'
 import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
@@ -367,8 +367,8 @@ async function authenticateSiblingRoots(
             if (!containedPath(declaredRoot, declared)) {
                 return { kind: 'refusal', reason: `sibling ${sibling.slug} escapes the declared sibling root` }
             }
-            const present = await lstat(declared).then(() => true, (error: NodeJS.ErrnoException) => {
-                if (error.code === 'ENOENT') return false
+            const present = await lstat(declared).then(() => true, (error: unknown) => {
+                if (hasErrorCode(error, 'ENOENT')) return false
                 throw error
             })
             if (!present) return absentSibling(sibling, declared, configPath)
@@ -386,7 +386,7 @@ async function authenticateSiblingRoots(
             declaredRoot, canonicalRoot, rootIdentity: Object.freeze({ dev: rootStatus.dev, ino: rootStatus.ino }), siblings,
         }) }
     } catch (error) {
-        const reason = error instanceof Error ? error.message : 'unknown filesystem error'
+        const reason = errorCause(error)
         return { kind: 'refusal', reason: `could not verify the sibling root (${reason})` }
     }
 }
@@ -920,7 +920,7 @@ export async function prepareSelectedBootstrapSurface(
     try {
         root = await realpath(captured.root)
         const status = await lstat(root)
-        if (root !== captured.root || !status.isDirectory() || status.isSymbolicLink()) throw new Error('root')
+        if (root !== captured.root || !status.isDirectory() || status.isSymbolicLink()) throw new RefusalError('root')
         rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
     } catch (error) {
         return refuse('GENERATED_INPUT_INVALID', `selected bootstrap root is not a canonical directory: ${errorCause(error)}`, captured.root)
@@ -997,7 +997,7 @@ export async function resumeSelectedBootstrapSurface(
     let rootIdentity: DirectoryIdentity
     try {
         const status = await lstat(captured.root)
-        if (!status.isDirectory() || status.isSymbolicLink() || await realpath(captured.root) !== captured.root) throw new Error('root')
+        if (!status.isDirectory() || status.isSymbolicLink() || await realpath(captured.root) !== captured.root) throw new RefusalError('root')
         rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
     } catch (error) {
         return refuse('GENERATED_INPUT_INVALID', `selected bootstrap root is not a canonical directory: ${errorCause(error)}`, captured.root)
@@ -1423,7 +1423,7 @@ async function safePath(root: string, path: string, allowMissing: boolean): Prom
             if (entry.isSymbolicLink() || index < parts.length - 1 && !entry.isDirectory()
                 || index === parts.length - 1 && !entry.isFile()) return undefined
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+            if (!hasErrorCode(error, 'ENOENT')) return undefined
             if (!allowMissing && index === parts.length - 1) return undefined
         }
     }
@@ -1791,7 +1791,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             return refuse('GENERATED_PATH_UNSAFE', 'the central secrets directory must be a mode-0700 non-symbolic directory', dirname(SECRET_IGNORE_PATH))
         }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (!hasErrorCode(error, 'ENOENT')) {
             return refuse('GENERATED_PATH_UNSAFE', 'the central secrets directory could not be authenticated', dirname(SECRET_IGNORE_PATH))
         }
     }
@@ -2038,7 +2038,7 @@ function instanceReadPaths(
 ): readonly Readonly<{ inRoot: boolean; path: string }>[] {
     return instances.map(instance => {
         const sibling = siblings.find(row => row.slug === instance.slug)
-        if (!sibling) throw new Error(`declared instance ${instance.path} names sibling ${instance.slug}, whose directory was not authenticated`)
+        if (!sibling) throw new RefusalError(`declared instance ${instance.path} names sibling ${instance.slug}, whose directory was not authenticated`)
         if (sibling.path === '') return { inRoot: true, path: instance.path }
         const suffix = [...sibling.path.split('/'), ...instance.path.split('/')].filter(part => part !== '..' && part !== '.' && part !== '')
         return { inRoot: false, path: suffix.join('/') }
@@ -2215,11 +2215,9 @@ function nativeGrantFragmentSet(
         }
         let base: Record<string, unknown> = {}
         if (row) {
-            try {
-                const parsed = ownRecord(JSON.parse(row.bytes))
-                if (!parsed) return undefined
-                base = parsed
-            } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
+            const parsed = ownRecord(tryParseJson(row.bytes))
+            if (!parsed) return undefined
+            base = parsed
             if (Object.hasOwn(base, 'permission')) return undefined
         }
         const externalDirectory = openCodeExternalDirectories(grants)
@@ -2270,20 +2268,20 @@ const own = value => value && typeof value === 'object' && !Array.isArray(value)
 const safe = value => typeof value === 'string' && value.length > 0 && !path.isAbsolute(value) && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part && part !== '.' && part !== '..' && !['.GIT','NODE_MODULES'].includes(part.normalize('NFC').toUpperCase()));
 (async () => {
   const source = fs.readFileSync(process.argv[2]);
-  if (digest(source) !== request.sourceSha256) throw new Error('module changed');
+  if (digest(source) !== request.sourceSha256) throw new RefusalError('module changed');
   const imported = await import('data:text/javascript;base64,' + source.toString('base64'));
-  const fn = imported[request.export]; if (typeof fn !== 'function') throw new Error('export');
+  const fn = imported[request.export]; if (typeof fn !== 'function') throw new RefusalError('export');
   const result = await fn(request.input);
-  if (!own(result) || Object.keys(result).sort().join(',') !== 'files,kind' || result.kind !== 'complete' || !Array.isArray(result.files) || result.files.length === 0 || result.files.length > 256) throw new Error('result');
+  if (!own(result) || Object.keys(result).sort().join(',') !== 'files,kind' || result.kind !== 'complete' || !Array.isArray(result.files) || result.files.length === 0 || result.files.length > 256) throw new RefusalError('result');
   let total = 0; let spelling = false; const files = [];
   for (const [index, file] of result.files.entries()) {
-    if (!own(file) || Object.keys(file).sort().join(',') !== 'bytes,path,scope,sha256' || !safe(file.path) || typeof file.bytes !== 'string' || Buffer.byteLength(file.bytes) > 65536 || digest(file.bytes) !== file.sha256 || !['always','scoped'].includes(file.scope)) throw new Error('file');
+    if (!own(file) || Object.keys(file).sort().join(',') !== 'bytes,path,scope,sha256' || !safe(file.path) || typeof file.bytes !== 'string' || Buffer.byteLength(file.bytes) > 65536 || digest(file.bytes) !== file.sha256 || !['always','scoped'].includes(file.scope)) throw new RefusalError('file');
     spelling = spelling || file.path === request.spelling || file.bytes.includes(request.spelling);
-    total += Buffer.byteLength(file.bytes); if (total > 4194304) throw new Error('limit');
+    total += Buffer.byteLength(file.bytes); if (total > 4194304) throw new RefusalError('limit');
     const output = path.join(request.output, String(index)); fs.writeFileSync(output, file.bytes, { flag: 'wx', mode: 0o600 });
     files.push({ path: file.path, sha256: file.sha256, scope: file.scope, output: String(index) });
   }
-  if (!spelling) throw new Error('spelling');
+  if (!spelling) throw new RefusalError('spelling');
   process.stdout.write(JSON.stringify({ version: 1, files }) + '\n');
 })().catch(() => { process.stdout.write(JSON.stringify({ version: 1, refusal: true }) + '\n'); });
 `
@@ -2386,7 +2384,7 @@ async function executeCustomCapability(
                     await rm(scratch, { recursive: true, force: true })
                 }
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+                if (!hasErrorCode(error, 'ENOENT')) throw error
             }
         }
     }
@@ -2485,7 +2483,7 @@ async function projectExplicitNativeHooks(
                         filesystemChecks: [{ path: prepared.root, expected: 'directory' }, { path: scratch!, expected: 'directory' }],
                         compensation: [],
                     })
-                    if (!step) throw new Error('native hook cost measurement could not be admitted')
+                    if (!step) throw new RefusalError('native hook cost measurement could not be admitted')
                     return step
                 },
             },
@@ -2503,7 +2501,7 @@ async function projectExplicitNativeHooks(
                     await rm(scratch, { recursive: true, force: true })
                 }
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+                if (!hasErrorCode(error, 'ENOENT')) throw error
             }
         }
     }
@@ -2539,10 +2537,10 @@ async function prepareSurfaces(
     try {
         for (const sibling of config.sibling.filter(row => requiredSlugs.has(row.slug))) {
             const authority = prepared.siblingRoots.siblings.get(sibling.slug)
-            if (!authority) throw new Error('root')
+            if (!authority) throw new RefusalError('root')
             const root = authority.root
             const status = await lstat(root)
-            if (!status.isDirectory() || status.isSymbolicLink()) throw new Error('root')
+            if (!status.isDirectory() || status.isSymbolicLink()) throw new RefusalError('root')
             siblingRoots.set(sibling.slug, root)
             sourceRoots.push(Object.freeze({ slug: sibling.slug, root, identity: authority.identity }))
         }
@@ -2679,9 +2677,9 @@ async function prepareSurfaces(
             const runtime = prepared.browserRunner
                 ? prepared.portLease && bindBrowserRuntimePortLease(configuredRuntime, prepared.portLease)
                 : configuredRuntime
-            if (!runtime) throw new Error('browser runtime could not be bound to the authenticated port lease')
+            if (!runtime) throw new RefusalError('browser runtime could not be bound to the authenticated port lease')
             if (prepared.browserRunner && runtime.connection.kind !== 'remote') {
-                throw new Error('browser runtime did not retain a remote endpoint after port binding')
+                throw new RefusalError('browser runtime did not retain a remote endpoint after port binding')
             }
             const browserMcp = prepared.browserRunner && runtime.connection.kind === 'remote'
                 ? bindBrowserMcpDeclaration(playwright[0]!, browserConfiguration.endpoint!, runtime.connection.endpoint)
@@ -2712,7 +2710,7 @@ async function prepareSurfaces(
                     ...(browserTargets.size > 0 ? { playwright: mcpApprovalDigest(browserMcp, prepared.root) } : {}) },
                 targets: SURFACE_TARGETS,
             })
-            if (boundMcp.kind !== 'complete') throw new Error(`bound browser MCP declaration was refused: ${boundMcp.diagnostic.code}`)
+            if (boundMcp.kind !== 'complete') throw new RefusalError(`bound browser MCP declaration was refused: ${boundMcp.diagnostic.code}`)
             mcp = Object.freeze({ ...boundMcp, result: Object.freeze({ ...boundMcp.result,
                 harnesses: Object.freeze(boundMcp.result.harnesses.map(row => Object.freeze({ ...row,
                     servers: Object.freeze(row.servers.filter(server => server.name !== 'playwright' || browserTargets.has(row.target))),
@@ -2754,7 +2752,7 @@ async function prepareSurfaces(
                 ...(runner ? { runner } : {}),
             })
         } catch (error) {
-            return refuse('SURFACE_INPUT_INVALID', `browser surface projection was refused: ${error instanceof Error ? error.message : String(error)}`, 'browser')
+            return refuse('SURFACE_INPUT_INVALID', `browser surface projection was refused: ${errorCause(error)}`, 'browser')
         }
     }
     const testingRegistry = prepared.workEnvironment.testing
@@ -3389,20 +3387,20 @@ async function ownedInputOverlap(
             try {
                 handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT' && path !== prepared.root) continue
+                if (hasErrorCode(error, 'ENOENT') && path !== prepared.root) continue
                 throw error
             }
             handles.push(handle)
             const opened = await handle.stat({ bigint: true })
             const named = await lstat(path, { bigint: true })
             if (!opened.isDirectory() || !named.isDirectory() || named.isSymbolicLink()
-                || opened.dev !== named.dev || opened.ino !== named.ino) throw new Error('directory identity changed')
+                || opened.dev !== named.dev || opened.ino !== named.ino) throw new RefusalError('directory identity changed')
             if (path === prepared.root && (opened.dev !== BigInt(prepared.personaSourceIdentity.root.dev)
-                || opened.ino !== BigInt(prepared.personaSourceIdentity.root.ino))) throw new Error('publication root identity changed')
+                || opened.ino !== BigInt(prepared.personaSourceIdentity.root.ino))) throw new RefusalError('publication root identity changed')
             watches.push(Object.freeze({ path, handle, dev: opened.dev, ino: opened.ino,
                 mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs }))
         }
-        if (!(await Promise.all(watches.map(stable))).every(Boolean)) throw new Error('directory namespace changed')
+        if (!(await Promise.all(watches.map(stable))).every(Boolean)) throw new RefusalError('directory namespace changed')
         const exact = new Set<string>()
         const physical: Array<Readonly<{ dev: number; ino: number }>> = []
         for (const path of [...new Set(inputPaths)].sort(compareCodeUnits)) {
@@ -3412,7 +3410,7 @@ async function ownedInputOverlap(
             try {
                 status = await lstat(path)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT'
+                if (hasErrorCode(error, 'ENOENT')
                     && missingGuidePaths.has(path) && !requiredPresentPaths.has(path)) continue
                 throw error
             }
@@ -3428,7 +3426,7 @@ async function ownedInputOverlap(
             try {
                 status = await lstat(path)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+                if (hasErrorCode(error, 'ENOENT')) continue
                 throw error
             }
             if (physical.some(input => input.dev === status.dev && input.ino === status.ino)) {
@@ -3456,7 +3454,7 @@ async function surfaceObservationMaxBytes(root: string, path: string): Promise<n
         if (!Number.isSafeInteger(status.size) || status.size < 0) return undefined
         return Math.min(MAX_GENERATED_BYTES, Math.max(1, status.size))
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 1 : undefined
+        return hasErrorCode(error, 'ENOENT') ? 1 : undefined
     }
 }
 
@@ -3942,7 +3940,7 @@ async function checkCanonicalGeneratedEnvironment(
                 : canonicalReads?.kind === 'invalid' && index < canonicalReads.index
                     ? await readAnchoredFile(prepared.root, file.path, MAX_GENERATED_BYTES, prepared.node, adapters)
                     : undefined
-            if (!read || read.kind !== 'complete') throw new Error('generated artifact unavailable')
+            if (!read || read.kind !== 'complete') throw new RefusalError('generated artifact unavailable')
             const fact = required.facts.find(fact => fact.path === file.path)!
             const classification = classifyGeneratedPaths([fact], [{ path: file.path, kind: 'file', bytes: read.bytes,
                 confinement: 'confined', identity: sourceIdentity(read.identity) }])

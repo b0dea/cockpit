@@ -1,4 +1,5 @@
 import type { CheckoutId, StackId } from './contract.js'
+import { RefusalError } from './contract.js'
 
 export const mechanism = {
     id: 'environment-instance-resolution',
@@ -59,7 +60,7 @@ function candidate(
         || typeof value.checkoutId !== 'string'
         || !CHECKOUT_ID.test(value.checkoutId)
     ) {
-        throw new TypeError(`${operation}: ${field} candidate is malformed`)
+        throw new RefusalError(`${operation}: ${field} candidate is malformed`)
     }
     return value
 }
@@ -107,7 +108,7 @@ function destructiveRefusal(
 
 export function selectDestructiveInstance(input: SelectDestructiveInstanceInput): DestructiveInstanceSelection {
     if (input === null || typeof input !== 'object') {
-        throw new TypeError('selectDestructiveInstance: input is malformed')
+        throw new RefusalError('selectDestructiveInstance: input is malformed')
     }
     const explicitValue = input.explicit
     const servedValue = input.served
@@ -117,7 +118,7 @@ export function selectDestructiveInstance(input: SelectDestructiveInstanceInput)
     const served = servedValue === undefined ? undefined : destructiveCandidate(servedValue, 'served')
     const launcher = launcherValue === undefined ? undefined : destructiveCandidate(launcherValue, 'launcher')
     if (!Array.isArray(inventoryValue)) {
-        throw new TypeError('selectDestructiveInstance: claimInventory is malformed')
+        throw new RefusalError('selectDestructiveInstance: claimInventory is malformed')
     }
     const inventory = canonicalCandidates(inventoryValue.map((value) => destructiveCandidate(value, 'claimInventory')))
     const conflictingStacks = conflictingStackIds(inventory)
@@ -169,7 +170,7 @@ export function selectDestructiveInstance(input: SelectDestructiveInstanceInput)
 
 export function resolveInstance(input: ResolveInstanceInput): InstanceResolution {
     if (input === null || typeof input !== 'object') {
-        throw new TypeError('resolveInstance: input is malformed')
+        throw new RefusalError('resolveInstance: input is malformed')
     }
     const served = candidate(input.served, 'served')
     const launcher = candidate(input.launcher, 'launcher')
@@ -178,7 +179,7 @@ export function resolveInstance(input: ResolveInstanceInput): InstanceResolution
         !Array.isArray(input.mountedSet)
         || input.mountedSet.some((value) => typeof value !== 'string' || !CHECKOUT_ID.test(value))
     ) {
-        throw new TypeError('resolveInstance: mountedSet contains a malformed checkout identity')
+        throw new RefusalError('resolveInstance: mountedSet contains a malformed checkout identity')
     }
 
     const mounted = new Set<CheckoutId>(input.mountedSet)

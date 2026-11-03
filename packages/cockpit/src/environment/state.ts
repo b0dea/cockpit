@@ -12,8 +12,10 @@ import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { checkoutId as deriveCheckoutId, type BootstrapLockOwnerId } from './identity.js'
 import { redactSensitiveText } from './sensitive.js'
 import {
+    hasErrorCode,
     ENVIRONMENT_CODES,
     errorCause,
+    RefusalError,
     snapshotEnvironmentObservation,
     snapshotJson,
     isCanonicalTimestamp,
@@ -48,7 +50,7 @@ const issuedBootstrapRestarts = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('state observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('state observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -63,11 +65,11 @@ function observationIssuedAt(value: unknown): number | undefined {
 
 export async function observeConfiguration(input: { readonly path: string; readonly stackId: StackId; readonly observedAt: string }): Promise<readonly EnvironmentObservation[]> {
     const snapshot = snapshotJson(input)
-    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new TypeError('configuration observation input is malformed')
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new RefusalError('configuration observation input is malformed')
     const owned = snapshot as Readonly<Record<string, JsonSnapshot>>
     if (typeof owned.path !== 'string' || owned.path.length === 0 || typeof owned.stackId !== 'string'
         || !/^stack:[a-f0-9]{64}$/.test(owned.stackId) || typeof owned.observedAt !== 'string'
-        || !isCanonicalTimestamp(owned.observedAt)) throw new TypeError('configuration observation input is malformed')
+        || !isCanonicalTimestamp(owned.observedAt)) throw new RefusalError('configuration observation input is malformed')
     const loaded = await loadCockpitConfig(owned.path)
     const failure = loaded.kind === 'refusal' ? loaded.diagnostics[0] : undefined
     const source = loaded.kind === 'complete' ? loaded.result.source.path : failure?.target ?? owned.path
@@ -443,7 +445,7 @@ type Unusable = Readonly<{ reason: string; denied: boolean }>
 async function unusableDirectory(path: string, uid: number): Promise<Unusable | 'missing' | undefined> {
     let status
     try { status = await lstat(path) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
+        if (hasErrorCode(error, 'ENOENT')) return 'missing'
         return { reason: `${path} cannot be inspected (${errorCause(error)})`, denied: deniedAccess(error) }
     }
     if (status.isSymbolicLink()) return { reason: `${path} is a symbolic link`, denied: false }
@@ -457,7 +459,7 @@ async function unusableDirectory(path: string, uid: number): Promise<Unusable | 
 }
 
 function deniedAccess(error: unknown): boolean {
-    return ['EPERM', 'EACCES', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')
+    return hasErrorCode(error, 'EPERM', 'EACCES', 'EROFS')
 }
 
 async function usableBase(path: string, uid: number): Promise<Unusable | undefined> {
@@ -504,12 +506,12 @@ function unusableStateRoot<T>(root: string, unusable: Unusable): StateResult<T> 
 }
 
 function checkedSegment(value: string, label: string): string {
-    if (!safeSegment.test(value)) throw new TypeError(`${label} is not a safe state path segment`)
+    if (!safeSegment.test(value)) throw new RefusalError(`${label} is not a safe state path segment`)
     return value
 }
 
 function checkedIdentity(value: string, pattern: RegExp, label: string): string {
-    if (!pattern.test(value)) throw new TypeError(`${label} is not a canonical environment identity`)
+    if (!pattern.test(value)) throw new RefusalError(`${label} is not a canonical environment identity`)
     return value
 }
 
@@ -519,7 +521,7 @@ function identitySegment(identity: string): string {
 }
 
 function checkedDigest(value: string): string {
-    if (!digest.test(value)) throw new TypeError('cache identity digest must be 64 lowercase hexadecimal characters')
+    if (!digest.test(value)) throw new RefusalError('cache identity digest must be 64 lowercase hexadecimal characters')
     return value
 }
 
@@ -586,7 +588,7 @@ function bootstrapNamespace(root: string, checkoutRoot: string, checkoutId: Chec
     const id = checkedIdentity(checkoutId, checkoutIdentity, 'checkout id') as CheckoutId
     const scopedRoot = join(root, 'checkouts', identitySegment(id))
     const bootstrap = (target: SurfaceTarget): BootstrapStateAddress => {
-        if (!surfaceTargets.has(target) || target !== selectedTarget) throw new TypeError('surface target does not match the selected bootstrap target')
+        if (!surfaceTargets.has(target) || target !== selectedTarget) throw new RefusalError('surface target does not match the selected bootstrap target')
         return Object.freeze({
             path: join(scopedRoot, 'records', 'bootstrap', `${target}.json`),
             stateRoot: root,
@@ -643,14 +645,7 @@ export async function withStateRootPortLock<T>(value: StateNamespace,
 // Another cockpit's namespace that this version cannot read, by its directory path.
 export type SkippedStateNamespace = Readonly<{ path: string; reason: string }>
 
-// The inventory reports its own failures as written and anything else through errorCause: an
-// unexpected error may quote the entry it was reading, and the reason reaches the caller's output.
-class InventoryRefusal extends Error {}
-class InventoryBoundaryError extends InventoryRefusal {}
-
-function inventoryReason(error: unknown): string {
-    return error instanceof InventoryRefusal ? error.message : errorCause(error)
-}
+class InventoryBoundaryError extends RefusalError {}
 
 // The callback only reads coordination records. Revalidate the entire read set before returning:
 // a per-cockpit scan alone misses a replacement made after that cockpit has already been visited.
@@ -675,7 +670,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
         let status: BigIntStats
         try { status = await lstat(path, { bigint: true }) }
         catch (error) {
-            if (!optional || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            if (!optional || !hasErrorCode(error, 'ENOENT')) throw error
             snapshots.set(path, undefined)
             const parent = dirname(path)
             if (!snapshots.has(parent)) await inspect(parent, 'directory', true)
@@ -683,7 +678,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
         }
         if (status.isSymbolicLink() || (kind === 'directory' ? !status.isDirectory() : !status.isFile())
             || status.uid !== BigInt(process.getuid?.() ?? -1) || (status.mode & 0o022n) !== 0n) {
-            throw new InventoryRefusal('state inventory entry is not safely owned')
+            throw new RefusalError('state inventory entry is not safely owned')
         }
         snapshots.set(path, status)
         return true
@@ -709,7 +704,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                 try {
                     const id = name.replaceAll('_', ':')
                     target = path
-                    if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new InventoryRefusal('state inventory contains an invalid cockpit namespace')
+                    if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new RefusalError('state inventory contains an invalid cockpit namespace')
                     const candidate = namespace(authenticated.root, id as CockpitId)
                     await inspect(candidate.cockpitRoot, 'directory')
                     const records = join(candidate.cockpitRoot, 'records')
@@ -720,10 +715,10 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                             const path = join(coordination, entry)
                             target = path
                             const parsed = parseCoordinationStateEntry(entry)
-                            if (!parsed) throw new InventoryRefusal('coordination store contains an unexpected entry')
+                            if (!parsed) throw new RefusalError('coordination store contains an unexpected entry')
                             await inspect(path, 'file')
                             if (parsed.kind === 'executor' && snapshots.get(path)!.nlink !== 1n) {
-                                throw new InventoryRefusal('coordination executor marker has multiple links')
+                                throw new RefusalError('coordination executor marker has multiple links')
                             }
                             bytes += snapshots.get(path)!.size
                             if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new InventoryBoundaryError('coordination inventory exceeds its aggregate byte boundary')
@@ -733,13 +728,13 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                 } catch (error) {
                     if (name === own || error instanceof InventoryBoundaryError) throw error
                     for (const key of snapshots.keys()) if (!visited.has(key)) snapshots.delete(key)
-                    skipped.push(Object.freeze({ path, reason: inventoryReason(error) }))
+                    skipped.push(Object.freeze({ path, reason: errorCause(error) }))
                 }
             }
         }
     } catch (error) {
         return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            `state namespace inventory could not be read safely: ${inventoryReason(error)}`, target,
+            `state namespace inventory could not be read safely: ${errorCause(error)}`, target,
             'inspect the named state entry and retry after all coordination writers finish')
     }
     const result = await operation(Object.freeze(namespaces), Object.freeze(skipped))
@@ -749,13 +744,13 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
             let after: BigIntStats
             try { after = await lstat(path, { bigint: true }) }
             catch (error) {
-                if (!before && (error as NodeJS.ErrnoException).code === 'ENOENT') continue
+                if (!before && hasErrorCode(error, 'ENOENT')) continue
                 throw error
             }
             if (!before || after.isSymbolicLink() || after.dev !== before.dev || after.ino !== before.ino
                 || after.mode !== before.mode || after.uid !== before.uid || after.size !== before.size
                 || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
-                throw new Error('state inventory changed during observation')
+                throw new RefusalError('state inventory changed during observation')
             }
         }
     } catch (error) {
@@ -796,7 +791,7 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
     try {
         const own = (object: object, key: PropertyKey): unknown => {
             const descriptor = Object.getOwnPropertyDescriptor(object, key)
-            if (!descriptor || !('value' in descriptor)) throw new Error('namespace properties must be owned data')
+            if (!descriptor || !('value' in descriptor)) throw new RefusalError('namespace properties must be owned data')
             return descriptor.value
         }
         const root = own(value, 'root')
@@ -932,7 +927,7 @@ export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootIn
     try {
         const canonicalCheckout = await lstat(stableInput.checkoutRoot)
         if (!canonicalCheckout.isDirectory() || canonicalCheckout.isSymbolicLink()
-            || await realpath(stableInput.checkoutRoot) !== stableInput.checkoutRoot) throw new Error('unsafe checkout')
+            || await realpath(stableInput.checkoutRoot) !== stableInput.checkoutRoot) throw new RefusalError('unsafe checkout')
         const id = deriveCheckoutId({ checkoutPath: stableInput.checkoutRoot })
         return { kind: 'complete', value: bootstrapNamespace(root, stableInput.checkoutRoot, id, stableInput.target) }
     } catch (error) {
@@ -945,7 +940,7 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
     try {
         const checkoutRoots = input.checkoutRoots
         if (checkoutRoots !== undefined && (!Array.isArray(checkoutRoots) || isProxy(checkoutRoots))) {
-            throw new TypeError('checkout roots are malformed')
+            throw new RefusalError('checkout roots are malformed')
         }
         stableInput = Object.freeze({
             platform: input.platform,
@@ -1061,7 +1056,7 @@ async function ownedPathIsSafe(root: string, path: string, kind: 'file' | 'direc
             const isFile = candidate === path && kind === 'file'
             if (!privatelyOwned(status) || status.isSymbolicLink() || (isFile ? !status.isFile() : !status.isDirectory())) return false
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
+            if (hasErrorCode(error, 'ENOENT')) return true
             return false
         }
     }
@@ -1081,10 +1076,10 @@ async function readRegularFileSnapshotNoFollow(
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
     try {
         const opened = await handle.stat()
-        if (!privatelyOwned(opened) || !opened.isFile() || opened.size > SERIALIZED_RECORD_BYTE_LIMIT || !(await revalidate())) throw new Error('unsafe file path')
+        if (!privatelyOwned(opened) || !opened.isFile() || opened.size > SERIALIZED_RECORD_BYTE_LIMIT || !(await revalidate())) throw new RefusalError('unsafe file path')
         const current = await lstat(path)
         if (!privatelyOwned(current) || current.isSymbolicLink() || !current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino) {
-            throw new Error('file path changed while opening')
+            throw new RefusalError('file path changed while opening')
         }
         const bounded = Buffer.allocUnsafe(SERIALIZED_RECORD_BYTE_LIMIT + 1)
         let byteLength = 0
@@ -1093,8 +1088,8 @@ async function readRegularFileSnapshotNoFollow(
             if (bytesRead === 0) break
             byteLength += bytesRead
         }
-        if (byteLength > SERIALIZED_RECORD_BYTE_LIMIT) throw new Error('file exceeds the byte limit')
-        if (!(await revalidate())) throw new Error('unsafe file path after read')
+        if (byteLength > SERIALIZED_RECORD_BYTE_LIMIT) throw new RefusalError('file exceeds the byte limit')
+        if (!(await revalidate())) throw new RefusalError('unsafe file path after read')
         const openedAfter = await handle.stat()
         const after = await lstat(path)
         if (
@@ -1106,7 +1101,7 @@ async function readRegularFileSnapshotNoFollow(
             || after.dev !== opened.dev
             || after.ino !== opened.ino
         ) {
-            throw new Error('file path changed while reading')
+            throw new RefusalError('file path changed while reading')
         }
         return { bytes: bounded.subarray(0, byteLength), dev: opened.dev, ino: opened.ino }
     } finally {
@@ -1126,7 +1121,7 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
     try {
         if (address.kind === 'bootstrap') {
             if (Reflect.ownKeys(address).sort().join(',') !== 'checkoutId,checkoutRoot,kind,path,stateRoot,target') {
-                throw new Error('bootstrap address shape is not closed')
+                throw new RefusalError('bootstrap address shape is not closed')
             }
             stableAddress = Object.freeze({
                 path: address.path, stateRoot: address.stateRoot, checkoutRoot: address.checkoutRoot,
@@ -1156,7 +1151,7 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
     try {
         bytes = await readRegularFileNoFollow(stableAddress.path, () => addressIsSafe(stableAddress))
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing', path: stableAddress.path }
+        if (hasErrorCode(error, 'ENOENT')) return { kind: 'missing', path: stableAddress.path }
         return malformed(stableAddress, error)
     }
 
@@ -1199,19 +1194,19 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
 }
 
 async function ensureDirectory(path: string, stateRoot: string): Promise<void> {
-    if (!(await ownedPathIsSafe(stateRoot, path, 'directory'))) throw new Error('unsafe state directory path')
+    if (!(await ownedPathIsSafe(stateRoot, path, 'directory'))) throw new RefusalError('unsafe state directory path')
     const absent: string[] = []
     let cursor = path
     while (true) {
         try {
             const status = await lstat(cursor)
-            if (!status.isDirectory() || status.isSymbolicLink() || !privatelyOwned(status) || (status.mode & 0o200) === 0) throw new Error('unsafe directory component')
+            if (!status.isDirectory() || status.isSymbolicLink() || !privatelyOwned(status) || (status.mode & 0o200) === 0) throw new RefusalError('unsafe directory component')
             break
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            if (!hasErrorCode(error, 'ENOENT')) throw error
             absent.push(cursor)
             const parent = dirname(cursor)
-            if (parent === cursor) throw new Error('no usable state ancestor')
+            if (parent === cursor) throw new RefusalError('no usable state ancestor')
             cursor = parent
         }
     }
@@ -1219,12 +1214,12 @@ async function ensureDirectory(path: string, stateRoot: string): Promise<void> {
         try {
             await mkdir(directory, { mode: 0o700 })
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+            if (!hasErrorCode(error, 'EEXIST')) throw error
         }
         const status = await lstat(directory)
-        if (!status.isDirectory() || status.isSymbolicLink() || !privatelyOwned(status) || (status.mode & 0o200) === 0) throw new Error('unsafe directory component')
+        if (!status.isDirectory() || status.isSymbolicLink() || !privatelyOwned(status) || (status.mode & 0o200) === 0) throw new RefusalError('unsafe directory component')
     }
-    if (!(await ownedPathIsSafe(stateRoot, path, 'directory'))) throw new Error('state directory path changed during creation')
+    if (!(await ownedPathIsSafe(stateRoot, path, 'directory'))) throw new RefusalError('state directory path changed during creation')
 }
 
 function validateRecordForAddress(
@@ -1561,7 +1556,7 @@ async function inspectLock(
         })
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
         const parsed = StateLockSchema.safeParse(JSON.parse(source))
-        if (!parsed.success) throw new Error('invalid lock metadata')
+        if (!parsed.success) throw new RefusalError('invalid lock metadata')
         let holderState: LockHolderState = 'unknown'
         let observationFailure = ''
         if (observeHolder) {
@@ -1702,7 +1697,7 @@ async function acquireLock(
                 // A partially created or replaced lock is authority evidence and must survive for recovery.
             }
         }
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        if (!hasErrorCode(error, 'EEXIST')) throw error
         const observed = await inspectLock(namespace.paths.stateLock, namespace.root, options.observeHolder)
         return refusal(
             ENVIRONMENT_CODES.STATE_LOCKED,
@@ -1715,10 +1710,10 @@ async function acquireLock(
 
 async function releaseQuarantine(locksRoot: string): Promise<string | undefined> {
     const before = await lstat(locksRoot)
-    if (!before.isDirectory() || before.isSymbolicLink() || !privatelyOwned(before)) throw new Error('state locks root is unsafe')
+    if (!before.isDirectory() || before.isSymbolicLink() || !privatelyOwned(before)) throw new RefusalError('state locks root is unsafe')
     const names = await readdir(locksRoot)
     const after = await lstat(locksRoot)
-    if (!sameNode(before, after)) throw new Error('state locks root changed during quarantine inspection')
+    if (!sameNode(before, after)) throw new RefusalError('state locks root changed during quarantine inspection')
     const name = names.filter((entry) => entry.startsWith('.state.lock.release-')).sort()[0]
     return name ? join(locksRoot, name) : undefined
 }
@@ -1731,7 +1726,7 @@ async function quarantineRecovery(path: string): Promise<string> {
             return `inspect the quarantined lock owner evidence at ${evidencePath} before explicit recovery`
         }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        if (!hasErrorCode(error, 'ENOENT')) throw error
     }
     return 'inspect the quarantined lock holder and restore or reclaim it using positive owner evidence'
 }
@@ -1743,15 +1738,7 @@ function sameNode(
     return actual.dev === expected.dev && actual.ino === expected.ino
 }
 
-// Release reports its own failures as written and anything else through errorCause: a hook or
-// filesystem error from another source may carry text this module did not write.
-class LockReleaseStepError extends Error {}
-
-function releaseStepCause(error: unknown): string {
-    return error instanceof LockReleaseStepError ? error.message : errorCause(error)
-}
-
-class LockReleaseError extends Error {
+class LockReleaseError extends RefusalError {
     constructor(
         message: string,
         readonly target: string,
@@ -1786,7 +1773,7 @@ async function releaseLock(
         || verifiedLock.isSymbolicLink()
         || !privatelyOwned(verifiedLock)
     ) {
-        throw new LockReleaseStepError('state lock changed before release')
+        throw new RefusalError('state lock changed before release')
     }
     const currentOwner = await readRegularFileSnapshotNoFollow(ownerPath, async () => {
         const root = await lstat(releaseRoot)
@@ -1797,14 +1784,14 @@ async function releaseLock(
             && samePrivateNode(lock, verifiedLock)
     })
     if (currentOwner.bytes.toString('utf8') !== ownerBytes) {
-        throw new LockReleaseStepError('state lock ownership changed before release')
+        throw new RefusalError('state lock ownership changed before release')
     }
     const parsedOwner = StateLockSchema.parse(JSON.parse(ownerBytes))
     await beforeRelease?.()
     if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
         || !samePrivateNode(lstatSync(lockPath), verifiedLock)
         || !samePrivateNode(lstatSync(ownerPath), currentOwner)) {
-        throw new LockReleaseStepError('state lock permissions or ownership changed before release')
+        throw new RefusalError('state lock permissions or ownership changed before release')
     }
 
     const tombstone = join(releaseRoot, `.state.lock.release-${parsedOwner.token}`)
@@ -1821,7 +1808,7 @@ async function releaseLock(
             || movedLock.isSymbolicLink()
             || !samePrivateNode(movedLock, verifiedLock)
         ) {
-            throw new LockReleaseStepError('moved lock directory does not match verified owner')
+            throw new RefusalError('moved lock directory does not match verified owner')
         }
         const movedOwner = await readRegularFileSnapshotNoFollow(movedOwnerPath, async () => {
             const root = await lstat(releaseRoot)
@@ -1832,11 +1819,11 @@ async function releaseLock(
                 && samePrivateNode(lock, movedLock)
         })
         if (!sameNode(movedOwner, currentOwner) || movedOwner.bytes.toString('utf8') !== ownerBytes) {
-            throw new LockReleaseStepError('moved lock owner does not match verified owner')
+            throw new RefusalError('moved lock owner does not match verified owner')
         }
         const entries = await readdir(tombstone)
         if (entries.length !== 1 || entries[0] !== 'owner.json') {
-            throw new LockReleaseStepError('quarantined lock contains unexpected entries')
+            throw new RefusalError('quarantined lock contains unexpected entries')
         }
         const deletionRoot = await lstat(releaseRoot)
         const deletionLock = await lstat(tombstone)
@@ -1846,7 +1833,7 @@ async function releaseLock(
             || !samePrivateNode(deletionLock, movedLock)
             || !samePrivateNode(deletionOwner, movedOwner)
         ) {
-            throw new LockReleaseStepError('quarantined lock changed before deletion')
+            throw new RefusalError('quarantined lock changed before deletion')
         }
         const ownerBackupPath = `${tombstone}.owner.json`
         await link(movedOwnerPath, ownerBackupPath)
@@ -1854,19 +1841,19 @@ async function releaseLock(
         const linkedOwner = await lstat(movedOwnerPath)
         const linkedBackup = await lstat(ownerBackupPath)
         if (!samePrivateNode(linkedOwner, movedOwner) || !samePrivateNode(linkedBackup, movedOwner)) {
-            throw new LockReleaseStepError('quarantined lock owner changed after evidence link')
+            throw new RefusalError('quarantined lock owner changed after evidence link')
         }
         // Node has no portable fd-relative conditional unlink. This checkpoint protects cooperative
         // concurrent processes and injected pre-syscall interference, not a malicious same-UID syscall race.
         await beforeLockMetadata?.('owner-unlink')
         if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
             || !samePrivateNode(lstatSync(tombstone), movedLock)) {
-            throw new LockReleaseStepError('state lock permissions changed before owner unlink')
+            throw new RefusalError('state lock permissions changed before owner unlink')
         }
         const ownerBeforeUnlink = await lstat(movedOwnerPath)
         const backupBeforeUnlink = await lstat(ownerBackupPath)
         if (!samePrivateNode(ownerBeforeUnlink, movedOwner) || !samePrivateNode(backupBeforeUnlink, movedOwner)) {
-            throw new LockReleaseStepError('quarantined lock owner changed before unlink')
+            throw new RefusalError('quarantined lock owner changed before unlink')
         }
         await unlink(movedOwnerPath)
         evidencePath = ownerBackupPath
@@ -1881,12 +1868,12 @@ async function releaseLock(
             const emptyRoot = await lstat(releaseRoot)
             const emptyLock = await lstat(tombstone)
             if (!samePrivateNode(emptyRoot, verifiedRoot) || !samePrivateNode(emptyLock, movedLock)) {
-                throw new LockReleaseStepError('quarantined lock changed before directory removal')
+                throw new RefusalError('quarantined lock changed before directory removal')
             }
             await beforeLockMetadata?.('tombstone-rmdir')
             if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
                 || !samePrivateNode(lstatSync(tombstone), movedLock)) {
-                throw new LockReleaseStepError('state lock permissions changed before directory removal')
+                throw new RefusalError('state lock permissions changed before directory removal')
             }
             await rmdir(tombstone)
             await syncDirectory(releaseRoot)
@@ -1895,14 +1882,14 @@ async function releaseLock(
                 await restoreOwnerEvidence(ownerBackupPath, movedOwnerPath, movedOwner, tombstone, beforeLockMetadata)
                 evidencePath = movedOwnerPath
             } catch (restoreError) {
-                throw new LockReleaseStepError(`${releaseStepCause(error)}; owner evidence remains at ${evidencePath}; restoration failed: ${releaseStepCause(restoreError)}`)
+                throw new RefusalError(`${errorCause(error)}; owner evidence remains at ${evidencePath}; restoration failed: ${errorCause(restoreError)}`)
             }
             throw error
         }
         await beforeLockMetadata?.('backup-unlink')
-        if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)) throw new LockReleaseStepError('state locks root permissions changed before backup cleanup')
+        if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)) throw new RefusalError('state locks root permissions changed before backup cleanup')
         const finalBackup = await lstat(ownerBackupPath)
-        if (!samePrivateNode(finalBackup, movedOwner)) throw new LockReleaseStepError('owner evidence backup changed before cleanup')
+        if (!samePrivateNode(finalBackup, movedOwner)) throw new RefusalError('owner evidence backup changed before cleanup')
         await unlink(ownerBackupPath)
         try {
             await syncDirectory(releaseRoot)
@@ -1920,7 +1907,7 @@ async function releaseLock(
         }
     } catch (error) {
         throw new LockReleaseError(
-            `state lock release quarantined an unverified holder: ${releaseStepCause(error)}`,
+            `state lock release quarantined an unverified holder: ${errorCause(error)}`,
             tombstone,
             evidencePath === movedOwnerPath
                 ? 'inspect the quarantined lock holder and restore or reclaim it using positive owner evidence'
@@ -1937,18 +1924,18 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
     let stableOptions: StateTransactionOptions | undefined
     try {
         if (!options || typeof options !== 'object' || isProxy(options)
-            || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) throw new Error('invalid options')
+            || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) throw new RefusalError('invalid options')
         const descriptors = Object.getOwnPropertyDescriptors(options)
         const allowed = new Set(['ownerId', 'observeHolder', 'contentionTimeoutMs', 'beforeRelease', 'beforeLockMetadata'])
         if (!descriptors.ownerId || !('value' in descriptors.ownerId)
             || Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !allowed.has(key))
-            || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) throw new Error('invalid options')
+            || Object.values(descriptors).some(descriptor => !('value' in descriptor) || !descriptor.enumerable)) throw new RefusalError('invalid options')
         const values = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
         if (typeof values.ownerId !== 'string'
             || values.observeHolder !== undefined && typeof values.observeHolder !== 'function'
             || values.contentionTimeoutMs !== undefined && typeof values.contentionTimeoutMs !== 'number'
             || values.beforeRelease !== undefined && typeof values.beforeRelease !== 'function'
-            || values.beforeLockMetadata !== undefined && typeof values.beforeLockMetadata !== 'function') throw new Error('invalid options')
+            || values.beforeLockMetadata !== undefined && typeof values.beforeLockMetadata !== 'function') throw new RefusalError('invalid options')
         stableOptions = Object.freeze({ ownerId: values.ownerId as HolderId,
             ...(values.observeHolder ? { observeHolder: values.observeHolder as StateTransactionOptions['observeHolder'] } : {}),
             ...(values.contentionTimeoutMs !== undefined ? { contentionTimeoutMs: values.contentionTimeoutMs } : {}),
@@ -2018,7 +2005,7 @@ async function restoreOwnerEvidence(
 ): Promise<void> {
     const backup = await lstat(backupPath)
     if (!backup.isFile() || backup.isSymbolicLink() || !samePrivateNode(backup, expectedOwner)) {
-        throw new LockReleaseStepError('owner evidence backup changed before restoration')
+        throw new RefusalError('owner evidence backup changed before restoration')
     }
     try {
         await beforeLockMetadata?.('owner-restore-link')
@@ -2027,15 +2014,15 @@ async function restoreOwnerEvidence(
         if (!root.isDirectory() || root.isSymbolicLink() || !privatelyOwned(root)
             || !lock.isDirectory() || lock.isSymbolicLink() || !privatelyOwned(lock)
             || !samePrivateNode(lstatSync(backupPath), expectedOwner)) {
-            throw new LockReleaseStepError('state lock path became unsafe before owner restoration')
+            throw new RefusalError('state lock path became unsafe before owner restoration')
         }
         await link(backupPath, ownerPath)
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        if (!hasErrorCode(error, 'EEXIST')) throw error
     }
     const restored = await lstat(ownerPath)
     if (!restored.isFile() || restored.isSymbolicLink() || !samePrivateNode(restored, expectedOwner)) {
-        throw new LockReleaseStepError('owner evidence path changed during restoration')
+        throw new RefusalError('owner evidence path changed during restoration')
     }
     await syncDirectory(tombstone)
 }
@@ -2049,7 +2036,7 @@ async function syncDirectory(directoryPath: string): Promise<void> {
     }
 }
 
-class TemporaryPublicationError extends Error {
+class TemporaryPublicationError extends RefusalError {
     constructor(readonly target: string) {
         super('temporary state publication path changed; unverified bytes were preserved')
     }
@@ -2124,7 +2111,7 @@ async function publishRecord(
         const handle = await open(temporaryPath, 'wx', 0o600)
         temporaryExists = true
         try {
-            if (source.byteLength > SERIALIZED_RECORD_BYTE_LIMIT) throw new Error('state record exceeds the byte limit')
+            if (source.byteLength > SERIALIZED_RECORD_BYTE_LIMIT) throw new RefusalError('state record exceeds the byte limit')
             await handle.writeFile(source)
             await handle.sync()
             temporaryNode = await handle.stat()
@@ -2139,7 +2126,7 @@ async function publishRecord(
         if (beforeCommit) {
             const cancellation = beforeCommit()
             if (cancellation !== undefined) {
-                if (!isStateTransactionAbort(cancellation)) throw new Error('state commit veto is malformed')
+                if (!isStateTransactionAbort(cancellation)) throw new RefusalError('state commit veto is malformed')
                 return cancellation
             }
         }
@@ -2152,10 +2139,10 @@ async function publishRecord(
             try {
                 const status = lstatSync(cursor)
                 if (!privatelyOwned(status) || status.isSymbolicLink() || (cursor === address.path ? !status.isFile() : !status.isDirectory())) {
-                    throw new Error('unsafe state path before publication')
+                    throw new RefusalError('unsafe state path before publication')
                 }
             } catch (error) {
-                if (cursor === address.path && (error as NodeJS.ErrnoException).code === 'ENOENT') break
+                if (cursor === address.path && hasErrorCode(error, 'ENOENT')) break
                 throw error
             }
         }
@@ -2177,7 +2164,7 @@ async function publishRecord(
                 await unlink(temporaryPath)
                 await syncDirectory(dirname(address.path))
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+                if (!hasErrorCode(error, 'ENOENT')) throw error
             }
         }
     }
@@ -2228,12 +2215,12 @@ export async function transactState<T>(
     }>
     let stableOptions: StateTransactionOptions
     try {
-        if (typeof update !== 'function') throw new Error('state transaction update is malformed')
+        if (typeof update !== 'function') throw new RefusalError('state transaction update is malformed')
         if (address.kind === 'bootstrap') {
             const authenticated = authenticateBootstrapStateNamespace(namespace)
-            if (!authenticated) throw new Error('bootstrap namespace is not issued')
+            if (!authenticated) throw new RefusalError('bootstrap namespace is not issued')
             if (Reflect.ownKeys(address).sort().join(',') !== 'checkoutId,checkoutRoot,kind,path,stateRoot,target') {
-                throw new Error('bootstrap address shape is not closed')
+                throw new RefusalError('bootstrap address shape is not closed')
             }
             stableAddress = Object.freeze({ path: address.path, stateRoot: address.stateRoot,
                 checkoutRoot: address.checkoutRoot, kind: 'bootstrap', checkoutId: address.checkoutId, target: address.target })

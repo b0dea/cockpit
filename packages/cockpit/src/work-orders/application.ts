@@ -14,6 +14,7 @@ import { resumeWorkOrder } from './resume.js'
 import { persistWorkOrderProgress } from './state.js'
 import { projectWorkOrderStatus } from './status.js'
 import { isWorkApplicationComposition, type PreparedAnswer, type WorkApplicationComposition } from './composition.js'
+import { errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-application',
@@ -172,7 +173,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
                 const accepted = acceptWorkOrder(started.continuation, draft, { now: Date.now(), actor: composition.operator, answer })
                 if (accepted.kind === 'refusal') return refusal(operation, accepted.message)
                 try { await composition.persistAcceptance(prepared, accepted); return complete(operation, { id: captured.workOrderId, digest: accepted.binding.digest }) }
-                catch (error) { return refusal(operation, error instanceof Error ? error.message : String(error)) }
+                catch (error) { return refusal(operation, errorCause(error)) }
             }
             return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest: started.digest, prompt: acceptancePrompt(draft.contract, decision), decide }) })
         }
@@ -225,5 +226,5 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
                     ...(observed.kind === 'executed' ? { exitCode: observed.exitCode } : { unavailable: observed.reason }) })) }, result.reason)
         }
         return refusal(operation, 'Unsupported work application operation')
-    } catch (error) { return refusal(operation, error instanceof Error ? error.message : String(error)) }
+    } catch (error) { return refusal(operation, errorCause(error)) }
 }

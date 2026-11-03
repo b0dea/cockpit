@@ -6,6 +6,8 @@ import { createHash, randomBytes } from 'node:crypto'
 import { platform } from 'node:os'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
     OBSERVATION_PRODUCER_BYTE_LIMIT,
@@ -72,7 +74,7 @@ const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('claim observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('claim observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -88,7 +90,7 @@ function observationIssuedAt(value: unknown): number | undefined {
 export async function observeClaimState(input: { readonly namespace: StateNamespace; readonly stackId: StackId; readonly observedAt: string }): Promise<EnvironmentObservation> {
     const namespace = snapshotStateNamespace(input.namespace)
     if (!namespace || !/^stack:[a-f0-9]{64}$/.test(input.stackId) || !isCanonicalTimestamp(input.observedAt)) {
-        throw new TypeError('claim observation input is malformed')
+        throw new RefusalError('claim observation input is malformed')
     }
     const inventory = await readActiveStackInventory(namespace)
     const refusal = inventory.kind === 'refusal' ? inventory.diagnostics[0] : undefined
@@ -759,15 +761,14 @@ export async function observeProcessStart(pid: number, host: ProcessHost): Promi
 async function observeProcStart(pid: number, host: ProcessHost): Promise<ProcessStartObservation> {
     let stat: string
     try { stat = await host.readFile(`/proc/${pid}/stat`) } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
         // Signal 0 just found it, so a missing entry means it exited since, unless this /proc is not
         // this pid namespace's (unmounted in a chroot or sandbox); only a second signal decides.
-        if (code === 'ENOENT' && await host.presence(pid) === 'absent') return { state: 'absent' }
-        return { state: 'unknown', reason: `/proc/${pid}/stat could not be read (${code ?? String(error)})` }
+        if (hasErrorCode(error, 'ENOENT') && await host.presence(pid) === 'absent') return { state: 'absent' }
+        return { state: 'unknown', reason: `/proc/${pid}/stat could not be read (${errorCause(error)})` }
     }
     let bootId: string
     try { bootId = (await host.readFile('/proc/sys/kernel/random/boot_id')).trim() } catch (error) {
-        return { state: 'unknown', reason: `the boot ID could not be read (${(error as NodeJS.ErrnoException).code ?? String(error)})` }
+        return { state: 'unknown', reason: `the boot ID could not be read (${errorCause(error)})` }
     }
     // The command name in parentheses may itself hold spaces and parentheses; the fields after the
     // last `)` start at field 3, so field 22 is the twentieth.
@@ -913,12 +914,12 @@ export async function createHolderProcessProbePlan(input: {
     readonly timeoutMs: number
 }): Promise<EnvironmentCommandOutcome<null>> {
     if (!input || typeof input !== 'object' || !hasExactKeys(input, ['namespace', 'stackId', 'executable', 'timeoutMs'])) {
-        throw new TypeError('holder process probe input is malformed')
+        throw new RefusalError('holder process probe input is malformed')
     }
     const namespace = snapshotStateNamespace(input?.namespace)
-    if (!namespace || !validIdentity(input?.stackId, stackIdentity)) throw new TypeError('holder process probe input is malformed')
+    if (!namespace || !validIdentity(input?.stackId, stackIdentity)) throw new RefusalError('holder process probe input is malformed')
     const stored = await readState(namespace.paths.coordination(input.stackId))
-    if (stored.kind !== 'complete') throw new TypeError('holder process probe coordination is unavailable')
+    if (stored.kind !== 'complete') throw new RefusalError('holder process probe coordination is unavailable')
     const record = stored.value
     const value = decodeCoordinationRecord(record, input.stackId)
     const executable = resolvedExecutable(input?.executable)
@@ -928,7 +929,7 @@ export async function createHolderProcessProbePlan(input: {
         || executable.invocationPath !== executable.canonicalPath
         || executable.executionMode !== 'verified-path'
         || value.holders.some(({ pid }) => !Number.isSafeInteger(pid) || pid! < 1 || pid! > 2_147_483_647)) {
-        throw new TypeError('holder process probe input is malformed')
+        throw new RefusalError('holder process probe input is malformed')
     }
     const steps = value.holders.map(({ holderId, pid }): ExecutionStep => Object.freeze({
         id: `holder:probe:${holderId.slice(7, 19)}`,
@@ -940,7 +941,7 @@ export async function createHolderProcessProbePlan(input: {
         filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
     }))
     const plan = snapshotExecutionPlan({ steps })
-    if (!plan) throw new TypeError('holder process probe input is malformed')
+    if (!plan) throw new RefusalError('holder process probe input is malformed')
     issuedHolderProbePlans.set(plan, Object.freeze({
         subjectId: record.subjectId as StackId,
         revision: record.revision,
@@ -985,63 +986,63 @@ export async function observeHolderCheckouts(input: {
 }): Promise<HolderCheckoutProbe> {
     let owned: { namespace: unknown; stackId: unknown; timeoutMs: unknown; checkouts: unknown }
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid input')
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid input')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         const keys = Reflect.ownKeys(descriptors)
         const expected = ['checkouts', 'namespace', 'stackId', 'timeoutMs']
-        if (keys.length !== expected.length || !expected.every((key) => keys.includes(key))) throw new Error('invalid input')
-        if (expected.some((key) => !('value' in descriptors[key]!))) throw new Error('invalid input')
+        if (keys.length !== expected.length || !expected.every((key) => keys.includes(key))) throw new RefusalError('invalid input')
+        if (expected.some((key) => !('value' in descriptors[key]!))) throw new RefusalError('invalid input')
         owned = {
             namespace: descriptors.namespace!.value,
             stackId: descriptors.stackId!.value,
             timeoutMs: descriptors.timeoutMs!.value,
             checkouts: descriptors.checkouts!.value,
         }
-    } catch { throw new TypeError('holder checkout probe input is malformed') }
+    } catch { throw new RefusalError('holder checkout probe input is malformed') }
     const namespace = snapshotStateNamespace(owned.namespace as StateNamespace)
     const checkouts: { readonly checkoutId: CheckoutId; readonly path: string }[] = []
     try {
-        if (!Array.isArray(owned.checkouts)) throw new Error('invalid checkouts')
+        if (!Array.isArray(owned.checkouts)) throw new RefusalError('invalid checkouts')
         const descriptors = Object.getOwnPropertyDescriptors(owned.checkouts) as unknown as Record<PropertyKey, PropertyDescriptor>
         const length = descriptors.length
         const count = length && 'value' in length ? length.value : undefined
         if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0
             || count > STRUCTURED_INPUT_ENTRY_LIMIT || Reflect.ownKeys(descriptors).length !== count + 1) {
-            throw new Error('invalid checkouts')
+            throw new RefusalError('invalid checkouts')
         }
         for (let index = 0; index < count; index += 1) {
             const indexed = descriptors[String(index)]
             if (!indexed || !('value' in indexed) || !indexed.value || typeof indexed.value !== 'object' || Array.isArray(indexed.value)) {
-                throw new Error('invalid checkout')
+                throw new RefusalError('invalid checkout')
             }
             const entry = Object.getOwnPropertyDescriptors(indexed.value)
             const entryKeys = Reflect.ownKeys(entry)
             if (entryKeys.length !== 2 || !entryKeys.includes('checkoutId') || !entryKeys.includes('path')
-                || !('value' in entry.checkoutId!) || !('value' in entry.path!)) throw new Error('invalid checkout')
+                || !('value' in entry.checkoutId!) || !('value' in entry.path!)) throw new RefusalError('invalid checkout')
             checkouts.push(Object.freeze({ checkoutId: entry.checkoutId.value, path: entry.path.value }))
         }
-    } catch { throw new TypeError('holder checkout probe input is malformed') }
+    } catch { throw new RefusalError('holder checkout probe input is malformed') }
     const stackId = owned.stackId as StackId
     const timeoutMs = owned.timeoutMs as number
     if (!namespace || !validIdentity(stackId, stackIdentity) || !Number.isSafeInteger(timeoutMs)
-        || timeoutMs < 1 || timeoutMs > 30_000) throw new TypeError('holder checkout probe input is malformed')
+        || timeoutMs < 1 || timeoutMs > 30_000) throw new RefusalError('holder checkout probe input is malformed')
     const paths = new Map<CheckoutId, string>()
     try {
         for (const checkout of checkouts) {
             if (!validIdentity(checkout.checkoutId, checkoutIdentity) || typeof checkout.path !== 'string'
                 || !isAbsolute(checkout.path) || normalize(checkout.path) !== checkout.path
                 || deriveCheckoutId({ checkoutPath: checkout.path }) !== checkout.checkoutId || paths.has(checkout.checkoutId)) {
-                throw new Error('invalid checkout')
+                throw new RefusalError('invalid checkout')
             }
             paths.set(checkout.checkoutId, checkout.path)
         }
-    } catch { throw new TypeError('holder checkout probe input is malformed') }
+    } catch { throw new RefusalError('holder checkout probe input is malformed') }
     const stored = await readState(namespace.paths.coordination(stackId))
-    if (stored.kind !== 'complete') throw new TypeError('holder checkout probe coordination is unavailable')
+    if (stored.kind !== 'complete') throw new RefusalError('holder checkout probe coordination is unavailable')
     const record = decodeCoordinationRecord(stored.value, stackId)
     const requiredCheckouts = new Set(record?.holders.map(({ checkoutId }) => checkoutId))
     if (!record || requiredCheckouts.size !== paths.size || [...requiredCheckouts].some((checkoutId) => !paths.has(checkoutId))) {
-        throw new TypeError('holder checkout probe input is malformed')
+        throw new RefusalError('holder checkout probe input is malformed')
     }
     const requestedAt = new Date().toISOString()
     const observations: HolderObservationInput[] = []
@@ -1054,7 +1055,7 @@ export async function observeHolderCheckouts(input: {
                 ? { state: 'available', value: { state: 'live' }, observedAt: new Date().toISOString(), producer: 'bounded-checkout-probe' }
                 : { state: 'unavailable', reason: 'checkout path is not a directory', producer: 'bounded-checkout-probe' }
         } catch (error) {
-            observation = (error as NodeJS.ErrnoException).code === 'ENOENT'
+            observation = hasErrorCode(error, 'ENOENT')
                 ? { state: 'available', value: { state: 'dead', evidence: 'checkout-missing' }, observedAt: new Date().toISOString(), producer: 'bounded-checkout-probe' }
                 : { state: 'unavailable', reason: 'checkout presence could not be established', producer: 'bounded-checkout-probe' }
         }
@@ -1237,7 +1238,7 @@ async function readCoordinationInventory(
         }
         return { kind: 'complete', value: records }
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (hasErrorCode(error, 'ENOENT')) {
             return inspected
                 ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination store changed during observation', directory)
                 : { kind: 'complete', value: [] }
@@ -1600,7 +1601,7 @@ function snapshotDrainTargets(value: unknown): readonly string[] | undefined {
         if (Reflect.ownKeys(descriptors).some((key) => typeof key === 'symbol' || key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key))) return undefined
         const targets = Array.from({ length: lengthValue }, (_, index): string => {
             const property = descriptors[String(index)]
-            if (!property || !('value' in property) || typeof property.value !== 'string') throw new TypeError('invalid target')
+            if (!property || !('value' in property) || typeof property.value !== 'string') throw new RefusalError('invalid target')
             return property.value
         })
         if (new Set(targets).size !== targets.length
@@ -1707,7 +1708,7 @@ function issueDrainAuthority(reservation: DrainReservation, record: StateRecord,
     const authority = Object.freeze({ reservation: snapshotDrainReservation(reservation) }) as DrainReservationAuthority
     const recordFingerprint = exactRecordFingerprint(record)
     const ownedAddress = snapshotCoordinationAddress(address)
-    if (recordFingerprint === undefined || ownedAddress === undefined) throw new TypeError('drain authority provenance is malformed')
+    if (recordFingerprint === undefined || ownedAddress === undefined) throw new RefusalError('drain authority provenance is malformed')
     drainAuthorities.add(authority)
     drainAuthorityRecords.set(authority, recordFingerprint)
     drainAuthorityAddresses.set(authority, ownedAddress)
@@ -1778,9 +1779,9 @@ export async function reserveDrain(input: {
     let namespace: StateNamespace | undefined
     let request: DrainReservationRequest | undefined
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || !hasExactKeys(input, ['namespace', 'request'])) throw new Error('invalid')
+        if (!input || typeof input !== 'object' || Array.isArray(input) || !hasExactKeys(input, ['namespace', 'request'])) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (!('value' in descriptors.namespace!) || !('value' in descriptors.request!)) throw new Error('invalid')
+        if (!('value' in descriptors.namespace!) || !('value' in descriptors.request!)) throw new RefusalError('invalid')
         namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
         request = snapshotDrainRequest(descriptors.request!.value)
     } catch {
@@ -1850,9 +1851,9 @@ function sameCoordinationAddress(left: StateAddress, right: StateAddress): boole
 }
 
 function issueDrainAttemptAuthority(reservation: DrainReservation, record: StateRecord, address: StateAddress): DrainAttemptAuthority {
-    if (!reservation.attempt) throw new TypeError('drain attempt is absent')
+    if (!reservation.attempt) throw new RefusalError('drain attempt is absent')
     const ownedAddress = snapshotCoordinationAddress(address)
-    if (!ownedAddress) throw new TypeError('drain attempt address is malformed')
+    if (!ownedAddress) throw new RefusalError('drain attempt address is malformed')
     const owned = snapshotDrainReservation(reservation)
     const authority = Object.freeze({ reservation: owned, attempt: owned.attempt! }) as DrainAttemptAuthority
     drainAttemptAuthorities.set(authority, {
@@ -1922,11 +1923,11 @@ export async function reserveDrainAttempt(input: {
     let reservationAuthority: DrainReservationAuthority | undefined
     try {
         if (!input || typeof input !== 'object' || Array.isArray(input)
-            || !hasExactKeys(input, ['namespace', 'authority'])) throw new Error('invalid')
+            || !hasExactKeys(input, ['namespace', 'authority'])) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Object.values(descriptors).some((descriptor) => !('value' in descriptor))) throw new Error('invalid')
+        if (Object.values(descriptors).some((descriptor) => !('value' in descriptor))) throw new RefusalError('invalid')
         reservationAuthority = descriptors.authority!.value as DrainReservationAuthority
-        if (!reservationAuthority || typeof reservationAuthority !== 'object' || !drainAuthorities.has(reservationAuthority)) throw new Error('invalid')
+        if (!reservationAuthority || typeof reservationAuthority !== 'object' || !drainAuthorities.has(reservationAuthority)) throw new RefusalError('invalid')
         reservation = reservationAuthority.reservation
         namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
     } catch {
@@ -2615,17 +2616,17 @@ export async function inspectDestructiveDrainRecovery(input: {
     let purpose: 'down' | 'reset' | undefined
     try {
         if (!input || typeof input !== 'object' || Array.isArray(input)
-            || !hasExactKeys(input, ['namespace', 'stackId', 'holderId', 'purpose'])) throw new Error('invalid')
+            || !hasExactKeys(input, ['namespace', 'stackId', 'holderId', 'purpose'])) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (!('value' in descriptors.namespace!) || !('value' in descriptors.stackId!)
-            || !('value' in descriptors.holderId!) || !('value' in descriptors.purpose!)) throw new Error('invalid')
+            || !('value' in descriptors.holderId!) || !('value' in descriptors.purpose!)) throw new RefusalError('invalid')
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         const suppliedStackId = descriptors.stackId!.value
         const suppliedHolderId = descriptors.holderId!.value
         const suppliedPurpose = descriptors.purpose!.value
         if (typeof suppliedStackId !== 'string' || typeof suppliedHolderId !== 'string'
             || !validIdentity(suppliedStackId, stackIdentity) || !validIdentity(suppliedHolderId, holderIdentity)
-            || suppliedPurpose !== 'down' && suppliedPurpose !== 'reset') throw new Error('invalid')
+            || suppliedPurpose !== 'down' && suppliedPurpose !== 'reset') throw new RefusalError('invalid')
         stackId = suppliedStackId as StackId
         holderId = suppliedHolderId as HolderId
         purpose = suppliedPurpose
@@ -2695,15 +2696,15 @@ export async function inspectSleepDrainRecovery(input: {
     let holderId: HolderId | undefined
     try {
         if (!input || typeof input !== 'object' || Array.isArray(input)
-            || !hasExactKeys(input, ['namespace', 'stackId', 'holderId'])) throw new Error('invalid')
+            || !hasExactKeys(input, ['namespace', 'stackId', 'holderId'])) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (!('value' in descriptors.namespace!) || !('value' in descriptors.stackId!)
-            || !('value' in descriptors.holderId!)) throw new Error('invalid')
+            || !('value' in descriptors.holderId!)) throw new RefusalError('invalid')
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         const suppliedStackId = descriptors.stackId!.value
         const suppliedHolderId = descriptors.holderId!.value
         if (typeof suppliedStackId !== 'string' || typeof suppliedHolderId !== 'string'
-            || !validIdentity(suppliedStackId, stackIdentity) || !validIdentity(suppliedHolderId, holderIdentity)) throw new Error('invalid')
+            || !validIdentity(suppliedStackId, stackIdentity) || !validIdentity(suppliedHolderId, holderIdentity)) throw new RefusalError('invalid')
         stackId = suppliedStackId as StackId
         holderId = suppliedHolderId as HolderId
     } catch {
@@ -2766,7 +2767,7 @@ export async function recoverSleepDrainReservation(input: {
     let request: DrainReservationRequest | undefined
     let issued: SleepDrainRecoveryRecord | undefined
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid')
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if ('value' in descriptors.authority!) {
             authority = descriptors.authority!.value as SleepDrainRecoveryAuthority
@@ -2775,7 +2776,7 @@ export async function recoverSleepDrainReservation(input: {
         }
         if (!hasExactKeys(input, ['namespace', 'authority', 'request'])
             || !('value' in descriptors.namespace!) || !('value' in descriptors.authority!)
-            || !('value' in descriptors.request!)) throw new Error('invalid')
+            || !('value' in descriptors.request!)) throw new RefusalError('invalid')
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         request = snapshotDrainRequest(descriptors.request!.value)
     } catch {
@@ -2833,9 +2834,9 @@ export async function recoverDrainReservation(input: {
     let namespace: StateNamespace | undefined
     let request: DrainReservationRequest | undefined
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || !hasExactKeys(input, ['namespace', 'request'])) throw new Error('invalid')
+        if (!input || typeof input !== 'object' || Array.isArray(input) || !hasExactKeys(input, ['namespace', 'request'])) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (!('value' in descriptors.namespace!) || !('value' in descriptors.request!)) throw new Error('invalid')
+        if (!('value' in descriptors.namespace!) || !('value' in descriptors.request!)) throw new RefusalError('invalid')
         namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
         request = snapshotDrainRequest(descriptors.request!.value)
     } catch {
@@ -3176,11 +3177,11 @@ export async function consumeRestoreExecutionAuthority(input: {
     let authority: RestoreExecutionAuthority | undefined
     let request: Omit<RestoreExecutionContract, 'revision' | 'reservationId'> | undefined
     try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid input')
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid input')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         const expected = ['namespace', 'authority', 'stackId', 'holderId', 'requesterId', 'configPath', 'configSha256', 'stepSha256']
         if (Reflect.ownKeys(descriptors).length !== expected.length
-            || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) throw new Error('invalid input')
+            || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) throw new RefusalError('invalid input')
         authority = descriptors.authority!.value as RestoreExecutionAuthority
         request = restoreAuthorityInput({
             namespace: descriptors.namespace!.value,
@@ -3259,11 +3260,11 @@ export async function settleRestoreExecutionAuthority(input: {
     let namespace: StateNamespace | undefined
     let lease: RestoreExecutionLease | undefined
     try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid')
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         const keys = Reflect.ownKeys(descriptors)
         if (keys.length !== 2 || !Object.hasOwn(descriptors, 'namespace') || !Object.hasOwn(descriptors, 'lease')
-            || !('value' in descriptors.namespace!) || !('value' in descriptors.lease!)) throw new Error('invalid')
+            || !('value' in descriptors.namespace!) || !('value' in descriptors.lease!)) throw new RefusalError('invalid')
         namespace = authenticateStateNamespace(descriptors.namespace.value)
         lease = descriptors.lease.value as RestoreExecutionLease
     } catch {
@@ -3310,9 +3311,9 @@ export async function acquireClaim(input: {
     }
     try {
         const namespaceProperty = Object.getOwnPropertyDescriptor(input, 'namespace')
-        if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
+        if (!namespaceProperty || !('value' in namespaceProperty)) throw new RefusalError('invalid namespace property')
         const stableNamespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
-        if (!stableNamespace) throw new Error('invalid namespace')
+        if (!stableNamespace) throw new RefusalError('invalid namespace')
         request = Object.freeze({
             namespace: stableNamespace,
             stackId: input.stackId,
@@ -3395,9 +3396,9 @@ export async function releaseClaim(input: {
     }
     try {
         const namespaceProperty = Object.getOwnPropertyDescriptor(input, 'namespace')
-        if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
+        if (!namespaceProperty || !('value' in namespaceProperty)) throw new RefusalError('invalid namespace property')
         const stableNamespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
-        if (!stableNamespace) throw new Error('invalid namespace')
+        if (!stableNamespace) throw new RefusalError('invalid namespace')
         authorityToken = input.authority
         const authority = authorityToken === undefined ? undefined : Object.freeze({
             stackId: authorityToken.stackId,
@@ -3456,7 +3457,7 @@ export async function releaseClaim(input: {
             preserveAuthority()
             return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'checkout is present; absence authority is no longer current', request.holderId)
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            if (!hasErrorCode(error, 'ENOENT')) {
                 preserveAuthority()
                 return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'checkout absence could not be confirmed', request.holderId)
             }
@@ -3478,7 +3479,7 @@ export async function releaseClaim(input: {
                         request.holderId,
                     ))
                 } catch (error) {
-                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                    if (!hasErrorCode(error, 'ENOENT')) {
                         return abortStateTransaction(refuse(
                             ENVIRONMENT_CODES.CLAIM_CO_TENANT,
                             'checkout absence could not be confirmed',
@@ -3569,7 +3570,7 @@ export async function releaseClaim(input: {
                           request.holderId,
                       ))
                   } catch (error) {
-                      return (error as NodeJS.ErrnoException).code === 'ENOENT'
+                      return hasErrorCode(error, 'ENOENT')
                           ? undefined
                           : abortStateTransaction(refuse(
                                 ENVIRONMENT_CODES.CLAIM_CO_TENANT,

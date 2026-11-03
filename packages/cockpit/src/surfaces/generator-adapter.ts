@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram, type LibexecProgram } from '../environment-exec/libexec-program.js'
-import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type ExecutionStep, type JsonSnapshotObject } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type ExecutionStep, type JsonSnapshotObject, RefusalError, errorCause, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import {
     bundleSurfaceFiles,
     captureSurfaceBundleBatch,
@@ -280,15 +280,15 @@ function sha256(bytes: string | Uint8Array): string {
 async function digestFile(path: string, maxBytes: number, executable = false): Promise<string> {
     let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
-        if (constants.O_NOFOLLOW === undefined) throw new Error('this platform cannot open files without following symbolic links')
+        if (constants.O_NOFOLLOW === undefined) throw new RefusalError('this platform cannot open files without following symbolic links')
         const before = await lstat(path)
-        if (!before.isFile() || before.isSymbolicLink()) throw new Error(`${path} is not a regular file`)
-        if (before.size > maxBytes) throw new Error(`${path} exceeds ${maxBytes} bytes`)
-        if (executable && (before.mode & 0o111) === 0) throw new Error(`${path} is not executable`)
+        if (!before.isFile() || before.isSymbolicLink()) throw new RefusalError(`${path} is not a regular file`)
+        if (before.size > maxBytes) throw new RefusalError(`${path} exceeds ${maxBytes} bytes`)
+        if (executable && (before.mode & 0o111) === 0) throw new RefusalError(`${path} is not executable`)
         handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
         const opened = await handle.stat()
         if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > maxBytes) {
-            throw new Error(`${path} changed while it was opened`)
+            throw new RefusalError(`${path} changed while it was opened`)
         }
         const hash = createHash('sha256')
         const chunk = Buffer.allocUnsafe(Math.min(maxBytes + 1, 1_048_576))
@@ -297,12 +297,12 @@ async function digestFile(path: string, maxBytes: number, executable = false): P
             const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null)
             if (bytesRead === 0) break
             total += bytesRead
-            if (total > maxBytes) throw new Error(`${path} grew past ${maxBytes} bytes while it was read`)
+            if (total > maxBytes) throw new RefusalError(`${path} grew past ${maxBytes} bytes while it was read`)
             hash.update(chunk.subarray(0, bytesRead))
         }
         const after = await handle.stat()
         if (total !== opened.size || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) {
-            throw new Error(`${path} changed while it was read`)
+            throw new RefusalError(`${path} changed while it was read`)
         }
         return hash.digest('hex')
     } finally {
@@ -317,9 +317,9 @@ async function nodeAuthority(): Promise<NodeAuthority> {
 
 async function bundleAuthority(): Promise<BundleAuthority> {
     const path = fileURLToPath(new URL('../../libexec/rulesync-generator.cjs', import.meta.url))
-    if (await realpath(path) !== path) throw new Error(`${path} is reached through a symbolic link`)
+    if (await realpath(path) !== path) throw new RefusalError(`${path} is reached through a symbolic link`)
     const digest = await digestFile(path, MAX_GENERATOR_BUNDLE_BYTES)
-    if (digest !== PINNED_GENERATOR_BUNDLE_SHA256) throw new Error(`${path} differs from the pinned bundle digest`)
+    if (digest !== PINNED_GENERATOR_BUNDLE_SHA256) throw new RefusalError(`${path} differs from the pinned bundle digest`)
     return Object.freeze({ path, sha256: digest, maxBytes: MAX_GENERATOR_BUNDLE_BYTES })
 }
 
@@ -329,10 +329,6 @@ function surfacePrograms(): SurfacePrograms {
         read: libexecProgram('surface-output-reader.cjs'),
         cleanup: libexecProgram('surface-scratch-cleanup.cjs'),
     })
-}
-
-function failureReason(error: unknown): string {
-    return error instanceof Error ? error.message : String(error)
 }
 
 function step(
@@ -469,62 +465,52 @@ function workerWarnings(value: unknown, target: GeneratorTarget): readonly Surfa
 }
 
 function parseWorkerReceipt(bytes: Buffer, target: GeneratorTarget, requested: readonly SurfaceFeature[]): WorkerReceipt | undefined {
-    try {
-        const text = outputText(bytes)
-        const record = text === undefined ? undefined : ownRecord(JSON.parse(text))
-        if (!record || Object.keys(record).sort().join(',') !== 'actualFiles,features,reportedPaths,target,version,warnings'
-            || record.version !== 1 || record.target !== target || !Array.isArray(record.features) || record.features.length !== requested.length
-            || !Array.isArray(record.actualFiles) || record.actualFiles.length > SURFACE_OUTPUT_MAX_FILES) return undefined
-        const reportedPaths = stringArray(record.reportedPaths)
-        const actualFiles = record.actualFiles.map(workerFile)
-        const warnings = workerWarnings(record.warnings, target)
-        if (!reportedPaths || !warnings || new Set(reportedPaths).size !== reportedPaths.length || actualFiles.some(file => !file)) return undefined
-        const features: WorkerFeature[] = []
-        for (const [index, value] of record.features.entries()) {
-            const feature = ownRecord(value)
-            if (!feature || Object.keys(feature).sort().join(',') !== 'count,feature,paths' || feature.feature !== requested[index]
-                || !FEATURES.has(feature.feature as SurfaceFeature) || !Number.isSafeInteger(feature.count) || (feature.count as number) < 0) return undefined
-            const paths = stringArray(feature.paths)
-            if (!paths || new Set(paths).size !== paths.length) return undefined
-            features.push(Object.freeze({ feature: feature.feature as SurfaceFeature, count: feature.count as number, paths }))
-        }
-        return Object.freeze({
-            version: 1,
-            target,
-            features: Object.freeze(features),
-            reportedPaths: Object.freeze([...reportedPaths]),
-            actualFiles: Object.freeze(actualFiles as WorkerFile[]),
-            warnings,
-        })
-    } catch {
-        // unparseable input is malformed; the caller refuses it.
-        return undefined
+    const text = outputText(bytes)
+    const record = text === undefined ? undefined : ownRecord(tryParseJson(text))
+    if (!record || Object.keys(record).sort().join(',') !== 'actualFiles,features,reportedPaths,target,version,warnings'
+        || record.version !== 1 || record.target !== target || !Array.isArray(record.features) || record.features.length !== requested.length
+        || !Array.isArray(record.actualFiles) || record.actualFiles.length > SURFACE_OUTPUT_MAX_FILES) return undefined
+    const reportedPaths = stringArray(record.reportedPaths)
+    const actualFiles = record.actualFiles.map(workerFile)
+    const warnings = workerWarnings(record.warnings, target)
+    if (!reportedPaths || !warnings || new Set(reportedPaths).size !== reportedPaths.length || actualFiles.some(file => !file)) return undefined
+    const features: WorkerFeature[] = []
+    for (const [index, value] of record.features.entries()) {
+        const feature = ownRecord(value)
+        if (!feature || Object.keys(feature).sort().join(',') !== 'count,feature,paths' || feature.feature !== requested[index]
+            || !FEATURES.has(feature.feature as SurfaceFeature) || !Number.isSafeInteger(feature.count) || (feature.count as number) < 0) return undefined
+        const paths = stringArray(feature.paths)
+        if (!paths || new Set(paths).size !== paths.length) return undefined
+        features.push(Object.freeze({ feature: feature.feature as SurfaceFeature, count: feature.count as number, paths }))
     }
+    return Object.freeze({
+        version: 1,
+        target,
+        features: Object.freeze(features),
+        reportedPaths: Object.freeze([...reportedPaths]),
+        actualFiles: Object.freeze(actualFiles as WorkerFile[]),
+        warnings,
+    })
 }
 
 function parseReadReceipt(bytes: Buffer): readonly ReadFileReceipt[] | undefined {
-    try {
-        const text = outputText(bytes)
-        const record = text === undefined ? undefined : ownRecord(JSON.parse(text))
-        if (!record || Object.keys(record).sort().join(',') !== 'files,version' || record.version !== 1
-            || !Array.isArray(record.files) || record.files.length > SURFACE_OUTPUT_MAX_FILES) return undefined
-        const files: ReadFileReceipt[] = []
-        let total = 0
-        for (const value of record.files) {
-            const item = ownRecord(value)
-            if (!item || Object.keys(item).sort().join(',') !== 'bytes,bytesBase64,path,sha256' || typeof item.bytesBase64 !== 'string') return undefined
-            const file = workerFile({ path: item.path, bytes: item.bytes, sha256: item.sha256 })
-            if (!file) return undefined
-            const decoded = Buffer.from(item.bytesBase64, 'base64')
-            total += decoded.byteLength
-            if (decoded.byteLength !== file.bytes || total > SURFACE_OUTPUT_MAX_BYTES || sha256(decoded) !== file.sha256) return undefined
-            files.push(Object.freeze({ ...file, bytesBase64: item.bytesBase64 }))
-        }
-        return Object.freeze(files)
-    } catch {
-        // unparseable input is malformed; the caller refuses it.
-        return undefined
+    const text = outputText(bytes)
+    const record = text === undefined ? undefined : ownRecord(tryParseJson(text))
+    if (!record || Object.keys(record).sort().join(',') !== 'files,version' || record.version !== 1
+        || !Array.isArray(record.files) || record.files.length > SURFACE_OUTPUT_MAX_FILES) return undefined
+    const files: ReadFileReceipt[] = []
+    let total = 0
+    for (const value of record.files) {
+        const item = ownRecord(value)
+        if (!item || Object.keys(item).sort().join(',') !== 'bytes,bytesBase64,path,sha256' || typeof item.bytesBase64 !== 'string') return undefined
+        const file = workerFile({ path: item.path, bytes: item.bytes, sha256: item.sha256 })
+        if (!file) return undefined
+        const decoded = Buffer.from(item.bytesBase64, 'base64')
+        total += decoded.byteLength
+        if (decoded.byteLength !== file.bytes || total > SURFACE_OUTPUT_MAX_BYTES || sha256(decoded) !== file.sha256) return undefined
+        files.push(Object.freeze({ ...file, bytesBase64: item.bytesBase64 }))
     }
+    return Object.freeze(files)
 }
 
 function samePaths(actual: readonly string[], expected: readonly string[]): boolean {
@@ -558,7 +544,7 @@ async function writeSources(root: string, batch: SurfaceBatch): Promise<void> {
     for (const source of batch.sources) {
         const target = resolve(root, source.path)
         const offset = relative(root, target)
-        if (offset === '' || offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset)) throw new TypeError('source path escaped staging')
+        if (offset === '' || offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset)) throw new RefusalError('source path escaped staging')
         await mkdir(dirname(target), { recursive: true, mode: 0o700 })
         await writeFile(target, source.bytes, { mode: 0o600, flag: 'wx' })
     }
@@ -578,12 +564,8 @@ async function directoryIdentity(path: string): Promise<DirectoryIdentity | unde
 function canonicalReceipt(bytes: Buffer): boolean {
     const text = outputText(bytes)
     if (text === undefined || !text.endsWith('\n')) return false
-    try {
-        return `${JSON.stringify(JSON.parse(text))}\n` === text
-    } catch {
-        // unparseable input is malformed; the caller refuses it.
-        return false
-    }
+    const value = tryParseJson(text)
+    return value !== undefined && `${JSON.stringify(value)}\n` === text
 }
 
 async function readPrivateReceipt(path: string, summary: ReceiptSummary): Promise<Buffer | undefined> {
@@ -619,44 +601,39 @@ function receiptSummaries(
     bytes: Buffer,
     jobs: readonly EstateJob[],
 ): ReadonlyMap<string, ReceiptSummary | SurfaceGenerationDiagnostic> | undefined {
-    try {
-        const text = outputText(bytes)
-        const record = text === undefined ? undefined : ownRecord(JSON.parse(text))
-        if (!record || Object.keys(record).sort().join(',') !== 'jobs,version' || record.version !== 1
-            || !Array.isArray(record.jobs) || record.jobs.length !== jobs.length) return undefined
-        const summaries = new Map<string, ReceiptSummary | SurfaceGenerationDiagnostic>()
-        for (let index = 0; index < jobs.length; index += 1) {
-            const expected = jobs[index]!
-            const row = ownRecord(record.jobs[index])
-            if (!row || row.id !== expected.id || row.target !== expected.generatorTarget || summaries.has(expected.id)
-                || row.kind !== 'complete' && row.kind !== 'error') return undefined
-            if (row.kind === 'error') {
-                if (Object.keys(row).sort().join(',') !== 'cause,id,kind,message,target'
-                    || row.cause !== 'nonzero' && row.cause !== 'stderr' && row.cause !== 'artifact'
-                    || typeof row.message !== 'string'
-                    || Buffer.byteLength(row.message) > 4_096) return undefined
-                summaries.set(expected.id, row.cause === 'stderr'
-                    ? diagnostic('SURFACE_WORKER_STDERR', 'surface generator emitted a diagnostic; partial output was refused', 'stderr', expected.generatorTarget, row.message)
-                    : row.cause === 'artifact'
-                        ? diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output could not be authenticated', 'artifact', expected.generatorTarget, row.message)
-                        : diagnostic('SURFACE_WORKER_NONZERO', 'surface generator worker did not complete successfully', 'nonzero', expected.generatorTarget, row.message))
-                continue
-            }
-            if (Object.keys(row).sort().join(',') !== 'bytes,id,kind,sha256,target'
-                || !Number.isSafeInteger(row.bytes) || (row.bytes as number) < 1 || (row.bytes as number) > MAX_WORKER_STDOUT_BYTES
-                || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
-            summaries.set(expected.id, Object.freeze({
-                id: expected.id,
-                target: expected.generatorTarget,
-                bytes: row.bytes as number,
-                sha256: row.sha256,
-            }))
+    const text = outputText(bytes)
+    const record = text === undefined ? undefined : ownRecord(tryParseJson(text))
+    if (!record || Object.keys(record).sort().join(',') !== 'jobs,version' || record.version !== 1
+        || !Array.isArray(record.jobs) || record.jobs.length !== jobs.length) return undefined
+    const summaries = new Map<string, ReceiptSummary | SurfaceGenerationDiagnostic>()
+    for (let index = 0; index < jobs.length; index += 1) {
+        const expected = jobs[index]!
+        const row = ownRecord(record.jobs[index])
+        if (!row || row.id !== expected.id || row.target !== expected.generatorTarget || summaries.has(expected.id)
+            || row.kind !== 'complete' && row.kind !== 'error') return undefined
+        if (row.kind === 'error') {
+            if (Object.keys(row).sort().join(',') !== 'cause,id,kind,message,target'
+                || row.cause !== 'nonzero' && row.cause !== 'stderr' && row.cause !== 'artifact'
+                || typeof row.message !== 'string'
+                || Buffer.byteLength(row.message) > 4_096) return undefined
+            summaries.set(expected.id, row.cause === 'stderr'
+                ? diagnostic('SURFACE_WORKER_STDERR', 'surface generator emitted a diagnostic; partial output was refused', 'stderr', expected.generatorTarget, row.message)
+                : row.cause === 'artifact'
+                    ? diagnostic('SURFACE_ARTIFACT_INVALID', 'surface output could not be authenticated', 'artifact', expected.generatorTarget, row.message)
+                    : diagnostic('SURFACE_WORKER_NONZERO', 'surface generator worker did not complete successfully', 'nonzero', expected.generatorTarget, row.message))
+            continue
         }
-        return summaries
-    } catch {
-        // unparseable input is malformed; the caller refuses it.
-        return undefined
+        if (Object.keys(row).sort().join(',') !== 'bytes,id,kind,sha256,target'
+            || !Number.isSafeInteger(row.bytes) || (row.bytes as number) < 1 || (row.bytes as number) > MAX_WORKER_STDOUT_BYTES
+            || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
+        summaries.set(expected.id, Object.freeze({
+            id: expected.id,
+            target: expected.generatorTarget,
+            bytes: row.bytes as number,
+            sha256: row.sha256,
+        }))
     }
+    return summaries
 }
 
 async function stageEstatePass(root: string, jobs: readonly EstateJob[]): Promise<readonly StagedEstateJob[] | undefined> {
@@ -851,7 +828,7 @@ async function cleanupScratch(scratch: string, node: NodeAuthority, program: Lib
         await lstat(scratch)
         return false
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        return hasErrorCode(error, 'ENOENT')
     }
 }
 
@@ -904,18 +881,18 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
     let node: NodeAuthority
     try { node = await nodeAuthority() } catch (error) {
         return unavailable(diagnostic('SURFACE_NODE_UNAVAILABLE',
-            `the Node executable could not be authenticated: ${failureReason(error)}`, 'package', process.execPath))
+            `the Node executable could not be authenticated: ${errorCause(error)}`, 'package', process.execPath))
     }
     let bundle: BundleAuthority
     try { bundle = await bundleAuthority() } catch (error) {
         return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE',
-            `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable: ${failureReason(error)} — fix: reinstall @b0dea/cockpit`,
+            `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable: ${errorCause(error)} — fix: reinstall @b0dea/cockpit`,
             'package', 'rulesync-generator.cjs'))
     }
     let programs: SurfacePrograms
     try { programs = surfacePrograms() } catch (error) {
         return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE',
-            `the surface generator workers are unavailable: ${failureReason(error)}`, 'package', 'libexec'))
+            `the surface generator workers are unavailable: ${errorCause(error)}`, 'package', 'libexec'))
     }
 
     let scratch: string
@@ -926,7 +903,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
         await chmod(scratch, 0o700)
     } catch (error) {
         return unavailable(diagnostic('SURFACE_SCRATCH_UNAVAILABLE',
-            `private surface staging could not be created: ${failureReason(error)}`, 'package', tmpdir()))
+            `private surface staging could not be created: ${errorCause(error)}`, 'package', tmpdir()))
     }
 
     let outcome: SurfaceEstateGenerationOutcome
@@ -939,7 +916,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
         await mkdir(secondRoot, { mode: 0o700 })
         const firstJobs = await stageEstatePass(firstRoot, jobs)
         const secondJobs = await stageEstatePass(secondRoot, jobs)
-        if (!firstJobs || !secondJobs) throw new Error('surface estate roots could not be authenticated')
+        if (!firstJobs || !secondJobs) throw new RefusalError('surface estate roots could not be authenticated')
         const settled = await Promise.allSettled([
             runEstatePass('first', firstRoot, firstJobs, node, bundle, programs, deadline),
             runEstatePass('second', secondRoot, secondJobs, node, bundle, programs, deadline),
@@ -947,7 +924,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
         const passes = settled.map((result): EstatePassResult => result.status === 'fulfilled' ? result.value : {
             preserveScratch: true,
             jobs: new Map(jobs.map(job => [job.id, diagnostic('SURFACE_STAGING_FAILED',
-                result.reason instanceof Error ? result.reason.message : 'surface pass did not complete',
+                errorCause(result.reason),
                 'artifact', job.generatorTarget)])),
         })
         preserveScratch = passes.some(pass => pass.preserveScratch === true)
@@ -999,7 +976,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
     } catch (error) {
         outcome = refuse(diagnostic(
             'SURFACE_STAGING_FAILED',
-            error instanceof Error ? `surface estate staging failed: ${error.message}` : 'surface estate staging failed',
+            `surface estate staging failed: ${errorCause(error)}`,
             'artifact',
             'surface-estate',
         ))

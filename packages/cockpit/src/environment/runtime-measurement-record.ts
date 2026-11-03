@@ -1,3 +1,4 @@
+import { errorCause, hasErrorCode } from './contract.js'
 /**
  * Owns this machine's runtime measurements: `machine/runtime-measurements.json` under the per-user
  * state root, one row per measured runtime. A row is keyed by the runtime product, the daemon
@@ -43,10 +44,6 @@ export type LocalRuntimeMeasurements =
     | Readonly<{ kind: 'read'; path: string; rows: readonly RuntimeMeasurementRow[] }>
     | Readonly<{ kind: 'unreadable'; path: string; reason: string }>
 
-function errorCode(error: unknown): string {
-    return (error as NodeJS.ErrnoException).code ?? (error as Error).message
-}
-
 /** Read the rows; a missing file is an empty record, anything else unreadable names why. */
 export async function readLocalRuntimeMeasurements(stateRoot: string): Promise<LocalRuntimeMeasurements> {
     const path = join(stateRoot, MEASUREMENTS_PATH)
@@ -56,8 +53,8 @@ export async function readLocalRuntimeMeasurements(stateRoot: string): Promise<L
         if (read.kind !== 'complete') return Object.freeze({ kind: 'unreadable', path, reason: 'the file is larger than cockpit reads' })
         bytes = read.bytes
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Object.freeze({ kind: 'read', path, rows: Object.freeze([]) })
-        return Object.freeze({ kind: 'unreadable', path, reason: `the file could not be read (${errorCode(error)})` })
+        if (hasErrorCode(error, 'ENOENT')) return Object.freeze({ kind: 'read', path, rows: Object.freeze([]) })
+        return Object.freeze({ kind: 'unreadable', path, reason: `the file could not be read (${errorCause(error)})` })
     }
     let value: unknown
     try {
@@ -83,7 +80,7 @@ async function plainDirectory(path: string): Promise<'present' | 'absent' | stri
         const status = await lstat(path)
         return status.isDirectory() && !status.isSymbolicLink() ? 'present' : `${path} is not a plain directory`
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : `${path} is unavailable (${errorCode(error)})`
+        return hasErrorCode(error, 'ENOENT') ? 'absent' : `${path} is unavailable (${errorCause(error)})`
     }
 }
 
@@ -123,6 +120,6 @@ export async function recordLocalRuntimeMeasurement(stateRoot: string, row: Runt
         await replaceFile(directory, 'runtime-measurements.json', `${JSON.stringify(record, null, 2)}\n`)
         return Object.freeze({ kind: 'complete', path, replaced, discardedUnreadable: current.kind === 'unreadable' ? current.reason : null })
     } catch (error) {
-        return Object.freeze({ kind: 'refusal', path, reason: `the record could not be written (${errorCode(error)})` })
+        return Object.freeze({ kind: 'refusal', path, reason: `the record could not be written (${errorCause(error)})` })
     }
 }

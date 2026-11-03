@@ -155,7 +155,7 @@ describe('reviewable upgrade plan', () => {
 
     it('turns a discovery transport exception into a named refusal without retrying', async () => {
         const discoverAuthenticated = vi.fn(async () => {
-            throw new Error('synthetic registry outage')
+            throw Object.assign(new Error('getaddrinfo ENOTFOUND registry.invalid'), { code: 'ENOTFOUND', syscall: 'getaddrinfo' })
         })
 
         const outcome = await upgradeCommand({ configPath: 'cockpit.toml' }, { discoverAuthenticated })
@@ -168,7 +168,7 @@ describe('reviewable upgrade plan', () => {
             diagnostics: [{
                 severity: 'error',
                 code: 'UPGRADE_NETWORK_FAILED',
-                message: 'upgrade discovery failed: synthetic registry outage',
+                message: 'upgrade discovery failed: getaddrinfo ENOTFOUND registry.invalid',
                 target: 'cockpit.toml',
             }],
         })

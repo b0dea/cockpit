@@ -68,8 +68,10 @@ import {
     withSetupCheckoutProjection,
 } from './environment/setup-observation.js'
 import {
+    RefusalError,
     ENVIRONMENT_CODES,
     errorCause,
+    hasErrorCode,
     INHERITED_TOOL_ENVIRONMENT,
     isCanonicalTimestamp,
     type EnvironmentCommandOutcome,
@@ -816,19 +818,20 @@ function optionCount(args: readonly string[], name: string): number {
 }
 
 const ANSWERS_FILE_BYTE_LIMIT = 262_144
+const PARSE_ARGS_CODES = ['ERR_PARSE_ARGS_UNKNOWN_OPTION', 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE', 'ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL'] as const
 
 /** The only path init creates outside its root: the previewed dedicated repository, never its parents. */
 async function createDedicatedCockpitRoot(path: string, env: Readonly<Record<string, string | undefined>>): Promise<void> {
     try { await mkdir(path, { mode: 0o755 }) }
     catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        if (!hasErrorCode(error, 'EEXIST')) throw error
     }
     const status = await lstat(path)
     if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== path) {
-        throw new Error(`${path} exists and is not a plain directory`)
+        throw new RefusalError(`${path} exists and is not a plain directory`)
     }
     const initialised = await initializeLocalGitRepository({ path, env }, { execute: executeProbe })
-    if (initialised.kind === 'refusal') throw new Error(initialised.reason)
+    if (initialised.kind === 'refusal') throw new RefusalError(initialised.reason)
 }
 
 /** Reads the consent digests and answers file of an unattended init; absent flags mean a terminal run. */
@@ -861,7 +864,7 @@ async function decodeUnattendedInit(values: {
             answers = parseToml(text)
         } catch (error) {
             return usageOutcome('CLI_USAGE_INVALID',
-                `--answers ${path} could not be read as one bounded regular TOML file (${error instanceof Error ? error.message : 'unknown error'}); replace it with a plain TOML file and retry`, '--answers')
+                `--answers ${path} could not be read as one bounded regular TOML file (${errorCause(error)}); replace it with a plain TOML file and retry`, '--answers')
         }
     }
     return { value: { previewSha256, answers, ...(defaultsSha256 === undefined ? {} : { defaultsSha256 }) } }
@@ -1450,15 +1453,15 @@ export async function runCli(
         let response: Awaited<ReturnType<typeof runGuardEvaluationApplication>>
         try {
             if (commandArgs.length !== 2 || commandArgs[0] !== '--harness'
-                || !isGuardSurfaceTarget(commandArgs[1])) throw new Error('Invalid private guard arguments.')
+                || !isGuardSurfaceTarget(commandArgs[1])) throw new RefusalError('Invalid private guard arguments.')
             harness = commandArgs[1]
-            if (!io.stdin) throw new Error('Guard input stream is missing.')
+            if (!io.stdin) throw new RefusalError('Guard input stream is missing.')
             const chunks: Buffer[] = []
             let bytes = 0
             for await (const chunk of io.stdin) {
                 const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
                 bytes += buffer.length
-                if (bytes > GUARD_INPUT_LIMITS.inputBytes) throw new Error('Guard input exceeds its byte bound.')
+                if (bytes > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Guard input exceeds its byte bound.')
                 chunks.push(buffer)
             }
             const raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes))
@@ -1472,9 +1475,9 @@ export async function runCli(
                         tool_input: native?.tool_input, cwd: native?.cwd ?? process.cwd() }
             }
             const identityBytes = (runtime.env ?? process.env).COCKPIT_GUARD_IDENTITY
-            if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new Error('Installed guard identity is missing or oversized.')
+            if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Installed guard identity is missing or oversized.')
             const guardRoot = (runtime.env ?? process.env).COCKPIT_GUARD_ROOT
-            if (!guardRoot) throw new Error('Installed guard root is missing.')
+            if (!guardRoot) throw new RefusalError('Installed guard root is missing.')
             const guardEnvironment = runtime.env ?? process.env
             response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(), transport: !reply,
                 askIsDeny: guardEnvironment.COCKPIT_ASK_IS_DENY === '1',
@@ -1567,7 +1570,8 @@ export async function runCli(
                 options: definition.options,
             }) as ParsedCommandArguments
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'invalid command arguments'
+            // parseArgs words its refusal from the command line the person typed; anything else is unexpected.
+            const message = hasErrorCode(error, ...PARSE_ARGS_CODES) ? (error as Error).message : errorCause(error)
             outcome = usageOutcome('CLI_USAGE_INVALID', message)
         }
 
@@ -1597,7 +1601,7 @@ export async function runCli(
                 } catch (error) {
                     outcome = usageOutcome(
                         'CLI_INTERNAL_ERROR',
-                        `the "${definition.handler}" command failed unexpectedly (${error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error value thrown'})`,
+                        `the "${definition.handler}" command failed unexpectedly (${errorCause(error)})`,
                         definition.handler,
                     )
                 }
@@ -1608,7 +1612,7 @@ export async function runCli(
                 } catch (error) {
                     outcome = usageOutcome(
                         'CLI_INTERNAL_ERROR',
-                        `the "${definition.handler}:output" operation failed unexpectedly (${error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error value thrown'})`,
+                        `the "${definition.handler}:output" operation failed unexpectedly (${errorCause(error)})`,
                         `${definition.handler}:output`,
                     )
                 }

@@ -3,6 +3,8 @@ import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, relative, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import {
+    hasErrorCode,
+    RefusalError,
     ENVIRONMENT_CODES,
     isCanonicalTimestamp,
     snapshotJson,
@@ -341,7 +343,7 @@ function fileIdentity(path: string): FileIdentity | undefined {
             : [status.dev, status.ino, status.mode, status.size, status.mtimeNs, status.ctimeNs]
         return Object.freeze({ state, identity: identity.map(String).join(':') })
     } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        return hasErrorCode(error, 'ENOENT')
             ? Object.freeze({ state: 'missing' })
             : undefined
     }
@@ -406,7 +408,7 @@ function sameBinding(left: LifecycleAuthorityBinding, right: LifecycleAuthorityB
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('lifecycle stage observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('lifecycle stage observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -487,7 +489,7 @@ export async function observeStateSeed(input: {
     readonly observedAt: string
 }): Promise<EnvironmentObservation> {
     const result = await resolveLifecycleStage(input)
-    if (result.kind !== 'complete') throw new TypeError(result.diagnostics[0]?.message ?? 'lifecycle stage is unavailable')
+    if (result.kind !== 'complete') throw new RefusalError(result.diagnostics[0]?.message ?? 'lifecycle stage is unavailable')
     return result.observation
 }
 

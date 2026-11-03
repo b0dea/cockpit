@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 
@@ -21,6 +22,14 @@ describe('diagnostic envelope', () => {
             const fix = /Fix: (.+)\n/.exec(rendered)![1]!
             if (/\b(delete|remove|rm)\b/.test(fix)) expect(fix, code).toMatch(/\bask the person\b/)
         }
+        // The same holds for a fix written beside its code that hands the agent a recursive delete.
+        const sources = readdirSync(new URL('.', import.meta.url), { recursive: true, encoding: 'utf8' })
+            .filter(path => path.endsWith('.ts') && !path.endsWith('.test.ts'))
+            .map(path => readFileSync(new URL(path, import.meta.url), 'utf8'))
+        const deletions = sources.flatMap(source => [...source.matchAll(/\bfix: (`[^`]*`|'[^']*')/g)].map(match => match[1]!))
+            .filter(fix => /\brm -r/.test(fix))
+        expect(deletions.length).toBeGreaterThan(0)
+        for (const fix of deletions) expect(fix).toMatch(/\bask the person\b/)
     })
 
     it('prints the runtime measure remedy bare, since a wrapped command prompts and some agents treat a prompt as a denial', () => {

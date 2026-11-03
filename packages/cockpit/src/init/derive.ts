@@ -10,7 +10,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
-import { errorCause } from '../environment/contract.js'
+import { errorCause, hasErrorCode } from '../environment/contract.js'
 import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
 import { repositoryIdentity } from '../environment/repository-identity.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
@@ -87,7 +87,7 @@ async function inspectDirectory(root: string, directory: string): Promise<Direct
         return { kind: 'complete', path, dev: stat.dev, ino: stat.ino }
     }
     catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' }
+        if (hasErrorCode(error, 'ENOENT')) return { kind: 'absent' }
         return { kind: 'skipped', reason: `could not be inspected (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` }
     }
 }
@@ -126,7 +126,7 @@ async function fileExists(root: string, directory: string, name: string): Promis
     const parent = await inspectDirectory(root, directory)
     if (parent.kind !== 'complete') return parent.kind
     try { return (await lstat(resolve(parent.path, name))).isFile() ? 'present' : 'skipped' }
-    catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'skipped' }
+    catch (error) { return hasErrorCode(error, 'ENOENT') ? 'absent' : 'skipped' }
 }
 
 function joinLogical(text: string): string[] {

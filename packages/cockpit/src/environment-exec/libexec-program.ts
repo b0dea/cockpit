@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { RefusalError, errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'libexec-program',
@@ -26,7 +27,7 @@ export function libexecProgram(name: string): LibexecProgram {
     try {
         descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
         const opened = fstatSync(descriptor)
-        if (!opened.isFile() || opened.size > PROGRAM_MAX_BYTES) throw new Error(`not a regular file of at most ${PROGRAM_MAX_BYTES} bytes`)
+        if (!opened.isFile() || opened.size > PROGRAM_MAX_BYTES) throw new RefusalError(`not a regular file of at most ${PROGRAM_MAX_BYTES} bytes`)
         const bytes = Buffer.alloc(opened.size + 1)
         let length = 0
         while (length < bytes.length) {
@@ -35,10 +36,10 @@ export function libexecProgram(name: string): LibexecProgram {
             length += read
         }
         const named = lstatSync(path)
-        if (length !== opened.size || named.dev !== opened.dev || named.ino !== opened.ino) throw new Error('changed while it was read')
+        if (length !== opened.size || named.dev !== opened.dev || named.ino !== opened.ino) throw new RefusalError('changed while it was read')
         return Object.freeze({ path, sha256: createHash('sha256').update(bytes.subarray(0, length)).digest('hex'), maxBytes: PROGRAM_MAX_BYTES })
     } catch (error) {
-        throw new Error(`cockpit's bundled program ${path} cannot be authenticated (${error instanceof Error ? error.message : String(error)}); `
+        throw new RefusalError(`cockpit's bundled program ${path} cannot be authenticated (${errorCause(error)}); `
             + 'cockpit runs only bundled programs whose bytes it hashed — fix: reinstall @b0dea/cockpit', { cause: error })
     } finally {
         if (descriptor !== undefined) closeSync(descriptor)

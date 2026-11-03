@@ -3,7 +3,7 @@ import { isAbsolute, normalize } from 'node:path'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { composeProjectDirectory } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { ENVIRONMENT_CODES, MAX_STEP_TIMEOUT_MS, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, MAX_STEP_TIMEOUT_MS, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId, RefusalError, errorCause } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
 import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, observedVersionCore, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
@@ -452,9 +452,9 @@ function instantMs(value: string): number { return Date.parse(value) }
 
 function instantNanoseconds(value: string): bigint {
     const match = RFC3339.exec(value)
-    if (match === null) throw new TypeError('invalid timestamp')
+    if (match === null) throw new RefusalError('invalid timestamp')
     const baseMilliseconds = Date.parse(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`)
-    if (!Number.isFinite(baseMilliseconds)) throw new TypeError('invalid timestamp')
+    if (!Number.isFinite(baseMilliseconds)) throw new RefusalError('invalid timestamp')
     const fraction = BigInt((match[7] ?? '').padEnd(9, '0') || '0')
     const offsetMagnitude = match[8] === 'Z' ? 0n : BigInt((Number(match[10]) * 60 + Number(match[11])) * 60)
     const offsetSeconds = match[9] === '-' ? -offsetMagnitude : offsetMagnitude
@@ -506,7 +506,7 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
     if (restart !== undefined && resolvedRestart === undefined) return unreadable('the restart window is malformed')
     let rawOutcome: unknown
     try { rawOutcome = await execute(resolvedPlan.step, { signal }) } catch (error) {
-        return unreadable(`the log read could not run: ${error instanceof Error ? error.message : String(error)}`)
+        return unreadable(`the log read could not run: ${errorCause(error)}`)
     }
     const outcome = authenticatedExecutionOutcome(rawOutcome, resolvedPlan.step)
     const authority = resolvedPlan.step.labels

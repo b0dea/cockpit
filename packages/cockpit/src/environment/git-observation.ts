@@ -3,6 +3,7 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import {
+    RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_REASON_BYTE_LIMIT,
     snapshotEnvironmentObservation,
@@ -36,7 +37,7 @@ const issuedObservations = new WeakMap<object, number>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('Git observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('Git observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -589,7 +590,7 @@ export async function inspectTrackedSecretFiles(input: {
     readonly timeoutMs: number
 }, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<readonly EnvironmentDiagnostic[]> {
     const executable = resolvedGitExecutable(input.executable)
-    if (!executable) throw new TypeError('tracked secret inspection needs a resolved Git executable')
+    if (!executable) throw new RefusalError('tracked secret inspection needs a resolved Git executable')
     const findings: EnvironmentDiagnostic[] = []
     for (const repository of input.repositories) {
         const step = snapshotExecutionStep({
@@ -603,7 +604,7 @@ export async function inspectTrackedSecretFiles(input: {
                 argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
             filesystemChecks: [], compensation: [],
         })
-        if (!step) throw new TypeError(`tracked secret inspection could not be planned for ${repository.slug}`)
+        if (!step) throw new RefusalError(`tracked secret inspection could not be planned for ${repository.slug}`)
         const outcome = authenticatedExecutionOutcome(await execute(step), step)
         // Git exits non-zero in a directory that is not a repository, which tracks nothing; that gap is
         // reported where Git state is. Any other refusal is a probe that did not run, and says so.

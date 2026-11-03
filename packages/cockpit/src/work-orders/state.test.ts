@@ -93,11 +93,11 @@ describe('durable work-order progress', () => {
         expect(loaded.value.heartbeat).toEqual(writer)
         const failed = await persistWorkOrderProgress(contract, defaultPolicy, before, event, writer, {
             read: store.read,
-            compareAndSwap: async () => { throw new Error('disk full') },
+            compareAndSwap: async () => { throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', syscall: 'write' }) },
         })
         expect(failed).toMatchObject({ kind: 'refusal', code: 'WO_STATE_PERSIST_FAILED' })
         assert(failed.kind === 'refusal')
-        expect(failed.message).toContain('disk full')
+        expect(failed.message).toContain('ENOSPC: no space left on device')
     })
 
     it('refuses concurrent updates and a successful write acknowledgement without readback', async () => {

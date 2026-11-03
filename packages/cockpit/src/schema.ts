@@ -7,6 +7,7 @@ import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
 import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
+import { RefusalError, errorCause } from './environment/contract.js'
 
 export const mechanism = {
     id: 'configuration-schema',
@@ -177,14 +178,14 @@ export function parseBrowserNetworkExposure(
     }
     if (Buffer.byteLength(exposure) > 512 || rules.length === 0 || rules.length > 32
         || new Set(rules).size !== rules.length || rules.some((rule) => !rule || rule !== rule.trim() || !validRule(rule))) {
-        throw new TypeError('browser network exposure must contain bounded Playwright hostname, IP, wildcard or loopback rules')
+        throw new RefusalError('browser network exposure must contain bounded Playwright hostname, IP, wildcard or loopback rules')
     }
     if (exposure === '<loopback>') {
-        if (reason !== undefined) throw new TypeError('browser network exposure reason is only valid for a wider decision')
+        if (reason !== undefined) throw new RefusalError('browser network exposure reason is only valid for a wider decision')
         return Object.freeze({ value: exposure })
     }
     if (typeof reason !== 'string' || reason !== reason.trim() || reason.length === 0 || Buffer.byteLength(reason) > 512
-        || /[\x00-\x1f\x7f]/.test(reason)) throw new TypeError('wider browser network exposure requires a bounded explicit reason')
+        || /[\x00-\x1f\x7f]/.test(reason)) throw new RefusalError('wider browser network exposure requires a bounded explicit reason')
     return Object.freeze({ value: exposure, reason })
 }
 
@@ -953,7 +954,7 @@ export const Browser = z.object({
     try {
         parseBrowserNetworkExposure(browser.network_exposure, browser.network_exposure_reason)
     } catch (error) {
-        ctx.addIssue({ code: 'custom', path: ['network_exposure'], message: error instanceof Error ? error.message : 'invalid browser network exposure' })
+        ctx.addIssue({ code: 'custom', path: ['network_exposure'], message: errorCause(error) })
     }
     if ((browser.project.manifest === undefined) !== (browser.project.manifest_sha256 === undefined)) {
         ctx.addIssue({ code: 'custom', path: ['project'], message: 'browser project manifest path and digest must be declared together' })

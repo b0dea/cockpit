@@ -519,8 +519,8 @@ function executionBoundaryViolations(
             && compactRelease(releaseQuery.body.getText(sourceFile)).includes('awaitPromise.race([timeout,(async()=>{')
             && compactRelease(releaseQuery.body.getText(sourceFile)).includes('transport({url:`https://registry.npmjs.org/${encodeURIComponent(installedPackageMetadata.name)}/latest`,signal:controller.signal})')) {
             const patterns = new Set([
-                "timer=setTimeout(()=>{controller.abort();reject(newError('releasemetadataquerytimedout'))},TIMEOUT_MS)",
-                "if(size>MAX_BYTES){controller.abort();thrownewError('releasemetadataexceededbytelimit')}",
+                "timer=setTimeout(()=>{controller.abort();reject(newRefusalError('releasemetadataquerytimedout'))},TIMEOUT_MS)",
+                "if(size>MAX_BYTES){controller.abort();thrownewRefusalError('releasemetadataexceededbytelimit')}",
                 '{if(timer)clearTimeout(timer)controller.abort()}',
             ].map(text => text.replace(/;/g, '')))
             const matchedPatterns = new Set<string>()
@@ -1205,6 +1205,8 @@ function hasDecisionSyntax(source: string): boolean {
                     'executeOutcome',
                     'executeEnvironmentOutcome',
                     'usageOutcome',
+                    // Describes a thrown value in the words it may surface; it decides nothing.
+                    'errorCause',
                     'renderJsonResponse',
                     'renderHumanDiagnostics',
                     'io.stdout.write',

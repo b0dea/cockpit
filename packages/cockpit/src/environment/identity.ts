@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, normalize } from 'node:path'
 import type { CheckoutId, CockpitId, HolderId, StackId } from './contract.js'
+import { RefusalError } from './contract.js'
 
 export const mechanism = {
     id: 'environment-identity',
@@ -41,21 +42,21 @@ function digest(parts: readonly string[]): string {
 
 function canonicalPath(value: string, field: string): string {
     if (typeof value !== 'string' || value.includes('\0') || !isAbsolute(value) || normalize(value) !== value) {
-        throw new TypeError(`identity: ${field} must be a canonical absolute path`)
+        throw new RefusalError(`identity: ${field} must be a canonical absolute path`)
     }
     return value
 }
 
 function closedIdentity(value: string, pattern: RegExp, field: string): string {
     if (typeof value !== 'string' || !pattern.test(value)) {
-        throw new TypeError(`identity: ${field} is malformed`)
+        throw new RefusalError(`identity: ${field} is malformed`)
     }
     return value
 }
 
 export function cockpitId(input: { readonly name: string } & CanonicalMainCheckoutEvidence): CockpitId {
     if (typeof input?.name !== 'string' || !COCKPIT_NAME.test(input.name)) {
-        throw new TypeError('identity: cockpit name must use lowercase letters, digits, and hyphens')
+        throw new RefusalError('identity: cockpit name must use lowercase letters, digits, and hyphens')
     }
     const mainCheckoutPath = canonicalPath(input.mainCheckoutPath, 'mainCheckoutPath')
     return `cockpit:${input.name}:${digest([mainCheckoutPath])}` as CockpitId
@@ -63,7 +64,7 @@ export function cockpitId(input: { readonly name: string } & CanonicalMainChecko
 
 export function publicationCockpitId(input: { readonly name: string }): CockpitId {
     if (typeof input?.name !== 'string' || !COCKPIT_NAME.test(input.name)) {
-        throw new TypeError('identity: cockpit name must use lowercase letters, digits, and hyphens')
+        throw new RefusalError('identity: cockpit name must use lowercase letters, digits, and hyphens')
     }
     return `cockpit:${input.name}:${digest(['publication', input.name])}` as CockpitId
 }
@@ -87,7 +88,7 @@ export function stackId(input: {
     if (variant?.kind === 'named' && STACK_NAME.test(variant.name)) {
         return `stack:${digest([cockpit, checkout, 'named', variant.name])}` as StackId
     }
-    throw new TypeError('identity: stack variant is malformed')
+    throw new RefusalError('identity: stack variant is malformed')
 }
 
 /**
@@ -97,7 +98,7 @@ export function stackId(input: {
  */
 export function composeProjectName(input: { readonly cockpitName: string; readonly stackId: StackId }): string {
     if (typeof input?.cockpitName !== 'string' || !COCKPIT_NAME.test(input.cockpitName)) {
-        throw new TypeError('identity: cockpit name must use lowercase letters, digits, and hyphens')
+        throw new RefusalError('identity: cockpit name must use lowercase letters, digits, and hyphens')
     }
     const stack = closedIdentity(input.stackId, STACK_ID, 'stackId')
     return `${input.cockpitName}-${stack.slice('stack:'.length, 'stack:'.length + 12)}`
@@ -111,7 +112,7 @@ export function holderId(input: {
     const stack = closedIdentity(input?.stackId, STACK_ID, 'stackId')
     const checkout = closedIdentity(input?.checkoutId, CHECKOUT_ID, 'checkoutId')
     if (typeof input.sessionId !== 'string' || input.sessionId.length === 0 || input.sessionId.includes('\0')) {
-        throw new TypeError('identity: sessionId must be a non-empty string without NUL bytes')
+        throw new RefusalError('identity: sessionId must be a non-empty string without NUL bytes')
     }
     return `holder:${digest([stack, checkout, 'session', input.sessionId])}:session` as HolderId
 }
@@ -122,7 +123,7 @@ export function bootstrapHolderId(input: {
 }): BootstrapLockOwnerId {
     const checkout = closedIdentity(input?.checkoutId, CHECKOUT_ID, 'checkoutId')
     if (typeof input.sessionId !== 'string' || input.sessionId.length === 0 || input.sessionId.includes('\0')) {
-        throw new TypeError('identity: sessionId must be a non-empty string without NUL bytes')
+        throw new RefusalError('identity: sessionId must be a non-empty string without NUL bytes')
     }
     return `bootstrap-holder:${digest([checkout, 'session', input.sessionId])}:session` as BootstrapLockOwnerId
 }

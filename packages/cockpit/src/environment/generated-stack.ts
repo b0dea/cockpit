@@ -8,7 +8,7 @@ import { parse as parseYaml } from 'yaml'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { DECISIONS_PATH, decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId, RefusalError, errorCause } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     authenticateGeneratedRender,
@@ -289,7 +289,7 @@ export function inspectGeneratedEnvironment(input: {
     }
     try {
         const parsedCompose = parseYaml(rendered.compose)
-        if (parsedCompose === null || typeof parsedCompose !== 'object') throw new TypeError('not a mapping')
+        if (parsedCompose === null || typeof parsedCompose !== 'object') throw new RefusalError('not a mapping')
     } catch {
         // the refusal names the invalid YAML.
         return { kind: 'refusal', code: 'GENERATED_COMPOSE_INVALID', target: declaration.compose_file, reason: 'generated Compose is not valid YAML' }
@@ -701,7 +701,7 @@ export function createGeneratedObservationExecution(input: {
     try {
         step = generatedObservationStep(plan, generatedAuthority.runtime, activeProfiles, declaredPortVariables, generatedAuthority.hostInputRoots)
     } catch (error) {
-        return Object.freeze({ kind: 'unavailable', id: plan.id, reason: error instanceof Error ? error.message : String(error) })
+        return Object.freeze({ kind: 'unavailable', id: plan.id, reason: errorCause(error) })
     }
     if (!step) return Object.freeze({ kind: 'unavailable', id: plan.id, reason: 'generated observation has no authentic executable plan' })
     const execution = Object.freeze({ kind: 'planned' as const, id: plan.id, step })

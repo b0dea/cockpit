@@ -16,7 +16,7 @@ import {
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
+import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
@@ -163,28 +163,28 @@ function freezeBaseline(baseline: EnvironmentBaseline): EnvironmentBaseline {
     })
 }
 
-function baselineRevalidationFailure(error: unknown): TypeError {
-    const reason = error instanceof TypeError ? error.message : ''
+function baselineRevalidationFailure(error: unknown): RefusalError {
+    const reason = error instanceof RefusalError ? error.message : ''
     if (['configuration projection is unavailable', 'configuration authority does not match',
         'configuration and runtime authority do not match', 'compose artifacts are unavailable',
         'compose artifacts changed during runtime observation'].includes(reason)) {
-        return new TypeError('baseline config source changed')
+        return new RefusalError('baseline config source changed')
     }
     if (['authenticated runtime topology is unavailable', 'runtime executable authority changed'].includes(reason)) {
-        return new TypeError('baseline runtime topology changed')
+        return new RefusalError('baseline runtime topology changed')
     }
     if (['a complete stable runtime cohort is unavailable', 'runtime service cohort changed',
         'runtime evidence subject is unavailable', 'lifecycle state changed during baseline observation'].includes(reason)) {
-        return new TypeError('baseline runtime cohort changed')
+        return new RefusalError('baseline runtime cohort changed')
     }
     if (['previous baseline is unavailable', 'previous baseline is malformed'].includes(reason)) {
-        return new TypeError('baseline previous baseline changed')
+        return new RefusalError('baseline previous baseline changed')
     }
     if (['runtime evidence capture plan is unavailable:', 'runtime evidence capture is unavailable:',
         'runtime evidence is unavailable:'].some((prefix) => reason.startsWith(prefix))) {
-        return new TypeError('baseline runtime stability changed')
+        return new RefusalError('baseline runtime stability changed')
     }
-    return new TypeError('baseline revalidation is unavailable')
+    return new RefusalError('baseline revalidation is unavailable')
 }
 
 function captureInput(value: ReadCommandCompositionInput): CapturedInput | undefined {
@@ -337,7 +337,7 @@ export function createReadCommandAdapters(
     // `refuse` receives the lifecycle's own refusal, such as an unmeasured runtime, so a caller can
     // report it instead of a generic unavailable context.
     const prepare = async (signal?: AbortSignal, refuse?: ReadinessRefusal<never>): Promise<StableReadContext> => {
-        if (!input || typeof execute !== 'function') throw new TypeError('read command composition is unavailable')
+        if (!input || typeof execute !== 'function') throw new RefusalError('read command composition is unavailable')
         const lifecycle = createLifecycleCommandAdapters({
             configPath: input.configPath,
             env: input.env,
@@ -353,57 +353,57 @@ export function createReadCommandAdapters(
         }
         if (loaded.kind !== 'complete') {
             if (refuse && loaded.diagnostics.length > 0) refuse(loaded.diagnostics)
-            throw new TypeError('authenticated lifecycle context is unavailable')
+            throw new RefusalError('authenticated lifecycle context is unavailable')
         }
         const context = loaded.result
         const configurationResult = await loadCockpitConfig(input.configPath)
-        if (configurationResult.kind !== 'complete') throw new TypeError('configuration projection is unavailable')
+        if (configurationResult.kind !== 'complete') throw new RefusalError('configuration projection is unavailable')
         const configuration = consumeLoadedConfigProjection(configurationResult.result)
         if (!configuration || !sameSource(context.source, configuration.source)) {
-            throw new TypeError('configuration authority does not match')
+            throw new RefusalError('configuration authority does not match')
         }
         const checkoutRoot = dirname(configuration.source.path)
         const generated = configuration.config.environment.generated
         const references = generated ? [generated.compose_file] : configuration.config.environment.compose_files
         const composeFiles = await composeArtifacts(checkoutRoot, references)
-        if (!composeFiles) throw new TypeError('compose artifacts are unavailable')
+        if (!composeFiles) throw new RefusalError('compose artifacts are unavailable')
         const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
             holderId: context.holderId, checkoutId: context.checkoutId, config: context.ports })
-        if (retained.kind !== 'complete') throw new TypeError('retained port authority is unavailable')
+        if (retained.kind !== 'complete') throw new RefusalError('retained port authority is unavailable')
         const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: context.entrypointDerivatives })
         const ports: PortLeaseProjection | undefined = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
-        if (!ports) throw new TypeError('retained port projection is unavailable')
+        if (!ports) throw new RefusalError('retained port projection is unavailable')
         const readiness = await lifecycle.withRuntimeReadiness(context, async (value) => value, ports, refuse)
-        if (!readiness) throw new TypeError('authenticated runtime topology is unavailable')
+        if (!readiness) throw new RefusalError('authenticated runtime topology is unavailable')
         const generatedApplication = generated ? await lifecycle.withGeneratedRuntime(context, readiness,
             async ({ application }) => application) : undefined
         const generatedComposeAuthority = generatedApplication?.generatedComposeAuthority
-        if (generated && !generatedComposeAuthority) throw new TypeError('generated runtime authority is unavailable')
+        if (generated && !generatedComposeAuthority) throw new RefusalError('generated runtime authority is unavailable')
         if (readiness.topology.cwd !== checkoutRoot
             || readiness.topology.stackId !== context.stackId
             || readiness.topology.configSha256 !== context.runtimeSha256) {
-            throw new TypeError('configuration and runtime authority do not match')
+            throw new RefusalError('configuration and runtime authority do not match')
         }
         const lifecycleRead = await readState(context.namespace.paths.lifecycle(context.stackId))
-        if (lifecycleRead.kind !== 'complete') throw new TypeError('lifecycle state is unavailable')
+        if (lifecycleRead.kind !== 'complete') throw new RefusalError('lifecycle state is unavailable')
         const lifecycleValue = decodeLifecycleRecord(lifecycleRead.value, context)?.value
-        if (!lifecycleValue || lifecycleValue.completedServices.length === 0) throw new TypeError('lifecycle state is malformed')
-        if (lifecycleValue.holderId !== context.holderId) throw new TypeError('lifecycle holder authority changed')
+        if (!lifecycleValue || lifecycleValue.completedServices.length === 0) throw new RefusalError('lifecycle state is malformed')
+        if (lifecycleValue.holderId !== context.holderId) throw new RefusalError('lifecycle holder authority changed')
         if (generatedApplication && !isDeepStrictEqual(lifecycleValue.generatedReplay, {
             runtimeSha256: generatedApplication.runtimeSha256, generation: generatedApplication.generation,
             profiles: generatedApplication.profiles, mounts: generatedApplication.mounts,
-        })) throw new TypeError('generated lifecycle replay authority changed')
+        })) throw new RefusalError('generated lifecycle replay authority changed')
         const env = runtimeEnvironment(input.env)
         const executable = await resolveDockerExecutable(input.env)
         if (executable.state !== 'available') {
-            throw new TypeError(`runtime executable authority changed: ${executable.reason}`)
+            throw new RefusalError(`runtime executable authority changed: ${executable.reason}`)
         }
         if (executable.value.sha256 !== readiness.topology.executableSha256) {
-            throw new TypeError('runtime executable authority changed')
+            throw new RefusalError('runtime executable authority changed')
         }
         const confirmedComposeFiles = await composeArtifacts(checkoutRoot, references)
         if (!confirmedComposeFiles || JSON.stringify(confirmedComposeFiles) !== JSON.stringify(composeFiles)) {
-            throw new TypeError('compose artifacts changed during runtime observation')
+            throw new RefusalError('compose artifacts changed during runtime observation')
         }
         const ownComposeAuthority = generated ? undefined : Object.freeze({
             ownComposeFiles: true as const,
@@ -433,19 +433,19 @@ export function createReadCommandAdapters(
     }
 
     const observeLogs = async (request: { readonly configPath: string; readonly service: string }): Promise<LogObservation> => {
-        if (!input || resolve(request.configPath) !== input.configPath) throw new TypeError('log configuration path does not match')
+        if (!input || resolve(request.configPath) !== input.configPath) throw new RefusalError('log configuration path does not match')
         const context = await prepare(input.signal, (diagnostics) => { throw new DeclarationRefusalError(diagnostics[0]!) })
         const declared = context.topology.services.map(({ id }) => id)
         if (!declared.includes(request.service)) throw new DeclarationRefusalError(serviceNotDeclared(request.service, declared))
         const completed = context.lifecycle.completedServices.find(({ service }) => service === request.service)
         if (!completed) {
-            throw new TypeError('requested service is not in the selected running stack')
+            throw new RefusalError('requested service is not in the selected running stack')
         }
         const evidence = await authenticateService(context.topology, completed.service, completed.containerId, execute, input.signal)
-        if (!evidence) throw new TypeError('requested service identity is unavailable')
+        if (!evidence) throw new RefusalError('requested service identity is unavailable')
         const after = await readState(context.namespace.paths.lifecycle(context.stackId))
         if (after.kind !== 'complete' || JSON.stringify(after.value) !== JSON.stringify(context.lifecycleRecord)) {
-            throw new TypeError('lifecycle state changed during log observation')
+            throw new RefusalError('lifecycle state changed during log observation')
         }
         return Object.freeze({
             ...(context.generatedComposeAuthority ? { generatedComposeAuthority: context.generatedComposeAuthority } : {}),
@@ -472,20 +472,20 @@ export function createReadCommandAdapters(
     }
 
     const measureBaseline = async (): Promise<BaselineMeasurement> => {
-        if (!input) throw new TypeError('baseline command composition is unavailable')
+        if (!input) throw new RefusalError('baseline command composition is unavailable')
         const context = await prepare()
         if (!exactCompletedTopology(context)) {
-            throw new TypeError('a complete stable runtime cohort is unavailable')
+            throw new RefusalError('a complete stable runtime cohort is unavailable')
         }
         let evidenceSubject: RuntimeServiceEvidence | undefined
         const cohort: Readonly<{ readonly service: string; readonly containerId: string }>[] = []
         for (const completed of context.lifecycle.completedServices) {
             const service = await authenticateService(context.topology, completed.service, completed.containerId, execute)
-            if (!service) throw new TypeError('runtime service cohort changed')
+            if (!service) throw new RefusalError('runtime service cohort changed')
             evidenceSubject = service
             cohort.push(Object.freeze({ service: completed.service, containerId: service.containerId }))
         }
-        if (!evidenceSubject) throw new TypeError('runtime evidence subject is unavailable')
+        if (!evidenceSubject) throw new RefusalError('runtime evidence subject is unavailable')
         const createdAt = new Date().toISOString()
         const capturePlan = createStabilityCapturePlan({
             stackId: context.stackId,
@@ -502,7 +502,7 @@ export function createReadCommandAdapters(
         })
         if (capturePlan.kind !== 'preview' || capturePlan.plan.steps.length !== 2) {
             const reason = capturePlan.diagnostics.map(({ message }) => message).join('; ')
-            throw new TypeError(`runtime evidence capture plan is unavailable: ${reason || 'the plan does not hold two capture steps'}`)
+            throw new RefusalError(`runtime evidence capture plan is unavailable: ${reason || 'the plan does not hold two capture steps'}`)
         }
         const results = []
         for (const step of capturePlan.plan.steps) results.push(await execute(step))
@@ -511,19 +511,19 @@ export function createReadCommandAdapters(
             results: results as [ExecuteProbeOutcome, ExecuteProbeOutcome],
         })
         if ('state' in authenticated) {
-            throw new TypeError(`runtime evidence capture is unavailable: ${authenticated.reason} (${authenticated.code})`)
+            throw new RefusalError(`runtime evidence capture is unavailable: ${authenticated.reason} (${authenticated.code})`)
         }
         const evidence = captureRuntimeEvidence({ capture: authenticated })
-        if (evidence.state !== 'available') throw new TypeError(`runtime evidence is unavailable: ${evidence.reason}`)
+        if (evidence.state !== 'available') throw new RefusalError(`runtime evidence is unavailable: ${evidence.reason}`)
         const after = await readState(context.namespace.paths.lifecycle(context.stackId))
         if (after.kind !== 'complete' || JSON.stringify(after.value) !== JSON.stringify(context.lifecycleRecord)) {
-            throw new TypeError('lifecycle state changed during baseline observation')
+            throw new RefusalError('lifecycle state changed during baseline observation')
         }
         const address = context.namespace.paths.baseline(context.stackId)
         const prior = await readState(address)
-        if (prior.kind !== 'complete' && prior.kind !== 'missing') throw new TypeError('previous baseline is unavailable')
+        if (prior.kind !== 'complete' && prior.kind !== 'missing') throw new RefusalError('previous baseline is unavailable')
         const previous = prior.kind === 'complete' ? baselineRecord(prior.value.value, context) : undefined
-        if (prior.kind === 'complete' && !previous) throw new TypeError('previous baseline is malformed')
+        if (prior.kind === 'complete' && !previous) throw new RefusalError('previous baseline is malformed')
         const snapshot = createEnvironmentSnapshot({
             stackId: context.stackId,
             configSha256: context.configuration.runtimeSha256,
@@ -588,7 +588,7 @@ export function createReadCommandAdapters(
     }
 
     const observeBaseline = async (request: { readonly configPath: string }): Promise<BaselineObservation> => {
-        if (!input || resolve(request.configPath) !== input.configPath) throw new TypeError('baseline configuration path does not match')
+        if (!input || resolve(request.configPath) !== input.configPath) throw new RefusalError('baseline configuration path does not match')
         const measured = await measureBaseline()
         pending.delete(measured.basis.stackId)
         latestPreviews.set(measured.basis.stackId, measured.basis)
@@ -599,11 +599,11 @@ export function createReadCommandAdapters(
     const revalidateBaseline = async (observation: BaselineObservation): Promise<BaselineObservation> => {
         const basis = observation && typeof observation === 'object' ? previews.get(observation) : undefined
         if (!basis) {
-            throw new TypeError('baseline preview authority is unavailable')
+            throw new RefusalError('baseline preview authority is unavailable')
         }
         previews.delete(observation)
         if (latestPreviews.get(basis.stackId) !== basis) {
-            throw new TypeError('baseline preview authority is unavailable')
+            throw new RefusalError('baseline preview authority is unavailable')
         }
         latestPreviews.delete(basis.stackId)
         pending.delete(basis.stackId)
@@ -623,32 +623,32 @@ export function createReadCommandAdapters(
                 predecessor: 'previous baseline',
                 stability: 'runtime stability',
             }
-            throw new TypeError(`baseline ${names[changed]} changed`)
+            throw new RefusalError(`baseline ${names[changed]} changed`)
         }
         pending.set(basis.stackId, basis)
         return observation
     }
 
     const writeBaseline = async (baseline: EnvironmentBaseline): Promise<void> => {
-        if (!isEnvironmentBaselineAuthentic(baseline)) throw new TypeError('baseline write authority is unavailable')
+        if (!isEnvironmentBaselineAuthentic(baseline)) throw new RefusalError('baseline write authority is unavailable')
         const basis = pending.get(baseline.stackId)
         if (!basis
             || baseline.snapshot.configSha256 !== basis.configSha256
             || baseline.evidence.configSha256 !== basis.configSha256
             || baseline.snapshot.snapshotSha256 !== basis.snapshotSha256
             || baseline.evidence.evidenceSha256 !== basis.evidenceSha256) {
-            throw new TypeError('baseline write authority is unavailable')
+            throw new RefusalError('baseline write authority is unavailable')
         }
         pending.delete(baseline.stackId)
         let fresh: BaselineMeasurement
         try {
             fresh = await measureBaseline()
         } catch {
-            throw new TypeError('baseline write authority is unavailable')
+            throw new RefusalError('baseline write authority is unavailable')
         }
         if ((Object.keys(basis.fingerprint) as (keyof PendingBaseline['fingerprint'])[])
             .some((field) => basis.fingerprint[field] !== fresh.basis.fingerprint[field])) {
-            throw new TypeError('baseline write authority is unavailable')
+            throw new RefusalError('baseline write authority is unavailable')
         }
         const expected = JSON.stringify(basis.expected)
         const result = await transactState(
@@ -667,7 +667,7 @@ export function createReadCommandAdapters(
                 })
                 : abortStateTransaction(false),
         )
-        if ('aborted' in result || result.kind !== 'complete') throw new TypeError('baseline publication is not durable')
+        if ('aborted' in result || result.kind !== 'complete') throw new RefusalError('baseline publication is not durable')
     }
 
     const logs: LogsCommandAdapters = Object.freeze({

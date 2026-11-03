@@ -15,6 +15,8 @@ import {
     type PortLeaseRecord,
 } from './claims.js'
 import {
+    errorCause,
+    RefusalError,
     ENVIRONMENT_CODES,
     OBSERVATION_PRODUCER_BYTE_LIMIT,
     OBSERVATION_REASON_BYTE_LIMIT,
@@ -75,7 +77,7 @@ const availableRetainedPortFamilies = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== mechanism.id) throw new TypeError('port observation is malformed')
+    if (!snapshot || snapshot.owner !== mechanism.id) throw new RefusalError('port observation is malformed')
     issuedObservations.set(snapshot, Date.now())
     return snapshot
 }
@@ -92,7 +94,7 @@ export async function observePortFamily(input: {
 }): Promise<EnvironmentObservation> {
     const namespace = authenticateStateNamespace(snapshotStateNamespace(input.namespace))
     if (!namespace || !/^stack:[a-f0-9]{64}$/.test(input.stackId) || !isCanonicalTimestamp(input.observedAt)) {
-        throw new TypeError('port observation input is malformed')
+        throw new RefusalError('port observation input is malformed')
     }
     const inventory = await readRootPortInventory(namespace)
     const refusal = inventory.kind === 'refusal' ? inventory.diagnostics[0] : undefined
@@ -343,17 +345,17 @@ export async function observeRetainedPortFamily(supplied: {
     let checkoutId: import('./contract.js').CheckoutId | undefined
     let config: PortFamilyConfig | 'recorded' | undefined
     try {
-        if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) throw new Error('invalid input')
+        if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) throw new RefusalError('invalid input')
         const descriptors = Object.getOwnPropertyDescriptors(supplied)
         const keys = ['namespace', 'stackId', 'holderId', 'checkoutId', 'config']
         if (Reflect.ownKeys(descriptors).length !== keys.length
-            || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))) throw new Error('invalid input')
+            || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))) throw new RefusalError('invalid input')
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         stackId = descriptors.stackId!.value as StackId
         holderId = descriptors.holderId!.value as HolderId
         checkoutId = descriptors.checkoutId!.value as import('./contract.js').CheckoutId
         const configSnapshot = descriptors.config!.value === 'recorded' ? 'recorded' : snapshotPortConfig(descriptors.config!.value)
-        if (typeof configSnapshot === 'string' && configSnapshot !== 'recorded') throw new Error(configSnapshot)
+        if (typeof configSnapshot === 'string' && configSnapshot !== 'recorded') throw new RefusalError(configSnapshot)
         config = configSnapshot
     } catch {
         // A throwing accessor or proxy trap makes the input malformed; refused here.
@@ -529,7 +531,7 @@ export async function inspectPortLeaseTransfer(input: {
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 6
             || !['namespace', 'stackId', 'holderId', 'checkoutId', 'previousHolderId', 'projection']
-                .every((key) => descriptors[key] && 'value' in descriptors[key]!)) throw new Error('invalid input')
+                .every((key) => descriptors[key] && 'value' in descriptors[key]!)) throw new RefusalError('invalid input')
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         stackId = descriptors.stackId!.value as StackId
         holderId = descriptors.holderId!.value as HolderId
@@ -893,7 +895,7 @@ export async function observePortListeners(input: {
     } catch (error) {
         return Object.freeze({
             kind: 'unavailable',
-            reason: `listener observation failed: ${error instanceof Error ? error.message : String(error)}`,
+            reason: `listener observation failed: ${errorCause(error)}`,
         })
     }
 }
@@ -1042,9 +1044,9 @@ export async function leasePortFamily(supplied: {
     let input: Omit<typeof supplied, 'listenerEvidence'> & { readonly listenerEvidence: readonly PortListenerEvidenceInput[] }
     try {
         const namespaceProperty = Object.getOwnPropertyDescriptor(supplied, 'namespace')
-        if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
+        if (!namespaceProperty || !('value' in namespaceProperty)) throw new RefusalError('invalid namespace property')
         const namespace = authenticateStateNamespace(snapshotStateNamespace(namespaceProperty.value as StateNamespace))
-        if (!namespace) throw new Error('invalid namespace')
+        if (!namespace) throw new RefusalError('invalid namespace')
         const stackId = supplied.stackId
         const holderId = supplied.holderId
         const checkoutId = supplied.checkoutId
@@ -1251,11 +1253,11 @@ export async function compensateAcquiredPortHolder(input: {
     let suppliedLeaseResult: unknown
     let now: string | undefined
     try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid input')
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid input')
         const descriptors = Object.getOwnPropertyDescriptors(input)
         if (Reflect.ownKeys(descriptors).length !== 3
             || !['namespace', 'leaseResult', 'now'].every((key) => descriptors[key] && 'value' in descriptors[key]!)) {
-            throw new Error('invalid input')
+            throw new RefusalError('invalid input')
         }
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         suppliedLeaseResult = descriptors.leaseResult!.value
@@ -1380,9 +1382,9 @@ export async function releasePortFamily(input: {
     let request: Parameters<typeof releaseClaim>[0]
     try {
         const namespaceProperty = Object.getOwnPropertyDescriptor(input, 'namespace')
-        if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
+        if (!namespaceProperty || !('value' in namespaceProperty)) throw new RefusalError('invalid namespace property')
         const namespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
-        if (!namespace) throw new Error('invalid namespace')
+        if (!namespace) throw new RefusalError('invalid namespace')
         request = Object.freeze({
             namespace,
             stackId: input.stackId,

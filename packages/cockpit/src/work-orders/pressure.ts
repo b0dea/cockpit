@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 import { isParsedWorkOrder, WORK_ORDER_LIMITS, WORK_ORDER_STATUSES, type ParsedWorkOrder, type WorkOrderStatus } from './contract.js'
 import { routeWorkOrder, WORK_ORDER_INTAKE_LIMITS, type WorkOrderCapacity } from './intake.js'
+import { errorCause } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'work-order-pressure',
@@ -235,7 +236,7 @@ export async function applyWorkOrderSweep(plan: WorkOrderSweepPlan | WorkPressur
             await writer.write(Object.freeze({ kind: 'reason', id: change.id, expectedDigest: change.digest, record: change.record }))
             await writer.write(Object.freeze({ kind: 'status', id: change.id, expectedDigest: change.digest, from: change.priorStatus, to: 'parked', record: change.record }))
         } catch (error) {
-            return refusal('WO_SWEEP_WRITE_FAILED', `Sweep write failed for ${change.id}; reconcile its reason/status before retry: ${error instanceof Error ? error.message : String(error)}`)
+            return refusal('WO_SWEEP_WRITE_FAILED', `Sweep write failed for ${change.id}; reconcile its reason/status before retry: ${errorCause(error)}`)
         }
     }
     return Object.freeze({ kind: 'applied', changes: plan.changes })

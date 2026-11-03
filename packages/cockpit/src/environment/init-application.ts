@@ -11,7 +11,7 @@ import {
     type EstateObservationInput,
 } from '../document/command.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
-import { ENVIRONMENT_CODES, snapshotJson } from './contract.js'
+import { ENVIRONMENT_CODES, snapshotJson, errorCause } from './contract.js'
 import { bootstrapHolderId } from './identity.js'
 import {
     authenticateStatePublication,
@@ -565,7 +565,7 @@ async function initStagesFrom(
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
         try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
         catch (error) {
-            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun ${initCommand({ root: input.root, target: input.target })}`, input.root)
+            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${errorCause(error)}); fix the named file and rerun ${initCommand({ root: input.root, target: input.target })}`, input.root)
         }
         if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
     }

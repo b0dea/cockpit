@@ -7,6 +7,7 @@ import { authenticateObservationPostureContext, type PreflightContext } from '..
 import { inspectPortLeaseProjection, type PortLeaseProjection } from '../environment/ports.js'
 import { authenticateStateNamespace, type StateNamespace } from '../environment/state.js'
 import { browserHostAllowed, resolveBrowserProxy, type BrowserProxyInput } from './proxy.js'
+import { RefusalError } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'browser-runtime',
@@ -54,16 +55,16 @@ interface BrowserRuntimeBinding {
 const issuedRuntimes = new WeakMap<object, BrowserRuntimeBinding>()
 
 function assertPlainData(value: unknown, depth = 0, budget = { entries: 0 }): void {
-    if (depth > 8 || ++budget.entries > 2048) throw new TypeError('browser input data exceeds its bounds')
+    if (depth > 8 || ++budget.entries > 2048) throw new RefusalError('browser input data exceeds its bounds')
     if (value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value)) return
     if (typeof value !== 'object' || isProxy(value)
-        || ![Object.prototype, Array.prototype, null].includes(Object.getPrototypeOf(value))) throw new TypeError('browser input must contain plain data')
+        || ![Object.prototype, Array.prototype, null].includes(Object.getPrototypeOf(value))) throw new RefusalError('browser input must contain plain data')
     const keys = Reflect.ownKeys(value)
-    if (keys.length > 2048 || keys.some((key) => typeof key !== 'string')) throw new TypeError('browser input data exceeds its bounds')
+    if (keys.length > 2048 || keys.some((key) => typeof key !== 'string')) throw new RefusalError('browser input data exceeds its bounds')
     const descriptors = Object.getOwnPropertyDescriptors(value)
-    if (Array.isArray(value) && keys.length !== value.length + 1) throw new TypeError('browser input data needs dense arrays')
+    if (Array.isArray(value) && keys.length !== value.length + 1) throw new RefusalError('browser input data needs dense arrays')
     for (const descriptor of Object.values(descriptors)) {
-        if (!('value' in descriptor)) throw new TypeError('browser input must contain plain data without accessors')
+        if (!('value' in descriptor)) throw new RefusalError('browser input must contain plain data without accessors')
         assertPlainData(descriptor.value, depth + 1, budget)
     }
 }
@@ -77,9 +78,9 @@ function storageIdentity(path: string): string {
             return JSON.stringify([metadata.dev, metadata.ino, metadata.mode, metadata.size, metadata.mtimeMs, metadata.ctimeMs])
         }
     } catch {
-        throw new TypeError('browser seeded storage state metadata is unavailable')
+        throw new RefusalError('browser seeded storage state metadata is unavailable')
     }
-    throw new TypeError('browser seeded storage state must be a confined mode-600 regular file')
+    throw new RefusalError('browser seeded storage state must be a confined mode-600 regular file')
 }
 
 export function browserClientLimit(maxClients: number, policy: BrowserRuntimeInput['authentication']['policy']): number {
@@ -92,15 +93,15 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     const checked = authenticateObservationPostureContext(input.postures)
     const checks = checked.checks
     if (input.postures.authorities.length !== 1 || checks.length !== 2 || checks.some(({ verdict }) => verdict !== 'pass')) {
-        throw new TypeError('browser posture requirements must match the selected declarations')
+        throw new RefusalError('browser posture requirements must match the selected declarations')
     }
     const authority = checked.authorities.values().next().value!
     const namespace = coordinationNamespace === undefined ? undefined : authenticateStateNamespace(coordinationNamespace)
-    if (coordinationNamespace !== undefined && !namespace) throw new TypeError('browser runtime coordination namespace must be an issued canonical state namespace')
+    if (coordinationNamespace !== undefined && !namespace) throw new RefusalError('browser runtime coordination namespace must be an issued canonical state namespace')
     const { addressing, authentication } = authority.environmentPostures
     const proxy = resolveBrowserProxy(input.proxy)
     if (!Number.isSafeInteger(input.maxClients) || input.maxClients < 1 || input.maxClients > 64) {
-        throw new TypeError('browser client cap must be an integer from 1 through 64')
+        throw new RefusalError('browser client cap must be an integer from 1 through 64')
     }
     const projectKeys = ['lockfile', 'sha256', 'driverVersion', ...(input.project.manifest === undefined ? [] : ['manifest', 'manifestSha256'])]
     if (Object.keys(input.project).length !== projectKeys.length || !projectKeys.every((key) => Object.hasOwn(input.project, key))
@@ -108,22 +109,22 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         || input.project.manifest !== undefined && (!GeneratedHostPath.safeParse(input.project.manifest).success
             || !/^[a-f0-9]{64}$/.test(input.project.manifestSha256 ?? ''))
         || input.project.manifest === undefined && input.project.manifestSha256 !== undefined) {
-        throw new TypeError('browser project lockfile identity is invalid')
+        throw new RefusalError('browser project lockfile identity is invalid')
     }
-    if (!BROWSER_DRIVER_VERSION.test(input.project.driverVersion)) throw new TypeError('browser project driver version must be exact')
+    if (!BROWSER_DRIVER_VERSION.test(input.project.driverVersion)) throw new RefusalError('browser project driver version must be exact')
     for (const image of [input.images.runner, input.images.mcp]) {
-        if (!/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(image.reference)) throw new TypeError('browser images must be digest-pinned')
+        if (!/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(image.reference)) throw new RefusalError('browser images must be digest-pinned')
     }
-    if (input.images.runner.driverVersion !== input.project.driverVersion) throw new TypeError('browser runner image driver differs from project lock identity')
+    if (input.images.runner.driverVersion !== input.project.driverVersion) throw new RefusalError('browser runner image driver differs from project lock identity')
     if (typeof input.images.mcp.driverVersion !== 'string' || !BROWSER_DRIVER_VERSION.test(input.images.mcp.driverVersion)
         || !browserDriversCompatible(input.images.mcp.driverVersion, input.project.driverVersion)) {
-        throw new TypeError('browser MCP image driver does not share major.minor with the project driver')
+        throw new RefusalError('browser MCP image driver does not share major.minor with the project driver')
     }
     const engine = input.engine ?? 'chromium'
-    if (!['chromium', 'firefox', 'webkit'].includes(engine)) throw new TypeError('browser engine must be chromium, firefox or webkit')
+    if (!['chromium', 'firefox', 'webkit'].includes(engine)) throw new RefusalError('browser engine must be chromium, firefox or webkit')
     const networkExposure = parseBrowserNetworkExposure(input.networkExposure, input.networkExposureReason)
     if (input.hostVariable !== undefined && !/^[A-Z][A-Z0-9_]{0,127}$/.test(input.hostVariable)) {
-        throw new TypeError('browser proxy host variable must be a canonical environment name')
+        throw new RefusalError('browser proxy host variable must be a canonical environment name')
     }
     let connection: Readonly<{ kind: 'remote'; endpoint: string; launchLocal: false }>
         | Readonly<{ kind: 'local-fallback'; reason: 'endpoint-absent'; launchLocal: true }>
@@ -138,7 +139,7 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
                 || !spelling || spelling[2] !== parsed.pathname || !browserHostAllowed(proxy, spelling[1])) throw Error('invalid')
             endpoint = input.endpoint!
         } catch {
-            throw new TypeError('configured browser endpoint must use ws:// with the exact credential-free checking proxy authority; TLS termination is unavailable')
+            throw new RefusalError('configured browser endpoint must use ws:// with the exact credential-free checking proxy authority; TLS termination is unavailable')
         }
         connection = Object.freeze({ kind: 'remote', endpoint, launchLocal: false })
     }
@@ -146,37 +147,37 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         || (addressing === 'hostname' ? input.resolver.length === 0 : input.resolver.length !== 0)
         || new Set(input.resolver.map(({ hostname }) => hostname)).size !== input.resolver.length
         || input.resolver.some(({ hostname, address }) => !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*$/.test(hostname) || isIP(address) === 0)) {
-        throw new TypeError('browser resolver rules must match the selected addressing posture')
+        throw new RefusalError('browser resolver rules must match the selected addressing posture')
     }
     if (connection.kind === 'local-fallback' && addressing === 'hostname' && engine !== 'chromium') {
-        throw new TypeError('local hostname resolver rules require chromium')
+        throw new RefusalError('local hostname resolver rules require chromium')
     }
     const artifactKeys = ['runner', 'mcp', 'cli', 'auth', 'debugger'] as const
     const paths = artifactKeys.map((key) => input.artifacts[key])
     if (Object.keys(input.artifacts).length !== artifactKeys.length
         || paths.some((path) => !GeneratedHostPath.safeParse(path).success)
         || paths.some((path, index) => paths.some((other, otherIndex) => index !== otherIndex && (path === other || path.startsWith(`${other}/`))))) {
-        throw new TypeError('browser artifact roots must be confined, distinct and non-overlapping')
+        throw new RefusalError('browser artifact roots must be confined, distinct and non-overlapping')
     }
     const states = input.authentication.states
     const storage: Array<Readonly<{ path: string; identity: string }>> = []
-    if (!Array.isArray(states) || states.length > 64) throw new TypeError('browser authentication states are invalid')
+    if (!Array.isArray(states) || states.length > 64) throw new RefusalError('browser authentication states are invalid')
     const signedOut = authentication === 'bypassed' || authentication === 'none' ? authentication : undefined
     if (signedOut) {
-        if (input.authentication.policy !== 'none' || states.length !== 0) throw new TypeError(`${signedOut} authentication cannot declare persona state or login`)
+        if (input.authentication.policy !== 'none' || states.length !== 0) throw new RefusalError(`${signedOut} authentication cannot declare persona state or login`)
     } else {
         if (input.authentication.policy !== 'serialized' && input.authentication.policy !== 'per-worker'
             || states.length !== (input.authentication.policy === 'serialized' ? 1 : input.maxClients)) {
-            throw new TypeError('real browser authentication requires serialized or per-worker seeded state')
+            throw new RefusalError('real browser authentication requires serialized or per-worker seeded state')
         }
         if (new Set(states.map(({ worker }) => worker)).size !== states.length || new Set(states.map(({ path }) => path)).size !== states.length) {
-            throw new TypeError('per-worker browser state must have distinct workers and paths')
+            throw new RefusalError('per-worker browser state must have distinct workers and paths')
         }
         const root = dirname(authority.source)
         for (const state of states) {
             if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(state.worker)
                 || !GeneratedHostPath.safeParse(state.path).success || !state.path.startsWith(`${input.artifacts.auth}/`)) {
-                throw new TypeError('browser storage state must name a worker and a path inside the auth artifact root')
+                throw new RefusalError('browser storage state must name a worker and a path inside the auth artifact root')
             }
             const path = resolve(root, state.path)
             storage.push(Object.freeze({ path, identity: storageIdentity(path) }))
@@ -184,10 +185,10 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     }
     if (!['empty', 'seeded', 'restored'].includes(input.data.mode) || typeof input.data.isolated !== 'boolean'
         || typeof input.data.reachesProduction !== 'boolean' || typeof input.requestPreapproval !== 'boolean' || typeof input.headed !== 'boolean') {
-        throw new TypeError('browser data and debugger posture must be explicit')
+        throw new RefusalError('browser data and debugger posture must be explicit')
     }
     if (input.requestPreapproval && (input.data.mode === 'restored' || !input.data.isolated || input.data.reachesProduction)) {
-        throw new TypeError('browser preapproval requires isolated empty or seeded data with no production reach')
+        throw new RefusalError('browser preapproval requires isolated empty or seeded data with no production reach')
     }
     const projection = Object.freeze({
         configurationPath: authority.source,
@@ -278,26 +279,26 @@ export function browserRuntimeCoordination(runtime: BrowserRuntimeProjection): R
 }
 
 export function assertBrowserArtifactRegistration(runtime: BrowserRuntimeProjection, producedPaths: readonly string[]): void {
-    if (!issuedRuntimes.has(runtime)) throw new TypeError('browser artifact registration requires an issued runtime')
+    if (!issuedRuntimes.has(runtime)) throw new RefusalError('browser artifact registration requires an issued runtime')
     assertPlainData(producedPaths)
     if (!Array.isArray(producedPaths) || producedPaths.length === 0 || producedPaths.length > 1024) {
-        throw new TypeError('browser artifact registration needs a bounded nonempty output inventory')
+        throw new RefusalError('browser artifact registration needs a bounded nonempty output inventory')
     }
     for (const path of producedPaths) {
         if (!GeneratedHostPath.safeParse(path).success
             || !runtime.generatedHostPaths.some((root) => path === root || path.startsWith(`${root}/`))) {
-            throw new TypeError('browser output is unregistered with reset artifact ownership')
+            throw new RefusalError('browser output is unregistered with reset artifact ownership')
         }
     }
     if (runtime.generatedHostPaths.some((root) => !producedPaths.some((path) => path === root || path.startsWith(`${root}/`)))) {
-        throw new TypeError('each browser transport artifact root requires a produced output')
+        throw new RefusalError('each browser transport artifact root requires a produced output')
     }
 }
 
 export function assertBrowserStorageStateCurrent(runtime: BrowserRuntimeProjection): void {
     const binding = issuedRuntimes.get(runtime)
-    if (!binding) throw new TypeError('browser storage state revalidation requires an issued runtime')
+    if (!binding) throw new RefusalError('browser storage state revalidation requires an issued runtime')
     for (const state of binding.storage) {
-        if (storageIdentity(state.path) !== state.identity) throw new TypeError('browser seeded storage state changed after resolution')
+        if (storageIdentity(state.path) !== state.identity) throw new RefusalError('browser seeded storage state changed after resolution')
     }
 }

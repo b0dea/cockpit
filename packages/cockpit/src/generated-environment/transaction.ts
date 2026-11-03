@@ -10,7 +10,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
-import { errorCause, snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
+import { errorCause, snapshotGeneratedJson, type ExecutionStep, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
 import { readState, type BootstrapStateAddress } from '../environment/state.js'
 import { installedPackageMetadata } from '../package-metadata.js'
@@ -457,7 +457,7 @@ async function publicationAnchor(root: string, parent: string): Promise<Publicat
             path = candidate
             chain.push(Object.freeze({ name: segment, dev: status.dev, ino: status.ino }))
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+            if (!hasErrorCode(error, 'ENOENT')) return undefined
             return anchored(segments.slice(index))
         }
     }
@@ -480,7 +480,7 @@ async function nestedPublicationAuthority(
             if (!status.isDirectory() || status.isSymbolicLink()) return undefined
             chain.push(Object.freeze({ name, dev: status.dev, ino: status.ino }))
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
+            if (!hasErrorCode(error, 'ENOENT')) return undefined
             return Object.freeze({ chain: Object.freeze(chain), segments: Object.freeze(segments.slice(index)) })
         }
     }
@@ -1362,7 +1362,7 @@ async function stageInputs(files: readonly OwnedBytes[]): Promise<{ directory: s
         directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-input-'))
         const inputs: Array<{ path: string; sha256: string }> = []
         for (const [index, file] of files.entries()) {
-            if (Buffer.byteLength(file.bytes) > MAX_GENERATED_BYTES) throw new Error('generated input is oversized')
+            if (Buffer.byteLength(file.bytes) > MAX_GENERATED_BYTES) throw new RefusalError('generated input is oversized')
             const path = join(directory, String(index))
             const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
             try { await handle.writeFile(file.bytes); await handle.sync() } finally { await handle.close() }
@@ -1643,9 +1643,7 @@ interface ReferenceManifest extends ReferenceManifestPayload { readonly integrit
 
 function parseReferenceManifest(bytes: string): ReferenceManifest | undefined {
     if (typeof bytes !== 'string' || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return undefined
-    let value: unknown
-    try { value = JSON.parse(bytes) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
-    const record = ownRecord(value)
+    const record = ownRecord(tryParseJson(bytes))
     if (!record || !exactKeys(record, ['format', 'generation', 'source', 'producer', 'entries', 'integrity'])
         || record.format !== 'cockpit-generated-references/v1' || typeof record.generation !== 'string' || !SHA256.test(record.generation)
         || typeof record.integrity !== 'string' || !SHA256.test(record.integrity)) return undefined
@@ -1677,7 +1675,7 @@ export function encodeReferenceManifest(input: ReferenceManifestInput): Readonly
     if (!captured || !exactKeys(captured as unknown as Record<string, unknown>, ['generation', 'sourceSha256', 'files', 'troubleshootingSha256'])
         || !SHA256.test(captured.generation) || !SHA256.test(captured.sourceSha256) || !SHA256.test(captured.troubleshootingSha256)
         || !Array.isArray(captured.files) || captured.files.length !== REFERENCE_FILE_PATHS.length
-        || captured.files.some((row, index) => !row || row.path !== REFERENCE_FILE_PATHS[index] || !SHA256.test(row.sha256))) throw new Error('reference manifest input is not exact bounded hashes')
+        || captured.files.some((row, index) => !row || row.path !== REFERENCE_FILE_PATHS[index] || !SHA256.test(row.sha256))) throw new RefusalError('reference manifest input is not exact bounded hashes')
     const payload: ReferenceManifestPayload = Object.freeze({
         format: 'cockpit-generated-references/v1', generation: captured.generation,
         source: Object.freeze({ path: 'package.json', sha256: captured.sourceSha256 }),
@@ -1690,7 +1688,7 @@ export function encodeReferenceManifest(input: ReferenceManifestInput): Readonly
     })
     const bytes = `${JSON.stringify({ ...payload, integrity: sha256(JSON.stringify(payload)) }, null, 2)}\n`
     const manifest = parseReferenceManifest(bytes)
-    if (!manifest) throw new Error('reference manifest encoder produced invalid bytes')
+    if (!manifest) throw new RefusalError('reference manifest encoder produced invalid bytes')
     return Object.freeze({ bytes, manifest })
 }
 
@@ -2145,7 +2143,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
             if (!Number.isSafeInteger(status.size) || status.size < 0) return undefined
             return Math.min(MAX_GENERATED_BYTES, Math.max(1, status.size))
         } catch (error) {
-            return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 1 : undefined
+            return hasErrorCode(error, 'ENOENT') ? 1 : undefined
         }
     }))
     if (maxBytes.some(limit => limit === undefined)) return refuse('GENERATED_PUBLICATION_FAILED', 'publication targets could not be classified safely', 'generated-environment')
@@ -2323,14 +2321,14 @@ async function applyPrepared(
         const transactionRootIdentity = prepared.rootIdentity
         if (!transactionRoot.isDirectory() || transactionRoot.isSymbolicLink()
             || transactionRoot.dev !== transactionRootIdentity.dev || transactionRoot.ino !== transactionRootIdentity.ino) {
-            throw new Error('generated transaction root is unsafe')
+            throw new RefusalError('generated transaction root is unsafe')
         }
         const transactionRootCurrent = async (): Promise<boolean> => {
             const current = await lstat(prepared.root)
             return current.isDirectory() && !current.isSymbolicLink()
                 && current.dev === transactionRootIdentity.dev && current.ino === transactionRootIdentity.ino
         }
-        if (Date.now() >= forwardCutoff) throw new Error('generated helper schedule exhausted')
+        if (Date.now() >= forwardCutoff) throw new RefusalError('generated helper schedule exhausted')
         const beforeStage = await adapters.revalidate(forwardCutoff, 'before-stage')
         if (beforeStage !== true) return typeof beforeStage === 'object' ? beforeStage : refuse('GENERATED_SOURCE_CHANGED', 'generated inputs changed before staging', 'generated-environment')
         if (!await planCurrent(prepared, adapters, forwardCutoff)) {
@@ -2342,22 +2340,22 @@ async function applyPrepared(
         // One helper call prepares as many groups as one request frame holds. Prepare never changes a
         // target, so a run interrupted inside a batch leaves only stage and backup files beside them.
         for (let next = 0; next < groups.length;) {
-            if (!await transactionRootCurrent()) throw new Error('generated transaction root changed')
+            if (!await transactionRootCurrent()) throw new RefusalError('generated transaction root changed')
             const batch = await prepareBatch(prepared.root, transactionRootIdentity, groups.slice(next), publicationFiles, staged.inputs)
             const deadline = batch && nextForwardDeadline(batch.rows.reduce((count, row) => count + row.group.logicalWeight, 0))
-            if (!batch || deadline === undefined) throw new Error('generated destination parent is unsafe or its helper schedule is exhausted')
+            if (!batch || deadline === undefined) throw new RefusalError('generated destination parent is unsafe or its helper schedule is exhausted')
             const raw = await runHelper(adapters, helperStep(node, prepared.root, 'generated-environment', batch.request, batch.inputs, deadline,
                 MAX_HELPER_FRAME_BYTES * (batch.rows.length + 1)))
             const receipt = parsePrepareBatchReceipt(raw, batch)
             if (receipt && receipt.groups.length > 0) {
                 applied.push(...receipt.groups)
-                if (!await recordRecovery(staged.directory, applied)) throw new Error('generated recovery record could not be persisted')
+                if (!await recordRecovery(staged.directory, applied)) throw new RefusalError('generated recovery record could not be persisted')
             }
-            if (!receipt?.complete) throw new Error('generated filesystem helper refused publication')
-            if (!await transactionRootCurrent()) throw new Error('generated transaction root changed')
+            if (!receipt?.complete) throw new RefusalError('generated filesystem helper refused publication')
+            if (!await transactionRootCurrent()) throw new RefusalError('generated transaction root changed')
             next += batch.rows.length
         }
-        if (Date.now() >= forwardCutoff) throw new Error('generated helper schedule exhausted')
+        if (Date.now() >= forwardCutoff) throw new RefusalError('generated helper schedule exhausted')
         const inputsCurrent = await adapters.revalidate(forwardCutoff, 'before-publish')
         if (inputsCurrent !== true || !await planCurrent(prepared, adapters, forwardCutoff) || !await transactionRootCurrent()) {
             if (!await compensate(applied, node, adapters, transactionDeadline)) {
@@ -2371,16 +2369,16 @@ async function applyPrepared(
             return typeof inputsCurrent === 'object' ? inputsCurrent : refuse('GENERATED_SOURCE_CHANGED', 'a generated input changed immediately before publication', 'generated-environment')
         }
         if (await runPublicationStage('publish', prepared.root, transactionRootIdentity, applied,
-            node, adapters, nextForwardDeadline) !== 'complete') throw new Error('generated filesystem helper did not confirm publication')
-        if (Date.now() >= forwardCutoff) throw new Error('generated helper schedule exhausted')
+            node, adapters, nextForwardDeadline) !== 'complete') throw new RefusalError('generated filesystem helper did not confirm publication')
+        if (Date.now() >= forwardCutoff) throw new RefusalError('generated helper schedule exhausted')
         if (await adapters.revalidate(forwardCutoff, 'after-publish') !== true || !await planCurrent(prepared, adapters, forwardCutoff, true)) {
-            throw new Error('generated input or unchanged target changed during publication')
+            throw new RefusalError('generated input or unchanged target changed during publication')
         }
         // A postcheck failure before any backup was retired still rolls back. Retirement can be
         // partial, so any later or unknown failure retains recovery instead of rolling back.
         const finalized = await runPublicationStage('commit', prepared.root, transactionRootIdentity, applied,
             node, adapters, nextForwardDeadline).catch(() => 'failed' as const)
-        if (finalized === 'verify-failed') throw new Error('generated postcheck failed')
+        if (finalized === 'verify-failed') throw new RefusalError('generated postcheck failed')
         if (finalized !== 'complete' || forwardCallsRemaining !== 0) {
             retainInputs = true
             return refuse(
