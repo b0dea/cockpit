@@ -275,6 +275,19 @@ vi.mock('./evidence.js', async (importOriginal) => {
     }
 })
 
+// Each change lands between an approved observation and its use; the cohort row moves a fingerprint,
+// the service row makes the measurement itself fail.
+const baselineChanges = [
+    ['config source', () => { controls.configSha256 = sha('4') }, 'baseline config source changed'],
+    ['runtime topology', () => { controls.runtimeVersion = '28.0.0' }, 'baseline runtime topology changed'],
+    ['container cohort', () => { controls.containerId = sha('7') }, 'baseline runtime cohort changed'],
+    ['service revalidation', () => { controls.unavailableService = 'api' }, 'baseline runtime cohort changed'],
+    ['previous baseline', () => { controls.predecessorChanged = true }, 'baseline previous baseline changed'],
+    ['process identity', () => { controls.processIdentitySha256 = sha('8') }, 'baseline runtime stability changed'],
+    ['content identity', () => { controls.contentHash = sha('9') }, 'baseline runtime stability changed'],
+    ['capture availability', () => { controls.captureUnavailable = true }, 'baseline runtime stability changed'],
+] as const
+
 describe('production read command composition', () => {
     beforeEach(() => {
         controls.generated = undefined
@@ -586,7 +599,9 @@ describe('production read command composition', () => {
         expect(controls.writes).toHaveLength(0)
     })
 
-    it('consumes write authority when the authenticated runtime changes after revalidation', async () => {
+    // The write re-measures the runtime, so a change after revalidation is named as revalidation
+    // names it, whether it moves a fingerprint or makes the measurement itself fail.
+    it.each(baselineChanges)('consumes write authority when %s changes after revalidation', async (_field, change, message) => {
         const adapters = createReadCommandAdapters({
             configPath: source.path,
             env: { PATH: '/synthetic' },
@@ -600,9 +615,9 @@ describe('production read command composition', () => {
         } as unknown as EnvironmentBaseline
         await adapters.baseline.revalidate(observed)
         controls.authenticBaselines.add(baseline)
-        controls.containerId = sha('7')
+        change()
 
-        await expect(adapters.baseline.write(baseline)).rejects.toThrow('baseline write authority is unavailable')
+        await expect(adapters.baseline.write(baseline)).rejects.toThrow(message)
         await expect(adapters.baseline.write(baseline)).rejects.toThrow('baseline write authority is unavailable')
         expect(controls.writes).toHaveLength(0)
     })
@@ -626,15 +641,7 @@ describe('production read command composition', () => {
         await expect(adapters.baseline.revalidate(observed)).resolves.toBe(observed)
     })
 
-    it.each([
-        ['config source', () => { controls.configSha256 = sha('4') }, 'baseline config source changed'],
-        ['runtime topology', () => { controls.runtimeVersion = '28.0.0' }, 'baseline runtime topology changed'],
-        ['container cohort', () => { controls.containerId = sha('7') }, 'baseline runtime cohort changed'],
-        ['previous baseline', () => { controls.predecessorChanged = true }, 'baseline previous baseline changed'],
-        ['process identity', () => { controls.processIdentitySha256 = sha('8') }, 'baseline runtime stability changed'],
-        ['content identity', () => { controls.contentHash = sha('9') }, 'baseline runtime stability changed'],
-        ['capture availability', () => { controls.captureUnavailable = true }, 'baseline runtime stability changed'],
-    ] as const)('consumes the preview when %s changes after approval', async (_field, change, message) => {
+    it.each(baselineChanges)('consumes the preview when %s changes after approval', async (_field, change, message) => {
         const adapters = createReadCommandAdapters({
             configPath: source.path,
             env: { PATH: '/synthetic' },
