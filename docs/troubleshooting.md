@@ -17,7 +17,7 @@ help, for example `cockpit sync --help`.
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `npx --no cockpit init . --target <tool>` command. |
 | `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
-| `SURFACE_STATE_CONFLICT` | Sync would overwrite settings cockpit does not own. | Review the file and use `npx --no cockpit sync --adopt <path> --config cockpit.toml` only with a person's approval. |
+| `SURFACE_STATE_CONFLICT` | Sync would overwrite a hand edit or a file cockpit has no record of writing. | Move a hand edit into `cockpit.toml` or a surface overlay and ask a person before discarding it; for a team's own settings file, have a person approve `npx --no cockpit sync --adopt <path> --config cockpit.toml`. |
 | `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `npx --no cockpit sync --config cockpit.toml`, then retry. |
 | `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `npx --no cockpit sync --config cockpit.toml`. |
@@ -85,9 +85,10 @@ new original. For a path conflict, change the declarations so only one produces 
 delete the existing path as a workaround.
 
 `SURFACE_STATE_CONFLICT` means a shared region, stale entry, symlink, or prior ownership record no
-longer matches the bytes cockpit wrote. Keep the current bytes and find out who changed them
-before retrying. For a team's own `.claude/settings.json`, `.codex/config.toml` or
-`.codex/hooks.json`, the message names the `sync --adopt` command that keeps it; see
+longer matches the bytes cockpit wrote. Keep the current bytes: a hand edit belongs in
+`cockpit.toml` or a surface overlay, and discarding it, or deleting a file cockpit has no record of
+writing, is the person's decision. For a team's own `.claude/settings.json`, `.codex/config.toml` or
+`.codex/hooks.json`, the fix names the `sync --adopt` command that keeps it; see
 [Adopt existing agent settings](adoption.md#adopt-existing-agent-settings).
 `SURFACE_ADOPTION_REFUSED` names the adopted key that would switch off or bypass the guard, or that
 cockpit writes with a different value; remove it from the named file and sync again.

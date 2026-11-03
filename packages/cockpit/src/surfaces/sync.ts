@@ -7,6 +7,8 @@ import {
     removeSharedOwnership,
     renderSharedPostimage,
     symlinkSource,
+    SURFACE_HAND_EDIT_FIX,
+    SURFACE_UNRECORDED_FIX,
     type SurfaceDesiredEntry,
     type SurfaceDiagnostic,
     type SurfacePriorOwnedEntry,
@@ -54,8 +56,9 @@ function exact(value: JsonSnapshotObject, required: readonly string[]): boolean 
 
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
 
-function refuse(message: string, target?: string): SurfaceChangePlanResult {
-    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code: 'SURFACE_STATE_CONFLICT', message, ...(target === undefined ? {} : { target }) }) })
+function refuse(message: string, target?: string, fix?: string): SurfaceChangePlanResult {
+    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code: 'SURFACE_STATE_CONFLICT', message,
+        ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }) })
 }
 
 function base(value: JsonSnapshotObject, configured: ReadonlySet<string>): boolean {
@@ -147,7 +150,7 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
         const previous = priorByPath.get(desired.path)
         if (desired.kind === 'file' && current.kind === 'file' && current.sha256 === desired.sha256
             || desired.kind === 'symlink' && current.kind === 'symlink' && current.target === desired.target) {
-            if (!previous || !priorMatchesObserved(previous, current)) return refuse('this path already holds exactly what sync would write, but no ownership record names it, so sync cannot tell whether cockpit or a person put it there', desired.path)
+            if (!previous || !priorMatchesObserved(previous, current)) return refuse('this path already holds exactly what sync would write, but no ownership record names it, so sync cannot tell whether cockpit or a person put it there', desired.path, SURFACE_UNRECORDED_FIX)
             continue
         }
         if (desired.kind === 'shared-region') {
@@ -166,9 +169,13 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
             continue
         }
         if (current.kind !== 'missing' && !previous && (ADOPTABLE_SURFACE_PATHS as readonly string[]).includes(desired.path)) {
-            return refuse(`existing surface is unmanaged; to keep the settings it holds, adopt it: npx --no cockpit sync --config <your cockpit.toml> --adopt ${desired.path}`, desired.path)
+            return refuse('this harness settings file exists but cockpit has no record of writing it', desired.path,
+                `to keep the settings it holds, have a human approve npx --no cockpit sync --config <your cockpit.toml> --adopt ${desired.path}`)
         }
-        if (current.kind !== 'missing' && (!previous || !priorMatchesObserved(previous, current))) return refuse('existing surface is unmanaged or changed', desired.path)
+        if (current.kind !== 'missing' && !previous) return refuse('this path holds a file cockpit has no record of writing', desired.path, SURFACE_UNRECORDED_FIX)
+        if (current.kind !== 'missing' && previous && !priorMatchesObserved(previous, current)) {
+            return refuse('this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits', desired.path, SURFACE_HAND_EDIT_FIX)
+        }
         writes.push({ kind: 'write', path: desired.path, desired,
             ...(current.kind === 'missing' ? {} : { preimage: { identity: current.identity, ...(current.kind === 'file' ? { sha256: current.sha256 } : {}) } }) })
     }
@@ -188,7 +195,7 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
                 preimage: { identity: current.identity, sha256: current.sha256 } })
             continue
         }
-        if (!priorMatchesObserved(stale, current)) return refuse('stale owned surface changed', stale.path)
+        if (!priorMatchesObserved(stale, current)) return refuse('stale owned surface changed', stale.path, SURFACE_HAND_EDIT_FIX)
         removals.push({ kind: 'remove', path: stale.path, priorOwned: stale,
             preimage: { identity: current.identity, ...(current.kind === 'file' ? { sha256: current.sha256 } : {}) } })
     }

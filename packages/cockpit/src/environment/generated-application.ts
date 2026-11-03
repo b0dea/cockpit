@@ -60,6 +60,7 @@ import {
     type EnvironmentOwnershipEntry,
     type OwnershipManifest,
     type SurfaceDesiredEntry,
+    type SurfaceDiagnostic,
     type SurfacePriorOwnedEntry,
 } from '../surfaces/ownership.js'
 import { codexWritableRoot, observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
@@ -3545,12 +3546,13 @@ function planObservedSurfaces(
 }
 
 /** A hand edit to a merged adopted file belongs in its adopted copy; say so where the conflict is reported. */
-function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Readonly<{ code: string; message: string; target?: string }>): RefusalOutcome {
+function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: SurfaceDiagnostic): RefusalOutcome {
     const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
         ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
-    return refuse(diagnostic.code, adopted
-        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, then ask the person who owns the cockpit before you delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`
-        : diagnostic.message, diagnostic.target)
+    return adopted
+        ? refuse(diagnostic.code, `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}`, diagnostic.target,
+            `make the change in ${adopted.source}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`)
+        : refuse(diagnostic.code, diagnostic.message, diagnostic.target, diagnostic.fix)
 }
 
 function surfaceMutations(

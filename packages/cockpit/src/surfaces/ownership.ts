@@ -14,7 +14,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/surfaces/ownership.ts',
     exports: ['classifySurfaceOwnership', 'symlinkSource', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
         'encodeOwnershipManifest', 'parseOwnershipManifest', 'projectGeneratedPathFacts',
-        'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths'],
+        'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths', 'SURFACE_HAND_EDIT_FIX', 'SURFACE_UNRECORDED_FIX'],
 } as const
 
 export type SurfaceOwnership = 'whole-file' | 'symlink' | 'shared-region'
@@ -69,7 +69,13 @@ export interface SurfaceDiagnostic {
         | 'SURFACE_OWNERSHIP_INVALID' | 'SURFACE_STATE_CONFLICT'
     readonly message: string
     readonly target?: string
+    readonly fix?: string
 }
+
+// An agent once read "delete the file" as permission and deleted a file without asking. A hand
+// edit is the person's work: say where it belongs, and that discarding it is their call.
+export const SURFACE_HAND_EDIT_FIX = 'keep the edit by moving it into cockpit.toml or a surface overlay, then ask the person who owns the cockpit before you discard the hand edit (undo it or delete the file), and rerun npx --no cockpit sync --config <your cockpit.toml>'
+export const SURFACE_UNRECORDED_FIX = 'ask the person who owns the cockpit whether this file is theirs; move anything they want kept into cockpit.toml or a surface overlay, and only with their approval move the file away or delete it, then rerun npx --no cockpit sync --config <your cockpit.toml>'
 
 export type SurfaceOwnershipResult =
     | Readonly<{ kind: 'complete'; entries: readonly SurfaceDesiredEntry[] }>
@@ -153,8 +159,8 @@ export function symlinkSource(value: unknown): value is SymlinkSource {
 
 function digest(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex') }
 
-function refusal(code: SurfaceDiagnostic['code'], message: string, target?: string): Extract<SurfaceOwnershipResult, { kind: 'refusal' }> {
-    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message, ...(target === undefined ? {} : { target }) }) })
+function refusal(code: SurfaceDiagnostic['code'], message: string, target?: string, fix?: string): Extract<SurfaceOwnershipResult, { kind: 'refusal' }> {
+    return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }) })
 }
 
 function sortedUniqueStrings(value: JsonSnapshot | undefined, allowed?: ReadonlySet<string>): value is JsonSnapshot & readonly string[] {
@@ -455,7 +461,7 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
             return refusal('SURFACE_STATE_CONFLICT', 'cockpit markers are present but the ownership record has no region for them', entry.path)
         }
         if (current && priorOwned?.kind === 'shared-region' && digest(current.bytes) !== priorOwned.region.sha256) {
-            return refusal('SURFACE_STATE_CONFLICT', `the text between cockpit's markers was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, undo the edit between the markers, then rerun npx --no cockpit sync --config <your cockpit.toml>`, entry.path)
+            return refusal('SURFACE_STATE_CONFLICT', "the text between cockpit's markers was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits", entry.path, SURFACE_HAND_EDIT_FIX)
         }
         if (!current && priorOwned) return refusal('SURFACE_STATE_CONFLICT', 'prior Markdown region is missing', entry.path)
         return markdownPostimage(existingBytes, entry)
@@ -482,7 +488,7 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
     }
     if (priorOwned.kind !== 'shared-region' || priorOwned.region.format !== 'opencode-json-root-properties') return refusal('SURFACE_STATE_CONFLICT', 'prior OpenCode ownership is invalid', entry.path)
     const prior = openCodeOwnedGroup(existingBytes, priorOwned.region.keys)
-    if (!prior || prior.sha256 !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'owned OpenCode root group is missing or changed', entry.path)
+    if (!prior || prior.sha256 !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'owned OpenCode root group is missing or changed', entry.path, SURFACE_HAND_EDIT_FIX)
     if (parsed.members.slice(priorOwned.region.keys.length).some(member => desiredKeys.includes(member.key))) {
         return refusal('SURFACE_STATE_CONFLICT', 'OpenCode root property exists outside prior ownership', entry.path)
     }
@@ -500,14 +506,14 @@ export function removeSharedOwnership(existingBytes: string, priorOwned: Ownersh
             || existingBytes.split(OWNER_PREFIX).length !== 3 || authority && markdownOwner(current.bytes) !== manifest?.cockpitId)) {
             return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown owner markers are foreign or ambiguous', priorOwned.path)
         }
-        if (!current || digest(current.bytes) !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown region changed', priorOwned.path)
+        if (!current || digest(current.bytes) !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown region changed', priorOwned.path, SURFACE_HAND_EDIT_FIX)
         return { kind: 'complete', bytes: `${existingBytes.slice(0, current.start)}${existingBytes.slice(current.finish)}` }
     }
     const parsed = rootObject(existingBytes)
     if (authority && parsed?.owner && parsed.owner.id !== manifest?.cockpitId
         || openCodeOwner(priorOwned.regionId) && parsed?.owner?.id !== openCodeOwner(priorOwned.regionId)) return refusal('SURFACE_STATE_CONFLICT', 'stale OpenCode owner markers are missing or foreign', priorOwned.path)
     const current = openCodeOwnedGroup(existingBytes, priorOwned.region.keys)
-    if (!parsed || !current || current.sha256 !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale OpenCode group changed', priorOwned.path)
+    if (!parsed || !current || current.sha256 !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale OpenCode group changed', priorOwned.path, SURFACE_HAND_EDIT_FIX)
     return { kind: 'complete', bytes: `${existingBytes.slice(0, parsed.open + 1)}${current.separatorPrefix}${existingBytes.slice(current.finish)}` }
 }
 
@@ -886,7 +892,8 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
             : Object.freeze([Object.freeze({ code: 'SURFACE_STATE_CONFLICT' as const, target: fact.path,
                 message: state === 'unknown' ? 'cockpit could not confirm this generated path is still the plain file or link inside the cockpit root that it last wrote'
                     : state === 'missing' ? 'this generated path is missing and nothing in this sync recreates it'
-                        : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, ask the person who owns the cockpit before you undo the edit or delete the file, then rerun npx --no cockpit sync --config <your cockpit.toml>' })])
+                        : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits',
+                ...(state === 'modified' ? { fix: SURFACE_HAND_EDIT_FIX } : {}) })])
         return Object.freeze({ fact, state, ...(rawSha256 ? { rawSha256 } : {}), diagnostics })
     })
     return Object.freeze({ kind: 'complete', paths: Object.freeze(paths) })

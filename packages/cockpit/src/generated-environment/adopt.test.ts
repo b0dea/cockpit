@@ -62,7 +62,7 @@ describe('sync --adopt', () => {
         const refused = await syncGeneratedEnvironment({ configPath })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
             code: 'SURFACE_STATE_CONFLICT', target: '.claude/settings.json',
-            message: expect.stringContaining('npx --no cockpit sync --config <your cockpit.toml> --adopt .claude/settings.json'),
+            fix: expect.stringContaining('have a human approve npx --no cockpit sync --config <your cockpit.toml> --adopt .claude/settings.json'),
         })] })
     })
 
@@ -267,7 +267,8 @@ describe('sync --adopt', () => {
         await writeFile(path, (await readFile(path, 'utf8')).replace('npm run lint', 'npm run anything'))
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
             code: 'SURFACE_STATE_CONFLICT', target: '.claude/settings.json',
-            message: expect.stringContaining('merged from cockpit/adopted/.claude/settings.json: make the change there, then ask the person who owns the cockpit before you delete .claude/settings.json'),
+            message: expect.stringContaining('merged from cockpit/adopted/.claude/settings.json'),
+            fix: expect.stringContaining('make the change in cockpit/adopted/.claude/settings.json, then ask the person who owns the cockpit before you delete .claude/settings.json'),
         })] })
     })
 })
