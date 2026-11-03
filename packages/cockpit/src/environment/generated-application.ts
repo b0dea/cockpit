@@ -1,6 +1,6 @@
 import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from '../team-metadata.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import { cockpitCommand, type FixContext } from '../fix-catalogue.js'
+import { cockpitCommand, initCommand, type FixContext } from '../fix-catalogue.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -109,7 +109,7 @@ import {
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { projectPersonaOutputs, type DataStepContext } from './data-plane.js'
 import { decodeLifecycleRecord, earlierNameRefusalMessage, findStackUnderEarlierName, resolveLifecycleStage } from './lifecycle-stage.js'
-import { authenticateStatePublication, observeConfiguration, readState, selectStateRoot,
+import { authenticateStatePublication, observeConfiguration, readState, selectBootstrapStateRoot, selectStateRoot,
     type BootstrapStateAddress, type BootstrapStateRecord, type StateNamespace, type StateResult } from './state.js'
 import {
     deriveEntrypoints,
@@ -1107,8 +1107,40 @@ async function authenticatedBootstrapPriorSurfaces(
     const authenticated = authenticateStatePublication(state)
     if (!authenticated || authenticated.status !== 'complete' || authenticated.record.kind !== 'bootstrap') return undefined
     const record = authenticated.record
-    if (record.value.stage === 'surface-previewed' || record.value.checkoutRoot !== root || record.target !== state.address.target
-        || state.address.checkoutRoot !== root || record.value.target !== record.target) return undefined
+    if (record.target !== state.address.target || state.address.checkoutRoot !== root) return undefined
+    const surfaces = await bootstrapPublishedSurfaces(root, record, node, adapters)
+    if (surfaces) consumedBootstrapStatePublications.add(publication)
+    return surfaces
+}
+
+// A plain sync between an interrupted init and its rerun met init's own setup skill files with no
+// ownership record and refused them, and its remedy had an agent delete them. The bootstrap record
+// sync reads here comes from this user's private state root, scoped to this cockpit root, and the
+// files must still hold exactly the bytes init published from the installed package.
+async function unfinishedInitSurfaces(
+    root: string,
+    node: ResolvedExecutable,
+    adapters: GeneratedEnvironmentCommandAdapters,
+): Promise<readonly SurfacePriorOwnedEntry[] | undefined> {
+    if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined
+    for (const target of SURFACE_TARGETS) {
+        const namespace = await selectBootstrapStateRoot({ platform: process.platform, home: process.env.HOME,
+            xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoot: root, target })
+        if (namespace.kind !== 'complete') return undefined
+        const read = await readState(namespace.value.paths.bootstrap(target))
+        if (read.kind === 'complete') return bootstrapPublishedSurfaces(root, read.value, node, adapters)
+    }
+    return undefined
+}
+
+async function bootstrapPublishedSurfaces(
+    root: string,
+    record: BootstrapStateRecord,
+    node: ResolvedExecutable,
+    adapters: GeneratedEnvironmentCommandAdapters,
+): Promise<readonly SurfacePriorOwnedEntry[] | undefined> {
+    if (record.kind !== 'bootstrap' || record.value.stage === 'surface-previewed' || record.value.checkoutRoot !== root
+        || record.value.target !== record.target) return undefined
     const assets = await selectedBootstrapAssets(node, adapters)
     if (!assets) return undefined
     const byPath = new Map(assets.map(asset => [asset.path, asset]))
@@ -1131,7 +1163,6 @@ async function authenticatedBootstrapPriorSurfaces(
     })), node, adapters)
     if (!reads || reads.kind !== 'complete' || reads.results.length !== inspected.files.length
         || reads.results.some((read, index) => read.kind !== 'file' || read.sha256 !== inspected.files[index]!.sha256)) return undefined
-    consumedBootstrapStatePublications.add(publication)
     return Object.freeze(inspected.files.map(file => Object.freeze({
         kind: 'file' as const, path: file.path, harnesses: [record.target] as [SurfaceTarget], scope: 'always' as const,
         capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,
@@ -3520,7 +3551,7 @@ function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Readonly<
     const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
         ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
     return refuse(diagnostic.code, adopted
-        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`
+        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, then ask the person who owns the cockpit before you delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`
         : diagnostic.message, diagnostic.target)
 }
 
@@ -3623,10 +3654,12 @@ async function preparePublication(
         const recorded = await renamedStackRefusal(base)
         if (recorded) return recorded
     }
-    const adoptedBootstrap = ownership.kind === 'missing' && request.bootstrapState
-        ? await authenticatedBootstrapPriorSurfaces(base.root, request.bootstrapState, base.node, adapters) : undefined
+    const adoptedBootstrap = ownership.kind !== 'missing' ? undefined : request.bootstrapState
+        ? await authenticatedBootstrapPriorSurfaces(base.root, request.bootstrapState, base.node, adapters)
+        : await unfinishedInitSurfaces(base.root, base.node, adapters)
     if (ownership.kind === 'missing' && request.bootstrapState && !adoptedBootstrap) return refuse(
-        'GENERATED_OWNERSHIP_INVALID', 'bootstrap state, packaged sources, or published outputs could not be authenticated', 'bootstrap',
+        'GENERATED_OWNERSHIP_INVALID', 'the setup skill files init published no longer hold the bytes it recorded, or the installed cockpit package changed since init published them, so sync cannot take them over as cockpit\'s own', 'bootstrap',
+        `if the cockpit package was upgraded, run ${initCommand({ args: '--json' })} and accept its fresh preview; otherwise restore the setup skill files init published (its --json preview lists them under result.files), or ask the person who ran init before you remove cockpit.toml and those files so init starts again`,
     )
     if (ownership.kind !== 'missing' && request.bootstrapState) return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'bootstrap adoption is only valid before the first ownership manifest', 'bootstrap',

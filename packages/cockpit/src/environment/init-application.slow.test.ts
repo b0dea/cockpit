@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { prepareSelectedBootstrapSurface, resumeSelectedBootstrapSurface, applySelectedBootstrapSurface, syncGeneratedEnvironment, checkGeneratedEnvironment } from '../generated-environment/command.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { join, resolve } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
 import { runCli } from '../cli.js'
@@ -175,8 +175,9 @@ it.each([
         synchronize: input => syncTeamGeneratedEnvironment(input),
         preflight: input => preflight(input),
     }
+    // A plain sync finds init's state where this machine keeps it, so init records it there too.
     const input: InitApplicationInput = { root: f.root, target: f.input.target, accepted: false, sessionId: f.input.sessionId,
-        platform: f.input.platform, home: f.input.home, xdgStateHome: f.input.xdgStateHome, cockpitRoot: { kind: 'in-repo' } }
+        platform: process.platform as 'darwin' | 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome, cockpitRoot: { kind: 'in-repo' } }
     const preview = await runInitApplication(input, adapters)
     const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
@@ -214,13 +215,24 @@ it.each([
     expect(outcome.result).toMatchObject({ unconfirmed: [{ field: 'environment.machine', provenance: 'agent-default' },
         { field: 'guards', provenance: 'agent-default' }] })
     await writeFile(f.destination, outcome.artifact!)
+    // A stop before init's own sync leaves init's setup skill with no ownership record. A plain sync
+    // refused it as foreign and told the agent to delete it; it now adopts init's own publication.
+    const unvalidated = await runInitApplication(accepted, { ...adapters, validateConfig: async () => ({ kind: 'refusal', status: 2,
+        result: null, diagnostics: [{ severity: 'error', code: 'CONFIG_SCHEMA_INVALID', message: 'synthetic' }] }) })
+    expect(unvalidated).toMatchObject({ kind: 'refusal',
+        diagnostics: [{ code: 'CONFIG_SCHEMA_INVALID' }, { code: 'INIT_VERIFICATION_INCOMPLETE' }] })
+    vi.stubEnv('HOME', f.input.home)
+    vi.stubEnv('XDG_STATE_HOME', f.input.xdgStateHome)
+    const plainSync = await syncTeamGeneratedEnvironment({ configPath: f.destination }).finally(() => vi.unstubAllEnvs())
+    expect(plainSync, JSON.stringify(plainSync.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
     // A run that stops after the draft still names what no person confirmed, and which prerequisites
     // are missing: an agent sees only this last outcome. init ran from a copy of cockpit outside the root.
     const stopped = await runInitApplication(accepted, { ...adapters,
         inspectReadiness: input => inspectInitReadiness(input, { env: process.env, timeoutMs: 5_000, execute: executeProbe }) })
     // This fixture root is not a Git working tree either.
     expect(stopped).toMatchObject({ kind: 'refusal',
-        diagnostics: [{ code: 'STATE_UNSEEDED' }, { code: 'COCKPIT_NOT_INSTALLED' }, { code: 'SETUP_PATH_TYPE_INVALID' }],
+        diagnostics: [{ code: 'STATE_UNSEEDED' }, { code: 'INIT_VERIFICATION_INCOMPLETE' }, { code: 'COCKPIT_NOT_INSTALLED' },
+            { code: 'SETUP_PATH_TYPE_INVALID' }],
         result: { unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }],
             readiness: { state: 'runtime', gaps: [{ id: 'cockpit-git', level: 'required' }, { id: 'cockpit-installed', level: 'recommended' }] } } })
     expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({

@@ -12,6 +12,7 @@ import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
 import { errorCause } from '../environment/contract.js'
 import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
+import { repositoryIdentity } from '../environment/repository-identity.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
 import { initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable, TestingName } from '../schema.js'
@@ -512,6 +513,11 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             skipped.push({ source, reason })
             return { kind: 'none', reason }
         }
+        // Preflight compares a sibling's upstream with its declared remote by repository identity,
+        // which only https and ssh remotes have; a local path also names this machine's disk, which a
+        // teammate's clone of the cockpit cannot reach. Proposing one made every preflight refuse.
+        if (repositoryIdentity(url).kind !== 'known') return { kind: 'none',
+            reason: `the origin remote in ${source} (${url}) is not an https or ssh repository URL, so a teammate's setup cannot clone it and preflight cannot compare the checkout with it; record its hosted remote once it has one` }
         return { kind: 'url', url, source }
     }
 

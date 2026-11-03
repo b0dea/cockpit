@@ -28,7 +28,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectMachineStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'refreshBootstrapPublication', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectMachineStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'refreshBootstrapPublication', 'restartBootstrapState', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -44,6 +44,7 @@ const issuedScopedLocks = new WeakMap<object, Readonly<{ namespace: StateNamespa
 const issuedBootstrapAnswerResets = new WeakSet<object>()
 const issuedBootstrapObservationRefreshes = new WeakSet<object>()
 const issuedBootstrapPublicationRefreshes = new WeakSet<object>()
+const issuedBootstrapRestarts = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
@@ -1274,11 +1275,15 @@ function validateRecordForAddress(
         const authorizedReset = currentBootstrap !== null
             && (issuedBootstrapAnswerResets.has(value as object) || issuedBootstrapObservationRefreshes.has(value as object))
         const authorizedPublicationRefresh = currentBootstrap !== null && issuedBootstrapPublicationRefreshes.has(value as object)
+        // A restart may only return to a fresh preview that carries no publication, draft or answers.
+        const authorizedRestart = currentBootstrap !== null && issuedBootstrapRestarts.has(value as object)
+            && record.value.stage === 'surface-previewed' && record.value.published.length === 0 && record.value.destination === null
+            && record.value.artifactBytes === null && record.value.artifactSha256 === null && record.value.greenfield === undefined
         return record.checkoutId === address.checkoutId && record.target === address.target
             && record.value.checkoutRoot === address.checkoutRoot && record.value.target === address.target
-            && record.revision === expectedRevision && stageAdvances
+            && record.revision === expectedRevision && (authorizedRestart || stageAdvances
             && (immutableEvidenceMatches && publishedEvidenceMatches || authorizedPublicationRefresh)
-            && draftEvidenceMatches && (greenfieldEvidenceMatches || authorizedReset) ? record : undefined
+            && draftEvidenceMatches && (greenfieldEvidenceMatches || authorizedReset)) ? record : undefined
     }
     const validated = StateRecordSchema.safeParse(value)
     if (!validated.success) return undefined
@@ -1519,6 +1524,28 @@ export async function refreshBootstrapPublication(
     })
     if ('aborted' in outcome) return outcome.value as BootstrapPublicationRefreshRefusal
     return outcome
+}
+
+/**
+ * Replaces bootstrap state whose publication is gone from the checkout with a fresh preview record.
+ * The caller proves the absence; the expected revision keeps a concurrent init from being discarded.
+ */
+export async function restartBootstrapState(
+    namespace: BootstrapStateNamespace,
+    address: BootstrapStateAddress,
+    input: Readonly<{ ownerId: BootstrapLockOwnerId; expectedRevision: number; updatedAt: string
+        value: Readonly<{ commandSha256: string; previewSha256: string; sources: readonly BootstrapStateRecord['value']['sources'][number][] }> }>,
+): Promise<StateResult<BootstrapStateRecord> | Readonly<{ kind: 'stale' }>> {
+    const outcome = await transactState(namespace, address, { ownerId: input.ownerId }, current => {
+        if (current === null || current.revision !== input.expectedRevision) return abortStateTransaction(Object.freeze({ kind: 'stale' as const }))
+        const record: BootstrapStateRecord = { ...current, revision: current.revision + 1, updatedAt: input.updatedAt,
+            value: { stage: 'surface-previewed', checkoutRoot: current.value.checkoutRoot, target: current.value.target,
+                sources: [...input.value.sources], commandSha256: input.value.commandSha256, previewSha256: input.value.previewSha256,
+                published: [], destination: null, artifactBytes: null, artifactSha256: null } }
+        issuedBootstrapRestarts.add(record)
+        return record
+    })
+    return 'aborted' in outcome ? outcome.value : outcome
 }
 
 async function inspectLock(

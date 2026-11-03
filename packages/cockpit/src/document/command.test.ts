@@ -443,9 +443,19 @@ describe('public estate observation', () => {
         changedDirectory[0] = { ...changedDirectory[0], dir: 'different-app' }
         expect(await documentObservedCommand({ root: canonical, configuration: { ...configuration,
             answers: [...configuration.answers, answerQuestion(pending.question!, changedDirectory)] } })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH',
-                fix: 'declare exactly one sibling per observed repository: slug "app" with dir "app"' }],
+            kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH', target: 'sibling',
+                message: 'the sibling answer must declare exactly the repositories init observed (app (dir "app")); it declares app (dir "different-app"), which init did not observe; it omits app (dir "app")',
+                fix: 'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>' }],
         })
+        // A sibling row's generated service is planned like the baseline's, so its host operations are refused at the answer too.
+        const rowSibling = (parseToml(readFileSync(join(root, 'packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')) as {
+            sibling: { derives: { generated: { service: { image: { manifest_probe: Record<string, unknown> } } } } }[] }).sibling[0]!
+        const { service: _probeService, ...rowProbe } = rowSibling.derives.generated.service.image.manifest_probe
+        rowSibling.derives.generated.service.image.manifest_probe = { ...rowProbe, location: 'host', argv: ['docker', 'image', 'inspect', 'worker'] }
+        expect(await documentObservedCommand({ root: canonical, configuration: { ...configuration, answers: [...configuration.answers,
+            answerQuestion(pending.question!, [...generatedConfig.sibling, rowSibling])] } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'sibling',
+                message: expect.stringMatching(/^sibling\.1\.derives\.generated\.service\.image\.manifest_probe runs "docker" on the host/) }] })
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await documentObservedCommand({ root: canonical, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'estate.runnable' } })
@@ -872,6 +882,16 @@ describe('operator-confirmed document completion', () => {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer],
         } })
         expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
+        // Loading cockpit.toml refuses a host command other than node; accepting the answer left init
+        // to fail only after it had written cockpit.toml, when the answer could no longer be reset.
+        const hostProbe = structuredClone(registryGeneratedDeclaration) as unknown as { services: { image: { manifest_probe: Record<string, unknown> } }[] }
+        const { service: _service, ...probe } = hostProbe.services[0]!.image.manifest_probe
+        hostProbe.services[0]!.image.manifest_probe = { ...probe, location: 'host', argv: ['docker', 'manifest', 'inspect', 'app'] }
+        expect(await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, hostProbe)],
+        } })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'environment.generated',
+            message: expect.stringContaining('environment.generated.services.0.image.manifest_probe runs "docker" on the host'),
+            fix: expect.stringContaining('make argv[0] of the host operation "node"') }] })
         const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
         const machine = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],

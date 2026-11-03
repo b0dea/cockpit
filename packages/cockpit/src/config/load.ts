@@ -20,7 +20,7 @@ import { formatShellCommand } from '../fix-catalogue.js'
 export const mechanism = {
     id: 'configuration-loading',
     module: 'packages/cockpit/src/config/load.ts',
-    exports: ['loadCockpitConfig', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
+    exports: ['loadCockpitConfig', 'unboundHostOperation', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
 } as const
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
@@ -356,7 +356,7 @@ function undatedForeignProvenance(value: unknown, configName: string, path: read
 // A host operation runs only with the Node that runs cockpit: that is the one host executable
 // whose identity cockpit binds into a generated runtime. Any other name could never be planned,
 // and `up` used to report only that the generated observations were incomplete.
-function unboundHostOperation(value: unknown, path: readonly string[]): Readonly<{ path: string; executable: string }> | undefined {
+export function unboundHostOperation(value: unknown, path: readonly string[]): Readonly<{ path: string; executable: string }> | undefined {
     if (value === null || typeof value !== 'object') return undefined
     const { location, argv } = value as { location?: unknown; argv?: unknown }
     if (location === 'host' && Array.isArray(argv) && argv[0] !== 'node') return { path: path.join('.'), executable: String(argv[0]) }

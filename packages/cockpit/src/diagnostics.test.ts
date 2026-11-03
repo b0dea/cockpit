@@ -17,6 +17,9 @@ describe('diagnostic envelope', () => {
             expect(rendered).toContain('What failed: synthetic failure\n')
             expect(rendered).toMatch(/Why it matters: .+\n/)
             expect(rendered).toMatch(/Fix: .+\n/)
+            // An agent followed a remedy that said to delete a file without asking anyone.
+            const fix = /Fix: (.+)\n/.exec(rendered)![1]!
+            if (/\b(delete|remove|rm)\b/.test(fix)) expect(fix, code).toMatch(/\bask the person\b/)
         }
     })
 

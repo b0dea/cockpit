@@ -97,9 +97,16 @@ describe('init application', () => {
             return syncRefusal
         } })
         expect(blocked).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
-        expect(blocked.diagnostics).toBe(syncRefusal.diagnostics)
+        // cockpit.toml is written now, so the stop also says how to finish rather than leaving the
+        // agent to try --reset-answer or a bare sync.
+        const finish = initCommand({ root: f.root, target: 'codexcli', args: `--accept-preview ${digest('3')}` })
+        expect(blocked.diagnostics).toEqual([...syncRefusal.diagnostics, expect.objectContaining({ severity: 'info',
+            code: 'INIT_VERIFICATION_INCOMPLETE', fix: expect.stringContaining(`then rerun ${finish} to finish verifying it`) })])
         expect(blocked.result?.ownerOutcome).toBe(syncRefusal)
         expect(f.calls).toEqual(['prepare', 'document', 'observe', 'resume', 'validate', 'sync-blocked'])
+        expect(await runInitApplication({ ...f.input, resetAnswer: { field: 'sibling' } }, f.adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_UNAVAILABLE',
+                fix: `cockpit.toml is already written from the recorded answers: change the value in cockpit.toml itself, then rerun ${finish} to finish verifying it` }] })
 
         f.calls.length = 0
         const complete = await runInitApplication(accepted, f.adapters)
@@ -258,6 +265,10 @@ describe('init application', () => {
             expect(outcome, `${attempt}: ${JSON.stringify(outcome.diagnostics)}`).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
             expect(outcome.diagnostics.map(row => row.code), attempt).not.toContain('INIT_ANSWER_UNUSED')
         }
+        // The remedies init prints rerun it against the cockpit root with no placement; the accepted
+        // placement is restored from the recorded command, for a dedicated root as for an in-repo one.
+        expect(await runInitApplication({ ...f.input, root, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') },
+            adapters)).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
         // An applied answer stays in force, so the file cannot quietly change it after the fact.
         expect(await run({ ...answers, sibling: [{ slug: 'checkout' }] })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'INIT_ANSWER_CONFLICT', message: expect.stringContaining('sibling') }] })
@@ -434,6 +445,14 @@ describe('init application', () => {
         const resumed = await runInitApplication({ ...accepted, accepted: false }, adapters)
         expect(resumed).toMatchObject({ kind: 'pending', result: { stage: 'draft-prepared' } })
         expect(resumed.result?.question).toBeUndefined()
+
+        // State is keyed by path: once the root is removed and recreated, nothing init published is
+        // there, and resuming used to fail at sync with GENERATED_OWNERSHIP_INVALID and no remedy.
+        f.setPublished({ kind: 'absent' })
+        expect(await runInitApplication({ ...accepted, accepted: false }, adapters)).toMatchObject({ kind: 'pending',
+            result: { stage: 'surface-previewed' }, diagnostics: [{ severity: 'info', code: 'INIT_STATE_RESTARTED' }] })
+        expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'pending',
+            result: { stage: 'surface-published', question: { field: 'sibling' } } })
     })
 
     it('refuses copied, unproven and oversized greenfield answers, then restarts a changed-source interview', async () => {
@@ -662,6 +681,12 @@ describe('init application', () => {
         expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
             field: reset.field, acceptedPreviewSha256: reset.previewSha256,
         } }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
+
+        // Once the published files are gone the recorded answers are about to be discarded, so a
+        // reset of one of them is refused instead of rewriting the discarded record.
+        f.setPublished({ kind: 'absent' })
+        expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: { field: 'sibling' } }, adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_UNAVAILABLE', fix: expect.stringContaining('without --reset-answer') }] })
     })
 
     it.each([

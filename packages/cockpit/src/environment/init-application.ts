@@ -19,6 +19,7 @@ import {
     refreshBootstrapObservation,
     refreshBootstrapPublication,
     resetBootstrapAnswer,
+    restartBootstrapState,
     selectBootstrapStateRoot,
     transactState,
     type BootstrapStateAddress,
@@ -437,6 +438,23 @@ export async function runInitApplication(
     return withReadiness(await runInitStages(input, adapters), input, adapters)
 }
 
+async function publicationGone(root: string, record: BootstrapStateRecord, adapters: InitApplicationAdapters): Promise<boolean> {
+    for (const path of [...record.value.published.map(row => row.path), 'cockpit.toml']) {
+        if (!await pathAbsent(root, path, adapters)) return false
+    }
+    return true
+}
+
+// A file is absent when it or any directory above it is; the observation refuses a path whose
+// parent is missing, and anything it cannot prove absent counts as present.
+async function pathAbsent(root: string, path: string, adapters: InitApplicationAdapters): Promise<boolean> {
+    for (let current = path; current !== '.' && current !== '/'; current = dirname(current)) {
+        const observed = await adapters.observeDestination({ path: join(root, current), byteLimit: DRAFT_BYTE_LIMIT })
+        if (observed.kind !== 'refusal') return observed.kind === 'absent'
+    }
+    return false
+}
+
 // Every stop init makes, the preview included, says which prerequisites are still missing, so the
 // setup agent can walk the person through them before the first `up` instead of meeting them one
 // refusal at a time; a cockpit was left uncommitted, outside Git or with no installed cockpit while
@@ -482,7 +500,6 @@ async function runInitStages(
         || dirname(firstSibling) !== dirname(input.root) || firstSibling === input.root)) {
         return refused('INIT_ROOT_INVALID', 'a dedicated cockpit root must sit beside the product repository it is created for, without a registry', input.root)
     }
-    let rootQuestion: CockpitRootQuestion | undefined
     for (const target of SURFACE_TARGETS) {
         if (target === input.target) continue
         const other = await selectBootstrapStateRoot({ platform: input.platform, home: input.home,
@@ -503,12 +520,46 @@ async function runInitStages(
     const read = await readState(address)
     if (read.kind === 'refusal') return stateFailure(read)
     let current = read.kind === 'complete' ? read.value : null
+    // State is keyed by the root's path, so it outlives the directory. Resuming into a recreated one
+    // reached its sync, which could not authenticate files that were no longer there.
+    let restarted: Diagnostic | undefined
+    let discarded: BootstrapStateRecord | undefined
+    if (current !== null && current.value.stage !== 'surface-previewed' && await publicationGone(input.root, current, adapters)) {
+        // A reset would rewrite answers that the restart is about to discard.
+        if (input.resetAnswer !== undefined) return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+            diagnostics: [{ ...diagnostic('INIT_ANSWER_RESET_UNAVAILABLE', `none of the files init published into ${input.root}, nor cockpit.toml, exist any more, so its recorded answers no longer apply`, address.path),
+                fix: `run ${initCommand({ root: input.root, target: input.target, args: '--json' })} without --reset-answer: init starts again from the preview` }] }
+        restarted = { severity: 'info', code: 'INIT_STATE_RESTARTED', target: address.path,
+            message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated, or they were deleted), so init starts again from the preview and the answers recorded there are discarded` }
+        discarded = current
+        current = null
+    }
+    const outcome = await initStagesFrom(input, adapters, namespace, address, current, discarded)
+    return restarted === undefined ? outcome
+        : Object.freeze({ ...outcome, diagnostics: [restarted, ...outcome.diagnostics] }) as InitApplicationOutcome
+}
+
+async function initStagesFrom(
+    input: InitApplicationInput,
+    adapters: InitApplicationAdapters,
+    namespace: BootstrapStateNamespace,
+    address: BootstrapStateAddress,
+    recorded: BootstrapStateRecord | null,
+    discarded: BootstrapStateRecord | undefined,
+): Promise<InitApplicationOutcome> {
+    let current = recorded
+    let rootQuestion: CockpitRootQuestion | undefined
     let boundInput = input
     if (current !== null && input.cockpitRoot === undefined && input.registry === undefined) {
-        const inRepoInput: InitApplicationInput = { ...input, cockpitRoot: { kind: 'in-repo' } }
         // The command driver starts each invocation before it has rediscovered placement. The
-        // accepted command digest restores in-repo context without reclassifying a genesis root.
-        if (current.value.commandSha256 === commandDigest(inRepoInput)) boundInput = inRepoInput
+        // accepted command digest restores the placement without reclassifying a genesis root; a
+        // dedicated root is named after its product repository, so the remedies that rerun init
+        // against the cockpit root resume it too.
+        const placements: NonNullable<InitApplicationInput['cockpitRoot']>[] = [{ kind: 'in-repo' },
+            ...basename(input.root).endsWith('-cockpit') ? [{ kind: 'dedicated' as const,
+                firstSibling: resolve(dirname(input.root), basename(input.root).slice(0, -'-cockpit'.length)) }] : []]
+        const accepted = current.value.commandSha256
+        boundInput = placements.map(cockpitRoot => ({ ...input, cockpitRoot })).find(candidate => commandDigest(candidate) === accepted) ?? input
     }
     if (current === null && input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
@@ -564,7 +615,12 @@ async function runInitStages(
             ...(input.resetAnswer.acceptedPreviewSha256 === undefined ? {}
                 : { acceptedPreviewSha256: input.resetAnswer.acceptedPreviewSha256 }),
         })
-        if (reset.kind === 'refusal') return refused(reset.code.replace('BOOTSTRAP_', 'INIT_'), reset.message, reset.target)
+        if (reset.kind === 'refusal') {
+            const code = reset.code.replace('BOOTSTRAP_', 'INIT_')
+            const fix = code === 'INIT_ANSWER_RESET_UNAVAILABLE' ? resetUnavailableFix(input, current) : undefined
+            return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+                diagnostics: [{ ...diagnostic(code, reset.message, reset.target), ...(fix === undefined ? {} : { fix }) }] }
+        }
         const publicPreview = Object.freeze({ ...reset.preview })
         if (reset.kind === 'pending') return { kind: 'pending', status: 0, artifact: null, destination: null,
             diagnostics: [], result: result(current!.value.stage, projection, undefined, { resetAnswer: publicPreview }) }
@@ -626,7 +682,13 @@ async function runInitStages(
     }
 
     if (current === null) {
-        const previewed = await persist(namespace, address, boundInput, projection, adapters, 'surface-previewed', null)
+        const previewed = discarded === undefined
+            ? await persist(namespace, address, boundInput, projection, adapters, 'surface-previewed', null)
+            : await restartBootstrapState(namespace, address, { ownerId: bootstrapHolderId({ checkoutId: namespace.checkoutId,
+                sessionId: input.sessionId }), expectedRevision: discarded.revision, updatedAt: adapters.now(),
+            value: { commandSha256: commandDigest(boundInput), previewSha256: projection.previewSha256, sources: projection.sources } })
+        if (previewed.kind === 'stale') return refused('INIT_STATE_STALE',
+            `bootstrap state changed while init was restarting it; rerun ${initCommand({ root: input.root, target: input.target })} to review the current preview`, address.path)
         if (previewed.kind !== 'complete') return stateFailure(previewed)
         current = previewed.value
     }
@@ -857,25 +919,49 @@ async function runInitStages(
         const authenticated = authenticateStatePublication({ publication: draftPublication, address })
         if (!authenticated) return refused('INIT_STATE_UNAUTHENTICATED', 'bootstrap state publication could not be authenticated', address.path)
     }
+    // From here cockpit.toml is on disk and the recorded answers can no longer be reset, so every stop
+    // says how to finish: an agent that met one tried --reset-answer, then ran sync by hand.
+    const verificationStop = (outcome: OwnerOutcome): InitApplicationOutcome => {
+        const stopped = ownerRefusal(outcome, 'draft-observed', projection, unconfirmedOf(currentDocument))
+        return { ...stopped, diagnostics: [...stopped.diagnostics, { severity: 'info', code: 'INIT_VERIFICATION_INCOMPLETE', target: destination,
+            message: 'cockpit.toml is written, so its recorded answers can no longer be reset; init stopped while verifying it',
+            fix: `correct what the errors above name, changing a cockpit.toml value in cockpit.toml itself, then rerun ${initCommand({ root: input.root,
+                target: input.target, args: `--accept-preview ${projection.previewSha256}` })} to finish verifying it` }] } as InitApplicationOutcome
+    }
     const validation = await adapters.validateConfig(destination)
-    if (validation.status !== 0) return ownerRefusal(validation, 'draft-observed', projection, unconfirmedOf(currentDocument))
+    if (validation.status !== 0) return verificationStop(validation)
     const synchronized = await adapters.synchronize(resumed.kind === 'complete'
         ? { configPath: destination }
         : { configPath: destination, bootstrapState: { publication: draftPublication!, address } })
-    if (synchronized.status !== 0) return ownerRefusal(synchronized, 'draft-observed', projection, unconfirmedOf(currentDocument))
+    if (synchronized.status !== 0) return verificationStop(synchronized)
     const checked = await adapters.check({ configPath: destination })
-    if (checked.status !== 0) return ownerRefusal(checked, 'draft-observed', projection, unconfirmedOf(currentDocument))
+    if (checked.status !== 0) return verificationStop(checked)
     const preflight = await adapters.preflight({ configPath: destination })
     // A surfaces-only cockpit has no runtime to preflight. Its refusal is the verified state, and is
     // reported as information so the operator still reads that no runtime is declared.
     const runtimeAbsent = preflight.status !== 0 && preflight.diagnostics.length > 0
         && preflight.diagnostics.every(row => row.code === 'ENVIRONMENT_NOT_DECLARED')
-    if (preflight.status !== 0 && !runtimeAbsent) return ownerRefusal(preflight, 'draft-observed', projection, unconfirmedOf(currentDocument))
+    if (preflight.status !== 0 && !runtimeAbsent) return verificationStop(preflight)
     const verified = await persist(namespace, address, boundInput, projection, adapters, 'environment-verified', current)
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
         diagnostics: runtimeAbsent ? preflight.diagnostics.map(row => ({ ...row, severity: 'info' as const })) : preflight.diagnostics,
         result: result('environment-verified', projection, undefined, unconfirmedOf(currentDocument)) }
+}
+
+// A reset rewrites the interview, which only exists until cockpit.toml is written from it.
+function resetUnavailableFix(input: InitApplicationInput, current: BootstrapStateRecord | null): string {
+    const resume = (args: string) => initCommand({ root: input.root, target: input.target, args })
+    switch (current?.value.stage) {
+        case 'draft-prepared':
+            return `cockpit.toml is already drafted from the recorded answers: rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to write it, then change the value in cockpit.toml itself and rerun the same command`
+        case 'draft-observed':
+            return `cockpit.toml is already written from the recorded answers: change the value in cockpit.toml itself, then rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to finish verifying it`
+        case 'environment-verified':
+            return `init has finished: change the value in cockpit.toml itself, then run ${cockpitCommand('sync', { config: join(input.root, 'cockpit.toml') })}`
+        default:
+            return `no answer is recorded yet: run ${resume('--json')} to preview, then answer the interview`
+    }
 }
 
 /** The review items a finished interview leaves: answers the setup agent chose or no one attributed. */

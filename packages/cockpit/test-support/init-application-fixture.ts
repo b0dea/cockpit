@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import type { InitApplicationAdapters, InitApplicationInput } from '../src/environment/init-application.js'
 import type { SurfaceTarget } from '../src/surfaces/contract.js'
 
@@ -23,6 +23,9 @@ export function fixture() {
     const destination = join(root, 'cockpit.toml')
     const calls: string[] = []
     let destinationState: { kind: 'absent' } | { kind: 'available'; sha256: string } = { kind: 'absent' }
+    // The files init publishes, which every other path stands for; a test removes them to model a
+    // root that was deleted and recreated.
+    let publishedState: { kind: 'absent' } | { kind: 'available'; sha256: string } = { kind: 'available', sha256: digest('2') }
     let canonicalOwnership = false
     let previewSha256 = digest('3')
     const preview = Object.freeze({
@@ -63,7 +66,17 @@ export function fixture() {
             return { kind: 'complete', status: 0, diagnostics: [], result: { document: 'name = "synthetic"\n' },
                 artifact: 'name = "synthetic"\n', destination }
         },
-        observeDestination: async () => { calls.push('observe'); return destinationState },
+        observeDestination: async ({ path }) => {
+            // A dedicated cockpit writes its cockpit.toml beside the product, not into this root.
+            if (basename(path) !== 'cockpit.toml') {
+                // As in the CLI, a path under a missing directory is refused rather than reported absent;
+                // only the topmost missing directory reads as absent.
+                if (publishedState.kind === 'absent' && relative(root, path).includes(sep)) return { kind: 'refusal', diagnostics: [] }
+                return publishedState
+            }
+            calls.push('observe')
+            return destinationState
+        },
         validateConfig: async () => { calls.push('validate'); return { kind: 'complete', status: 0, diagnostics: [], result: {} } },
         synchronize: async () => { calls.push('sync'); canonicalOwnership = true; return { kind: 'complete', status: 0, diagnostics: [], result: {} } },
         check: async () => { calls.push('check'); return { kind: 'complete', status: 0, diagnostics: [], result: {} } },
@@ -76,6 +89,7 @@ export function fixture() {
     return {
         root, destination, calls, adapters, input,
         setDestination: (value: typeof destinationState) => { destinationState = value },
+        setPublished: (value: typeof publishedState) => { publishedState = value },
         setPreviewSha256: (value: string) => { previewSha256 = value },
     }
 }

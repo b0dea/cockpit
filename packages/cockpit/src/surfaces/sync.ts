@@ -147,7 +147,7 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
         const previous = priorByPath.get(desired.path)
         if (desired.kind === 'file' && current.kind === 'file' && current.sha256 === desired.sha256
             || desired.kind === 'symlink' && current.kind === 'symlink' && current.target === desired.target) {
-            if (!previous || !priorMatchesObserved(previous, current)) return refuse('matching bytes or target are not proof of ownership', desired.path)
+            if (!previous || !priorMatchesObserved(previous, current)) return refuse('this path already holds exactly what sync would write, but no ownership record names it, so sync cannot tell whether cockpit or a person put it there', desired.path)
             continue
         }
         if (desired.kind === 'shared-region') {

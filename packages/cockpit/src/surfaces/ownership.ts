@@ -891,7 +891,7 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
             : Object.freeze([Object.freeze({ code: 'SURFACE_STATE_CONFLICT' as const, target: fact.path,
                 message: state === 'unknown' ? 'cockpit could not confirm this generated path is still the plain file or link inside the cockpit root that it last wrote'
                     : state === 'missing' ? 'this generated path is missing and nothing in this sync recreates it'
-                        : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, undo the edit or delete the file, then rerun npx --no cockpit sync --config <your cockpit.toml>' })])
+                        : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, ask the person who owns the cockpit before you undo the edit or delete the file, then rerun npx --no cockpit sync --config <your cockpit.toml>' })])
         return Object.freeze({ fact, state, ...(rawSha256 ? { rawSha256 } : {}), diagnostics })
     })
     return Object.freeze({ kind: 'complete', paths: Object.freeze(paths) })

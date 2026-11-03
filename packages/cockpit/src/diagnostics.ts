@@ -25,7 +25,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     SURFACE_STATE_CONFLICT: Object.freeze({
         why: 'sync would overwrite content that cockpit did not write',
-        fix: `for a generated file you edited, move the change into cockpit.toml or a surface overlay, then undo the edit or delete the file and rerun ${cockpitCommand('sync')}; for the team's own .claude/settings.json, .codex/config.toml or .codex/hooks.json, have a human approve ${cockpitCommand('sync', { args: '--adopt <path>' })}`,
+        fix: `for a generated file you edited, move the change into cockpit.toml or a surface overlay, then ask the person who owns the cockpit before you undo the edit or delete the file, and rerun ${cockpitCommand('sync')}; for the team's own .claude/settings.json, .codex/config.toml or .codex/hooks.json, have a human approve ${cockpitCommand('sync', { args: '--adopt <path>' })}`,
     }),
     GENERATED_ARTIFACT_DRIFT: Object.freeze({
         why: 'generated files no longer match the canonical cockpit configuration',

@@ -333,7 +333,8 @@ describe('selected bootstrap target', () => {
         const bytes = await readFile(first)
         await writeFile(first, 'changed after bootstrap publication\n')
         expect(await syncGeneratedEnvironment({ configPath,
-            bootstrapState: { publication, address } })).toMatchObject({ kind: 'refusal' })
+            bootstrapState: { publication, address } })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_OWNERSHIP_INVALID',
+            fix: expect.stringContaining('restore the setup skill files init published') }] })
         await writeFile(first, bytes)
 
         expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address }))

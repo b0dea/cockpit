@@ -3,7 +3,7 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { initCommand } from '../fix-catalogue.js'
-import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
+import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT, unboundHostOperation } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { errorCause, snapshotJson } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
@@ -148,6 +148,14 @@ const SCHEMA_ISSUES_SHOWN = 10
 
 function issueSummary(error: { readonly issues: readonly { path: readonly PropertyKey[]; message: string }[] }): string {
     return schemaIssueSummary(error.issues, SCHEMA_ISSUES_SHOWN)
+}
+
+// cockpit.toml loading refuses the same operation, but only after init has written the file, where
+// the recorded answers can no longer be reset; the answer is refused here, before anything is written.
+function hostOperationRefusal(operation: NonNullable<ReturnType<typeof unboundHostOperation>>, field: string): RefusedDocumentOutcome {
+    return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+        `${operation.path} runs "${operation.executable}" on the host, but cockpit runs host operations only with the Node executable that runs cockpit, so this configuration could never be planned`,
+        field, 'in the answer, make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool')
 }
 
 function refusal(code: string, message: string, target?: string, fix?: string): RefusedDocumentOutcome {
@@ -1044,6 +1052,9 @@ async function completeConfigurationDocument(
             return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 'the operator-confirmed sibling declarations are invalid or change detected registry facts', question.field)
         }
+        const hostOperation = parsed.data.reduce<ReturnType<typeof unboundHostOperation>>((found, row, index) =>
+            found ?? unboundHostOperation(row.derives?.generated, ['sibling', String(index), 'derives', 'generated']), undefined)
+        if (hostOperation) return hostOperationRefusal(hostOperation, question.field)
         siblingRows = parsed.data
         record('sibling', read.provenance)
         answerIndex += 1
@@ -1064,13 +1075,22 @@ async function completeConfigurationDocument(
         const siblingSlugs = siblingRows.map(row => row.slug)
         if (new Set(dispositionSlugs).size !== dispositionSlugs.length
             || [...dispositionSlugs].sort().join(',') !== [...siblingSlugs].sort().join(',')
-            || estateRunnable.some(disposition => siblingRows.find(row => row.slug === disposition.slug)?.dir !== disposition.path)) return refusal(
-            'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH',
-            'the sibling declarations do not match the repository identities and directories in the current estate observation',
-            'sibling',
-            `declare exactly one sibling per observed repository: ${estateRunnable
-                .map(row => `slug ${JSON.stringify(row.slug)} with dir ${JSON.stringify(row.path)}`).join('; ')}`,
-        )
+            || estateRunnable.some(disposition => siblingRows.find(row => row.slug === disposition.slug)?.dir !== disposition.path)) {
+            // Naming only the code left a setup agent that had declared every repository beside an
+            // in-repo cockpit with no way to tell which declaration init would not accept.
+            const observed = estateRunnable.map(row => `${row.slug} (dir ${JSON.stringify(row.path)})`)
+            const declared = siblingRows.map(row => `${row.slug} (dir ${JSON.stringify(row.dir)})`)
+            const unobserved = declared.filter(row => !observed.includes(row))
+            const undeclared = observed.filter(row => !declared.includes(row))
+            return refusal('DOCUMENT_ESTATE_TOPOLOGY_MISMATCH',
+                `the sibling answer must declare exactly the repositories init observed (${observed.join(', ')})${
+                    unobserved.length === 0 ? '' : `; it declares ${unobserved.join(', ')}, which init did not observe`}${
+                    undeclared.length === 0 ? '' : `; it omits ${undeclared.join(', ')}`}${
+                    input.estate === undefined ? '' : '; a cockpit inside or beside a product repository starts with that repository alone'}`,
+                'sibling',
+                'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>',
+            )
+        }
     }
 
     const runnableResolutions = new Map<string, Readonly<{ runnable: boolean; service?: string; command?: readonly string[] }>>()
@@ -1184,6 +1204,8 @@ async function completeConfigurationDocument(
             if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
                 generatedQuestion.field)
+            const hostOperation = unboundHostOperation(parsedGenerated.data, ['environment', 'generated'])
+            if (hostOperation) return hostOperationRefusal(hostOperation, generatedQuestion.field)
             let runnableWitnesses = 0
             for (const disposition of estateRunnable) {
                 const services = parsedGenerated.data.services.filter(service => service.sibling === disposition.slug)

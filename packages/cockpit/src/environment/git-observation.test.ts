@@ -416,7 +416,10 @@ describe('comparison remote identity evidence', () => {
         try {
             expect(await compare({ root, executable, declaredRemote: 'https://token@code.invalid/team/service.git' })).toEqual({
                 kind: 'unavailable', code: 'GIT_COMPARISON_REMOTE_MISMATCH',
-                reason: 'declared repository identity is unavailable for sibling service',
+                reason: 'declared repository identity is unavailable for sibling service: its remote in cockpit.toml carries credentials; declare it without them',
+            })
+            expect(await compare({ root, executable, declaredRemote: '/srv/remotes/service.git' })).toMatchObject({
+                kind: 'unavailable', reason: expect.stringContaining('is a local path or a URL scheme other than https or ssh'),
             })
             const unavailable = await compare({ root, executable, declaredRemote: 'https://code.invalid/team/service.git' })
             expect(unavailable).toEqual({
