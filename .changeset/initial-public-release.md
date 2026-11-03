@@ -21,9 +21,9 @@ Initial public release.
 - `cockpit selftest` checks that each agent tool really enforces the generated controls.
 - `cockpit runtime measure` measures the local Docker runtime and records the result for this machine only, in the git-ignored `.cockpit/local/runtime-measurements.json`; `cockpit.toml` never changes.
 - Teams share one cockpit: the root `package.json` pins the exact cockpit version, `check` refuses a different running version, and cockpit manages its own block in `.gitignore`.
-- `cockpit init` and `cockpit document` start a cockpit from scratch or from an existing shell-based setup, marking every inferred value for review. Init answers carry their provenance: an answer `[provenance]` marks as inferred stays listed under `unconfirmed`, and `doctor` reports `DECLARATION_UNCONFIRMED` until a person confirms it.
+- `cockpit init` starts a cockpit from scratch or from an existing shell-based setup, marking every inferred value for review. Init answers carry their provenance: an answer `[provenance]` marks as inferred stays listed under `unconfirmed`, and `doctor` reports `DECLARATION_UNCONFIRMED` until a person confirms it.
 - `init` always asks for `cockpit.name`, and renaming a cockpit is supported: `down`, edit the name, `sync`.
 - The package ships the user guide under `docs/`.
 - Shipped skills tell agents how to set up, explain, fix and work in a cockpit, and how to run browser checks. Install the adoption skill with `npx skills add b0dea/cockpit --skill adopt-cockpit`.
-- Experimental: work orders graded by a separate evaluator, browser checks, and `upgrade` plans.
+- Experimental: work orders graded by a separate evaluator, and browser checks.
 - Runs on macOS and Linux. Native Windows is refused at startup; WSL2 should behave like Linux but is untested.
