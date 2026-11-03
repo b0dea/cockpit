@@ -82,13 +82,19 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         } finally { admit.mockRestore(); run.mockRestore() }
     })
 
-    it('refuses stale authority without changing exact output preimages', async () => {
+    // compose.yml is an input of compose.cockpit.yml just as cockpit.toml is, so an edit to either
+    // between prepare and apply makes the prepared override stale.
+    it.each([
+        ['the configuration', async (_root: string, configPath: string) => writeFile(configPath, (await readFile(configPath, 'utf8'))
+            .replace('purpose = "Synthetic application"', 'purpose = "Changed synthetic application"'))],
+        ['a declared Compose file', async (root: string) => addService(root, 'changed-again')],
+    ] as const)('refuses stale authority without changing exact output preimages when %s changes', async (_input, change) => {
         const { root, configPath, paths } = await consumer()
         await addService(root, 'changed')
         const current = await prepareGeneratedEnvironmentCurrentness({ configPath })
         if (!current.repairAuthority) throw new Error('Expected repair authority')
         const before = await Promise.all(paths.map(path => readFile(join(root, path))))
-        await writeFile(configPath, (await readFile(configPath, 'utf8')).replace('purpose = "Synthetic application"', 'purpose = "Changed synthetic application"'))
+        await change(root, configPath)
         expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED' })] })
         expect(await Promise.all(paths.map(path => readFile(join(root, path))))).toEqual(before)
     })
@@ -141,5 +147,65 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'complete' })
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(before)
         expect(await readFile(join(root, overridePath), 'utf8')).toBe(desired)
+    })
+
+    it('compensates corrupt preimages and explicitly syncs the identical admitted restoration once', async () => {
+        const { root, configPath, paths } = await consumer()
+        const desired = await readFile(join(root, overridePath))
+        const originalLedger = await readFile(join(root, ledgerPath))
+        const original = JSON.parse(originalLedger.toString())
+        await writeFile(join(root, 'foreign.txt'), 'unowned synthetic control\n')
+        await writeFile(join(root, overridePath), 'synthetic corrupt preimage\n')
+        const preimages = await Promise.all(paths.map(path => readFile(join(root, path))))
+        const admit = vi.spyOn(transaction, 'admitPublicationPlan')
+        const run = vi.spyOn(transaction, 'runPublicationPlan')
+        try {
+            let published = false
+            let failed = false
+            const current = await prepareGeneratedEnvironmentCurrentness({ configPath }, {
+                now: () => nextInstant,
+                observeSource: observeConfigSource,
+                execute: async step => {
+                    const outcome = await executeProbe(step)
+                    if (step.labels.action === 'publish-batch' || step.labels.action === 'publish') published = true
+                    // One file is read alone and several in a batch, so the proof's read of the override is either.
+                    if (published && !failed && (step.labels.action === 'read-batch' || step.labels.action === 'read-file')) {
+                        type Entry = { action: string; segments?: string[]; name: string; output: string }
+                        const request = JSON.parse(step.argv[3]!) as Entry & { entries?: Entry[] }
+                        const override = (request.entries ?? [request]).find(entry => (entry.action === 'read-file' || entry.action === 'read-entry') && [...entry.segments ?? [], entry.name].join('/') === overridePath)
+                        if (override) {
+                            await writeFile(override.output, 'synthetic unavailable canonical proof\n')
+                            failed = true
+                        }
+                    }
+                    return outcome
+                },
+            })
+            expect(current.changes).toEqual([{ operation: 'write', path: overridePath }])
+            expect(admit).toHaveBeenCalledTimes(1)
+            const admitted = await admit.mock.results[0]!.value
+            if (admitted.kind !== 'complete' || !current.repairAuthority) throw new Error('Corrupt repair authority unavailable')
+            expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'refusal' })
+            expect(failed).toBe(true)
+            expect(run).toHaveBeenCalledTimes(1)
+            expect(run.mock.calls[0]![0]).toBe(admitted.plan)
+            expect(admit).toHaveBeenCalledTimes(1)
+            expect(await Promise.all(paths.map(path => readFile(join(root, path))))).toEqual(preimages)
+            expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'refusal' })
+            expect(run).toHaveBeenCalledTimes(1)
+            admit.mockClear()
+            run.mockClear()
+
+            expect(await syncGeneratedEnvironment({ configPath }, { now: () => nextInstant })).toMatchObject({ kind: 'complete' })
+            expect(admit).toHaveBeenCalledTimes(1)
+            const syncAdmission = await admit.mock.results[0]!.value
+            if (syncAdmission.kind !== 'complete') throw new Error('Explicit restoration refused')
+            expect(run).toHaveBeenCalledTimes(1)
+            expect(run.mock.calls[0]![0]).toBe(syncAdmission.plan)
+            expect(await readFile(join(root, overridePath))).toEqual(desired)
+            expect(JSON.parse(await readFile(join(root, ledgerPath), 'utf8'))).toEqual(original)
+            expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(root, 'foreign.txt'), 'utf8')).toBe('unowned synthetic control\n')
+        } finally { admit.mockRestore(); run.mockRestore() }
     })
 })

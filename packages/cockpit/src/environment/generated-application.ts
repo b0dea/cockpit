@@ -245,6 +245,8 @@ interface PreparedEnvironment {
     // The team's adopted harness settings copies a merged surface was rendered from.
     readonly adoptedSources: readonly AdoptedSourceIdentity[]
     readonly nativeHookPolicySource?: Readonly<{ path: string; sha256: string; identity: PersonaSourceIdentity }>
+    // The declared Compose files the ownership override was rendered from, re-read before publication.
+    readonly composeSources: readonly Readonly<{ path: string; sha256: string; identity: PersonaSourceIdentity }>[]
     readonly surfaceAssets: readonly SurfaceAssetIdentity[]
     readonly warnings: readonly SurfaceGenerationWarning[]
     // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
@@ -1394,6 +1396,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         process.execPath,
     )
     let composeOwnership: OwnedBytes | undefined
+    const composeSources: PreparedEnvironment['composeSources'][number][] = []
     if (config.environment.compose_files.length > 0) {
         const sources = []
         for (const reference of config.environment.compose_files) {
@@ -1401,6 +1404,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             if (read.kind !== 'complete') return refuse('GENERATED_PATH_UNSAFE',
                 'a declared Compose file is missing, unreadable, or crosses a symbolic-link boundary', reference)
             sources.push({ reference, source: read.bytes.toString('utf8') })
+            composeSources.push(Object.freeze({ path: reference, sha256: read.sha256, identity: read.identity }))
         }
         const ownership = renderComposeOwnership({ sources, stackId: currentStack, cockpitId: currentCockpit,
             configSha256: loaded.result.runtimeSha256, resettableVolumes: config.environment.resettable_volumes })
@@ -1452,6 +1456,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         configuredHarnesses: Object.freeze([...SURFACE_TARGETS]),
         activeSurfaceOverrides: Object.freeze([]),
         changedOverrideOriginals: Object.freeze([]),
+        composeSources: Object.freeze(composeSources),
         guideSources: Object.freeze({ requests: Object.freeze([]), observations: Object.freeze([]), missing: Object.freeze([]) }),
         openCodeGrantRoots: Object.freeze([]),
         sourceEvidence: Object.freeze([]),
@@ -2829,10 +2834,12 @@ async function inputSourcesCurrent(
             ...(prepared.nativeHookPolicySource ? [Object.freeze({ path: prepared.nativeHookPolicySource.path,
                 maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })] : []),
             ...prepared.adoptedSources.map(source => Object.freeze({ path: source.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })),
+            ...prepared.composeSources.map(source => Object.freeze({ path: source.path, maxBytes: COMPOSE_SOURCE_BYTES, action: 'read-file' as const })),
         ], prepared.node, adapters, deadline)
         const adoptedOffset = prepared.customSources.length + 1 + (prepared.nativeHookPolicySource ? 1 : 0)
+        const composeOffset = adoptedOffset + prepared.adoptedSources.length
         if ((deadline !== undefined && Date.now() >= deadline) || !reads || reads.kind !== 'complete'
-            || reads.results.length !== adoptedOffset + prepared.adoptedSources.length) return false
+            || reads.results.length !== composeOffset + prepared.composeSources.length) return false
         const source = reads.results[0]!
         const expected = prepared.personaSourceIdentity
         const localCurrent = source.kind === 'complete' && source.sha256 === prepared.personaSource.sha256
@@ -2854,6 +2861,11 @@ async function inputSourcesCurrent(
                 const read = reads.results[adoptedOffset + index]!
                 return read.kind === 'complete' && read.sha256 === adopted.sha256
                     && sourceIdentity(read.identity) === sourceIdentity(adopted.identity)
+            })
+            && prepared.composeSources.every((compose, index) => {
+                const read = reads.results[composeOffset + index]!
+                return read.kind === 'complete' && read.sha256 === compose.sha256
+                    && sourceIdentity(read.identity) === sourceIdentity(compose.identity)
             })
         if (!localCurrent) return false
         const assetReads = prepared.surfaceAssets.length === 0
