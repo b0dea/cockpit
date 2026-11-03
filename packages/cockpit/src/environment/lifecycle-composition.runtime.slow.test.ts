@@ -1029,6 +1029,19 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             code: 'LIFECYCLE_PROGRESS_INVALID',
             message: `the recorded stack runs an earlier version of the services, ports, mounts or images: cockpit.toml changed since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
         }] })
+        // A Compose file an earlier cockpit rendered is not handed to Compose; down names the sync
+        // that brings it current and the down to run after it, and stops nothing until then.
+        const composePath = join(first.candidate.checkout, 'generated/compose.yml')
+        const rendered = await readFile(composePath, 'utf8')
+        await writeFile(composePath, `${rendered}# rendered by an earlier cockpit\n`)
+        const stale = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
+        expect(stale).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'GENERATED_ENVIRONMENT_UNAVAILABLE',
+            message: expect.stringContaining('down and reset hand Compose only a Compose file rendered from the current cockpit.toml, so nothing was stopped or removed'),
+            fix: `run ${cockpitCommand('sync', { config: path })}, then ${cockpitCommand('down', { config: path })} (or the reset you ran)`,
+        }] })
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        expect(await readFile(composePath, 'utf8')).toBe(rendered)
         // Follow the recovery exactly as printed: it must remove the old stack and start the new one.
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
