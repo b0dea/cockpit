@@ -64,11 +64,11 @@ instructions and skills in every listed tool, and the guard refuses a push to a 
 read of a declared secret file and commands against a declared production host. Run
 `npx --no cockpit doctor --config ./cockpit.toml` for what is still missing: it reports each gap
 with why cockpit needs it. If anyone uses Codex, a person must trust its guard hook once per
-machine; `doctor` says so until it is done. Add `npx --no cockpit check` to CI, or use the
+machine; `doctor` says so until it is done. Add `npx --no cockpit check --config cockpit.toml` to CI, or use the
 [`cockpit-check` action](harness-surfaces.md).
 
 Run every command from the cockpit directory with a path that fails when the dependency is missing
-and never downloads a package: `./node_modules/.bin/cockpit` or `npx --no cockpit`. Once `init`
+and never downloads a package: run it as `./node_modules/.bin/cockpit` or through `npx --no`. Once `init`
 has written the `cockpit:*` package scripts, use them. The package ships these guides under
 `./node_modules/@b00dea/cockpit/docs/`, so skills and fix hints cite them offline.
 

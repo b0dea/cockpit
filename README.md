@@ -25,8 +25,8 @@ $ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"comman
 $ ... --harness codexcli
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Refusing push to a declared protected branch."}}
 
-$ ... --harness opencode
-cockpit guard: Refusing push to a declared protected branch.
+$ ... --harness opencode        # stderr, exit status 2
+> cockpit guard: Refusing push to a declared protected branch.
 ```
 
 One policy, one evaluator, three transports: Claude Code and Codex read the JSON decision, OpenCode's
@@ -66,8 +66,8 @@ npx cockpit init
 fills in `cockpit.toml` from the files it finds, marking every value it guessed. Then:
 
 ```sh
-npx --no cockpit sync     # write the generated files
-npx --no cockpit check    # fail on drift; run it in CI too
+npx --no cockpit sync --config cockpit.toml    # write the generated files
+npx --no cockpit check --config cockpit.toml   # fail on drift; run it in CI too
 ```
 
 [Getting started](docs/getting-started.md) walks through each step. Several repositories and a
