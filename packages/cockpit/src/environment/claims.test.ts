@@ -768,7 +768,7 @@ describe('destructive drain recovery inspection', () => {
             .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
     })
 
-    it('returns an immutable exact request for an authentic failed reservation and rejects later record drift', async () => {
+    it('returns the exact request of an authentic failed reservation and rejects later record drift', async () => {
         vi.useFakeTimers()
         vi.setSystemTime('2026-09-07T12:00:00.000Z')
         const state = await namespace()

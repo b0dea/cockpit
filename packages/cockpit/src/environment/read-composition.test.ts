@@ -373,7 +373,7 @@ describe('production read command composition', () => {
             }] })
     })
 
-    it('captures a complete runtime cohort as frozen environment evidence', async () => {
+    it('captures a complete runtime cohort as environment evidence and its snapshot', async () => {
         const adapters = createReadCommandAdapters({
             configPath: source.path,
             env: { PATH: '/synthetic' },

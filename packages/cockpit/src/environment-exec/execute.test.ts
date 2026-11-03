@@ -526,7 +526,7 @@ describe('mechanical environment executor', () => {
         expect(probe.execution).toEqual(expect.objectContaining({ stdoutBytes: 9, stderrBytes: 24 }))
     })
 
-    it('issues an immutable execution receipt from the step that actually ran', async () => {
+    it('issues an execution receipt bound to the step that actually ran', async () => {
         const step = nodeStep('receipt-control', "process.stdout.write('ok')", {
             labels: { batchId: 'resolved-batch', configSha256: 'resolved-config' },
         })
