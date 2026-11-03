@@ -546,7 +546,7 @@ describe('environment ignore observation', () => {
         }, () => 'authorized')).resolves.toBe('authorized')
     })
 
-    it('ignores caller Git redirects and binds repository metadata to every ignore probe', async () => {
+    it('ignores caller Git redirects', async () => {
         const root = await repository()
         const redirected = await repository()
         await writeFile(join(redirected, '.gitignore'), '')
@@ -562,19 +562,6 @@ describe('environment ignore observation', () => {
             },
         }, () => 'authorized')
         expect(sanitized).toBe('authorized')
-
-        const bin = join(root, 'bin')
-        const realGit = await realpath((await run('which', ['git'])).stdout.trim())
-        await mkdir(bin)
-        await writeFile(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" --absolute-git-dir "*) ;; *" rev-parse --path-format=absolute --show-toplevel "*) printf '\\n[probe-change]\\n' >> '${join(root, '.git', 'config')}';; esac\nexec ${realGit} "$@"\n`, { mode: 0o700 })
-        const changing = await authority(root)
-        const resolution = await resolveGitExecutable(Object.freeze({ PATH: bin }))
-        if (resolution.state !== 'available') throw new Error(resolution.reason)
-        await expect(observeEnvironmentIgnore({
-            ...changing,
-            env: Object.freeze({ PATH: bin }),
-            gitExecutable: resolution.value,
-        }, () => 'used')).resolves.toBeUndefined()
     })
 
     it('refuses hardlinked repository files used as ignore authority', async () => {

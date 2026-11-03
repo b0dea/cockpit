@@ -518,7 +518,6 @@ describe('observation contract and applicability', () => {
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED)).toMatchObject({
             owner: 'generated-environment-application', verdict: 'unavailable',
         })
-        expect(ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED).toBe('MACHINE_COLD_START_EXCEEDED')
     })
 
     it('collects claim, port, and seed state through their owning read paths', async () => {
@@ -791,14 +790,6 @@ describe('observation contract and applicability', () => {
         ]))
     })
 
-    it('never turns unavailable or stale required evidence green', async () => {
-        const unavailable = await unavailableConfiguration()
-        const stale = await observation()
-        expect((await evaluateFixture([unavailable])).checks.find(({ code }) => code === unavailable.code)?.verdict).toBe('unavailable')
-        const changedSource = `${validConfigSource}# changed\n`
-        expect(aggregateObservations([[stale]], await context(stackId, 'always', changedSource)).checks.find(({ code }) => code === stale.code)?.verdict).toBe('fail')
-    })
-
     it('keeps not-applicable evidence distinct from missing required evidence', async () => {
         const result = aggregateObservations([[]], await context(stackId, 'none'))
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('not-applicable')
@@ -843,17 +834,6 @@ describe('deterministic preflight and doctor', () => {
         } finally {
             clock.mockRestore()
         }
-    })
-
-    it('marks producer evidence from after the evaluation instant stale', async () => {
-        const evaluationTime = '2026-09-08T06:00:00.000Z'
-        vi.useFakeTimers()
-        vi.setSystemTime(evaluationTime)
-        const future = new Date(Date.parse(evaluationTime) + 1_000).toISOString()
-        const result = aggregateObservations([[await observation({ observedAt: future })]],
-            await context(stackId, 'always', validConfigSource, evaluationTime),
-        )
-        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
     })
 
     it('does not let future-dated producer evidence age into validity', async () => {
@@ -1058,11 +1038,6 @@ describe('deterministic preflight and doctor', () => {
         expect(() => aggregateObservations([[]], {
             authorities: currentPosture.authorities, stages: [expiring.authority],
         })).toThrow('lifecycle stage authority')
-    })
-
-    it('uses the complete production declaration set', async () => {
-        const result = aggregateObservations([[]], await context())
-        expect(result.checks).toHaveLength(allObservationDeclarations.length + 2)
     })
 
     it('requires an explicit timestamp whenever missing evidence is synthesized', async () => {

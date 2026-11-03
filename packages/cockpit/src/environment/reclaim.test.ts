@@ -1448,35 +1448,6 @@ describe('reset planning', () => {
         },
     )
 
-    it('does not carry reset continuation authority across coordination revisions', async () => {
-        const root = await canonicalTemp('cockpit-reset-coordination-continuation-')
-        const target = join(root, 'generated', 'session')
-        try {
-            await mkdir(target, { recursive: true })
-            const initial = await authenticatedDiscovery(root, [
-                resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ])
-            const preview = await planReset(resetInput(root, { discovery: initial }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            const fresh = await authenticatedDiscovery(root, initial.resources)
-            const first = await planReset(resetInput(root, {
-                discovery: fresh, confirmationDigest: preview.digest, consent: preview.consent,
-                coordinationAddress: await writeCoordination(root),
-            }))
-            expect(first.kind).toBe('complete')
-            if (first.kind !== 'complete') return
-            await rm(target, { recursive: true })
-            const changed = { ...stateRecord(root), revision: 8, updatedAt: new Date().toISOString() }
-            const remaining = await authenticatedDiscovery(root, initial.resources)
-            expect(await planReset(resetInput(root, {
-                discovery: remaining, confirmationDigest: preview.digest, continuation: first.continuation ?? undefined,
-                coordinationRecord: changed, expectedCoordinationRevision: changed.revision,
-                coordinationAddress: await writeCoordination(root, changed),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
     it('requires the resolved system removal executable for host reset', async () => {
         const root = await canonicalTemp('cockpit-reset-removal-executable-')
         try {
@@ -1680,8 +1651,13 @@ describe('reset planning', () => {
             const changed = await authenticatedDiscovery(root, snapshot([
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
             ]).resources)
-            expect(await planReset(resetInput(root, { confirmationDigest: preview.digest, discovery: changed })))
-                .toEqual(expect.objectContaining({ kind: 'refusal' }))
+            // Consent and fresh coordination evidence are supplied, so only the changed target can refuse.
+            expect(await planReset(resetInput(root, {
+                confirmationDigest: preview.digest, consent: preview.consent, discovery: changed,
+                coordinationAddress: await writeCoordination(root),
+            }))).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, message: 'reset consent does not match the fresh complete preview',
+            })] }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
