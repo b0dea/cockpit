@@ -181,7 +181,7 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'review', '--work-order', 'WO-001', '--json'], ['work', 'grade', '--work-order', 'WO-001'],
             ['work', 'recover', '--lock', 'WO-001'], ['work', 'recover', '--lock', '.admission-capacity'], ['work', 'sweep'],
             ['work', 'programme-mint', '--programme', 'release', '--item', 'first-item'],
-            ['browser', 'drive', '--json'], ['browser', 'accessibility', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
+            ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
         ]
         for (const args of cases) {
             const argv = ['document', 'registry-resolve'].includes(args[0]!) ? args : [...args, '--config', authority.configPath]
@@ -202,7 +202,7 @@ describe('closed ordinary invocation metadata', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
         expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
             'test-run', 'work intake', 'work status', 'work resume', 'work recover', 'work execute', 'work record', 'work review', 'work sweep',
-            'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser accessibility', 'browser screenshot'])
+            'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
             expect(ordinary(argv), `${row.name} missing config`).toBeUndefined()
@@ -549,10 +549,9 @@ describe('CLI help', () => {
         const browser = await runInProcess(['browser', '--help'])
         expect(browser.status).toBe(0)
         expect(browser.stdout).toContain('Subcommands:\n' +
-            '  drive          Drive the declared application browser surfaces\n' +
-            '  accessibility  Collect accessibility observations from the application\n' +
-            '  screenshot     Capture the declared application surfaces\n' +
-            '  debugger       Prepare an explicitly requested browser debugger\n\n')
+            '  drive       Drive the declared application browser surfaces\n' +
+            '  screenshot  Capture the declared application surfaces\n' +
+            '  debugger    Prepare an explicitly requested browser debugger\n\n')
         expect((await runInProcess(['work', 'grade', '--help'])).stdout).toMatch(/^Usage: cockpit work grade \[options\]\n/)
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
@@ -2274,7 +2273,7 @@ describe('work command routing', () => {
             ['work-metrics', [], { operation: 'work-metrics' }],
             ['work-grade', ['--work-order', 'WO-001'], { operation: 'work-grade', workOrderId: 'WO-001' }],
             ['browser-drive', ['--role', 'qa_user'], { operation: 'browser-drive', role: 'qa_user' }],
-            ['browser-accessibility', ['--role', '1worker'], { operation: 'browser-accessibility', role: '1worker' }],
+            ['browser-screenshot', ['--role', '1worker'], { operation: 'browser-screenshot', role: '1worker' }],
             ['browser-screenshot', [], { operation: 'browser-screenshot' }],
             ['browser-debugger', [], { operation: 'browser-debugger' }],
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'file:src/example.ts'], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'file', value: 'src/example.ts' } }],

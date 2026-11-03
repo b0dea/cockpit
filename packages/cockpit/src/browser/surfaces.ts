@@ -68,7 +68,7 @@ export interface BrowserProjectClient {
 }
 
 export interface BrowserProjectOperation {
-    readonly kind: 'drive' | 'accessibility' | 'screenshot'
+    readonly kind: 'drive' | 'screenshot'
     readonly surface: Readonly<{ name: string; url: string }>
     readonly deadline: number
     readonly role?: string
@@ -126,7 +126,7 @@ const PackageObservation = z.object({
     artifactRoot: GeneratedHostPath,
 }).strict()
 const ProjectOperation = z.object({
-    kind: z.enum(['drive', 'accessibility', 'screenshot']),
+    kind: z.enum(['drive', 'screenshot']),
     surface: z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/), url: z.string().max(4_096) }).strict(),
     deadline: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     role: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
@@ -141,7 +141,6 @@ const Input = z.object({
 }).strict()
 const Manifest = z.object({ name: z.literal('@playwright/test'), version: Version, bin: z.object({ playwright: GeneratedHostPath }) })
 const digest = (bytes: string | Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
-const MAX_ARIA_BYTES = 65_536
 const MAX_SCREENSHOT_BYTES = 8_388_608
 const COMMAND_TIMEOUT_MS = 30_000
 function observedFile(path: string, maxBytes: number): Buffer {
@@ -307,7 +306,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
     if (!controlAuthorities || !controlPorts) throw new RefusalError('browser operation requires issued control authorities')
     const program = libexecProgram('browser-operation.cjs')
     // '--' ends Node's own options, so the program path can never be read as one.
-    const argv = [client.node.path, '--', program.path, '--aria-limit', String(MAX_ARIA_BYTES), '--screenshot-limit', String(MAX_SCREENSHOT_BYTES),
+    const argv = [client.node.path, '--', program.path, '--screenshot-limit', String(MAX_SCREENSHOT_BYTES),
         '--module-proof', client.module.path, '--module', client.module.path,
         '--manifest-proof', client.manifest.path, '--lock-proof', client.lock.path, '--operation', operation.kind,
         '--engine', runtime.server.engine, '--connection', runtime.connection.kind === 'remote' ? 'remote' : 'local',

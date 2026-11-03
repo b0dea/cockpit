@@ -259,7 +259,7 @@ describe('shipped skill contract', () => {
             skills: ['cockpit-browser', 'cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'],
             costs: result.costs.map(cost => ({
                 ...cost,
-                value: cost.value + (['claudecode', 'codexcli', 'opencode'].includes(cost.target) ? 231 : 0),
+                value: cost.value + (['claudecode', 'codexcli', 'opencode'].includes(cost.target) ? 216 : 0),
             })),
             inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         })
@@ -408,7 +408,7 @@ describe('shipped skill contract', () => {
         })
 
         const claudecode = accepted.costs.find(cost => cost.target === 'claudecode')!
-        const caps = { ...generousCaps, claudecode: claudecode.value + 230 }
+        const caps = { ...generousCaps, claudecode: claudecode.value + 215 }
         const bounded = await inspectSkillSet(input(sources, caps))
         expect(bounded.kind).toBe('complete')
         if (bounded.kind !== 'complete') return
@@ -436,7 +436,7 @@ describe('shipped skill descriptions', () => {
             total += Buffer.byteLength(description)
         }
         const browser = await readFile(join(surfaceRoot, 'cockpit-browser.skill.md'), 'utf8')
-        expect(browser).toContain('cockpit browser accessibility --config cockpit.toml --json')
+        expect(browser).toContain('cockpit browser drive --config cockpit.toml --json')
         expect(browser).toContain('cockpit browser screenshot --config cockpit.toml --json')
         // Rendered frontmatter adds per-harness keys; the neutral descriptions alone must leave room for them.
         expect(total).toBeLessThan(8192 / 4)

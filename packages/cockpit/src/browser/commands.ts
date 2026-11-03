@@ -17,7 +17,7 @@ export const mechanism = {
     exports: ['executeBrowserCommand', 'isIssuedBrowserCommandReceipt', 'issueBrowserRoutePolicy', 'ownDataRecord'],
 } as const
 
-export type BrowserCommandKind = 'drive' | 'accessibility' | 'screenshot'
+export type BrowserCommandKind = 'drive' | 'screenshot'
 export interface BrowserRouteDeclaration { readonly name: string; readonly path: string }
 export interface BrowserRoutePolicy {
     readonly origin: string
@@ -36,7 +36,6 @@ export interface BrowserCommandInput {
 export interface BrowserCommandSurfaceReceipt {
     readonly name: string
     readonly url: string
-    readonly accessibility?: Readonly<{ sha256: string; byteLength: number }>
     readonly screenshot?: Readonly<{ path: string; sha256: string; byteLength: number }>
 }
 export interface BrowserCommandReceipt {
@@ -51,13 +50,12 @@ export type BrowserCommandResult = Readonly<{ kind: 'complete'; receipt: Browser
 
 const issuedPolicies = new WeakMap<BrowserRoutePolicy, BrowserRuntimeProjection>()
 const issuedReceipts = new WeakSet<object>()
-const kinds = new Set<BrowserCommandKind>(['drive', 'accessibility', 'screenshot'])
+const kinds = new Set<BrowserCommandKind>(['drive', 'screenshot'])
 const sha256 = /^[a-f0-9]{64}$/
-const MAX_ARIA_BYTES = 65_536
 const MAX_SCREENSHOT_BYTES = 8_388_608
 const COMMAND_TIMEOUT_MS = 30_000
 const browserFailureCategories = Object.freeze({
-    connect: 'availability', context: 'setup', navigation: 'navigation', accessibility: 'observation',
+    connect: 'availability', context: 'setup', navigation: 'navigation',
     screenshot: 'observation', artifact: 'artifact', cleanup: 'cleanup',
 } as const)
 function refusal(reason: string): BrowserCommandResult {
@@ -249,7 +247,7 @@ function parseObservation(value: Buffer, kind: BrowserCommandKind, origin: strin
     const evidence = row.evidence as Record<string, unknown>
     if (Object.keys(evidence).sort().join(',') !== 'byteLength,sha256' || typeof evidence.sha256 !== 'string' || !sha256.test(evidence.sha256)
         || !Number.isSafeInteger(evidence.byteLength) || (evidence.byteLength as number) < 0
-        || (kind === 'accessibility' ? (evidence.byteLength as number) > MAX_ARIA_BYTES : (evidence.byteLength as number) > MAX_SCREENSHOT_BYTES)) return undefined
+        || (evidence.byteLength as number) > MAX_SCREENSHOT_BYTES) return undefined
     return Object.freeze({ finalUrl: final.href, evidence: Object.freeze({ sha256: evidence.sha256, byteLength: evidence.byteLength as number }) })
 }
 
@@ -341,8 +339,7 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         if (!observation) return refusal(`Browser ${input.kind} returned no bound application-driving observation for ${surface.name}`)
         try { assertBrowserStorageStateCurrent(input.runtime) } catch { return refusal('Browser seeded state changed while the application was being driven') }
         const base = { name: surface.name, url: observation.finalUrl }
-        if (input.kind === 'accessibility') receipts.push(Object.freeze({ ...base, accessibility: observation.evidence! }))
-        else if (input.kind === 'screenshot') {
+        if (input.kind === 'screenshot') {
             let path: string | undefined
             let cause = ''
             try { path = postcheckScreenshot(client.artifactRoot, client.cwd, output!, observation.evidence!) } catch (error) { cause = ` (${errorCause(error)})` }

@@ -36,7 +36,7 @@ exports.chromium = { connect: async () => ({
       { isNavigationRequest: () => true, frame: () => frame, url: () => url })
       if (aborted) throw new Error('synthetic navigation blocked')
       return fulfilled }, url: () => current,
-    locator: () => ({ ariaSnapshot: async () => 'tree' }), screenshot: async () => Buffer.from('shot'), close: async () => undefined } }, close: async () => undefined } },
+    screenshot: async () => Buffer.from('shot'), close: async () => undefined } }, close: async () => undefined } },
   close: async () => undefined
 }) }
 `

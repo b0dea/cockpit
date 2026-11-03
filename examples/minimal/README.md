@@ -43,7 +43,6 @@ mkdir -p .browser/runner .browser/mcp .browser/cli .browser/auth .browser/debugg
 ./node_modules/.bin/cockpit runtime measure --config cockpit.browser.toml --image node:22-alpine
 ./node_modules/.bin/cockpit up --config cockpit.browser.toml
 ./node_modules/.bin/cockpit browser drive --config cockpit.browser.toml --json
-./node_modules/.bin/cockpit browser accessibility --config cockpit.browser.toml --json
 ./node_modules/.bin/cockpit browser screenshot --config cockpit.browser.toml --json
 ./node_modules/.bin/cockpit down --config cockpit.browser.toml
 ```

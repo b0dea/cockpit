@@ -18,10 +18,10 @@ const roots: string[] = []
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))))
 
-type ModuleMode = 'connect' | 'context' | 'page' | 'goto' | 'aria' | 'screenshot' | 'http-error'
+type ModuleMode = 'connect' | 'context' | 'page' | 'goto' | 'screenshot' | 'http-error'
     | 'null-response' | 'redirect-return' | 'final-foreign' | 'same-origin-redirect' | 'popup-cross-origin' | 'control-plane-attempts'
     | 'later-navigation' | 'refused'
-    | 'oversize-aria' | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'remove-screenshot' | 'cleanup' | null
+    | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'remove-screenshot' | 'cleanup' | null
 
 function playwrightModule(input: { logPath: string; serverPath: string; artifactRoot: string; outsideRoot: string; mode: ModuleMode }): string {
     return `const fs = require('node:fs')
@@ -77,7 +77,7 @@ const browser = () => ({
           ${input.mode === 'http-error' ? 'fulfilled = response(current, 503)' : ''}
           ${input.mode === 'null-response' ? 'return null' : 'return fulfilled'} },
         url: () => current,
-        locator: selector => ({ ariaSnapshot: async () => {
+        screenshot: async () => {
           if (${JSON.stringify(input.mode)} === 'later-navigation') {
             const later = 'http://app.localhost:4000/later'
             let native = false
@@ -86,8 +86,7 @@ const browser = () => ({
             { url: () => later, isNavigationRequest: () => true, frame: () => frame })
             if (native) documentSource = current + '#pending-navigation'
           }
-          log(['ariaSnapshot', selector, current, documentSource]); ${input.mode === 'aria' ? "throw new Error('synthetic aria failure');" : input.mode === 'oversize-aria' ? `return 'x'.repeat(${65_537})` : "return '- document \\\"Synthetic fixture\\\"'"} } }),
-        screenshot: async () => { log(['screenshot']); ${input.mode === 'screenshot' ? "throw new Error('synthetic screenshot failure');" : ''}
+          log(['screenshot', current, documentSource]); ${input.mode === 'screenshot' ? "throw new Error('synthetic screenshot failure');" : ''}
           ${input.mode === 'preexisting-screenshot' ? "fs.writeFileSync(output(), 'preexisting')" : ''}
           ${input.mode === 'swap-root' ? `fs.renameSync(${JSON.stringify(input.artifactRoot)}, ${JSON.stringify(`${input.artifactRoot}.moved`)}); fs.symlinkSync(${JSON.stringify(input.outsideRoot)}, ${JSON.stringify(input.artifactRoot)})` : ''}
           return ${input.mode === 'oversize-screenshot' ? `Buffer.alloc(${8_388_609})` : "Buffer.from('synthetic screenshot')"} },
@@ -217,14 +216,7 @@ describe('browser driving commands', () => {
         expect(localCalls.some(call => Array.isArray(call) && call[0] === 'connect')).toBe(false)
     })
 
-    it('returns only bounded hashes for accessibility and a postchecked mode-600 screenshot', async () => {
-        const accessibility = await fixture()
-        const a11y = await executeBrowserCommand({ runtime: accessibility.runtime, client: accessibility.client,
-            policy: issueBrowserRoutePolicy(accessibility.runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'accessibility' })
-        expect(a11y.kind).toBe('complete')
-        expect(JSON.stringify(a11y)).not.toContain('Synthetic fixture')
-        if (a11y.kind === 'complete') expect(a11y.receipt.surfaces[0]).toMatchObject({ accessibility: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/), byteLength: 30 } })
-
+    it('returns a bounded hash and a postchecked mode-600 screenshot', async () => {
         const screenshot = await fixture()
         const shot = await executeBrowserCommand({ runtime: screenshot.runtime, client: screenshot.client,
             policy: issueBrowserRoutePolicy(screenshot.runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'screenshot' })
@@ -411,10 +403,10 @@ describe('browser driving commands', () => {
             origin: 'http://app.localhost:4000', routes: [{ name: 'start', path: '/start' }],
         })
         const laterResult = await executeBrowserCommand({ runtime: later.runtime, client: later.client,
-            policy: laterPolicy, kind: 'accessibility' })
+            policy: laterPolicy, kind: 'screenshot' })
         expect(laterResult).toMatchObject({ kind: 'refusal' })
         expect(await calls(later.logPath)).toContainEqual([
-            'ariaSnapshot', 'body', 'http://app.localhost:4000/start', 'http://app.localhost:4000/start#pending-navigation',
+            'screenshot', 'http://app.localhost:4000/start', 'http://app.localhost:4000/start#pending-navigation',
         ])
     })
 
@@ -429,7 +421,7 @@ describe('browser driving commands', () => {
 
     it('refuses oversized observations and an output path occupied before exclusive creation', async () => {
         for (const [mode, kind] of [
-            ['oversize-aria', 'accessibility'], ['oversize-screenshot', 'screenshot'], ['preexisting-screenshot', 'screenshot'],
+            ['oversize-screenshot', 'screenshot'], ['preexisting-screenshot', 'screenshot'],
         ] as const) {
             const failed = await fixture({ mode })
             await expect(executeBrowserCommand({ runtime: failed.runtime, client: failed.client, policy: failed.policy, kind }))
@@ -465,13 +457,12 @@ describe('browser driving commands', () => {
             ['context', [['browser.close']], 'context', 'setup'],
             ['page', [['context.close'], ['browser.close']], 'navigation', 'navigation'],
             ['goto', [['page.close'], ['context.close'], ['browser.close']], 'navigation', 'navigation'],
-            ['aria', [['page.close'], ['context.close'], ['browser.close']], 'accessibility', 'observation'],
             ['screenshot', [['page.close'], ['context.close'], ['browser.close']], 'screenshot', 'observation'],
             ['preexisting-screenshot', [['page.close'], ['context.close'], ['browser.close']], 'artifact', 'artifact'],
             ['cleanup', [['page.close'], ['context.close'], ['browser.close']], 'cleanup', 'cleanup'],
         ] as const) {
             const failed = await fixture({ mode })
-            const kind = mode === 'aria' ? 'accessibility' : mode === 'screenshot' || mode === 'preexisting-screenshot' ? 'screenshot' : 'drive'
+            const kind = mode === 'screenshot' || mode === 'preexisting-screenshot' ? 'screenshot' : 'drive'
             const result = await executeBrowserCommand({ runtime: failed.runtime, client: failed.client, policy: failed.policy, kind })
             expect(result).toEqual({ kind: 'refusal',
                 reason: `Browser ${kind} operation failed during ${phase} (${category}) for home` })

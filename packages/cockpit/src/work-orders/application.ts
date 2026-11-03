@@ -34,7 +34,7 @@ export type WorkApplicationRequest =
     | Readonly<{ operation: 'work-sweep'; apply: boolean }>
     | Readonly<{ operation: 'work-reverse'; workOrderId: string }>
     | Readonly<{ operation: 'work-programme-mint'; programmeId: string; itemKey?: string; candidate?: string }>
-    | Readonly<{ operation: 'browser-drive' | 'browser-accessibility' | 'browser-screenshot' | 'browser-debugger'; role?: string }>
+    | Readonly<{ operation: 'browser-drive' | 'browser-screenshot' | 'browser-debugger'; role?: string }>
     | Readonly<{ operation: 'test-run'; gate: string; mode: 'canonical' | 'full' | 'staged'; select?: Readonly<{ kind: 'spec' | 'file' | 'test' | 'route'; value: string }> }>
 
 export interface WorkApplicationContinuation { readonly digest: string; readonly prompt: string; readonly decide: (answer: string) => Promise<WorkApplicationOutcome> }
@@ -55,7 +55,7 @@ const operationKeys: Readonly<Record<WorkApplicationRequest['operation'], Operat
     'work-sweep': { required: ['operation', 'apply'] }, 'work-reverse': { required: ['operation', 'workOrderId'] },
     'work-programme-mint': { required: ['operation', 'programmeId'], optional: ['itemKey', 'candidate'] }, 'work-metrics': { required: ['operation'] },
     'work-grade': { required: ['operation', 'workOrderId'] }, 'work-review': { required: ['operation', 'workOrderId'] }, 'browser-drive': { required: ['operation'], optional: ['role'] },
-    'browser-accessibility': { required: ['operation'], optional: ['role'] }, 'browser-screenshot': { required: ['operation'], optional: ['role'] },
+    'browser-screenshot': { required: ['operation'], optional: ['role'] },
     'browser-debugger': { required: ['operation'], optional: ['role'] }, 'test-run': { required: ['operation', 'gate', 'mode'], optional: ['select'] },
 })
 const requestKeys = [...new Set(Object.values(operationKeys).flatMap(shape => [...shape.required, ...(shape.optional ?? [])]))]
@@ -209,7 +209,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
             if (!captured.candidate) return complete(operation, { programmeId: captured.programmeId, itemKey: selected.itemKey, candidateRequired: true })
             const prepared = await selected.candidate(captured.candidate); const result = mintProgrammeWorkOrder({ ...prepared.input, pressure }); if (result.kind === 'refusal') return refusal(operation, result.message); if (result.kind === 'mint') await prepared.persist(result); return complete(operation, result) }
         if (operation === 'work-metrics') { const metrics = collectWorkOrderMetrics(await composition.metrics()); return metrics.kind === 'refusal' ? refusal(operation, metrics.message) : complete(operation, { metrics, text: renderWorkOrderMetrics(metrics) }) }
-        if (operation.startsWith('browser-')) { const browserRequest = captured as Extract<WorkApplicationRequest, { operation: `browser-${string}` }>; const kind = operation === 'browser-accessibility' ? 'accessibility' : operation === 'browser-screenshot' ? 'screenshot' : 'drive'; const result = await executeBrowserCommand(await composition.browser(kind, operation === 'browser-debugger', browserRequest.role)); if (result.kind === 'refusal') return refusal(operation, result.reason); if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) } return complete(operation, result) }
+        if (operation.startsWith('browser-')) { const browserRequest = captured as Extract<WorkApplicationRequest, { operation: `browser-${string}` }>; const kind = operation === 'browser-screenshot' ? 'screenshot' : 'drive'; const result = await executeBrowserCommand(await composition.browser(kind, operation === 'browser-debugger', browserRequest.role)); if (result.kind === 'refusal') return refusal(operation, result.reason); if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) } return complete(operation, result) }
         if (operation === 'test-run') { const prepared = await composition.gate(captured); const run = await runGate(prepared.registry, prepared.request, prepared.dependencies); return run.satisfiesGate
             ? complete(operation, run)
             : unsatisfied(operation, run, `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`) }

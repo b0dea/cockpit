@@ -2123,7 +2123,7 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 const AGENT_COCKPIT_COMMANDS = [
     'check *', 'doctor *', 'preflight *', 'logs *', 'sync * --dry-run', 'up *', 'sleep *', 'runtime measure *', 'test-run *',
     'work status *', 'work resume *', 'work intake *', 'work record *', 'work execute *', 'work review *', 'work grade *', 'work sweep *',
-    'browser drive *', 'browser accessibility *', 'browser screenshot *',
+    'browser drive *', 'browser screenshot *',
 ] as const
 
 function claudeCommandAllowances(): Readonly<Record<string, 'allow'>> {

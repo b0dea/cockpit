@@ -117,8 +117,7 @@ To set cockpit up for your own product, start at [Getting started](docs/getting-
   narrow gate while iterating and the full gate before handing back, with `cockpit test-run`.
 - **Graded work orders**. Acceptance criteria, declared checks and a separate
   evaluator that grades each criterion from the check results.
-- **Browser checks**. Drive the running application's declared routes, save screenshots and
-  record a digest of each page's accessibility (ARIA) state.
+- **Browser checks**. Drive the running application's declared routes and save screenshots.
 - **Safe on a shared machine.** Port leases and holder tracking mean one agent cannot stop another
   agent's stack.
 - **Adopt what you already have.** `cockpit init` previews a first setup for one agent tool, and

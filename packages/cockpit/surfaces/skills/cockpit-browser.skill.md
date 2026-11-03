@@ -1,6 +1,6 @@
 ---
 name: cockpit-browser
-description: "Use when the visible behaviour of the running application must be checked or evidenced: exploring routes, signed-in views, accessibility or screenshots. It reports findings and never edits code."
+description: "Use when the visible behaviour of the running application must be checked or evidenced: exploring routes, signed-in views or screenshots. It reports findings and never edits code."
 ---
 
 <!-- cockpit:verified version=0.0.0 -->
@@ -19,9 +19,8 @@ yourself has nobody left to check it, so hand it to whoever owns the repository.
    human can see what you skipped. A change under test sets the priority: its routes first, then the routes
    that share its data. Done when the list is written down before the first page opens.
 3. **Drive with the real commands.** `npx --no cockpit browser drive --config cockpit.toml --json` visits every
-   declared route; `npx --no cockpit browser accessibility --config cockpit.toml --json` collects accessibility
-   observations and `npx --no cockpit browser screenshot --config cockpit.toml --json` captures each surface. Add
-   `--role <role>` to any of them for a signed-in persona. Unless `cockpit.toml` sets
+   declared route and `npx --no cockpit browser screenshot --config cockpit.toml --json` captures each surface. Add
+   `--role <role>` to either for a signed-in persona. Unless `cockpit.toml` sets
    `browser.request_preapproval`, the guard asks a person before each one. Use the
    browser tools below for anything the declared routes do not reach. For signed-in testing read
    `../cockpit-setup/references/test-data-and-personas.md` first: it explains how state is minted per

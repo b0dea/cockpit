@@ -20,7 +20,7 @@ export function isRecordedAnswerField(value: string): boolean {
 export type WorkHandlerIdentifier =
     | 'work-intake' | 'work-status' | 'work-accept' | 'work-renew' | 'work-resume'
     | 'work-recover' | 'work-execute' | 'work-record' | 'work-answer' | 'work-review' | 'work-sweep' | 'work-reverse' | 'work-programme-mint' | 'work-metrics' | 'work-grade'
-    | 'browser-drive' | 'browser-accessibility' | 'browser-screenshot' | 'browser-debugger' | 'test-run'
+    | 'browser-drive' | 'browser-screenshot' | 'browser-debugger' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'baseline-record'
@@ -544,9 +544,6 @@ export const commands: readonly CommandDefinition[] = [
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
         ordinary: ordinary('browser-drive', browserOptions, browserAdmission),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser accessibility', handler: 'browser-accessibility', stage: 'test-and-grade', summary: 'Collect accessibility observations from the application', visibility: 'public',
-        ordinary: ordinary('browser-accessibility', browserOptions, browserAdmission),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
         ordinary: ordinary('browser-screenshot', browserOptions, browserAdmission),

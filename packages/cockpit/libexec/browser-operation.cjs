@@ -1,12 +1,12 @@
 'use strict'
 
 // Drives one browser operation for packages/cockpit/src/browser/surfaces.ts through the project's own
-// Playwright module: navigate to a surface, then report it, take its accessibility snapshot, or save a
-// screenshot into the artifact root. Runs from a staged snapshot, so it must stay self-contained.
+// Playwright module: navigate to a surface, then report it or save a screenshot into the artifact
+// root. Runs from a staged snapshot, so it must stay self-contained.
 //
 // argv: named flags (--operation, --engine, --connection, --url, --origin, --timeout, --module,
-// --module-proof, --control-authorities, --control-ports, --aria-limit, --screenshot-limit, and the
-// screenshot artifact flags); see operationStep in surfaces.ts for the full set.
+// --module-proof, --control-authorities, --control-ports, --screenshot-limit, and the screenshot
+// artifact flags); see operationStep in surfaces.ts for the full set.
 // stdout on success: one JSON 'cockpit-browser-observation/v1' object.
 // stderr on failure: one JSON 'cockpit-browser-failure/v1' object naming the phase and its category,
 // and, when one is known, a fixed-vocabulary reason (a browser network error code such as
@@ -43,7 +43,7 @@ async function main() {
     const deadline = Date.now() + timeout
     const remaining = () => { const value = deadline - Date.now(); if (value <= 0) throw new Error('browser operation deadline expired'); return value }
     const resolverRule = args.includes('--resolver-rule') ? one('--resolver-rule') : undefined
-    const categories = { connect: 'availability', context: 'setup', navigation: 'navigation', accessibility: 'observation',
+    const categories = { connect: 'availability', context: 'setup', navigation: 'navigation',
         screenshot: 'observation', artifact: 'artifact', cleanup: 'cleanup' }
     let browser, context, page, observation, failurePhase, failureReason, httpStatus, cleanupFailed = false, phase = 'connect'
     try {
@@ -117,18 +117,7 @@ async function main() {
         documentResponse = response
         const initialDocument = currentDocument()
         if (operation === 'drive') observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: initialDocument.url }
-        else if (operation === 'accessibility') {
-            phase = 'accessibility'
-            const displayedBefore = currentDocument()
-            const value = await page.locator('body').ariaSnapshot()
-            if (typeof value !== 'string') throw new Error('accessibility observation is not text')
-            const bytes = Buffer.from(value, 'utf8')
-            if (bytes.byteLength > Number(one('--aria-limit'))) throw new Error('accessibility observation exceeds bound')
-            const displayedAfter = currentDocument()
-            if (displayedAfter.url !== displayedBefore.url || displayedAfter.epoch !== displayedBefore.epoch
-                    || displayedAfter.attempts !== displayedBefore.attempts) throw new Error('navigation changed during accessibility observation')
-            observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: displayedAfter.url, evidence: { sha256: digest(bytes), byteLength: bytes.byteLength } }
-        } else if (operation === 'screenshot') {
+        else if (operation === 'screenshot') {
             phase = 'screenshot'
             const displayedBefore = currentDocument()
             const bytes = await page.screenshot()

@@ -5,7 +5,7 @@ describe('UI driving gate', () => {
     it('requires an activating field and names a satisfying command', () => {
         expect(evaluateUiGate({ receipts: [] })).toEqual({
             kind: 'refusal', reason: 'UI evidence requires an activating browser command',
-            satisfyingCommand: 'npx --no cockpit browser drive --config cockpit.toml, npx --no cockpit browser accessibility --config cockpit.toml, or npx --no cockpit browser screenshot --config cockpit.toml',
+            satisfyingCommand: 'npx --no cockpit browser drive --config cockpit.toml or npx --no cockpit browser screenshot --config cockpit.toml',
         })
     })
 
