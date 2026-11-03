@@ -60,15 +60,10 @@ function validInstant(value: string): boolean {
 }
 
 function captureOwnValues(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || !exactKeys(value, keys)) return undefined
-        const captured: Record<string, unknown> = {}
-        for (const key of keys) captured[key] = (value as Record<string, unknown>)[key]
-        return captured
-    } catch {
-        // A throwing accessor or proxy trap means the value is malformed.
-        return undefined
-    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || !exactKeys(value, keys)) return undefined
+    const captured: Record<string, unknown> = {}
+    for (const key of keys) captured[key] = (value as Record<string, unknown>)[key]
+    return captured
 }
 
 function stringRecord(value: unknown): value is Readonly<Record<string, string>> {
@@ -123,18 +118,7 @@ export function planLogs(
             || name.startsWith('DOCKER_') && !localDockerSelection(name, value))) {
         return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request must be resolved and bounded' }
     }
-    let suppliedPortProjection: PortLeaseProjection | undefined
-    try {
-        const descriptor = ownComposeAuthority === undefined
-            ? undefined : Object.getOwnPropertyDescriptor(ownComposeAuthority, 'portLeaseProjection')
-        if (descriptor && !('value' in descriptor)) {
-            return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
-        }
-        suppliedPortProjection = descriptor?.value as PortLeaseProjection | undefined
-    } catch {
-        // A throwing accessor or proxy trap on the authority is what the message calls malformed.
-        return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
-    }
+    const suppliedPortProjection = ownComposeAuthority?.portLeaseProjection as PortLeaseProjection | undefined
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
     if (suppliedPortProjection !== undefined && portProjection === undefined) {
         return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
