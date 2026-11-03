@@ -41,7 +41,8 @@ describe('init operator command', () => {
         }
     })
 
-    it('returns preview unchanged when noninteractive or JSON and never confirms or writes', async () => {
+    // Interactive JSON returns the preview before the terminal check, so no terminal is not a refusal.
+    it.each([false, true])('returns the pending preview unchanged for JSON (interactive: %s) and never confirms or writes', async interactive => {
         const calls: string[] = []
         const io: InitCommandIo = {
             terminal: false,
@@ -50,21 +51,7 @@ describe('init operator command', () => {
         }
 
         const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-            { interactive: false, json: true }, io, async () => { calls.push('application'); return pending() })
-
-        expect(outcome).toEqual(pending())
-        expect(calls).toEqual(['application'])
-    })
-
-    it('returns the exact pending preview for interactive JSON before terminal or confirmation', async () => {
-        const calls: string[] = []
-
-        const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
-            { interactive: true, json: true }, {
-                terminal: false,
-                confirm: async () => { calls.push('confirm'); return undefined },
-                writeArtifact: async () => { calls.push('write') },
-            }, async () => { calls.push('application'); return pending() })
+            { interactive, json: true }, io, async () => { calls.push('application'); return pending() })
 
         expect(outcome).toEqual(pending())
         expect(calls).toEqual(['application'])
