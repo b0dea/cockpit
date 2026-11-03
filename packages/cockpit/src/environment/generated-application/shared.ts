@@ -641,7 +641,7 @@ export function complete(
             ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current command, arguments, working directory and environment names (sha256 ${server.sha256}), so every harness keeps it disabled`,
-                fix: 'to enable it, review its declaration, set its name to the sha256 in this message under [mcp.approved] in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed',
+                fix: 'a person reviews its declaration, sets its name to the sha256 in this message under [mcp.approved] in cockpit.toml and runs npx --no cockpit sync --config <your cockpit.toml>; while [autonomy] mcp_approve is person, the default, the guard refuses an agent\'s edit of [mcp]. To keep it off, nothing is needed',
             })),
             // Real sync and check refuse a changed original; a preview reports it so it can be reviewed.
             ...prepared.changedOverrideOriginals.map(finding => overrideChanged(finding, 'warning')),

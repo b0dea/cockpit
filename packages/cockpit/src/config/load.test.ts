@@ -301,7 +301,7 @@ cold_start_seconds = 30
             wipCap: 2, attemptCap: 1,
             // Unset fields take the owner's defaults; each set one is the file's.
             policy: { grading: 'checks', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' },
-                autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'agent' } },
+                autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person' } },
             generatedHostPaths: browserArtifactPaths,
             browser: {
                 harnesses: [{ target: 'codexcli', version: '0.149.0' }],

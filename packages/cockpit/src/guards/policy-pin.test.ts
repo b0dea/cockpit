@@ -12,12 +12,13 @@ const current = [
     '[mcp]', 'approved = {}', '',
     '[guards]', 'protected_branches = ["main"]', '',
 ].join('\n')
-const decide = (payload: Record<string, unknown>, isConfig: (path: string) => boolean = path => path === config) => {
+const decide = (payload: Record<string, unknown>, isConfig: (path: string) => boolean = path => path === config, text = current) => {
     const parsed = parseGuardInput({ hook_event_name: 'PreToolUse', cwd: root, ...payload })
     if (parsed.status !== 'parsed') throw new Error(parsed.reason)
-    return pinnedPolicyDenial(parsed, current, isConfig)?.decision
+    return pinnedPolicyDenial(parsed, text, isConfig)?.decision
 }
-const edit = (old: string, replacement: string, file = config) => decide({ tool_name: 'Edit', tool_input: { file_path: file, old_string: old, new_string: replacement } })
+const edit = (old: string, replacement: string, file = config, text = current) =>
+    decide({ tool_name: 'Edit', tool_input: { file_path: file, old_string: old, new_string: replacement } }, undefined, text)
 
 describe('guard policy pin', () => {
     it('denies an edit, write or patch that changes [work], [work.gates], [autonomy] or a person-approved [mcp], and admits one elsewhere', () => {
@@ -25,6 +26,9 @@ describe('guard policy pin', () => {
         expect(edit('accept = "person"', 'accept = "agent"')).toBe('deny')
         expect(edit('mcp_approve = "person"', 'mcp_approve = "agent"')).toBe('deny')
         expect(edit('approved = {}', 'approved = { docs = "' + 'a'.repeat(64) + '" }')).toBe('deny')
+        // Unset, a person approves MCP servers, so an agent cannot approve the one it declared either.
+        expect(edit('approved = {}', 'approved = { docs = "' + 'a'.repeat(64) + '" }', config, current.replace('mcp_approve = "person"', ''))).toBe('deny')
+        expect(edit('approved = {}', 'approved = { docs = "' + 'a'.repeat(64) + '" }', config, current.replace('mcp_approve = "person"', 'mcp_approve = "agent"'))).toBeUndefined()
         // A table added where none was is a change too.
         expect(edit('[guards]', '[work.gates]\nsignoff = "agent"\n\n[guards]')).toBe('deny')
         expect(edit('protected_branches = ["main"]', 'protected_branches = ["main", "release"]')).toBeUndefined()

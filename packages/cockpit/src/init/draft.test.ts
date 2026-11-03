@@ -578,9 +578,12 @@ describe('document source classification', () => {
         expect(artifact.match(/no profile and no make target in purpose/g)).toHaveLength(2)
         expect(artifact.indexOf('sibling.first.mount')).toBeLessThan(artifact.indexOf('sibling.second.mount'))
         expect(artifact.indexOf('slug = "first"')).toBeLessThan(artifact.indexOf('slug = "second"'))
-        // Every decision shows its default as a comment, reset being the one a person keeps by default.
+        // Every decision shows its default as a comment. A person keeps reset, which deletes stack data,
+        // and MCP approval, whose agent setting the block warns starts processes outside the guard.
         expect(artifact).toContain('# [work.gates]\n# accept = "agent"')
         expect(artifact).toContain('# reset = "person"')
+        expect(artifact).toContain('# mcp_approve = "person"')
+        expect(artifact).toContain('# mcp_approve = "agent" lets an agent start processes outside the guard')
     })
 
     it('never exposes a skipped source row or lets the command module write files', async () => {

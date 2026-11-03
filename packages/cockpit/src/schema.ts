@@ -484,7 +484,7 @@ export const Autonomy = z
         stale_delete: Decider.optional().describe('Who approves sync deleting files cockpit generated before and no longer generates. Default agent.'),
         reset: Decider.optional().describe('Who may apply a reset, which deletes stack data. Default person.'),
         // CI adds nothing here: an approval is a digest in [mcp.approved], which only a person edits.
-        mcp_approve: z.enum(['agent', 'person']).optional().describe('Who approves a declared MCP server: agent lets sync enable every declared server; person records each digest in [mcp.approved]. Default agent.'),
+        mcp_approve: z.enum(['agent', 'person']).optional().describe('Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person.'),
     })
     .strict()
 

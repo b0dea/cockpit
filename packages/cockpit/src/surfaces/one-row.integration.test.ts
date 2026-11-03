@@ -188,7 +188,8 @@ describe('one-row generated surface integration', () => {
             mcpServers: Record<string, unknown>
         }
         const claudeSettings = JSON.parse(await readFile(join(added.root, '.claude/settings.json'), 'utf8')) as {
-            enabledMcpjsonServers: string[]
+            enabledMcpjsonServers?: string[]
+            disabledMcpjsonServers?: string[]
         }
         const codex = parseToml(await readFile(join(added.root, '.codex/config.toml'), 'utf8')) as {
             mcp_servers: Record<string, { enabled?: boolean }>
@@ -204,11 +205,17 @@ describe('one-row generated surface integration', () => {
         const openCode = JSON.parse(openCodeJson) as {
             mcp: Record<string, { enabled: boolean }>
         }
-        // Under the default [autonomy] mcp_approve = "agent" a declared server is enabled as declared now.
+        // A sibling's MCP source is an ordinary file an agent can write, and a harness starts an
+        // enabled server outside every guard boundary, so by default a declared server stays off
+        // until a person records its digest.
         expect(Object.keys(claudeMcp.mcpServers)).toEqual(['row-server'])
-        expect(claudeSettings.enabledMcpjsonServers).toEqual(['row-server'])
-        expect(codex.mcp_servers['row-server']?.enabled).not.toBe(false)
-        expect(openCode.mcp['row-server']?.enabled).toBe(true)
+        expect(claudeSettings.enabledMcpjsonServers ?? []).toEqual([])
+        expect(claudeSettings.disabledMcpjsonServers).toEqual(['row-server'])
+        expect(codex.mcp_servers['row-server']?.enabled).toBe(false)
+        expect(openCode.mcp['row-server']?.enabled).toBe(false)
+        // The guard refuses an agent's approval, so the fix names who approves.
+        expect(addedSync.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'row-server',
+            fix: expect.stringMatching(/^a person reviews its declaration, sets its name to the sha256/) }))
 
         const evidence = [
             JSON.stringify(addedSync),

@@ -95,7 +95,8 @@ complete example.
   checks and judges the change), `checks` (cockpit's own reruns decide) or `self`. A change that needs no
   order can use `cockpit grade --criteria <file>`. See [Work and browser](docs/work-and-browser.md).
 - **A policy for who decides.** `[autonomy]` and `[work.gates]` say which steps an `agent`, a `person` or
-  `ci` may pass. Everything defaults to `agent` except `reset`, which wipes data and needs a person;
+  `ci` may pass. Everything defaults to `agent` except `reset`, which wipes data, and `mcp_approve`,
+  because an enabled MCP server runs outside the guard; both need a person;
   `check` and `doctor` report any weakening of the policy nobody has confirmed.
 - **Browser checks.** `browser drive` and `browser screenshot` visit the application's declared routes
   with a local browser; a loopback browser service from your own Compose file can also publish the

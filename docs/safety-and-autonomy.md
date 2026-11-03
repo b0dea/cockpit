@@ -318,7 +318,7 @@ shell commands only.
 ## Who decides
 
 `[autonomy]` and `[work.gates]` in `cockpit.toml` say who takes each decision cockpit gates: `agent`,
-`person` or `ci`. Every field defaults to `agent` except `reset`, which defaults to `person`.
+`person` or `ci`. Every field defaults to `agent` except `reset` and `mcp_approve`, which default to `person`.
 `[work] grading` says how a work order earns done; the work-order fields are described in
 [Who passes each gate](work-and-browser.md#who-passes-each-gate).
 
@@ -327,7 +327,7 @@ shell commands only.
 | `sync` | whether the guard lets an agent run a writing `sync`; under `ci` a writing sync runs only where `CI` is set | `agent` |
 | `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest | `agent` |
 | `reset` | whether `reset --apply` deletes stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
-| `mcp_approve` | `agent`: sync enables every declared MCP server as declared now; `person`: only those whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest | `agent` |
+| `mcp_approve` | `person`: sync enables only the MCP servers whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest; `agent`: sync enables every declared server as declared now, which lets an agent start processes outside the guard, because a sibling's MCP source is a file the agent can write and each harness starts an enabled server outside every guard boundary | `person` |
 
 <!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an agent's edit, write or patch that would change `[work]`,
 `[work.gates]` or `[autonomy]`, or `[mcp]` while `mcp_approve` is `person`, is a hard denial. It

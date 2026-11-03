@@ -825,7 +825,7 @@
           ]
         },
         "mcp_approve": {
-          "description": "Who approves a declared MCP server: agent lets sync enable every declared server; person records each digest in [mcp.approved]. Default agent.",
+          "description": "Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person.",
           "type": "string",
           "enum": [
             "agent",

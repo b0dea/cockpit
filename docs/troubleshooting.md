@@ -124,8 +124,9 @@ For `MCP_INPUT_INVALID` or `MCP_DECLARATION_INVALID`, correct the declaration, d
 same-name environment reference, or confined working directory named by the message.
 `MCP_COMMAND_CONFLICT` means two sources give one server name different commands; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
 server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
-was approved; only after reviewing its command, arguments, working directory, environment names and
-sources, set its name to the sha256 in the message under `[mcp.approved]`. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
+was approved; a person, only after reviewing its command, arguments, working directory, environment
+names and sources, sets its name to the sha256 in the message under `[mcp.approved]` and runs `sync`.
+While `[autonomy] mcp_approve` is `person`, the default, the guard refuses an agent's edit of `[mcp]`. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
 declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 
