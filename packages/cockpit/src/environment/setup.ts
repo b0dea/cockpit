@@ -4,6 +4,7 @@ import {
     ENVIRONMENT_CODES,
     type EnvironmentCommandOutcome, type ExecutionPlan, type ExecutionStep, type FilesystemCheck,
     type Observation, type EnvironmentDiagnostic, type RefusalCode, type SetupActionKind,
+    forwardedRefusal,
 } from './contract.js'
 import type { Sibling } from '../schema.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
@@ -43,7 +44,7 @@ export type PlanSetupInput = PlanSetupBaseInput & (
 )
 
 function refusal(code: RefusalCode, message: string, target: string): EnvironmentCommandOutcome<SetupResult> {
-    return { kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code, message, target }], result: null }
+    return forwardedRefusal([{ severity: 'error', code, message, target }])
 }
 
 const APPROVED_GIT_ENVIRONMENT = [

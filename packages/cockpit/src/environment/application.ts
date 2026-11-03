@@ -35,6 +35,7 @@ import {
     type SourceProvenance,
     type StackId,
     snapshotJson,
+    forwardedRefusal,
 } from './contract.js'
 import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupResult } from './setup.js'
 import type { InstructionPointerResult } from './instruction-pointer.js'
@@ -2366,12 +2367,6 @@ function changedRuntimeInputs(recorded: RuntimeInputs | undefined, current: Runt
 
 function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
     return cockpitCommand(command, { config: context.source.path })
-}
-
-export function forwardedRefusal(
-    diagnostics: readonly EnvironmentDiagnostic[],
-): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
-    return { kind: 'refusal', status: 2, result: null, diagnostics }
 }
 
 export { decodeLifecycleRecord } from './lifecycle-stage.js'

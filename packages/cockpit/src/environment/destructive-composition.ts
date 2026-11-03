@@ -7,7 +7,6 @@ import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load
 import {
     issueDestructiveRunContext,
     noticeLifecycleRun,
-    forwardedRefusal,
     type DestructiveObservation,
     type DestructiveObservationRefusal,
     type DestructiveReclaimObservation,
@@ -16,7 +15,7 @@ import {
     type LifecycleRunContext,
     type ResetCommandAdapters,
 } from './application.js'
-import { ENVIRONMENT_CODES, type Diagnostic, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, forwardedRefusal, type Diagnostic, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
 import { decodeCoordinationRecord, liveHolderMessage, observeProcessStart, processHost, readActiveStackInventory, releaseDeadSessionHolders } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolvePathRemovalExecutable } from './executable.js'

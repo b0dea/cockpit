@@ -15,6 +15,7 @@ import { CockpitConfig } from '../schema.js'
 import { harnessFact, SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/harness-registry.js'
 import { ENVIRONMENT_CODES, errorCause } from './contract.js'
 import type { SiblingOutcome } from './sibling-registration.js'
+import { refusalOutcome as refused } from '../refusal.js'
 
 export interface ToolChangeInput {
     readonly operation: 'add' | 'remove'
@@ -25,11 +26,6 @@ export interface ToolChangeInput {
 }
 
 const EDIT_BY_HAND_FIX = 'edit the tools list under [surfaces] in cockpit.toml by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run'
-
-function refused(code: string, message: string, target: string, fix?: string): SiblingOutcome {
-    return { status: 2, result: null, artifact: null, destination: null,
-        diagnostics: [{ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) }] }
-}
 
 /** Key order must not matter when two parsed configurations are compared. */
 function canonical(value: unknown): string {

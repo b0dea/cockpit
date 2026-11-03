@@ -28,6 +28,7 @@ import { stackId } from './identity.js'
 import { decodeLifecycleRecord } from './lifecycle-stage.js'
 import { observeGeneratedCheckoutIdentity } from './setup-observation.js'
 import { readState, selectStateRoot } from './state.js'
+import { refusalOutcome as refused } from '../refusal.js'
 
 export interface SiblingAddInput {
     readonly configPath: string
@@ -64,11 +65,6 @@ export interface SiblingOutcome {
 
 const STEP_TIMEOUT_MS = 10_000
 const FREE_TEXT_UNSAFE = /[\u0000-\u001f\u007f]/
-
-function refused(code: string, message: string, target?: string, fix?: string): SiblingOutcome {
-    return { status: 2, result: null, artifact: null, destination: null,
-        diagnostics: [{ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }] }
-}
 
 function usage(message: string, target?: string): SiblingOutcome {
     return refused('CLI_USAGE_INVALID', message, target)

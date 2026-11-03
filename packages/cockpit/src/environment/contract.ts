@@ -983,3 +983,10 @@ export type EnvironmentCommandOutcome<Result> =
           result: null
           plan?: never
       }
+
+/** A command refusal carrying the diagnostics an owner raised: exit status 2 and no result. */
+export function forwardedRefusal(
+    diagnostics: readonly EnvironmentDiagnostic[],
+): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
+    return { kind: 'refusal', status: 2, result: null, diagnostics }
+}

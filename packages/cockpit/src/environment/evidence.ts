@@ -13,6 +13,7 @@ import {
     type ExecutionPlan,
     type ExecutionStep,
     type StackId,
+    forwardedRefusal,
 } from './contract.js'
 import { classifyResolvedRuntimeLiterals } from './runtime.js'
 import { isSensitiveField, redactSensitiveText } from './sensitive.js'
@@ -81,7 +82,7 @@ function diagnostic(message: string, target: string): EnvironmentDiagnostic {
 }
 
 function refusal<T>(message: string, target: string): EnvironmentCommandOutcome<T> {
-    return { kind: 'refusal', status: 2, diagnostics: [diagnostic(message, target)], result: null }
+    return forwardedRefusal([diagnostic(message, target)])
 }
 
 export interface EnvironmentSnapshotInput {

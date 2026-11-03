@@ -28,6 +28,7 @@ import { recordLocalRuntimeMeasurement } from './runtime-measurement-record.js'
 import { MEASURE_DIRECTORY_PREFIX, claimMeasureDirectory, sweepProbeResidue } from './runtime-probe-residue.js'
 import { selectMachineStateRoot } from './state.js'
 import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
+import { refusalOutcome as refused } from '../refusal.js'
 
 export interface RuntimeMeasureInput {
     readonly configPath: string
@@ -53,12 +54,6 @@ export interface RuntimeMeasureOutcome {
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
 const STEP_TIMEOUT_MS = 10_000
 const PROBE_STEP_TIMEOUT_MS = 30_000
-
-function refused(code: string, message: string, target?: string, fix?: string): RuntimeMeasureOutcome {
-    return { status: 2, result: null, artifact: null, destination: null,
-        diagnostics: [{ severity: 'error' as const, code, message,
-            ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }] }
-}
 
 function dockerStep(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string, args: readonly string[], stdoutLimitBytes = 1_024): ExecutionStep {
     return {
