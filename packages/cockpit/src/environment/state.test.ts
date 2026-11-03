@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, symlinkSync, unlinkSync } from 'node:fs'
+import { chmodSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
@@ -1765,6 +1765,86 @@ describe('transactState', () => {
             expect(contents).toContainEqual(expect.stringContaining(holderA))
         },
     )
+
+    it('synchronizes the directory after removing verified prepared bytes', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const publicationParent = dirname(address.path)
+        await mkdir(publicationParent, { recursive: true })
+        const sync = await interceptDirectorySync(publicationParent, () => undefined)
+        let result
+        try {
+            result = await transactState(namespace, address, {
+                ownerId: holderA,
+                beforeCommit: () => abortStateTransaction('cancelled'),
+            }, () => lifecycleRecord(0, 1))
+        } finally {
+            sync.restore()
+        }
+
+        expect(result).toEqual({ aborted: true, value: 'cancelled' })
+        expect(sync.calls()).toBe(1)
+    })
+
+    it('rejects prepared state bytes mutated by a commit veto callback', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const seeded = await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 1))
+        if (seeded.kind !== 'complete') throw new Error(JSON.stringify(seeded))
+        const before = await readState(address)
+        if (before.kind !== 'complete') throw new Error('expected lifecycle record')
+        const result = await transactState(namespace, address, {
+            ownerId: holderA,
+            beforeCommit: () => {
+                const temporary = readdirSync(dirname(address.path)).find((name) => name.startsWith(`.${stackId.replace(':', '_')}.`) && name.endsWith('.tmp'))
+                if (!temporary) throw new Error('expected prepared state file')
+                writeFileSync(join(dirname(address.path), temporary), `${JSON.stringify({
+                    ...before.value,
+                    revision: before.value.revision + 1,
+                    updatedAt: new Date().toISOString(),
+                    value: { count: 9 },
+                })}\n`)
+                return undefined
+            },
+        }, (current) => ({
+            ...current!,
+            revision: current!.revision + 1,
+            updatedAt: new Date().toISOString(),
+        }))
+        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+        expect(await readState(address)).toEqual(before)
+    })
+
+    it('rejects prepared state bytes mutated before ordinary publication', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const seeded = await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 1))
+        if (seeded.kind !== 'complete') throw new Error(JSON.stringify(seeded))
+        const before = await readState(address)
+        if (before.kind !== 'complete') throw new Error('expected lifecycle record')
+        let temporaryPath = ''
+        let injected = ''
+        const result = await transactState(namespace, address, {
+            ownerId: holderA,
+            beforePublish: async (path) => {
+                temporaryPath = path
+                injected = `${JSON.stringify({
+                    ...before.value,
+                    revision: before.value.revision + 1,
+                    updatedAt: new Date().toISOString(),
+                    value: { count: 9 },
+                })}\n`
+                writeFileSync(path, injected)
+            },
+        }, (current) => ({
+            ...current!,
+            revision: current!.revision + 1,
+            updatedAt: new Date().toISOString(),
+        }))
+        expect(result).toMatchObject({
+            kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+            message: expect.stringContaining('unverified bytes were preserved'), target: temporaryPath,
+        })
+        expect(await readState(address)).toEqual(before)
+        expect(await readFile(temporaryPath, 'utf8')).toBe(injected)
+    })
 })
 
 
