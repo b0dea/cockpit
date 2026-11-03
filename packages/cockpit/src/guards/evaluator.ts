@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { GUARD_INPUT_LIMITS, isParsedGuardInput, type ParsedInvocation } from './invocation-parser.js'
+import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
@@ -148,6 +148,16 @@ const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the gua
     + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
     + 'the command search path finds the installed package; a path such as ./node_modules/.bin/cockpit counts whenever it resolves to the installed package.'
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
+// A refusal names the command it judged, so an agent can tell which part of a chain was refused.
+const named = (invocation: ParsedInvocation) => {
+    const words = invocation.executable === null ? [] : [invocation.executable, ...invocation.argv]
+    const shown: string[] = []
+    for (const word of words) {
+        if (!/^[\w./@+=:,%^~{}-]+$/.test(word) || [...shown, word].join(' ').length > 80) break
+        shown.push(word)
+    }
+    return shown.length ? `\`${shown.join(' ')}${shown.length < words.length ? ' …' : ''}\`` : 'This command'
+}
 const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every invocation matches an exact permitted profile or bounded data operation.' })
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -657,6 +667,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const chainOf = (path: string) => { const item = identities.get(path)!; return item.identity === null ? item.ancestors : [...item.ancestors, item.identity] }
     const secretDenial = deny('Refusing mutation or staging below a secrets directory.')
     const instanceDenial = deny('Refusing mutation or staging of a declared environment instance.')
+    // `git add -A`, `git add .` and a directory operand stage everything below them.
+    const coveringStageDenial = deny(`Refusing to stage a path that contains ${SECRETS_ROOT} or a declared environment instance: \`git add -A\`, \`git add .\` and a directory operand stage everything below them. Stage the changed files by name instead.`)
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
@@ -732,15 +744,16 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // cover leaves that do not exist yet, which have no identity to compare, and folded
         // spellings of a root that a case-insensitive volume resolves to it.
         const folded = fold(lexical)
-        if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(secretDenial)
-        if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(instanceDenial)
+        if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(staging && !folded.split('/').includes('.secrets') ? coveringStageDenial : secretDenial)
+        if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(staging && !resolved.instances.some((item) => folded === fold(item.path)) ? coveringStageDenial : instanceDenial)
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
             || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
         if (request.operation === 'write' && executes(folded, controlCoverage)) hold(executionDenial)
         if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
-            hold(unavailable('Guard path escapes configured roots.'))
+            hold(unavailable('Guard path escapes configured roots. A path or working directory in this command is outside every root this cockpit manages, '
+                + 'which the guard does not judge: work inside the cockpit, or a person runs the command.'))
             return
         }
         const evidence = resolvedEvidence(request)
@@ -752,8 +765,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
         const { is, below, covers } = evidenceFacts(evidence)
-        if (below(secretRoot) || secretFile(evidence) || (staging || removing) && covers(secretRoot)) hold(secretDenial)
-        if (resolved.instances.some((item) => is(item.path) || (staging || removing) && covers(item.path))) hold(instanceDenial)
+        if (below(secretRoot) || secretFile(evidence)) hold(secretDenial)
+        else if ((staging || removing) && covers(secretRoot)) hold(staging ? coveringStageDenial : secretDenial)
+        if (resolved.instances.some((item) => is(item.path))) hold(instanceDenial)
+        else if ((staging || removing) && resolved.instances.some((item) => covers(item.path))) hold(staging ? coveringStageDenial : instanceDenial)
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
         return evidence
@@ -835,7 +850,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             // listing, which reports names, may name one.
             const protectedRead = folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))
             if (kind !== 'listing' && protectedRead) hold(readDenial)
-            if (!resolved.allowedRoots.some((root) => within(lexical, root))) { safe = false; return }
+            if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+                safe = false
+                searchBlocker ??= ask(`${shownGuardWord(path)} is outside the configured roots, where the guard cannot prove it holds no secret. Read a copy inside the cockpit, or a person approves it.`)
+                return
+            }
             pathCount++
             // An undeclared `.env*` file is not a known instance, but it is not known to be data either.
             // A declared template is: the configuration names it as the instance's documentation.
@@ -927,7 +946,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const cockpit = provenCockpit(invocation)
         return [invocation, classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })]
     }))
-    const chainReadOnly = [...accesses.values()].every((access) => access !== undefined)
+    // A definition or a `cd` runs nothing, so it cannot create a path before a search reads it; a bare redirect writes one.
+    const chainReadOnly = [...accesses].every(([invocation, access]) => access !== undefined
+        || invocation.executable === null && !invocation.redirects.some((redirect) => redirect.write))
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {
@@ -973,7 +994,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))
             }
             if (writes.uncertain) hold(unavailable('Unsupported visible writer option.'))
-        } else if (!access) {
+        } else if (!access && git?.verb !== 'add') {
+            // Staging writes the index, never the named file, and its operands are inspected as staged below.
             for (const arg of git?.args ?? operands) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
                     inspectPossibleControlOperand(arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd)
@@ -1011,7 +1033,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                     if (['-A', '--all', '-u', '--update'].includes(arg)) {
                         // These forms can stage an instance even without a literal operand.
                         inspectPath({ path: '.', cwd: git.cwd, operation: 'stage' })
-                    } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option.'))
+                    } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
                 } else {
                     operands++
                     pathCount++
@@ -1039,6 +1061,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (resolved.searchPathRelativeEntry !== null && invocation.executable !== null) {
             return ask(`The command search path the agent runs with holds the relative entry ${JSON.stringify(resolved.searchPathRelativeEntry)}${resolved.searchPathRelativeEntry === '' ? ' (an empty entry is the working directory)' : ''}, so ${invocation.executable}, or a program it starts by name, may run a file the agent wrote instead of the permitted program. Remove relative entries from the PATH the agent harness starts with.`)
         }
+        // Only a proven read-only command may carry `$?`: as any other argument it could name a path the guard never saw.
+        if (invocation.expandsStatus && !readOnly.has(invocation)) return ask(`${named(invocation)} has an argument holding $?, whose digits the guard cannot see, so it cannot prove which path the argument names. Write the value out, or print it with echo on its own.`)
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
         if (declared) { declaredReasons.push(declared.reason); continue }
@@ -1049,7 +1073,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
             && cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, i) => word === invocation.argv[i])
         if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
-            && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) return searchRefusals.get(invocation) ?? ask('Invocation does not match an exact permitted profile.')
+            && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) {
+            const config = /^[\w./@%+=:,-]+$/.test(resolved.configPath) ? resolved.configPath : `'${resolved.configPath.replaceAll("'", "'\\''")}'`
+            return searchRefusals.get(invocation) ?? ask(`${named(invocation)} requires human approval: the guard admits only the read-only commands it classifies, a declared build or test command run from its checkout, and [guards] allow rules. `
+                + `A person approves it or runs it in a terminal. To run tests, use \`npx --no cockpit test-run --config ${config} --gate <gate>\`; a person can admit a command for good under [guards] allow in ${posix.basename(resolved.configPath)}.`)
+        }
     }
     return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

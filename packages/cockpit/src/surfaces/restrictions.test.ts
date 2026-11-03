@@ -443,7 +443,7 @@ describe('restriction expansion', () => {
         const ambientRipgrep = runGuard(result, bash('rg needle src'), { RIPGREP_CONFIG_PATH: '' })
         expect(ambientRipgrep, ambientRipgrep.stderr).toMatchObject({ status: 0, stderr: '' })
         expect(JSON.parse(ambientRipgrep.stdout)).toMatchObject({ hookSpecificOutput: {
-            permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('exact permitted profile'),
+            permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('`rg needle src` requires human approval'),
         } })
         expect(JSON.parse(runGuard(result, bash('cat env/service.env')).stdout)).toMatchObject({ hookSpecificOutput: {
             permissionDecision: 'deny', permissionDecisionReason: 'Refusing to read a declared environment instance or secrets directory into the agent context.',
@@ -641,7 +641,7 @@ while (Date.now() < end) {
 
     it('keeps destructive policy active when the instance set is empty and denies asks without a prompt tier', async () => {
         const result = complete(expandRestrictions(await input({ instances: [] })))
-        expect(runGuard(result, bash('git reset --hard HEAD~1')))
+        expect(runGuard(result, bash('git reset --hard "$REVISION"')))
             .toMatchObject({ status: 2, stderr: expect.stringContaining('Dynamic command construction is unsupported') })
         const command = bash('git reset --hard HEAD')
 

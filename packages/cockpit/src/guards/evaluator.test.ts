@@ -140,7 +140,7 @@ describe('resolved guard evaluation', () => {
             expect(decide(command).decision, command).toBe('allow')
         }
         for (const host of ['notdb.example.test', 'db.example.test.evil', 'other.example.test']) {
-            expect(decide(`printf ${host}`).decision).toBe('ask')
+            expect(decide(`curl ${host}`).decision).toBe('ask')
         }
         // Resolvers apply compatibility normalisation, so fullwidth letters and ideographic dots name the same host.
         for (const command of ['curl http://db。example。test/', 'curl http://ｄｂ.example.test/', 'curl https://db．example．test', 'curl https://API.VENDOR｡EXAMPLE.TEST']) {
@@ -160,7 +160,7 @@ describe('resolved guard evaluation', () => {
         }
         expect(decide('npm test', configured).decision).toBe('allow')
         for (const value of [`not${host}`, `${host}.example.test`, ...(!wildcard ? [`tenant.${host}`] : [])]) {
-            expect(decide(`printf ${value}`, configured).decision, value).toBe('ask')
+            expect(decide(`curl ${value}`, configured).decision, value).toBe('ask')
         }
     })
 
@@ -192,6 +192,10 @@ describe('resolved guard evaluation', () => {
         }
         expect(decide('npm test', policy(), other).decision).toBe('ask')
         expect(decide('npm test', policy(), '/outside').decision).toBe('unavailable')
+        // A cd moves the working directory each profile is matched in.
+        expect(decide('cd ../other && npm run build').decision).toBe('allow')
+        expect(decide('cd ./src && npm test').decision).toBe('ask')
+        expect(decide('cd /outside && npm test')).toEqual({ decision: 'unavailable', reason: expect.stringContaining('work inside the cockpit, or a person runs the command') })
     })
 
     it('separates branch destinations from remotes, option values and source refs', () => {
@@ -304,7 +308,15 @@ describe('resolved guard evaluation', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('git add -f env')), noInstances, inspect).decision).toBe('deny')
         expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: 'config/template', content: 'value' })), policy(), inspect).decision).toBe('allow')
         expect(decide('git add config/template').decision).toBe('ask')
-        expect(decide('git add --pathspec-from-file=list').decision).toBe('unavailable')
+        expect(decide('git add --pathspec-from-file=list')).toEqual({ decision: 'unavailable', reason: expect.stringContaining('Stage with `git add <paths>`') })
+        // A broad staging refusal says how to stage instead.
+        const covering = { decision: 'deny', reason: expect.stringContaining('Stage the changed files by name instead.') }
+        expect(decide('git add .')).toEqual(covering)
+        expect(decide('git add -A')).toEqual(covering)
+        expect(evaluateGuard(parseGuardInput(shellPayload('git add -f env')), noInstances, inspect)).toEqual(covering)
+        expect(decide('git add config/active.instance')).toEqual({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+        // Staging writes the index, not the file, so naming a guard control is the person's call to approve, like any staging.
+        expect(decide('git add .claude/settings.json .codex/hooks.json cockpit.toml')).toEqual({ decision: 'ask', reason: expect.stringContaining('`git add .claude/settings.json .codex/hooks.json cockpit.toml` requires human approval') })
     })
 
     it('denies writes that would disable the guard while permitting neighbouring harness files', () => {
@@ -367,8 +379,12 @@ describe('resolved guard evaluation', () => {
             for (const facts of [{ [`${root}/API`]: { identity: '1:20', ancestors: ['1:10'] } }, {}] as IdentityFacts[]) {
                 const grant = configured()
                 grant.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: 'git', argv: ['add', 'API'] })
-                expect(evaluateGuard(parseGuardInput(shellPayload('git add API')), grant, volume(facts)).decision).toBe('deny')
+                expect(evaluateGuard(parseGuardInput(shellPayload('git add API')), grant, volume(facts)))
+                    .toEqual({ decision: 'deny', reason: expect.stringContaining('Stage the changed files by name instead.') })
             }
+            // A directory another name reaches covers the secrets root by identity alone.
+            expect(evaluateGuard(parseGuardInput(shellPayload('git add moved')), configured(), volume({ [`${root}/moved`]: { identity: '1:40', ancestors: ['1:10'] } })))
+                .toEqual({ decision: 'deny', reason: expect.stringContaining('Stage the changed files by name instead.') })
         })
 
         it('denies any spelling that shares the identity of an instance or guard control file', () => {
@@ -522,7 +538,10 @@ describe('built-in read-only profile', () => {
             'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '!*.min.js' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
             'fd name src', "find src -name '*.ts' -type f", 'git status', 'git diff --stat', 'git log --oneline -5', 'git show HEAD',
             'git branch', 'git branch --list', 'git -C ../other status', 'cockpit check', 'cockpit doctor --json', 'cockpit --help',
-            'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts']) {
+            'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts',
+            'echo "exit=$?"', "printf '%s\\n' done", 'sed -n 1,20p src/a.ts', "sed -n -e '1p;$p' src/a.ts", 'git diff HEAD~1 --stat',
+            'git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>&1 | head -1', 'git branch -vv', 'git -C ../other branch --show-current',
+            'cd ./src && cat a.ts | wc -l', 'cd ./src && grep -rn needle .', 'cd ../other; git status', 'grep -rn needle src 2>/dev/null | head -30']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
     })
@@ -589,7 +608,7 @@ describe('built-in read-only profile', () => {
         for (const command of ['cat README.md 2>/dev/null', 'ls > /dev/null 2>&1', 'rg needle src 2>/dev/stderr', 'cat README.md >/dev/stdout', 'wc -l < /dev/null']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
-        expect(decide('printf x 2>/dev/null').decision).toBe('ask')
+        expect(decide('make check 2>/dev/null').decision).toBe('ask')
         for (const command of ['cat README.md 2>/dev/tty', 'cat README.md > /tmp/out', 'cat README.md 2>/dev/null/x']) {
             expect(decideInRepositories(command).decision, command).toBe('unavailable')
         }
@@ -618,9 +637,28 @@ describe('built-in read-only profile', () => {
             'git diff --no-index src/a.ts README.md', 'git diff -- .env.local', 'grep -C 5 needle src/a.ts', 'grep -A x needle src/a.ts',
             // Undeclared environment files, paths outside the roots, writes, wrappers and mixed chains.
             'cat .env.local', 'cat /etc/hosts', 'ls /tmp', 'cat src/a.ts > copy.txt', 'env ls', 'LANG=C ls', 'LS', 'ls; touch src/a.ts',
+            // Any sed command but `p` can write, read another file or run a program.
+            'sed -n 1,20w out.txt src/a.ts', "sed -n '1p;w out' src/a.ts", 'sed -i 1p src/a.ts', "sed 's/a/b/' src/a.ts", 'sed -n -f script.sed src/a.ts',
+            'git branch -v topic', 'git rev-parse --git-path hooks', 'cat src/a$?', 'node --test', 'git fetch origin', 'git branch --set-upstream-to=origin/main main',
+            'git commit -m done', 'printf -v HOME %s src; git status', 'git -C $? log',
         ]) {
             expect(decideInRepositories(command).decision, command).toBe('ask')
         }
+        // Each refusal names the command and what to do instead.
+        expect(decideInRepositories('git commit -m "Add the parser"').reason).toBe('`git commit -m …` requires human approval: the guard admits only the read-only commands it classifies, '
+            + 'a declared build or test command run from its checkout, and [guards] allow rules. A person approves it or runs it in a terminal. To run tests, use '
+            + '`npx --no cockpit test-run --config /workspace/project/cockpit.toml --gate <gate>`; a person can admit a command for good under [guards] allow in cockpit.toml.')
+        expect(decideInRepositories('cat /etc/hosts').reason).toContain('"/etc/hosts" is outside the configured roots')
+        // A path is quoted with the characters a harness rejects in a reason escaped, so the refusal still arrives.
+        expect(decideInRepositories('cat /tmp/a\u2028b').reason).toContain('"/tmp/a\\u2028b" is outside the configured roots')
+        // `$?` never names a path a grant could admit unseen.
+        const granted = { ...policy(), declaredAllows: [{ argv: ['cat'], reason: 'Reading is declared safe.' }] }
+        expect(evaluateGuard(parseGuardInput(shellPayload('cat config/active.$?')), granted, withGit)).toEqual({ decision: 'ask', reason: expect.stringContaining('holding $?') })
+        // Even a repository literally named `$?` is not where `git -C $?` runs.
+        const statusRepository = (request: { path: string; cwd: string; operation?: string }) => ({ ...withGit(request),
+            ...(posix.resolve(request.cwd, request.path) === `${root}/$?/.git` ? { identity: '9:2' } : {}) })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C $? status')), policy(), statusRepository).decision).toBe('ask')
+        expect(evaluateGuard(parseGuardInput(shellPayload("git -C '$?' status")), policy(), statusRepository).decision).toBe('allow')
         // A declared template documents the instance's variables, so it is data, not an unknown `.env*` file.
         const templated = { ...policy(), templates: [`${root}/.env.example`, `${other}/.env.example`] }
         for (const command of ['cat .env.example', 'head -n 5 ../other/.env.example', 'grep KEY .ENV.EXAMPLE']) {
@@ -650,7 +688,8 @@ describe('built-in read-only profile', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('rg needle src')), present(instance), withGit).decision).toBe('allow')
         // Another command in the same call could write an instance or an environment file before the
         // search reads it, as `vercel env pull .env.local && rg KEY .` would, wherever the search is rooted.
-        for (const command of ['npm test && rg needle', 'npm test && rg needle src']) {
+        // A bare redirect writes too: emptying .gitignore re-includes what the ignore-aware evidence left out.
+        for (const command of ['npm test && rg needle', 'npm test && rg needle src', '>.gitignore; rg needle']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'ask',
                 reason: `A recursive search of ${command.endsWith('src') ? 'src' : '.'} could read an environment file or secrets directory that another command in this call creates first. Run the search on its own.` })
         }
@@ -703,7 +742,12 @@ describe('built-in read-only profile', () => {
             'rg . env/.secrets/token', 'grep -r . env/.secrets/token', 'rg . env/.secrets/project', 'rg -l . env/.secrets/project/',
             'grep -rn . env/.secrets/', 'rg . env/.SECRETS/token', 'rg . ../other/.secrets', 'rg needle config/active.instance',
             // A case-insensitive volume resolves a folded spelling of the checkout itself to the instance.
-            'cat ../PROJECT/config/active.instance', 'rg . ../Project/env/.secrets']) {
+            'cat ../PROJECT/config/active.instance', 'rg . ../Project/env/.secrets',
+            // A command after cd is judged from where it runs, and after `;` also from where a failed cd leaves it.
+            'cd ./config && cat active.instance', 'cd ./src; cat ../config/active.instance', 'cd ./missing; cat config/active.instance',
+            'cd ./env/.secrets && cat token', 'cd /workspace/project/config && head active.instance',
+            // A list ending in `&` runs in a background subshell, so its cd moves nothing after it.
+            'cd ./src && pwd & cat config/active.instance']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
         }
         // A hard link carries the instance's identity under a spelling no normalisation equates.
@@ -824,6 +868,7 @@ describe('cockpit structure protection', () => {
         const commands = [
             'rm .codex/hooks.json', 'git rm .claude/settings.json', 'mv opencode.json archived.json', 'find .codex -delete',
             'rm -rf .claude', 'rm -rf .opencode/plugin/installed-control', 'rm -rf cockpit/adopted', 'unlink .CODEX/HOOKS.JSON',
+            'cd ./.codex && rm hooks.json',
         ]
         for (const command of commands) {
             const configured = policy()
