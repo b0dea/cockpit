@@ -40,9 +40,10 @@ import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGener
 import { mergeSurfaceDeclarations, type ActiveSurfaceOverride, type SurfaceUpgradeFinding } from '../surfaces/merge.js'
 import {
     CORE_EVALUATOR_ASSET as EVALUATOR_ASSET,
+    CORE_PROCEDURE_ASSETS as PROCEDURE_ASSETS,
     CORE_SKILL_ASSETS as SKILL_ASSETS,
     coreSurfaceDeclarations,
-    shippedSkillNames,
+    shippedSkillSources,
 } from '../surfaces/core-declarations.js'
 import { collectMcpDeclarations, hasTargetMcpServers, mcpApprovalDigest, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration, type McpDiagnostic } from '../surfaces/mcp.js'
 import {
@@ -891,15 +892,21 @@ function selectedBootstrapInput(input: unknown): SelectedBootstrapSurfaceInput |
     return Object.freeze({ root: record.root, target: record.target as SurfaceTarget })
 }
 
-function selectedBootstrapSources(assets: ReadonlyMap<SurfaceAssetPath, Readonly<{ bytes: string }>>): readonly SurfaceSourceFile[] | undefined {
-    const terminal = assets.get('skills/procedures/onboarding.md')?.bytes
-    const names = shippedSkillNames(assets)
-    const entries = names?.map(name => [name, assets.get(`skills/${name}.skill.md` as SurfaceAssetPath)?.bytes] as const)
-    if (terminal === undefined || !entries || entries.some(([, bytes]) => bytes === undefined)) return undefined
-    return Object.freeze(entries.flatMap(([name, bytes]) => [
-        Object.freeze({ path: `skills/${name}/SKILL.md`, bytes: bytes! }),
-        Object.freeze({ path: `skills/${name}/procedures/onboarding.md`, bytes: terminal }),
-    ]))
+type AuthenticatedAsset = Readonly<{ path: string; bytes: string; sha256: string }>
+
+/** The shipped skill sources with the packaged collection and procedures that authenticate them. */
+function bootstrapSkillInput(assets: ReadonlyMap<string, AuthenticatedAsset>): Readonly<{
+    sources: readonly SurfaceSourceFile[]
+    collection: AuthenticatedAsset
+    procedures: readonly AuthenticatedAsset[]
+}> | undefined {
+    const skills = shippedSkillSources(assets)
+    const collection = assets.get('skills/collection.json')
+    const procedures = PROCEDURE_ASSETS.map(path => assets.get(path))
+    if (!skills || !collection || procedures.some(row => row === undefined)) return undefined
+    const pick = ({ path, bytes, sha256: digest }: AuthenticatedAsset) => Object.freeze({ path, bytes, sha256: digest })
+    return Object.freeze({ sources: Object.freeze(skills.flatMap(skill => skill.sources)), collection: pick(collection),
+        procedures: Object.freeze((procedures as AuthenticatedAsset[]).map(pick)) })
 }
 
 async function selectedBootstrapAssets(
@@ -953,14 +960,10 @@ export async function prepareSelectedBootstrapSurface(
     const node = await nodeAuthority()
     const assets = node && await selectedBootstrapAssets(node, adapters)
     if (!node || !assets) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets could not be authenticated', 'bootstrap')
-    const byPath = new Map(assets.map(asset => [asset.path, asset]))
-    const sources = selectedBootstrapSources(byPath)
-    const collection = byPath.get('skills/collection.json')
-    const terminal = byPath.get('skills/procedures/onboarding.md')
-    if (!sources || !collection || !terminal) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets are incomplete', 'bootstrap')
-    const inspection = await inspectSkillSet({ sources,
-        collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
-        terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
+    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])))
+    if (!skillInput) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets are incomplete', 'bootstrap')
+    const { sources } = skillInput
+    const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap skill set was refused', 'bootstrap')
     const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'selected bootstrap output set was refused', captured.target)
@@ -1035,14 +1038,10 @@ export async function resumeSelectedBootstrapSurface(
     )
     const assets = await selectedBootstrapAssets(node, adapters)
     if (!assets) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume packaged assets could not be authenticated', 'bootstrap')
-    const byPath = new Map(assets.map(asset => [asset.path, asset]))
-    const sources = selectedBootstrapSources(byPath)
-    const collection = byPath.get('skills/collection.json')
-    const terminal = byPath.get('skills/procedures/onboarding.md')
-    if (!sources || !collection || !terminal) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume packaged assets are incomplete', 'bootstrap')
-    const inspection = await inspectSkillSet({ sources,
-        collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
-        terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
+    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])))
+    if (!skillInput) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume packaged assets are incomplete', 'bootstrap')
+    const { sources } = skillInput
+    const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume skill set was refused', 'bootstrap')
     const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume output projection was refused', captured.target)
@@ -1177,16 +1176,11 @@ async function bootstrapPublishedSurfaces(
         || record.value.target !== record.target) return undefined
     const assets = await selectedBootstrapAssets(node, adapters)
     if (!assets) return undefined
-    const byPath = new Map(assets.map(asset => [asset.path, asset]))
-    const sources = selectedBootstrapSources(byPath)
-    const collection = byPath.get('skills/collection.json')
-    const terminal = byPath.get('skills/procedures/onboarding.md')
-    if (!sources || !collection || !terminal) return undefined
-    const sourceRows = sources.map(source => ({ path: source.path, sha256: sha256(source.bytes) }))
+    const skillInput = bootstrapSkillInput(new Map(assets.map(asset => [asset.path, asset])))
+    if (!skillInput) return undefined
+    const sourceRows = skillInput.sources.map(source => ({ path: source.path, sha256: sha256(source.bytes) }))
     if (JSON.stringify(sourceRows) !== JSON.stringify(record.value.sources)) return undefined
-    const inspection = await inspectSkillSet({ sources,
-        collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
-        terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
+    const inspection = await inspectSkillSet(skillInput)
     if (inspection.kind !== 'complete') return undefined
     const inspected = projectInspectedSkillOutputs(inspection, record.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return undefined
@@ -2905,7 +2899,7 @@ async function prepareSurfaces(
             .flatMap(overlay => overlay.sources.flatMap(source => /^skills\/([^/]+)\/SKILL\.md$/.exec(source.path)?.[1] ?? []))
             .filter(name => !shippedSkills.some(shipped => shipped === name))
             .sort(compareCodeUnits),
-        collection: skillAsset('skills/collection.json'), terminal: skillAsset('skills/procedures/onboarding.md'), generated, targets: tools })
+        collection: skillAsset('skills/collection.json'), procedures: PROCEDURE_ASSETS.map(skillAsset), generated, targets: tools })
     if (skillInspection.kind !== 'complete') {
         const diagnostic = skillInspection.diagnostics[0]
         return refuse(diagnostic?.code ?? 'SKILL_RENDER_INVALID', diagnostic?.message ?? 'rendered skill set was refused', diagnostic?.target)

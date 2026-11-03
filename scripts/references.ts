@@ -9,10 +9,11 @@ import { commandStages, commands } from '../packages/cockpit/src/command-table.j
 import { EXIT_CODES } from '../packages/cockpit/src/invocation.js'
 import { configurationDefaults } from '../packages/cockpit/src/schema.js'
 import { renderCockpitSchema } from '../packages/cockpit/src/schema-json.js'
-import { GUARD_SURFACE_TARGETS, harnessFact, SURFACE_TARGETS, type SurfaceTarget } from '../packages/cockpit/src/surfaces/harness-registry.js'
+import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, harnessFact, SURFACE_TARGETS, type SurfaceTarget } from '../packages/cockpit/src/surfaces/harness-registry.js'
 import { shippedInstructionCapabilities } from '../packages/cockpit/src/surfaces/projection.js'
 import { inspectShippedRestrictionCapabilities } from '../packages/cockpit/src/surfaces/restrictions.js'
 import { inspectSkillSet } from '../packages/cockpit/src/surfaces/skill-contract.js'
+import { CORE_PROCEDURE_ASSETS, CORE_SKILL_PROCEDURES } from '../packages/cockpit/src/surfaces/core-declarations.js'
 import { diagnosticInventory, type DiagnosticInventory } from './diagnostic-inventory.ts'
 
 export const mechanism = {
@@ -24,7 +25,8 @@ export const mechanism = {
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SURFACES = 'packages/cockpit/surfaces'
 const SKILLS = ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'] as const
-const PROCEDURE_PATH = `${SURFACES}/skills/procedures/onboarding.md`
+// The adoption skill copies its steps from the setup procedure, where bootstrap and secret handling live.
+const SETUP_PROCEDURE = 'skills/procedures/setup.md'
 const COLLECTION_PATH = `${SURFACES}/skills/collection.json`
 const ADOPT_SKILL_TEMPLATE_PATH = 'scripts/adopt-cockpit.skill.md'
 const TROUBLESHOOTING_PATH = 'docs/troubleshooting.md'
@@ -42,7 +44,8 @@ export interface ReferenceSources {
     /** Each shipped skill's source bytes, by skill name. */
     readonly skills: ReadonlyMap<string, string>
     readonly collection: string
-    readonly procedure: string
+    /** Each shipped skill procedure's source bytes, by its packaged path. */
+    readonly procedures: ReadonlyMap<string, string>
 }
 export interface ReferenceFile { readonly path: string; readonly bytes: string }
 
@@ -56,7 +59,7 @@ export async function readReferenceSources(root: string): Promise<ReferenceSourc
         adapters: await Promise.all(['claude', 'codex', 'opencode'].map(async name => JSON.parse(await read(`${SURFACES}/guards/${name}.adapter.json`)) as unknown)),
         skills: new Map(await Promise.all(SKILLS.map(async name => [name, await read(`${SURFACES}/skills/${name}.skill.md`)] as const))),
         collection: await read(COLLECTION_PATH),
-        procedure: await read(PROCEDURE_PATH),
+        procedures: new Map(await Promise.all(CORE_PROCEDURE_ASSETS.map(async path => [path, await read(`${SURFACES}/${path}`)] as const))),
     }
 }
 
@@ -71,7 +74,7 @@ const listed = (names: readonly string[]) => names.length < 2 ? names.join('') :
 // Installed skill paths as the skill contract names them, mapped back to the files a maintainer edits.
 function sourcePathOf(installed: string): string {
     if (installed === 'skills/collection.json') return COLLECTION_PATH
-    if (installed === 'skills/procedures/onboarding.md' || /^skills\/[^/]+\/procedures\/onboarding\.md$/.test(installed)) return PROCEDURE_PATH
+    if ((CORE_PROCEDURE_ASSETS as readonly string[]).includes(installed)) return `${SURFACES}/${installed}`
     const skill = /^skills\/([^/]+)\/SKILL\.md$/.exec(installed)?.[1]
     if (skill && (SKILLS as readonly string[]).includes(skill)) return `${SURFACES}/skills/${skill}.skill.md`
     throw new Error(`no repository source is known for installed skill asset ${installed}`)
@@ -154,13 +157,15 @@ async function capabilityCells(sources: ReferenceSources) {
     const restrictions = inspectShippedRestrictionCapabilities({ guardTemplate: sources.guardTemplate, adapters: sources.adapters })
     if (restrictions.kind !== 'complete') throw new Error(`shipped guards: ${restrictions.message}`)
     const collection = { path: 'skills/collection.json', bytes: sources.collection, sha256: digest(sources.collection) }
-    const terminal = { path: 'skills/procedures/onboarding.md', bytes: sources.procedure, sha256: digest(sources.procedure) }
+    const procedures = [...sources.procedures].map(([path, bytes]) => ({ path, bytes, sha256: digest(bytes) }))
     const skillSources = SKILLS.flatMap(name => {
         const bytes = sources.skills.get(name)
-        if (bytes === undefined) throw new Error(`shipped skill ${name} is missing`)
-        return [{ path: `skills/${name}/SKILL.md`, bytes }, { path: `skills/${name}/procedures/onboarding.md`, bytes: sources.procedure }]
+        const procedure = CORE_SKILL_PROCEDURES[name]
+        const procedureBytes = sources.procedures.get(`skills/${procedure}`)
+        if (bytes === undefined || procedureBytes === undefined) throw new Error(`shipped skill ${name} or its procedure is missing`)
+        return [{ path: `skills/${name}/SKILL.md`, bytes }, { path: `skills/${name}/${procedure}`, bytes: procedureBytes }]
     })
-    const skills = await inspectSkillSet({ sources: skillSources, collection, terminal })
+    const skills = await inspectSkillSet({ sources: skillSources, collection, procedures })
     if (skills.kind !== 'complete') throw new Error(`shipped skills: ${skills.diagnostics.map(row => row.message).join('; ')}`)
     const cells: CapabilityCell[] = []
     for (const row of restrictions.targets) {
@@ -213,8 +218,9 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
     // A verdict that holds only once a person acts says so where the reader looks first; the skills'
     // pending review is a maintainer's task and does not condition their use.
     const state = (row: CapabilityCell) => row.measuredOn !== NEVER_PROBED && row.evidence === 'human_needed' ? `${row.state} (needs a person)` : row.state
-    const grid = `| Tool | ${CAPABILITY_COLUMNS.map(([, label]) => label).join(' | ')} |\n| --- |${' --- |'.repeat(CAPABILITY_COLUMNS.length)}\n`
-        + SURFACE_TARGETS.map(target => `| ${cell(name(target))} (${code(target)}) | ${CAPABILITY_COLUMNS.map(([capability]) => cell(state(at(target, capability)))).join(' | ')} |\n`).join('')
+    const rendered = (target: SurfaceTarget) => (DEFAULT_SURFACE_TOOLS as readonly string[]).includes(target) ? 'by default' : 'when listed'
+    const grid = `| Tool | Written | ${CAPABILITY_COLUMNS.map(([, label]) => label).join(' | ')} |\n| --- | --- |${' --- |'.repeat(CAPABILITY_COLUMNS.length)}\n`
+        + SURFACE_TARGETS.map(target => `| ${cell(name(target))} (${code(target)}) | ${rendered(target)} | ${CAPABILITY_COLUMNS.map(([capability]) => cell(state(at(target, capability)))).join(' | ')} |\n`).join('')
     const entries = CAPABILITY_COLUMNS.flatMap(([capability, label]) => SURFACE_TARGETS.map(target => ({ label, row: at(target, capability) })))
     const measured = entries.filter(({ row }) => row.measuredOn !== NEVER_PROBED).map(({ label, row }) =>
         `- ${cell(name(row.target))}, ${label.toLowerCase()} (${row.measuredOn}, version ${cell(row.measuredVersion ?? 'not recorded')}): ${cell(row.provenance)}.\n`)
@@ -237,6 +243,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
     return documentHeading('Capability matrix')
         + `<!-- Source manifest: ${manifestSha256} -->\n\n`
         + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
+        + `Written says whether \`sync\` writes the tool's files for a cockpit.toml that lists no tools: the tools whose guard firing is measured are the default \`[surfaces] tools\`, and any other tool is written only once listed (\`npx --no cockpit tool add <tool> --config <your cockpit.toml>\`).\n\n`
         + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}.\n\n`
         + grid
         + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
@@ -263,10 +270,10 @@ function renderAdoptSkill(template: string, procedure: string): string {
     if (![...template.matchAll(PROCEDURE_SECTION)].length) throw new Error(`${ADOPT_SKILL_TEMPLATE_PATH} names no procedure section`)
     const body = template.slice(frontmatter.length).replace(PROCEDURE_SECTION, (_marker, name: string) => {
         const section = procedureSection(procedure, name)
-        if (section === undefined) throw new Error(`${PROCEDURE_PATH} has no single section "## ${name}"`)
+        if (section === undefined) throw new Error(`${SURFACES}/${SETUP_PROCEDURE} has no single section "## ${name}"`)
         return section
     })
-    return `${frontmatter}\n<!-- Generated by \`npm run references\` from ${ADOPT_SKILL_TEMPLATE_PATH} and ${PROCEDURE_PATH}; edit those, not this file. -->\n${body}`
+    return `${frontmatter}\n<!-- Generated by \`npm run references\` from ${ADOPT_SKILL_TEMPLATE_PATH} and ${SURFACES}/${SETUP_PROCEDURE}; edit those, not this file. -->\n${body}`
 }
 
 // --- Configuration reference ------------------------------------------------------------------
@@ -522,7 +529,7 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
             + '| Flag | Type | Default |\n| --- | --- | --- |\n' + Object.entries(command.options).map(([flag, option]) =>
                 `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
             + '\n| Exit | Meaning |\n| --- | --- |\n' + exits).join('\n')
-    const caps = SURFACE_TARGETS.map(target => `| ${target} | ${collection.metric} | ${collection.caps[target]} | ${code(sourcePathOf(collection.displacement))} |\n`).join('')
+    const caps = SURFACE_TARGETS.map(target => `| ${target} | ${collection.metric} | ${collection.caps[target]} | each skill's procedure |\n`).join('')
     const entrypoints = collection.entrypoints.map(entry => `| ${code(sourcePathOf(entry.path))} | ${entry.metric} | ${entry.cap} | ${code(sourcePathOf(entry.displacement))} |\n`).join('')
     const configuration = documentHeading('Configuration reference')
         + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version. '
@@ -536,7 +543,7 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
         + `The limits come from ${code(sourcePathOf(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`
         + '| Target | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + caps + '\n'
         + '| Skill entry point | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + entrypoints + '\n'
-        + `The procedure ${code(sourcePathOf(collection.terminal.path))} is read on demand and has no size limit; SHA-256 ${code(collection.terminal.sha256)}.\n\n`
+        + `Each procedure is read on demand and has no size limit: ${listed(collection.procedures.map(row => `${code(sourcePathOf(row.path))} (SHA-256 ${code(row.sha256)})`))}.\n\n`
         + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} limits always-loaded guidance to ${defaults.cockpit.guide_cap} lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.\n`
     const list = documentHeading('Command list')
         + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
@@ -547,7 +554,7 @@ export async function renderReferences(sources: ReferenceSources): Promise<reado
         { path: 'docs/configuration-reference.md', bytes: configuration },
         { path: 'docs/command-list.md', bytes: list },
         { path: 'docs/capability-matrix.md', bytes: renderCapabilityMatrix(cells, manifest, collection.skills) },
-        { path: 'skills/adopt-cockpit/SKILL.md', bytes: renderAdoptSkill(sources.adoptSkillTemplate, sources.procedure) },
+        { path: 'skills/adopt-cockpit/SKILL.md', bytes: renderAdoptSkill(sources.adoptSkillTemplate, sources.procedures.get(SETUP_PROCEDURE)!) },
         { path: TROUBLESHOOTING_PATH, bytes: replaceRegion(sources.troubleshooting, renderRemedies(sources.diagnostics, sources.troubleshooting)) },
     ]
 }

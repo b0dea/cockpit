@@ -51,8 +51,8 @@ export interface AdmittedSkillCollection {
     readonly skills: readonly string[]
     readonly metric: 'frontmatter_bytes'
     readonly caps: Readonly<Record<SurfaceTarget, number>>
-    readonly displacement: string
-    readonly terminal: Readonly<{ path: string; sha256: string; loading: 'pull'; budget: 'uncapped' }>
+    /** The packaged procedures of the shipped skills, each read on demand by the skill that names it. */
+    readonly procedures: readonly Readonly<{ path: string; sha256: string; loading: 'pull'; budget: 'uncapped' }>[]
     readonly entrypoints: readonly Readonly<{ path: string; cap: number; metric: 'lines'; displacement: string }>[]
 }
 
@@ -119,8 +119,8 @@ interface CapturedInput {
     readonly sources: readonly SurfaceSourceFile[]
     readonly declaredExtensions: readonly string[]
     readonly collection: Readonly<{ path: string; bytes: string; sha256: string }>
-    readonly terminal: Readonly<{ path: string; bytes: string; sha256: string }>
-    readonly authority: Readonly<{ skills: readonly string[]; metric: 'frontmatter_bytes'; caps: Readonly<Record<SurfaceTarget, number>>; displacement: string }>
+    readonly procedures: readonly Readonly<{ path: string; bytes: string; sha256: string }>[]
+    readonly authority: Readonly<{ skills: readonly string[]; metric: 'frontmatter_bytes'; caps: Readonly<Record<SurfaceTarget, number>> }>
 }
 
 interface CapturedRenderedInput extends CapturedInput {
@@ -173,27 +173,32 @@ function refusal(code: string, message: string, target?: string): Extract<SkillC
     })
 }
 
-function authenticatedAsset(value: JsonSnapshot | undefined, path: string): value is JsonSnapshotObject & { path: string; bytes: string; sha256: string } {
-    return object(value) && exact(value, ['path', 'bytes', 'sha256']) && value.path === path
+const PROCEDURE_ASSET = /^skills\/procedures\/[a-z0-9][a-z0-9-]*\.md$/
+
+function authenticatedAsset(value: JsonSnapshot | undefined, path: string | RegExp): value is JsonSnapshotObject & { path: string; bytes: string; sha256: string } {
+    return object(value) && exact(value, ['path', 'bytes', 'sha256']) && typeof value.path === 'string'
+        && (typeof path === 'string' ? value.path === path : path.test(value.path))
         && typeof value.bytes === 'string' && Buffer.byteLength(value.bytes) <= 65_536
         && typeof value.sha256 === 'string' && createHash('sha256').update(value.bytes).digest('hex') === value.sha256
 }
 
 function captureInput(input: unknown): CapturedInput | undefined {
     const captured = snapshotJson(input)
-    if (!object(captured) || !exact(captured, ['sources', 'collection', 'terminal',
+    if (!object(captured) || !exact(captured, ['sources', 'collection', 'procedures',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])]) || !Array.isArray(captured.sources)
         || !authenticatedAsset(captured.collection, 'skills/collection.json')
-        || !authenticatedAsset(captured.terminal, 'skills/procedures/onboarding.md')) return undefined
+        || !Array.isArray(captured.procedures) || captured.procedures.length === 0 || captured.procedures.length > 16
+        || !captured.procedures.every(procedure => authenticatedAsset(procedure, PROCEDURE_ASSET))
+        || new Set(captured.procedures.map(procedure => (procedure as JsonSnapshotObject).path)).size !== captured.procedures.length) return undefined
     let authority: JsonSnapshot | undefined
     try {
         authority = snapshotJson(JSON.parse(captured.collection.bytes))
         const json = parseDocument(captured.collection.bytes, { uniqueKeys: true })
         if (json.errors.length > 0 || json.warnings.length > 0) return undefined
     } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
-    if (!object(authority) || !exact(authority, ['skills', 'metric', 'caps', 'displacement'])
+    if (!object(authority) || !exact(authority, ['skills', 'metric', 'caps'])
         || !Array.isArray(authority.skills) || !sameStrings(authority.skills, ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']) || authority.metric !== 'frontmatter_bytes'
-        || authority.displacement !== captured.terminal.path || !object(authority.caps) || !exact(authority.caps, SURFACE_TARGETS)) return undefined
+        || !object(authority.caps) || !exact(authority.caps, SURFACE_TARGETS)) return undefined
     const caps = authority.caps
     const shippedSkills = authority.skills
     if (SURFACE_TARGETS.some(target => !Number.isSafeInteger(caps[target]) || Number(caps[target]) < 1
@@ -203,24 +208,29 @@ function captureInput(input: unknown): CapturedInput | undefined {
         || declaredExtensions.some((name, index) => typeof name !== 'string' || name.length > 128 || !NAME.test(name)
             || shippedSkills.includes(name) || index > 0 && String(declaredExtensions[index - 1]) >= name)) return undefined
     if (!surfaceSourcesMatchFeature(captured.sources, 'skills')) return undefined
-    const terminal = parseEntryPoint(captured.terminal.bytes)
-    if (!terminal || !exact(terminal.frontmatter, ['loading', 'budget']) || terminal.frontmatter.loading !== 'pull'
-        || terminal.frontmatter.budget !== 'uncapped' || terminal.body.length === 0) return undefined
+    if (!captured.procedures.every(procedure => pulledProcedure((procedure as JsonSnapshotObject).bytes as string))) return undefined
     return Object.freeze({ ...captured, declaredExtensions, authority }) as unknown as CapturedInput
+}
+
+/** A procedure is read on demand and uncapped, and says something. */
+function pulledProcedure(bytes: string): boolean {
+    const parsed = parseEntryPoint(bytes)
+    return !!parsed && exact(parsed.frontmatter, ['loading', 'budget']) && parsed.frontmatter.loading === 'pull'
+        && parsed.frontmatter.budget === 'uncapped' && parsed.body.length > 0
 }
 
 function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined {
     // Rendered output carries every target's copy of each procedure, so it outgrows the generic
     // JSON limit with one extra skill; bundleSurfaceFiles below enforces the real output cap.
     const captured = snapshotGeneratedJson(input)
-    if (!object(captured) || !exact(captured, ['sources', 'collection', 'terminal', 'generated', 'targets',
+    if (!object(captured) || !exact(captured, ['sources', 'collection', 'procedures', 'generated', 'targets',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])])) return undefined
     const targets = Array.isArray(captured.targets) && captured.targets.length > 0
         && captured.targets.every(target => SURFACE_TARGETS.includes(target as SurfaceTarget))
         && new Set(captured.targets).size === captured.targets.length
         ? SURFACE_TARGETS.filter(target => (captured.targets as readonly JsonSnapshot[]).includes(target)) : undefined
     if (!targets) return undefined
-    const base = captureInput({ sources: captured.sources, collection: captured.collection, terminal: captured.terminal,
+    const base = captureInput({ sources: captured.sources, collection: captured.collection, procedures: captured.procedures,
         ...(Object.hasOwn(captured, 'declaredExtensions') ? { declaredExtensions: captured.declaredExtensions } : {}) })
     const generated = captured.generated
     if (!base || !object(generated) || !exact(generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', 'warnings'])
@@ -375,10 +385,9 @@ function admitDeclarations(captured: CapturedInput): SkillDeclaration[] | SkillC
         const procedurePath = `skills/${admitted.name}/${admitted.procedure}`
         const procedure = captured.sources.find(candidate => candidate.path === procedurePath)
         const extension = captured.declaredExtensions.includes(admitted.name)
-        const parsed = procedure && parseEntryPoint(procedure.bytes)
-        if (extension ? !parsed || !exact(parsed.frontmatter, ['loading', 'budget'])
-            || parsed.frontmatter.loading !== 'pull' || parsed.frontmatter.budget !== 'uncapped' || parsed.body.length === 0
-            : procedure?.bytes !== captured.terminal.bytes || `skills/${admitted.procedure}` !== captured.authority.displacement) {
+        // A shipped skill's procedure is exactly the packaged file its entry point names.
+        const packaged = captured.procedures.find(candidate => candidate.path === `skills/${admitted.procedure}`)
+        if (!procedure || (extension ? !pulledProcedure(procedure.bytes) : procedure.bytes !== packaged?.bytes)) {
             return refusal('SKILL_PROCEDURE_MISSING', 'skill procedure is missing or empty', procedurePath)
         }
         declarations.push(admitted)
@@ -428,11 +437,12 @@ function inspectRendered(
     const collection: AdmittedSkillCollection = Object.freeze({
         source: Object.freeze({ path: captured.collection.path, sha256: captured.collection.sha256 }),
         skills: Object.freeze([...captured.authority.skills]), metric: captured.authority.metric,
-        caps: Object.freeze({ ...captured.authority.caps }), displacement: captured.authority.displacement,
-        terminal: Object.freeze({ path: captured.terminal.path, sha256: captured.terminal.sha256, loading: 'pull', budget: 'uncapped' }),
+        caps: Object.freeze({ ...captured.authority.caps }),
+        procedures: Object.freeze(captured.procedures.map(procedure => Object.freeze({ path: procedure.path, sha256: procedure.sha256,
+            loading: 'pull' as const, budget: 'uncapped' as const }))),
         entrypoints: Object.freeze(declarations.map(skill => Object.freeze({ path: `skills/${skill.name}/SKILL.md`,
             cap: skill.cap, metric: 'lines' as const, displacement: captured.declaredExtensions.includes(skill.name)
-                ? `skills/${skill.name}/${skill.procedure}` : captured.authority.displacement }))),
+                ? `skills/${skill.name}/${skill.procedure}` : `skills/${skill.procedure}` }))),
     })
     admittedCollections.add(collection)
     const result = Object.freeze({

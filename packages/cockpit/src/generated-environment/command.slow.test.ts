@@ -205,10 +205,10 @@ describe('selected bootstrap target', () => {
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
         if (applied.kind !== 'complete') throw new Error('bootstrap publication was refused')
-        const priorPath = prepared.result.files.find(row => row.path.endsWith('/procedures/onboarding.md'))?.path
-        if (!priorPath) throw new Error('bootstrap onboarding output was unavailable')
+        const priorPath = prepared.result.files.find(row => row.path.endsWith('/procedures/setup.md'))?.path
+        if (!priorPath) throw new Error('bootstrap setup procedure output was unavailable')
         const currentBytes = await readFile(join(root, priorPath), 'utf8')
-        const priorBytes = `${currentBytes}\nPrior packaged onboarding bytes.\n`
+        const priorBytes = `${currentBytes}\nPrior packaged setup procedure bytes.\n`
         await writeFile(join(root, priorPath), priorBytes)
         const priorFiles = prepared.result.files.map(row => row.path === priorPath ? { ...row, sha256: digest(priorBytes) } : { ...row })
         const priorPreviewSha256 = digest(JSON.stringify({ target: 'codexcli', sources: prepared.result.sources, files: priorFiles }))

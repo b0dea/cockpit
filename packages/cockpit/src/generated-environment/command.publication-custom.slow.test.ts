@@ -189,23 +189,23 @@ ${original.replace('  return {', `  await writeFile(${JSON.stringify(join(fixtur
         it.each([false, true])('issues active surface overrides and changed originals only from the authenticated merge (additional skill: %s)', async additionalSkill => {
             const fixture = await surfaceConsumer('surface-override-projection')
             const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
-            const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/onboarding.md'), 'utf8')
+            const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/setup.md'), 'utf8')
             const originalSha256 = surfaceDeclarationSha256({
                 name: 'cockpit-setup',
                 feature: 'skills',
                 source: 'skills/cockpit-setup.skill.md',
                 sources: [
                     { path: 'skills/cockpit-setup/SKILL.md', bytes: entryPoint },
-                    { path: 'skills/cockpit-setup/procedures/onboarding.md', bytes: procedure },
+                    { path: 'skills/cockpit-setup/procedures/setup.md', bytes: procedure },
                 ],
             })
             const recordedSha256 = 'a'.repeat(64)
             const replacementSources = [
                 { path: 'skills/cockpit-setup/SKILL.md', bytes: entryPoint.replace('Bootstrap this cockpit', 'Bootstrap this synthetic cockpit') },
-                { path: 'skills/cockpit-setup/procedures/onboarding.md', bytes: procedure },
+                { path: 'skills/cockpit-setup/procedures/setup.md', bytes: procedure },
                 ...(additionalSkill ? [
                     { path: 'skills/inspect/SKILL.md', bytes: entryPoint.replace('name: cockpit-setup', 'name: inspect') },
-                    { path: 'skills/inspect/procedures/onboarding.md', bytes: procedure },
+                    { path: 'skills/inspect/procedures/setup.md', bytes: procedure },
                 ] : []),
             ]
             const declaration = await readFile(fixture.configPath, 'utf8')

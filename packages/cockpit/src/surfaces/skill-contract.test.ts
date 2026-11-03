@@ -16,26 +16,28 @@ const surfaceRoot = join(dirname(fileURLToPath(import.meta.url)), '../../surface
 const generousCaps: Record<SurfaceTarget, number> = {
     claudecode: 8_192, codexcli: 8_192, opencode: 8_192, cursor: 8_192, grokcli: 8_192,
 }
-const terminal = { path: 'skills/procedures/onboarding.md', bytes: await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8') }
+const PROCEDURES: Readonly<Record<string, string>> = {
+    'cockpit-setup': 'procedures/setup.md', 'cockpit-explain': 'procedures/explain.md',
+    'cockpit-fix': 'procedures/fix.md', 'cockpit-work': 'procedures/work.md',
+}
+const procedureAssets = await Promise.all(Object.values(PROCEDURES).map(async path =>
+    ({ path: `skills/${path}`, bytes: await readFile(join(surfaceRoot, path), 'utf8') })))
 
 function authenticated(source: { path: string; bytes: string }) {
     return { ...source, sha256: createHash('sha256').update(source.bytes).digest('hex') }
 }
 
 async function shippedSources() {
-    const names = ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']
-    const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
-    return Promise.all(names.flatMap(name => [
+    return Promise.all(Object.entries(PROCEDURES).flatMap(([name, procedure]) => [
         readFile(join(surfaceRoot, `${name}.skill.md`), 'utf8').then(bytes => ({ path: `skills/${name}/SKILL.md`, bytes })),
-        Promise.resolve({ path: `skills/${name}/procedures/onboarding.md`, bytes: procedure }),
+        readFile(join(surfaceRoot, procedure), 'utf8').then(bytes => ({ path: `skills/${name}/${procedure}`, bytes })),
     ]))
 }
 
 function input(sources: readonly { path: string; bytes: string }[], standingCostCaps = generousCaps) {
     return { sources, collection: authenticated({ path: 'skills/collection.json', bytes: JSON.stringify({
         skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: standingCostCaps,
-        displacement: terminal.path,
-    }) }), terminal: authenticated(terminal) }
+    }) }), procedures: procedureAssets.map(authenticated) }
 }
 
 function changeEntry(
@@ -58,16 +60,16 @@ describe('shipped skill contract', () => {
     it('admits only the exact union of shipped skills and explicitly declared extensions', async () => {
         const shipped = await shippedSources()
         const extension = shipped.filter(source => source.path.startsWith('skills/cockpit-setup/')).map(source => ({
-            path: source.path.replace('skills/cockpit-setup/', 'skills/inspect/').replace('procedures/onboarding.md', 'procedures/inspect.md'),
+            path: source.path.replace('skills/cockpit-setup/', 'skills/inspect/').replace('procedures/setup.md', 'procedures/inspect.md'),
             bytes: source.path.endsWith('/SKILL.md')
-                ? source.bytes.replace('name: cockpit-setup', 'name: inspect').replace('procedures/onboarding.md', 'procedures/inspect.md')
+                ? source.bytes.replace('name: cockpit-setup', 'name: inspect').replace('procedures/setup.md', 'procedures/inspect.md')
                 : '---\nloading: pull\nbudget: uncapped\n---\n\nInspect the product-owned verification target.\n',
         }))
         const captured = input([...shipped, ...extension])
         const admitted = await inspectSkillSet({ ...captured, declaredExtensions: ['inspect'] })
         expect(admitted).toMatchObject({ kind: 'complete', skills: ['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work', 'inspect'],
             collection: { source: { sha256: captured.collection.sha256 }, skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'],
-                metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path } })
+                metric: 'frontmatter_bytes', caps: generousCaps } })
         if (admitted.kind !== 'complete') throw new Error('Declared skill extension refused')
         expect(admitted.collection.entrypoints).toContainEqual(expect.objectContaining({
             path: 'skills/inspect/SKILL.md', displacement: 'skills/inspect/procedures/inspect.md' }))
@@ -119,30 +121,31 @@ describe('shipped skill contract', () => {
 
     it.each([
         ['malformed', '{'],
-        ['extra key', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path, extra: true })],
-        ['wrong metric', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'bytes', caps: generousCaps, displacement: terminal.path })],
-        ['incomplete target', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: { claudecode: 8192, codexcli: 8192 }, displacement: terminal.path })],
-        ['over ceiling', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: { ...generousCaps, codexcli: 65537 }, displacement: terminal.path })],
-        ['wrong inventory', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-fix'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path })],
-        ['outside sink', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: '../onboarding.md' })],
-        ['duplicate key', '{"skills":["cockpit-setup","cockpit-explain","cockpit-fix","cockpit-work"],"metric":"bytes","metric":"frontmatter_bytes","caps":{"claudecode":8192,"codexcli":8192,"opencode":8192},"displacement":"skills/procedures/onboarding.md"}'],
+        ['extra key', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: generousCaps, extra: true })],
+        ['wrong metric', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'bytes', caps: generousCaps })],
+        ['incomplete target', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: { claudecode: 8192, codexcli: 8192 } })],
+        ['over ceiling', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: { ...generousCaps, codexcli: 65537 } })],
+        ['wrong inventory', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-fix'], metric: 'frontmatter_bytes', caps: generousCaps })],
+        ['duplicate key', '{"skills":["cockpit-setup","cockpit-explain","cockpit-fix","cockpit-work"],"metric":"bytes","metric":"frontmatter_bytes","caps":{"claudecode":8192,"codexcli":8192,"opencode":8192}}'],
     ])('refuses collection declaration: %s', async (_label, bytes) => {
         const captured = input(await shippedSources())
         await expect(inspectSkillSet({ ...captured, collection: authenticated({ path: captured.collection.path, bytes }) }))
             .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_INPUT_INVALID' }] })
     })
 
+    const setupProcedure = procedureAssets[0]!
     it.each([
-        ['absent', ''], ['push', terminal.bytes.replace('loading: pull', 'loading: push')],
-        ['capped', terminal.bytes.replace('budget: uncapped', 'budget: 8192')],
-        ['implicit', terminal.bytes.replace('budget: uncapped\n', '')],
-    ])('refuses terminal documentation metadata: %s', async (_label, bytes) => {
+        ['absent', setupProcedure.path, ''], ['push', setupProcedure.path, setupProcedure.bytes.replace('loading: pull', 'loading: push')],
+        ['capped', setupProcedure.path, setupProcedure.bytes.replace('budget: uncapped', 'budget: 8192')],
+        ['implicit', setupProcedure.path, setupProcedure.bytes.replace('budget: uncapped\n', '')],
+        ['outside the procedures directory', 'skills/setup.md', setupProcedure.bytes],
+    ])('refuses packaged procedure metadata: %s', async (_label, path, bytes) => {
         const captured = input(await shippedSources())
-        await expect(inspectSkillSet({ ...captured, terminal: authenticated({ path: terminal.path, bytes }) }))
+        await expect(inspectSkillSet({ ...captured, procedures: [authenticated({ path, bytes }), ...captured.procedures.slice(1)] }))
             .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_INPUT_INVALID' }] })
     })
 
-    it('binds the shipped declaration digest, exact inventory, entrypoint caps and pull terminal', async () => {
+    it('binds the shipped declaration digest, exact inventory, entrypoint caps and each skill to its own pulled procedure', async () => {
         const sources = await shippedSources()
         const bytes = await readFile(join(surfaceRoot, 'collection.json'), 'utf8')
         const captured = input(sources)
@@ -150,17 +153,20 @@ describe('shipped skill contract', () => {
         expect(result.kind, JSON.stringify(result)).toBe('complete')
         if (result.kind !== 'complete') return
         expect(result.collection).toMatchObject({ source: { path: 'skills/collection.json', sha256: authenticated({ path: 'skills/collection.json', bytes }).sha256 },
-            metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path,
-            terminal: { path: terminal.path, sha256: authenticated(terminal).sha256, loading: 'pull', budget: 'uncapped' } })
+            metric: 'frontmatter_bytes', caps: generousCaps,
+            procedures: procedureAssets.map(asset => ({ path: asset.path, sha256: authenticated(asset).sha256, loading: 'pull', budget: 'uncapped' })) })
         expect(result.collection.entrypoints).toEqual(['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].map(name => ({
-            path: `skills/${name}/SKILL.md`, cap: ({ 'cockpit-setup': 11, 'cockpit-explain': 11, 'cockpit-fix': 14, 'cockpit-work': 10 } as Record<string, number>)[name]!, metric: 'lines', displacement: terminal.path,
+            path: `skills/${name}/SKILL.md`, cap: ({ 'cockpit-setup': 11, 'cockpit-explain': 11, 'cockpit-fix': 14, 'cockpit-work': 10 } as Record<string, number>)[name]!, metric: 'lines', displacement: `skills/${PROCEDURES[name]}`,
         })))
         expect(SURFACE_TARGETS.map(target => result.files.filter(file => file.target === target).length)).toEqual([8, 12, 8, 8, 8])
         expect(result.files.some(file => file.path.includes('collection'))).toBe(false)
         for (const changed of [sources.filter(source => !source.path.includes('/cockpit-fix/')),
-            sources.filter(source => source.path !== 'skills/cockpit-setup/procedures/onboarding.md'),
-            sources.map(source => source.path === 'skills/cockpit-setup/procedures/onboarding.md' ? { ...source, bytes: source.bytes + 'changed' } : source),
-            changeEntry(sources, value => value.replace('procedure: procedures/onboarding.md', 'procedure: procedures/elsewhere.md'))]) {
+            sources.filter(source => source.path !== 'skills/cockpit-setup/procedures/setup.md'),
+            sources.map(source => source.path === 'skills/cockpit-setup/procedures/setup.md' ? { ...source, bytes: source.bytes + 'changed' } : source),
+            changeEntry(sources, value => value.replace('procedure: procedures/setup.md', 'procedure: procedures/elsewhere.md')),
+            // Another skill's procedure is not this skill's, even byte for byte.
+            sources.map(source => source.path === 'skills/cockpit-setup/procedures/setup.md'
+                ? { ...source, bytes: sources.find(row => row.path === 'skills/cockpit-fix/procedures/fix.md')!.bytes } : source)]) {
             await expect(inspectSkillSet(input(changed))).resolves.toMatchObject({ kind: 'refusal' })
         }
     })
@@ -192,8 +198,8 @@ describe('shipped skill contract', () => {
         }
         expect(result.files).toEqual(expect.arrayContaining([
             expect.objectContaining({ target: 'codexcli', path: '.agents/skills/cockpit-setup/agents/openai.yaml' }),
-            expect.objectContaining({ target: 'claudecode', path: '.claude/skills/cockpit-setup/procedures/onboarding.md' }),
-            expect.objectContaining({ target: 'opencode', path: '.opencode/skills/cockpit-setup/procedures/onboarding.md' }),
+            expect.objectContaining({ target: 'claudecode', path: '.claude/skills/cockpit-setup/procedures/setup.md' }),
+            expect.objectContaining({ target: 'opencode', path: '.opencode/skills/cockpit-setup/procedures/setup.md' }),
         ]))
     }, 120_000)
 
@@ -209,7 +215,7 @@ describe('shipped skill contract', () => {
         expect(projections[1]).toMatchObject({ kind: 'complete', target: 'codexcli', skill: 'cockpit-setup', files: [
             { path: '.agents/skills/cockpit-setup/SKILL.md' },
             { path: '.agents/skills/cockpit-setup/agents/openai.yaml' },
-            { path: '.agents/skills/cockpit-setup/procedures/onboarding.md' },
+            { path: '.agents/skills/cockpit-setup/procedures/setup.md' },
         ] })
         expect(projectInspectedSkillOutputs({ ...result }, 'codexcli', 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
         expect(projectInspectedSkillOutputs(result, 'codexcli', 'explain' as 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
@@ -220,14 +226,14 @@ describe('shipped skill contract', () => {
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') throw new Error('Shipped preparation workflow was refused')
         for (const target of SURFACE_TARGETS) {
-            const procedure = result.files.find(file => file.target === target && file.path.endsWith('/cockpit-fix/procedures/onboarding.md'))
+            const procedure = result.files.find(file => file.target === target && file.path.endsWith('/cockpit-fix/procedures/fix.md'))
             expect(procedure, target).toBeDefined()
-            const fix = procedure!.bytes.slice(procedure!.bytes.indexOf('## Fix\n'), procedure!.bytes.indexOf('## Work\n')).replace(/\s+/g, ' ')
+            const fix = procedure!.bytes.slice(procedure!.bytes.indexOf('## Fix\n')).replace(/\s+/g, ' ')
             // A one-line fix that had to pass intake and a source audit first sent an agent into the
             // work-order lane; only work someone else certifies belongs there.
             expect(fix).not.toContain('work intake')
             expect(fix).toContain('It needs no intake, draft, source audit or work-order file')
-            expect(fix).toContain('Use **Work** instead when someone else must certify the result')
+            expect(fix).toContain('Use the cockpit-work skill instead when someone else must certify the result')
             const before = fix.indexOf('cockpit test-run --config cockpit.toml --gate')
             const edit = fix.indexOf('Then change the repository that owns the defect')
             expect(before).toBeGreaterThan(-1)
@@ -239,8 +245,6 @@ describe('shipped skill contract', () => {
 
     it('admits the complete shipped set, preserves procedure goldens, and measures each rendered installed manifest', async () => {
         const sources = await shippedSources()
-        const procedure = sources.find(source => source.path === 'skills/cockpit-setup/procedures/onboarding.md')?.bytes
-        expect(procedure).toBeDefined()
 
         const result = await inspectSkillSet(input(sources))
 
@@ -274,10 +278,23 @@ describe('shipped skill contract', () => {
         }])).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVALID' }] })
         expect(extendInspectedSkillStandingCosts(result, [result.files.find(file => file.path.endsWith('/cockpit-setup/SKILL.md'))!]))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_NAME_DUPLICATE' }] })
-        const renderedProcedures = result.files.filter(file => file.path.endsWith('/procedures/onboarding.md'))
+        // Each skill installs only its own procedure, byte for byte; none carries another's sections.
+        const renderedProcedures = result.files.filter(file => /\/procedures\/[^/]+\.md$/.test(file.path))
         expect(renderedProcedures).toHaveLength(SURFACE_TARGETS.length * 4)
-        expect(renderedProcedures.every(file => file.bytes === procedure)).toBe(true)
-        const body = procedure!.replace(/\s+/g, ' ')
+        for (const file of renderedProcedures) {
+            const [, skill, procedure] = /\/skills\/([^/]+)\/(procedures\/[^/]+\.md)$/.exec(file.path)!
+            expect(procedure, file.path).toBe(PROCEDURES[skill!])
+            expect(file.bytes, file.path).toBe(sources.find(source => source.path === `skills/${skill}/${procedure}`)!.bytes)
+        }
+        const section = (name: string) => procedureAssets.filter(asset => asset.bytes.includes(`\n## ${name}\n`)).map(asset => asset.path)
+        expect(section('Bootstrap')).toEqual(['skills/procedures/setup.md'])
+        expect(section('Secret handling')).toEqual(['skills/procedures/setup.md'])
+        expect(section('Fix')).toEqual(['skills/procedures/fix.md'])
+        expect(section('Work')).toEqual(['skills/procedures/work.md'])
+        for (const path of ['skills/procedures/explain.md', 'skills/procedures/fix.md']) {
+            expect(procedureAssets.find(asset => asset.path === path)!.bytes, path).toContain('`../../cockpit-setup/procedures/setup.md`')
+        }
+        const body = procedureAssets.map(asset => asset.bytes).join('\n').replace(/\s+/g, ' ')
         expect(body).not.toContain('## Authenticated testing')
         expect(body).toContain('After accepted initialization')
         expect(body).toContain('references/test-data-and-personas.md')
@@ -371,14 +388,14 @@ describe('shipped skill contract', () => {
         ['undeclared native tool', (bytes: string) => bytes.replace('  allowed-tools: [Bash]\n', '  allowed-tools: [Bash, Write]\n')],
         ['missing changes', (bytes: string) => bytes.replace('  changes: [cockpit configuration and generated harness surfaces after preview]\n', '')],
         ['missing non-goals', (bytes: string) => bytes.replace('  non-goals: [parsing registries, deciding environment policy, claiming an unproved installation]\n', '')],
-        ['missing procedure', (bytes: string) => bytes.replace('  procedure: procedures/onboarding.md\n', '')],
+        ['missing procedure', (bytes: string) => bytes.replace('  procedure: procedures/setup.md\n', '')],
         ['missing review metadata', (bytes: string) => bytes.replace('  review: { mechanical: cockpit-skill-contract, judgment: pending }\n', '')],
         ['numbered inline procedure', (bytes: string) => `${bytes}1. Parse inputs\n`],
         ['fenced inline procedure', (bytes: string) => `${bytes}\`\`\`sh\ncockpit check\n\`\`\`\n`],
         ['copied registry logic', (bytes: string) => `${bytes}Parse the registry before continuing.\n`],
         ['copied policy table', (bytes: string) => `${bytes}| Tier | Verdict |\n| --- | --- |\n`],
         ['misspelled command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [innit,')],
-        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, setup, sync, check, doctor, up, preflight, sibling]\n', '')],
+        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, setup, sync, check, doctor, up, preflight, upgrade, sibling, tool]\n', '')],
         ['stale command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [bootstrap,')],
         ['unadmitted command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [publish,')],
         ['undeclared command', (bytes: string) => `${bytes}Run \`cockpit invent\`.\n`],
@@ -445,9 +462,9 @@ describe('shipped skill descriptions', () => {
     })
 })
 
-describe('shipped onboarding commands', () => {
-    it('routes every onboarding command with its required source arguments', async () => {
-        const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
+describe('shipped procedure commands', () => {
+    it('routes every procedure command with its required source arguments', async () => {
+        const procedure = procedureAssets.map(asset => asset.bytes).join('\n')
         // `<tool>` is the reader's own agent tool target; any valid one routes the same way.
         const invocations = [...procedure.matchAll(/`\.\/node_modules\/\.bin\/cockpit ([^`]+)`/g)]
             .map(match => match[1]!.replaceAll('<tool>', 'claudecode').split(' '))

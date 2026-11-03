@@ -295,23 +295,20 @@ async function bootstrapPublication() {
     const assetRoot = new URL('../../surfaces/', import.meta.url)
     const assets = [
         'skills/collection.json', 'skills/cockpit-setup.skill.md', 'skills/cockpit-explain.skill.md',
-        'skills/cockpit-fix.skill.md', 'skills/cockpit-work.skill.md', 'skills/procedures/onboarding.md',
+        'skills/cockpit-fix.skill.md', 'skills/cockpit-work.skill.md', 'skills/procedures/setup.md', 'skills/procedures/explain.md',
+        'skills/procedures/fix.md', 'skills/procedures/work.md',
     ] as const
     const bytes = new Map(await Promise.all(assets.map(async path => [path, await readFile(new URL(path, assetRoot), 'utf8')] as const)))
-    const terminal = bytes.get('skills/procedures/onboarding.md')!
-    const sources = [
-        ['skills/cockpit-setup/SKILL.md', bytes.get('skills/cockpit-setup.skill.md')!],
-        ['skills/cockpit-setup/procedures/onboarding.md', terminal],
-        ['skills/cockpit-explain/SKILL.md', bytes.get('skills/cockpit-explain.skill.md')!],
-        ['skills/cockpit-explain/procedures/onboarding.md', terminal],
-        ['skills/cockpit-fix/SKILL.md', bytes.get('skills/cockpit-fix.skill.md')!],
-        ['skills/cockpit-fix/procedures/onboarding.md', terminal],
-        ['skills/cockpit-work/SKILL.md', bytes.get('skills/cockpit-work.skill.md')!],
-        ['skills/cockpit-work/procedures/onboarding.md', terminal],
-    ].map(([path, body]) => ({ path, bytes: body }))
+    const sources = (['setup', 'explain', 'fix', 'work'] as const).flatMap(part => [
+        [`skills/cockpit-${part}/SKILL.md`, bytes.get(`skills/cockpit-${part}.skill.md`)!],
+        [`skills/cockpit-${part}/procedures/${part}.md`, bytes.get(`skills/procedures/${part}.md`)!],
+    ]).map(([path, body]) => ({ path: path!, bytes: body! }))
     const collectionBytes = bytes.get('skills/collection.json')!
     const inspected = await inspectSkillSet({ sources, collection: { path: 'skills/collection.json', bytes: collectionBytes, sha256: digest(collectionBytes) },
-        terminal: { path: 'skills/procedures/onboarding.md', bytes: terminal, sha256: digest(terminal) } })
+        procedures: (['setup', 'explain', 'fix', 'work'] as const).map(part => {
+            const body = bytes.get(`skills/procedures/${part}.md`)!
+            return { path: `skills/procedures/${part}.md`, bytes: body, sha256: digest(body) }
+        }) })
     if (inspected.kind !== 'complete') throw new Error(JSON.stringify(inspected))
     const projection = projectInspectedSkillOutputs(inspected, 'codexcli', 'cockpit-setup')
     if (projection.kind !== 'complete') throw new Error(JSON.stringify(projection))

@@ -544,7 +544,7 @@ must not be symbolic links and must have mode 0700. cockpit leaves files it did 
 and does not create their values: create resolver files with mode 0600 through your own approved
 provisioning process.
 
-The shared onboarding procedure explains how to adopt Varlock, optionally, through the product's
+The shipped setup procedure explains how to adopt Varlock, optionally, through the product's
 pinned dependency and an existing declared command or script. Use agent-mode validation for status
 and `run --inject vars --redact-stdout` for a trusted product process, and keep resolved
 credentials out of the agent's environment. Give both paths as absolute paths with repeated

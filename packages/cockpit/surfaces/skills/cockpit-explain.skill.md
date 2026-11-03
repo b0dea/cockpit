@@ -11,7 +11,7 @@ cockpit:
   commands: [doctor, check, preflight]
   changes: [nothing]
   non-goals: [editing configuration, starting services, repairing drift]
-  procedure: procedures/onboarding.md
+  procedure: procedures/explain.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
   entry-point-lines: 11
 claudecode:
@@ -28,7 +28,7 @@ opencode:
 # Explain an installed cockpit
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
-Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Explain**.
+Read the generated [procedures/explain.md](procedures/explain.md) beside this skill and follow **Explain**.
 Choose only the question-relevant read-only command: `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, or `npx --no cockpit preflight --config cockpit.toml`.
 
 This skill changes nothing.

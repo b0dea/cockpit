@@ -415,7 +415,7 @@ Done when the human has confirmed every inferred value and the stack reports hea
 named what stopped it.
 
 Follow **Create a local setup** in the shipped procedure,
-[packages/cockpit/surfaces/skills/procedures/onboarding.md](../packages/cockpit/surfaces/skills/procedures/onboarding.md#create-a-local-setup).
+[packages/cockpit/surfaces/skills/procedures/setup.md](../packages/cockpit/surfaces/skills/procedures/setup.md#create-a-local-setup).
 It derives each value from the repository's manifests, CI workflows and deployment files, records
 it as inferred with its source, and keeps every unknown a named gap. The `init` preview already
 proposes some of these: a Dockerfile's `EXPOSE`, `CMD` and `HEALTHCHECK`, a `package.json`
@@ -473,7 +473,7 @@ Done when `preflight` reports no `ENV_SCHEMA_UNHEALTHY` row.
 
 `preflight` and `doctor` check every sibling with a `.env.schema` through Varlock and report key
 names and validity, never values. Follow **Secret handling** in the
-[shipped procedure](../packages/cockpit/surfaces/skills/procedures/onboarding.md#secret-handling)
+[shipped setup procedure](../packages/cockpit/surfaces/skills/procedures/setup.md#secret-handling)
 and [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas).
 `varlock init`, provider login, encryption and moving secrets are the human's actions: preview
 them, do not run them.

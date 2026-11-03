@@ -113,7 +113,10 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'surfaces/skills/cockpit-explain.skill.md',
     'surfaces/skills/cockpit-fix.skill.md',
     'surfaces/skills/cockpit-work.skill.md',
-    'surfaces/skills/procedures/onboarding.md',
+    'surfaces/skills/procedures/explain.md',
+    'surfaces/skills/procedures/fix.md',
+    'surfaces/skills/procedures/setup.md',
+    'surfaces/skills/procedures/work.md',
 ])
 // The only jobs allowed to hold a write scope, and exactly which ones. Everything else is
 // read-only. Widening this list is a security-policy change: review it as one.

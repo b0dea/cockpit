@@ -21,11 +21,13 @@ Skill entry points are transformed per harness, because each harness uses differ
 frontmatter, tool names, paths and sidecar files. Their contract is the full list of rendered
 files plus the meaning that the skill contract checks.
 
-Supporting files that need no harness-specific spelling stay byte-for-byte copies. The skill
-contract compares every rendered copy of [skills/procedures/onboarding.md](skills/procedures/onboarding.md) with this source
-for every harness.
+Supporting files that need no harness-specific spelling stay byte-for-byte copies. Each shipped
+skill carries only its own procedure from [skills/procedures/](skills/procedures/), named by the
+`procedure` field of its entry point; the skill contract compares every rendered copy with its
+source for every harness. Steps two skills need, such as secret handling, live in the setup
+procedure and the others point to it.
 
 References under `references/` are pulled on demand. `cockpit-setup` carries the test-data
 reference beside its entry point; it sits outside the skill contract because the
-contract covers only entry points and the shared procedure. `cockpit-browser` reads the test-data
+contract covers only entry points and their procedures. `cockpit-browser` reads the test-data
 reference through its sibling skill instead of carrying a second copy.

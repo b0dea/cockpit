@@ -311,9 +311,9 @@ describe('reference pages', () => {
         expect(configuration).toContain(String(configurationDefaults().cockpit.guide_cap))
         // Skill size limits name the files a maintainer edits, not the paths skills install to.
         expect(configuration).toContain('The limits come from `packages/cockpit/surfaces/skills/collection.json`')
-        expect(configuration).toContain('The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit')
-        expect(configuration).toMatch(/^\| `packages\/cockpit\/surfaces\/skills\/cockpit-setup\.skill\.md` \| lines \| \d+ \| `packages\/cockpit\/surfaces\/skills\/procedures\/onboarding\.md` \|$/m)
-        expect(configuration).not.toMatch(/`skills\/(?:collection\.json|procedures\/onboarding\.md|[a-z-]+\/SKILL\.md)`/)
+        expect(configuration).toContain('Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md`')
+        expect(configuration).toMatch(/^\| `packages\/cockpit\/surfaces\/skills\/cockpit-setup\.skill\.md` \| lines \| \d+ \| `packages\/cockpit\/surfaces\/skills\/procedures\/setup\.md` \|$/m)
+        expect(configuration).not.toMatch(/`skills\/(?:collection\.json|procedures\/[a-z-]+\.md|[a-z-]+\/SKILL\.md)`/)
     })
 
     it('derives capability strength from the shipped guards and skills', async () => {
@@ -321,12 +321,13 @@ describe('reference pages', () => {
         const section = (heading: string) => matrix.slice(matrix.indexOf(`## ${heading}\n`)).split(/\n(?=## )/)[0]!
         // One row per harness, one column per capability. Guard firing is enforced only where a dated
         // run of the real tool showed a refusal, and Codex's holds only once a person trusts the hook.
-        expect(matrix).toContain('| Tool | Guard firing | Instruction loading | Skills |\n| --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | enforced | instructed | instructed |\n'
-            + '| Codex (`codexcli`) | enforced (needs a person) | instructed | instructed |\n'
-            + '| OpenCode (`opencode`) | enforced | instructed | instructed |\n'
-            + '| Cursor (`cursor`) | unavailable | generated | generated |\n'
-            + '| Grok Build (`grokcli`) | unavailable | generated | generated |\n')
+        // Every tool stays in the matrix; the unmeasured ones are written only when listed.
+        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills |\n| --- | --- | --- | --- | --- |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed |\n'
+            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed |\n'
+            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed |\n'
+            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated |\n'
+            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated |\n')
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).not.toMatch(/Cursor|Grok Build|skills/)
         // A date reads as a run of the tool, so cells nobody ran carry none.
@@ -345,21 +346,23 @@ describe('reference pages', () => {
             ? { format: row.format, target: row.target, mechanism: 'unavailable', measuredOn: row.measuredOn, measuredVersion: null,
                 provenance: 'synthetic unavailable adapter', reason: 'native entry unavailable' } : row)
         const changed = (await pages({ adapters })).get('docs/capability-matrix.md')!
-        expect(changed).toContain('| Codex (`codexcli`) | unavailable | instructed | instructed |')
+        expect(changed).toContain('| Codex (`codexcli`) | by default | unavailable | instructed | instructed |')
         expect(changed).toContain('- Guard firing in Codex: synthetic unavailable adapter.\n')
     })
 
     it('copies shipped procedure sections into the adopt-cockpit skill and refuses a template every harness would not load', async () => {
         const skill = (await pages()).get('skills/adopt-cockpit/SKILL.md')!
         expect(skill).toMatch(/^---\nname: adopt-cockpit\ndescription: "[^"\n]+"\n---\n/)
+        const setup = shipped.procedures.get('skills/procedures/setup.md')!
         for (const name of ['Bootstrap', 'Create a local setup', 'Secret handling']) {
-            const start = shipped.procedure.indexOf(`## ${name}\n`)
-            const next = shipped.procedure.indexOf('\n## ', start + 1)
-            expect(skill).toContain(`#${shipped.procedure.slice(start, next === -1 ? undefined : next).trimEnd()}`)
+            const start = setup.indexOf(`## ${name}\n`)
+            const next = setup.indexOf('\n## ', start + 1)
+            expect(skill).toContain(`#${setup.slice(start, next === -1 ? undefined : next).trimEnd()}`)
         }
         expect(skill).not.toContain('cockpit:procedure-section')
-        const changedProcedure = shipped.procedure.replace('## Create a local setup\n\n', '## Create a local setup\n\nA changed shipped step.\n\n')
-        expect((await pages({ procedure: changedProcedure })).get('skills/adopt-cockpit/SKILL.md')).toContain('A changed shipped step.')
+        const changedProcedure = setup.replace('## Create a local setup\n\n', '## Create a local setup\n\nA changed shipped step.\n\n')
+        expect((await pages({ procedures: new Map([...shipped.procedures, ['skills/procedures/setup.md', changedProcedure]]) }))
+            .get('skills/adopt-cockpit/SKILL.md')).toContain('A changed shipped step.')
         const harnessKey = shipped.adoptSkillTemplate.replace('name: adopt-cockpit\n', 'name: adopt-cockpit\nallowed-tools: [Bash]\n')
         await expect(renderReferences(sources({ adoptSkillTemplate: harnessKey }))).rejects.toThrow(/frontmatter/)
         const missingSection = shipped.adoptSkillTemplate.replace('procedure-section Secret handling', 'procedure-section Absent section')

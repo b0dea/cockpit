@@ -267,7 +267,7 @@ describe('printed cockpit commands', () => {
             .map(path => [path, readFileSync(path, 'utf8')] as const)
             .filter(([, text]) => !generated.test(text.split('\n').slice(0, 5).join('\n')))
         expect(documents.map(([path]) => path)).toEqual(expect.arrayContaining([
-            'packages/cockpit/surfaces/skills/cockpit-fix.skill.md', 'packages/cockpit/surfaces/skills/procedures/onboarding.md',
+            'packages/cockpit/surfaces/skills/cockpit-fix.skill.md', 'packages/cockpit/surfaces/skills/procedures/setup.md',
             'packages/cockpit/surfaces/references/testing-tiers.md', 'docs/getting-started.md']))
         const sources = [...documents, ['examples/synthetic AGENTS.md as synced', await readFile(join(example, 'AGENTS.md'), 'utf8')] as const]
 

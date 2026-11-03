@@ -251,7 +251,10 @@ describe('generated application authenticated read batching', () => {
             'skills/cockpit-explain.skill.md',
             'skills/cockpit-fix.skill.md',
             'skills/cockpit-work.skill.md',
-            'skills/procedures/onboarding.md',
+            'skills/procedures/setup.md',
+            'skills/procedures/explain.md',
+            'skills/procedures/fix.md',
+            'skills/procedures/work.md',
             'references/test-data-and-personas.md',
             'guards/bash-guard.sh',
             'guards/claude.adapter.json',
@@ -303,7 +306,7 @@ describe('generated application authenticated read batching', () => {
         const skillRoots = ['.agents/skills', '.claude/skills', '.opencode/skills', '.cursor/skills', '.grok/skills']
         const expectedSurfacePaths = [
             ...skillRoots.flatMap(prefix => [
-                ...skills.flatMap(name => [`${prefix}/${name}/SKILL.md`, `${prefix}/${name}/procedures/onboarding.md`]),
+                ...skills.flatMap(name => [`${prefix}/${name}/SKILL.md`, `${prefix}/${name}/procedures/${name.slice('cockpit-'.length)}.md`]),
                 `${prefix}/cockpit-setup/references/test-data-and-personas.md`,
             ]),
             ...skills.map(name => `.agents/skills/${name}/agents/openai.yaml`),
