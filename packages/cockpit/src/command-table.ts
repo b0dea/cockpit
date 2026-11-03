@@ -137,6 +137,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'work-order': 'Work-order identifier',
     'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, with the probe fields left for you',
     'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
+    'write-instruction-files': 'Write the reviewed AGENTS.md and CLAUDE.md changes that let every agent tool load a sibling\'s instructions',
 })
 
 export function describePublicOption(name: string): string {
@@ -236,10 +237,11 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        ordinary: ordinary('setup', configured, { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers']), values: Object.freeze([]) }) }),
+        ordinary: ordinary('setup', configured, { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']), values: Object.freeze([]) }) }),
         options: {
             config: { type: 'string' },
             'write-instruction-pointers': { type: 'boolean', default: false },
+            'write-instruction-files': { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
     },

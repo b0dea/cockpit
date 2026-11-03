@@ -211,6 +211,13 @@ describe('closed ordinary invocation metadata', () => {
         }
     })
 
+    // Writes into a product repository change what every agent session there loads, so a person runs them.
+    it('leaves setup writes into sibling repositories to a person', () => {
+        for (const flag of ['--write-instruction-pointers', '--write-instruction-files']) {
+            expect(ordinary(['setup', flag, '--config', authority.configPath]), flag).toBeUndefined()
+        }
+    })
+
     it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
         const cases = [
             ['document'], ['document', '.', '--registry', 'registry.sh'], ['document', '.', '--output', 'out.toml'], ['document', '.', 'other'],
@@ -1524,6 +1531,14 @@ describe('setup process contract', () => {
             setup: async input => { seen.push(input); return setupOutcome() },
         })).toBe(0)
         expect(seen).toEqual([{ configPath: 'cockpit.toml', writeInstructionPointers: true }])
+    })
+
+    it('routes explicit sibling instruction file write authority to setup', async () => {
+        const seen: unknown[] = []
+        expect(await runCli(['setup', '--config', 'cockpit.toml', '--write-instruction-files'], captureIo().io, {
+            setup: async input => { seen.push(input); return setupOutcome() },
+        })).toBe(0)
+        expect(seen).toEqual([{ configPath: 'cockpit.toml', writeInstructionFiles: true }])
     })
 
     it('keeps setup refusals off stdout for humans and null in JSON mode', async () => {

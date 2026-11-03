@@ -6,6 +6,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { synchronizeInstructionPointer } from './instruction-pointer.js'
+import { synchronizeSiblingInstructionFiles } from './sibling-instructions.js'
 type RegistryDerivationOverrides = Partial<Pick<typeof import('../registry-derivation.js'), 'deriveRegistry'>>
 const applicationOwners = vi.hoisted(() => ({
     registryDerivation: {} as RegistryDerivationOverrides,
@@ -176,6 +177,36 @@ describe('setup application choreography', () => {
         expect(outcome).toMatchObject({ kind: 'complete' })
         const destination = relative(siblingRoot, join(cockpitRoot, 'AGENTS.md')).split(sep).join('/')
         expect(readFileSync(join(siblingRoot, 'AGENTS.md'), 'utf8')).toContain(`(<${destination}>)`)
+    })
+
+    it('proposes the CLAUDE.md a sibling with only AGENTS.md needs, and writes it only under write authority', async () => {
+        const { configPath, context, adapters } = await sequenceFixture()
+        adapters.syncInstructionFiles = synchronizeSiblingInstructionFiles
+        const siblingRoot = resolve(context.siblingsRoot, 'api')
+        mkdirSync(siblingRoot, { recursive: true })
+        writeFileSync(join(siblingRoot, 'AGENTS.md'), '# API\n')
+
+        const previewed = await runSetupSequence({ configPath }, adapters)
+
+        expect(previewed).toMatchObject({ kind: 'complete' })
+        expect(previewed.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'info', code: 'SETUP_INSTRUCTION_FILES_OFFERED', target: siblingRoot,
+            fix: 'review the proposed change with a person, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
+        }))
+        expect(existsSync(join(siblingRoot, 'CLAUDE.md'))).toBe(false)
+
+        const loaded = await loadCockpitConfig(configPath)
+        if (loaded.kind !== 'complete') throw new Error('fixture configuration did not reload')
+        const issued = await issueContext({ ...context, source: loaded.result.source, observedAt: new Date().toISOString() }, loaded.result,
+            input => ({ ...input, writeInstructionFiles: true }))
+        if (issued.kind !== 'complete') throw new Error('write-authorized setup context was not issued')
+        adapters.load = async () => ({ kind: 'complete', status: 0, diagnostics: [], result: issued.result })
+
+        const written = await runSetupSequence({ configPath }, adapters)
+
+        expect(written).toMatchObject({ kind: 'complete' })
+        expect(written.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'SETUP_INSTRUCTION_FILES_OFFERED' }))
+        expect(readFileSync(join(siblingRoot, 'CLAUDE.md'), 'utf8')).toBe('@AGENTS.md\n')
     })
 
     it.each([
@@ -1393,6 +1424,7 @@ describe('setup application choreography', () => {
                     ? { kind: 'complete', status: 0, diagnostics: [], result }
                     : { kind: 'preview', status: 0, diagnostics: [], result, plan: { steps: [{ id: `setup:${sibling.slug}:clone` }] as never } }
             },
+            syncInstructionFiles: async ({ siblingRoot }) => ({ kind: 'none', root: siblingRoot }),
             execute: async (plan) => {
                 const id = plan.steps[0]!.id
                 events.push(`execute:${id.split(':')[1]}`)
@@ -1465,6 +1497,7 @@ describe('setup application choreography', () => {
                         ? { kind: 'complete', status: 0, diagnostics: [], result }
                         : { kind: 'preview', status: 0, diagnostics: [], result, plan: { steps: [{ id: `setup:${sibling.slug}:clone` }] as never } }
                 },
+                syncInstructionFiles: async ({ siblingRoot }) => ({ kind: 'none', root: siblingRoot }),
                 execute: async () => ({ kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'EXECUTION_STEP_FAILED', message: 'failed' }], result: null, execution: { completedStepIds: [], failedStep: { id: 'setup:api:clone', started: true }, compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] } } }),
                 observeSource: async () => ({ state: 'available', ...candidate.source }),
                 recordStarted: async () => ({ kind: 'unchanged', record: {} as never }),

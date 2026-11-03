@@ -38,6 +38,7 @@ import {
 } from './contract.js'
 import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupResult } from './setup.js'
 import type { InstructionPointerResult } from './instruction-pointer.js'
+import type { SiblingInstructionFilesResult } from './sibling-instructions.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
 import { evaluateGuard, GUARD_LOCATION_LIMITS, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
@@ -1180,6 +1181,7 @@ function lifecycleContextRefusal(
 export interface SetupCommandInput {
     configPath: string
     writeInstructionPointers?: boolean
+    writeInstructionFiles?: boolean
     env?: Readonly<Record<string, string | undefined>>
     gitExecutable?: ResolvedExecutable
 }
@@ -1203,6 +1205,7 @@ export interface SetupRunContext {
     readonly stackId: StackId
     readonly holderId: HolderId
     readonly writeInstructionPointers: boolean
+    readonly writeInstructionFiles: boolean
 }
 
 export interface SetupRunContextInput {
@@ -1220,6 +1223,7 @@ export interface SetupRunContextInput {
     readonly holderId: HolderId
     readonly sessionId: string
     readonly writeInstructionPointers?: boolean
+    readonly writeInstructionFiles?: boolean
 }
 
 const issuedSetupRuns = new WeakSet<object>()
@@ -1288,6 +1292,7 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             stackId: expectedStackId,
             holderId: expectedHolderId,
             writeInstructionPointers: input.writeInstructionPointers === true,
+            writeInstructionFiles: input.writeInstructionFiles === true,
         })
         issuedSetupRuns.add(context)
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
@@ -1312,6 +1317,7 @@ export interface SetupCommandAdapters {
     observeGit(input: SiblingOperationInput): Promise<SetupObservation>
     planGit(input: SiblingOperationInput & { readonly observation: SetupObservation }): Promise<EnvironmentCommandOutcome<SetupResult>>
     syncInstructionPointer?(input: Readonly<{ cockpitRoot: string; siblingRoot: string; write: boolean }>): Promise<InstructionPointerResult>
+    syncInstructionFiles(input: Readonly<{ siblingRoot: string; write: boolean }>): Promise<SiblingInstructionFilesResult>
     execute(plan: ExecutionPlan): Promise<ExecutePlanOutcome>
     observeSource(path: string): Promise<ConfigSourceSnapshot>
     recordStarted(input: Pick<SetupRunContext, 'namespace' | 'stackId' | 'holderId'> & {
@@ -1494,6 +1500,23 @@ function exactInstructionPointerResult(
         || !['offered', 'written', 'unchanged'].includes(result.kind as string)
         || result.path !== path || result.target !== target) return undefined
     return Object.freeze({ kind: result.kind as 'offered' | 'written' | 'unchanged', path, target })
+}
+
+function exactInstructionFilesResult(value: unknown, siblingRoot: string): SiblingInstructionFilesResult | undefined {
+    const snapshot = snapshotJson(value)
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
+    const result = snapshot as Record<string, unknown>
+    const keys = Object.keys(result).sort().join('\0')
+    if (result.root !== siblingRoot) return undefined
+    if (result.kind === 'none' && keys === ['kind', 'root'].join('\0')) return Object.freeze({ kind: 'none', root: siblingRoot })
+    if (result.kind === 'refusal') {
+        if (keys !== ['kind', 'reason', 'root'].join('\0') || typeof result.reason !== 'string' || result.reason.length === 0
+            || Buffer.byteLength(result.reason) > 4_096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(result.reason)) return undefined
+        return Object.freeze({ kind: 'refusal', root: siblingRoot, reason: result.reason })
+    }
+    if (keys !== ['change', 'kind', 'root'].join('\0') || (result.kind !== 'offered' && result.kind !== 'written')
+        || (result.change !== 'claude-import' && result.change !== 'move-to-agents')) return undefined
+    return Object.freeze({ kind: result.kind, root: siblingRoot, change: result.change })
 }
 
 type ReadyEnvironmentSeedPlan = Extract<EnvironmentSeedPlan, { kind: 'ready' }>
@@ -1946,6 +1969,38 @@ export async function runSetup(
             }
             diagnostics.push(...checked.diagnostics)
             siblingResult = checkedResult
+        }
+
+        // The cockpit's own directory gets its AGENTS.md and CLAUDE.md from sync, not from setup, and a
+        // checkout setup leaves absent (acquire = "none") has no files to change.
+        if (siblingResult.target !== dirname(context.source.path) && siblingResult.observed !== 'absent') {
+            if (context.writeInstructionFiles) {
+                const lifecycleFailure = await startLifecycle()
+                if (lifecycleFailure) return lifecycleFailure
+                const sourceFailure = await refuseSourceDrift()
+                if (sourceFailure) return sourceFailure
+            }
+            const files = exactInstructionFilesResult(await adapters.syncInstructionFiles({
+                siblingRoot: siblingResult.target,
+                write: context.writeInstructionFiles,
+            }), siblingResult.target)
+            if (!files || files.kind === 'refusal') {
+                return sequenceRefusal(context, adapters, [...diagnostics, ownerDiagnostic(
+                    ENVIRONMENT_CODES.SETUP_INSTRUCTION_FILES_INVALID,
+                    files ? files.reason : 'sibling instruction file result was not bound to the declared sibling',
+                    siblingResult.target,
+                )], executionEvidence(completedStepIds, mutationMayHaveOccurred))
+            }
+            if (files.kind === 'offered') diagnostics.push({
+                severity: 'info',
+                code: ENVIRONMENT_CODES.SETUP_INSTRUCTION_FILES_OFFERED,
+                message: files.change === 'claude-import'
+                    ? `sibling ${sibling.slug} has AGENTS.md but no CLAUDE.md; setup would create CLAUDE.md holding the single line @AGENTS.md, so Claude Code loads the same instructions as Codex and OpenCode`
+                    : `sibling ${sibling.slug} has CLAUDE.md but no AGENTS.md; setup would copy CLAUDE.md byte for byte to AGENTS.md and replace CLAUDE.md with the single line @AGENTS.md, so Codex and OpenCode load the same instructions as Claude Code`,
+                target: siblingResult.target,
+                fix: 'review the proposed change with a person, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
+            })
+            mutationMayHaveOccurred ||= files.kind === 'written'
         }
 
         if (sibling.instruction_pointer) {

@@ -18,6 +18,8 @@ describe('project readiness', () => {
         const sibling = join(base, 'api')
         const bin = join(base, 'bin')
         await Promise.all([root, sibling, bin].map(path => mkdir(path)))
+        // Instructions every tool loads, so the only findings are Git's.
+        await Promise.all([writeFile(join(sibling, 'AGENTS.md'), '# API\n'), writeFile(join(sibling, 'CLAUDE.md'), '@AGENTS.md\n')])
         // Git 2.54.0's own words for a repository whose owner is another user (2026-11-03).
         await writeFile(join(bin, 'git'), [
             '#!/bin/sh',
@@ -35,5 +37,23 @@ describe('project readiness', () => {
             message: expect.stringContaining(`Git refuses to read ${owned} because another user owns it`),
             fix: `ask the person who owns this machine whether to trust ${owned}; only if they agree, run git config --global --add safe.directory ${owned}, then rerun this command`,
         })))
+    })
+
+    // Agents started in a sibling load only the files their tool reads; the cockpit root's own guides
+    // come from sync and are no finding.
+    it('names the sibling whose instruction files leave a tool without its instructions, even without Git', async () => {
+        const base = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-readiness-')))
+        scratch.push(base)
+        const root = join(base, 'cockpit')
+        const sibling = join(base, 'api')
+        await Promise.all([root, sibling, join(base, 'empty-path')].map(path => mkdir(path)))
+        await Promise.all([writeFile(join(root, 'AGENTS.md'), '# Cockpit\n'), writeFile(join(sibling, 'AGENTS.md'), '# API\n')])
+
+        const findings = await inspectProjectReadiness({ root, repositories: [{ slug: 'cockpit', root }, { slug: 'api', root: sibling }],
+            checkRoot: false, env: { PATH: join(base, 'empty-path') }, timeoutMs: 5_000 }, executeProbe)
+
+        expect(findings.filter(({ code }) => code.startsWith('SIBLING_INSTRUCTIONS_'))).toEqual([expect.objectContaining({
+            severity: 'warning', code: 'SIBLING_INSTRUCTIONS_AGENTS_ONLY', target: 'sibling:api',
+        })])
     })
 })

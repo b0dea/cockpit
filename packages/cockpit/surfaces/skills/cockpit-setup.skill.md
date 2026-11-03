@@ -1,6 +1,6 @@
 ---
 name: cockpit-setup
-description: "Use when the user wants to add a repository to, upgrade, or diagnose a cockpit that is already installed, or to set up test users and signed-in browser state. A repository with no cockpit yet is adopt-cockpit's job."
+description: "Use when the user wants to add a repository to, upgrade, or diagnose a cockpit that is already installed, to make a repository's AGENTS.md and CLAUDE.md reach every agent tool, or to set up test users and signed-in browser state. A repository with no cockpit yet is adopt-cockpit's job."
 targets: ["*"]
 cockpit:
   tools: [shell]
@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [init, document, sync, check, doctor, up, preflight, upgrade, sibling]
+  commands: [init, document, setup, sync, check, doctor, up, preflight, upgrade, sibling]
   changes: [cockpit configuration and generated harness surfaces after preview]
   non-goals: [parsing registries, deciding environment policy, claiming an unproved installation]
   procedure: procedures/onboarding.md
@@ -28,7 +28,7 @@ opencode:
 # Set up and maintain an installed cockpit
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
-Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow the section that matches the request: **Add a repository** (`npx --no cockpit sibling add <slug> --config cockpit.toml`), **After upgrading cockpit** (follow the *Review an upgrade* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`, install that exact release, then ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`), or **Diagnose** (`npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, `npx --no cockpit preflight --config cockpit.toml`).
+Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow the section that matches the request: **Add a repository** (`npx --no cockpit sibling add <slug> --config cockpit.toml`), **Make a repository's instructions reach every tool** (`npx --no cockpit setup --config cockpit.toml`), **After upgrading cockpit** (follow the *Review an upgrade* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`, install that exact release, then ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`), or **Diagnose** (`npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, `npx --no cockpit preflight --config cockpit.toml`).
 **Bootstrap** (`npx --no cockpit init . --target <tool>`, `npx --no cockpit document .`, `npx --no cockpit up --config cockpit.toml`) is what the first install ran; a repository that has never run locally follows **Create a local setup**.
 For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`.
 

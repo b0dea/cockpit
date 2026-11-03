@@ -335,6 +335,7 @@ async function sequenceFixture(
         observedAt: () => new Date().toISOString(),
         observeGit: async () => available('repository'),
         planGit: async () => ({ kind: 'complete', status: 0, diagnostics: [], result }),
+        syncInstructionFiles: async ({ siblingRoot }) => ({ kind: 'none', root: siblingRoot }),
         execute: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { steps: [] } }),
         observeSource: async () => ({ state: 'available', ...context.source }),
         recordStarted: async () => ({ kind: 'unchanged', record: {} as never }),

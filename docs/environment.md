@@ -244,6 +244,23 @@ block and keeps every other byte. A missing guide is created only by this approv
 partial or duplicate marked blocks are refused so a person can reconcile them. Setup also refuses
 redirected directories and invalid UTF-8 rather than replace the product's bytes.
 
+An agent started inside a sibling loads only the instruction files its own tool reads: Codex and
+OpenCode read **AGENTS.md**, while Claude Code reads **CLAUDE.md** (the
+[capability matrix](capability-matrix.md) has the dated measurements). Every tool gets the same
+instructions only when AGENTS.md holds them and CLAUDE.md imports it with a line reading
+`@AGENTS.md`. `doctor` warns for every sibling laid out otherwise:
+`SIBLING_INSTRUCTIONS_AGENTS_ONLY`, `SIBLING_INSTRUCTIONS_CLAUDE_ONLY`,
+`SIBLING_INSTRUCTIONS_UNLINKED` (both files, no import), `SIBLING_INSTRUCTIONS_MISSING` (neither),
+and `SIBLING_INSTRUCTIONS_TOOL_ONLY` for files such as **.cursorrules** or **GEMINI.md** that none of
+those tools load. Setup proposes the two changes that need no judgement, and makes them only when
+a person runs `cockpit setup --config cockpit.toml --write-instruction-files` after reviewing them:
+a sibling with only AGENTS.md gets a CLAUDE.md holding `@AGENTS.md`, and a sibling with only
+CLAUDE.md has it copied byte for byte to AGENTS.md and replaced by `@AGENTS.md`. Setup proposes no
+move when CLAUDE.md imports other files with `@`, because only Claude Code would follow those
+imports from AGENTS.md. It writes only ordinary files, never through a link, and refuses when a
+file changed after it was read. Merging two diverging files, or writing a first AGENTS.md, needs a
+person's judgement and stays with them.
+
 ### Start or resume the stack
 
 `up` starts the selected stack, or resumes it. It records a holder it newly adds separately from an

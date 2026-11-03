@@ -81,6 +81,7 @@ import {
 import { loadCockpitConfig, observeConfigSource, readBoundedInput } from './config/load.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
+import { synchronizeSiblingInstructionFiles } from './environment/sibling-instructions.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
@@ -372,6 +373,7 @@ async function loadSetupContext(input: SetupCommandInput): Promise<EnvironmentCo
             holderId: holderId({ stackId: currentStackId, checkoutId: checkout.checkoutId, sessionId }),
             sessionId,
             writeInstructionPointers: input.writeInstructionPointers === true,
+            writeInstructionFiles: input.writeInstructionFiles === true,
         }),
     )
     if (!issued) {
@@ -400,6 +402,7 @@ const defaultSetupAdapters: SetupCommandAdapters = {
         gitExecutable: context.gitExecutable,
     }),
     syncInstructionPointer: synchronizeInstructionPointer,
+    syncInstructionFiles: synchronizeSiblingInstructionFiles,
     execute: executePlan,
     observeSource: observeConfigSource,
     recordStarted: recordLifecycleStarted,
@@ -1006,13 +1009,14 @@ async function decodeRequest(
     }
 
     if (handler === 'setup') {
-        const values = parsed.values as { config?: string; json?: boolean; 'write-instruction-pointers'?: boolean }
+        const values = parsed.values as { config?: string; json?: boolean; 'write-instruction-pointers'?: boolean; 'write-instruction-files'?: boolean }
         if (parsed.positionals.length > 0) {
             return usageOutcome(ENVIRONMENT_CODES.SETUP_POSITIONAL_UNSUPPORTED, 'setup accepts named inputs only')
         }
         if (!values.config) return usageOutcome(ENVIRONMENT_CODES.SETUP_CONFIG_REQUIRED, 'provide --config <file>', '--config')
         return { handler, input: { configPath: values.config,
-            ...(values['write-instruction-pointers'] === true ? { writeInstructionPointers: true } : {}) } }
+            ...(values['write-instruction-pointers'] === true ? { writeInstructionPointers: true } : {}),
+            ...(values['write-instruction-files'] === true ? { writeInstructionFiles: true } : {}) } }
     }
 
     if (handler === 'sync') {

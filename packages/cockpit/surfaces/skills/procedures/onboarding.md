@@ -226,6 +226,28 @@ block and the preserved team text. After approval, run
 `./node_modules/.bin/cockpit setup --config cockpit.toml --write-instruction-pointers`, which writes only the marked
 block and refuses an edited or ambiguous existing block.
 
+Then run `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` and clear any
+`sibling-instructions` gap for the new repository as **Make a repository's instructions reach every
+tool** describes.
+
+## Make a repository's instructions reach every tool
+
+Each product repository's own instructions must reach every agent tool, not only the one its team
+uses: Codex and OpenCode load **AGENTS.md** and Claude Code loads **CLAUDE.md**, so the shared text
+belongs in AGENTS.md and CLAUDE.md starts with a line reading `@AGENTS.md`. The `sibling-instructions`
+readiness gap names each repository laid out otherwise. Plain
+`./node_modules/.bin/cockpit setup --config cockpit.toml --json` reports `SETUP_INSTRUCTION_FILES_OFFERED`
+for the two changes that need no judgement (a CLAUDE.md importing an existing AGENTS.md, or a lone
+CLAUDE.md moved byte for byte into AGENTS.md); show the human the exact files, and after their yes
+run `./node_modules/.bin/cockpit setup --config cockpit.toml --write-instruction-files`. Before
+proposing a move, read the CLAUDE.md: lines that only Claude Code can act on (Claude Code commands,
+settings or tool names) belong back in CLAUDE.md under the `@AGENTS.md` line once moved, so show the
+human those lines and where each would go. When both files exist without the import, read both,
+propose one AGENTS.md holding everything every tool needs and a CLAUDE.md of `@AGENTS.md` plus
+Claude-only lines, and edit only after the human approves that exact text. When neither exists, or
+the instructions sit in files such as **.cursorrules** or **GEMINI.md**, draft the AGENTS.md from what
+you read for the human to approve. Never delete a team's instruction file yourself.
+
 ## After upgrading cockpit
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
