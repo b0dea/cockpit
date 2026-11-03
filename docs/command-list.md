@@ -7,11 +7,9 @@ This generated index is for users choosing the command that owns their next oper
 ## Set up
 
 - `cockpit init`: Preview, then accept, a first cockpit setup for one agent tool.
-- `cockpit document`: Draft cockpit.toml from an existing cockpit, marking every inferred value.
 - `cockpit setup`: Clone or locate the declared sibling repositories and link them.
 - `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
 - `cockpit registry-resolve`: Turn a validated shell registry into data shell scripts can source.
-- `cockpit upgrade` (experimental): Show the steps to upgrade cockpit without applying them.
 
 ## Generate and verify
 
@@ -33,7 +31,6 @@ This generated index is for users choosing the command that owns their next oper
 ## Diagnose
 
 - `cockpit doctor`: Report environment problems without changing anything.
-- `cockpit baseline-record` (experimental): Record an explicitly confirmed environment baseline.
 
 ## Test and grade
 
@@ -54,6 +51,5 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit work metrics`: Report work-order metrics.
 - `cockpit work grade`: Independently grade the current accepted work order.
 - `cockpit browser drive`: Drive the declared application browser surfaces.
-- `cockpit browser accessibility`: Collect accessibility observations from the application.
 - `cockpit browser screenshot`: Capture the declared application surfaces.
 - `cockpit browser debugger`: Prepare an explicitly requested browser debugger.

@@ -30,24 +30,6 @@ Does not read `cockpit.toml`.
 | 2 | failure |
 | 130 | cancelled |
 
-## cockpit document
-
-Draft cockpit.toml from an existing cockpit, marking every inferred value.
-
-Does not read `cockpit.toml`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--registry` | string | unset |
-| `--output` | string | unset |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
 ## cockpit setup
 
 Clone or locate the declared sibling repositories and link them.
@@ -103,27 +85,6 @@ Does not read `cockpit.toml`.
 | `--registry` | string | unset |
 | `--siblings-root` | string | unset |
 | `--adoption` | string | unset |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit upgrade
-
-Show the steps to upgrade cockpit without applying them.
-
-Status: experimental. This interface may change before a stable release.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--release-evidence` | string | unset |
-| `--release-evidence-sha256` | string | unset |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -339,26 +300,6 @@ Reads `cockpit.toml` from `--config`.
 | Flag | Type | Default |
 | --- | --- | --- |
 | `--config` | string | unset |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit baseline-record
-
-Record an explicitly confirmed environment baseline.
-
-Status: experimental. This interface may change before a stable release.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -669,24 +610,6 @@ Reads `cockpit.toml` from `--config`.
 ## cockpit browser drive
 
 Drive the declared application browser surfaces.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--role` | string | unset |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit browser accessibility
-
-Collect accessibility observations from the application.
 
 Reads `cockpit.toml` from `--config`.
 

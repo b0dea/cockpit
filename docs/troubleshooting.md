@@ -287,8 +287,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
-| `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-upgrade) |
-| `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-upgrade) |
+| `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-override-inspection) |
+| `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-override-inspection) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again |
@@ -331,10 +331,10 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_NAME_DUPLICATE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_NODE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_OUTPUT_COVERAGE` | [see above](#merge-ownership-and-generation) |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#selftest-and-upgrade) |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#selftest-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#selftest-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#selftest-and-override-inspection) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#selftest-and-override-inspection) |
 | `SURFACE_OVERRIDE_INVALID` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
 | `SURFACE_PACKAGE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
@@ -352,12 +352,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_WORKER_TIMEOUT` | [see above](#merge-ownership-and-generation) |
 | `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `TEST_GATE_UNSATISFIED` | the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged |
-| `UPGRADE_AUTH_FAILED` | [see above](#selftest-and-upgrade) |
-| `UPGRADE_DISCOVERY_INVALID` | [see above](#selftest-and-upgrade) |
-| `UPGRADE_NETWORK_FAILED` | [see above](#selftest-and-upgrade) |
-| `UPGRADE_REPAIR_UNVERIFIED` | [see above](#selftest-and-upgrade) |
-| `UPGRADE_SOURCE_INVALID` | [see above](#selftest-and-upgrade) |
-| `UPGRADE_VERSION_AMBIGUOUS` | [see above](#selftest-and-upgrade) |
 | `WORK_EXECUTION_PAUSED` | read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work execute --config <your cockpit.toml> --work-order <id> --approach <text> |
 | `WORK_GRADE_UNSATISFIED` | read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id> |
 <!-- cockpit:diagnostic-index:end -->
