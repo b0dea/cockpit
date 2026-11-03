@@ -65,7 +65,7 @@ describe('work-order lifecycle', () => {
     it('grades a criteria file against the uncommitted change without counting the file itself as outside scope', async () => {
         const root = await cockpit('[work]\nevaluators = ["claudecode", "codexcli"]')
         // Only the synthetic Claude Code answers: a Codex installed on this machine is left off PATH.
-        const env = { ...process.env, PATH: [syntheticEvaluator(), ...(process.env.PATH ?? '').split(':').filter(dir => dir && !existsSync(join(dir, 'codex')))].join(':') }
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [syntheticEvaluator(), ...(process.env.PATH ?? '').split(':').filter(dir => dir && !existsSync(join(dir, 'codex')))].join(':') }
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
         writeFileSync(join(root, 'criteria.md'), '---\nscope: [src/]\ncriteria:\n  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n---\n')
         const graded = await work(root, ['grade', '--criteria', 'criteria.md'], env)
@@ -76,6 +76,12 @@ describe('work-order lifecycle', () => {
         for (const outside of ['../criteria.md', join(root, '..', 'criteria.md')]) {
             expect(await work(root, ['grade', '--criteria', outside], env)).toMatchObject({ status: 2, diagnostics: [{ code: 'CLI_USAGE_INVALID', message: expect.stringContaining('--criteria') }] })
         }
+        // Graded by the tool running the command only because the other was passed over: a warning says so and how to change it.
+        const sameTool = await work(root, ['grade', '--criteria', 'criteria.md'], { ...env, CLAUDECODE: '1' })
+        expect(sameTool.result).toMatchObject({ evaluator: { tool: 'claudecode', fallbacks: [{ tool: 'codexcli' }] } })
+        expect(sameTool.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'EVALUATOR_FELL_BACK_TO_RUNNING_TOOL',
+            message: expect.stringContaining('the Codex CLI (codex) is not on PATH') }))
+        expect(graded.diagnostics.map(row => row.code)).not.toContain('EVALUATOR_FELL_BACK_TO_RUNNING_TOOL')
         // The fix names the command that was run, not an order this grade does not have.
         expect(graded.guidance?.[0]?.text).toContain(`npx --no cockpit grade --config ${join(root, 'cockpit.toml')} --criteria <file>`)
         // A person who names the grader gets that tool or a refusal, never another listed tool that is available.

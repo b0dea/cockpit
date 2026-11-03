@@ -439,6 +439,11 @@ const EVALUATOR_TIMEOUT_DEFAULT_SECONDS = 900
 export const EVALUATOR_COMMANDS = Object.freeze({ codexcli: 'codex', claudecode: 'claude', opencode: 'opencode' } as const)
 export type EvaluatorTool = keyof typeof EVALUATOR_COMMANDS
 
+export function runningEvaluatorTool(env: Readonly<Record<string, string | undefined>>): EvaluatorTool | undefined {
+    const claude = (env.CLAUDECODE ?? '') !== ''; const codex = (env.CODEX_THREAD_ID ?? '') !== ''
+    return claude === codex ? undefined : claude ? 'claudecode' : 'codexcli'
+}
+
 // Who may pass a decision point: the agent itself, a person typing the digest cockpit shows in a
 // terminal, or cockpit running in CI, where the required `work verify` job behind a protected
 // environment's reviewers is the gate. A local person gate is best-effort: cockpit cannot tell a

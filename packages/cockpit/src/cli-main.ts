@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { EVALUATOR_COMMANDS, type EvaluatorTool } from './schema.js'
+import { EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
@@ -498,9 +498,18 @@ function personRequired(handler: 'work-accept' | 'work-answer' | 'work-signoff',
         fix: 'stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them' }] }
 }
 
-function workCommandOutcome(outcome: WorkApplicationOutcome): CommandOutcome {
-    if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: [] }
-    if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] }
+// A grade by the same tool that did the work is weaker than one by another tool, so it is never silent.
+function sameToolGradeWarnings(value: unknown, env: Readonly<Record<string, string | undefined>>): Diagnostic[] {
+    const evaluator = (value as { evaluator?: { tool?: unknown; fallbacks?: readonly { tool: string; message: string }[] } } | null)?.evaluator
+    if (!evaluator?.fallbacks?.length || evaluator.tool !== runningEvaluatorTool(env)) return []
+    return [{ severity: 'warning', code: 'EVALUATOR_FELL_BACK_TO_RUNNING_TOOL' satisfies typeof ENVIRONMENT_CODES.EVALUATOR_FELL_BACK_TO_RUNNING_TOOL,
+        message: `graded by ${EVALUATOR_COMMANDS[evaluator.tool as EvaluatorTool]}, the tool running this command, because the others were passed over: ${evaluator.fallbacks.map(row => `${row.tool}: ${row.message}`).join('; ')}`,
+        fix: 'install and sign in to the passed-over tool so another tool grades the work, or name the grader you accept with --evaluator <tool>' }]
+}
+
+function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Record<string, string | undefined>>): CommandOutcome {
+    if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: sameToolGradeWarnings(outcome.value, env) }
+    if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason), ...sameToolGradeWarnings(outcome.value, env)] }
     return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'this step needs a person at a terminal')
 }
 
@@ -580,7 +589,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
     }, executeProbe)
     const workHandlers: Partial<Pick<CommandHandlers, WorkHandlerIdentifier>> = {}
     for (const command of commands) if (isWorkHandler(command.handler)) {
-        workHandlers[command.handler] = async input => workCommandOutcome(await configuredWorkApplication(input, runtime))
+        workHandlers[command.handler] = async input => workCommandOutcome(await configuredWorkApplication(input, runtime), runtime.env ?? process.env)
     }
     return {
         ...workHandlers,
@@ -1381,9 +1390,9 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
     return {
         beginOperatorWorkApplication: async input => {
             const outcome = await configuredWorkApplication(input, runtime)
-            if (outcome.kind !== 'human-needed') return workCommandOutcome(outcome)
+            if (outcome.kind !== 'human-needed') return workCommandOutcome(outcome, runtime.env ?? process.env)
             return { digest: outcome.continuation.digest, prompt: outcome.continuation.prompt,
-                decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer)) }
+                decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer), runtime.env ?? process.env) }
         },
         beginOperatorReset: async (input) => {
             if (sessionId === null) return operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID')

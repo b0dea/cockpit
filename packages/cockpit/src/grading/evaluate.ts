@@ -8,7 +8,7 @@ import { parseDocument } from 'yaml'
 import { ENVIRONMENT_CODES, errorCause, parseJsonText, RefusalError, type ConsumedFile, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
-import { EVALUATOR_COMMANDS, type EvaluatorTool } from '../schema.js'
+import { EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from '../schema.js'
 
 // One run of an agent tool apart from the agent that did the work: a fresh headless session started in a
 // private directory of its own, held read-only by the tool's own mechanism, whose answer is checked
@@ -191,23 +191,25 @@ function schemaViolation(schema: Readonly<Record<string, unknown>>, value: unkno
     return undefined
 }
 
-async function findExecutable(directories: readonly string[], name: string): Promise<Readonly<{ state: 'available'; value: Executable }> | Readonly<{ state: 'unavailable'; reason: string }>> {
-    let reason = `Executable ${name} is unavailable`
+// `reason` is the first cause other than the file simply not being there; it is absent when no directory held the tool.
+async function findExecutable(directories: readonly string[], name: string): Promise<Readonly<{ state: 'available'; value: Executable }> | Readonly<{ state: 'unavailable'; reason?: string }>> {
+    let reason: string | undefined
+    const refuse = (cause: string) => { if (!/\bENOENT\b|\bENOTDIR\b/.test(cause)) reason ??= cause }
     for (const directory of directories) {
         if (!isAbsolute(directory)) continue
         const resolved = await resolveExecutablePath(join(directory, name))
-        if (resolved.state !== 'available') { reason = resolved.reason; continue }
+        if (resolved.state !== 'available') { refuse(resolved.reason); continue }
         let bytes: number
         try { bytes = lstatSync(resolved.value.canonicalPath).size }
-        catch (error) { reason = `Executable ${name} is unavailable: ${errorCause(error)}`; continue }
+        catch (error) { refuse(`Executable ${name} is unavailable: ${errorCause(error)}`); continue }
         return { state: 'available', value: { path: resolved.value.canonicalPath, sha256: resolved.value.sha256, bytes } }
     }
-    return { state: 'unavailable', reason }
+    return reason === undefined ? { state: 'unavailable' } : { state: 'unavailable', reason }
 }
 
-const missingMessage = (tool: EvaluatorTool, reason: string) => {
+const missingMessage = (tool: EvaluatorTool, reason: string | undefined) => {
     const spec = TOOLS[tool]
-    return `${spec.name} (${EVALUATOR_COMMANDS[tool]}) is not on PATH (${reason}); install it with ${spec.install} and sign in with ${spec.signIn}`
+    return `${spec.name} (${EVALUATOR_COMMANDS[tool]}) is not on PATH${reason === undefined ? '' : ` (${reason})`}; install it with ${spec.install} and sign in with ${spec.signIn}`
 }
 
 /** The listed tools found on the search path, without running them: what doctor reports. */
@@ -285,9 +287,8 @@ async function probe(tool: EvaluatorTool, executable: Executable, directories: r
  * not detected.
  */
 export function defaultEvaluatorOrder(tools: readonly EvaluatorTool[], env: Readonly<Record<string, string | undefined>>): readonly EvaluatorTool[] {
-    const claude = (env.CLAUDECODE ?? '') !== ''; const codex = (env.CODEX_THREAD_ID ?? '') !== ''
-    if (claude === codex) return tools
-    const runner: EvaluatorTool = claude ? 'claudecode' : 'codexcli'
+    const runner = runningEvaluatorTool(env)
+    if (runner === undefined) return tools
     return [...tools.filter(tool => tool !== runner), ...tools.filter(tool => tool === runner)]
 }
 
