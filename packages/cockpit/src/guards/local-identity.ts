@@ -3,6 +3,7 @@
 // (Node, the installed cockpit module, root and configuration device and inode numbers) lives here,
 // in a directory that ignores itself. It decides nothing: the guard application authenticates the
 // file against the running process and the published surfaces before any policy is resolved.
+import { exactKeys } from '../exact-keys.js'
 import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -57,7 +58,7 @@ export function parseGuardLocalIdentity(bytes: string): GuardHandlerIdentity | u
     }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
     const record = value as Record<string, unknown>
-    if (Object.keys(record).length !== KEYS.length || !KEYS.every(key => typeof record[key] === 'string')) return undefined
+    if (!exactKeys(record, KEYS) || !KEYS.every(key => typeof record[key] === 'string')) return undefined
     const identity = record as unknown as GuardHandlerIdentity
     return identity.node === lines[1] && identity.module === lines[2] && encodeGuardLocalIdentity(identity) === bytes ? identity : undefined
 }

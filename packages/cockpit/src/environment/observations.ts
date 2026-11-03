@@ -10,6 +10,7 @@ import {
     type ObservationStageDeclaration,
     type StackId,
 } from './contract.js'
+import { exactKeys } from '../exact-keys.js'
 import { createHash } from 'node:crypto'
 import { observationDeclarations as claimDeclarations } from './claims.js'
 import { surfaceObservationDeclarations } from './generated-application/shared.js'
@@ -68,8 +69,8 @@ function boundedArray(value: unknown): readonly unknown[] | undefined {
 function validStage(value: ObservationStageDeclaration): boolean {
     if ((value.stage !== 'bootstrap' && value.stage !== 'steady') || (value.disposition !== 'required' && value.disposition !== 'not-applicable')) return false
     const reason = value.disposition === 'not-applicable' ? value.reason : undefined
-    if (value.disposition === 'required') return Object.keys(value).length === 2
-    return Object.keys(value).length === 3 && typeof reason === 'string' && reason.length > 0 && !reason.includes('\0')
+    if (value.disposition === 'required') return exactKeys(value, ['stage', 'disposition'])
+    return exactKeys(value, ['stage', 'disposition', 'reason']) && typeof reason === 'string' && reason.length > 0 && !reason.includes('\0')
         && Buffer.byteLength(reason, 'utf8') <= 1_024
 }
 
