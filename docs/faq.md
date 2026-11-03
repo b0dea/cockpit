@@ -17,7 +17,7 @@ and can hand finished work to an independent evaluator.
 - You are on native Windows: every command stops at startup with `CLI_PLATFORM_UNSUPPORTED`,
   before reading or writing anything, because process management, file publication and the shell
   guards assume macOS or Linux. Under WSL2 cockpit should behave as on Linux, but that is untested.
-- You need a stable tool: cockpit is pre-alpha, and its commands, configuration and generated
+- You need a stable tool: cockpit is pre-1.0, and its commands, configuration and generated
   layout can still change without a migration path; see
   [Status and limits](../README.md#status-and-limits).
 
