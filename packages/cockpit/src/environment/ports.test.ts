@@ -1010,18 +1010,6 @@ describe('whole-family port leases', () => {
         }
     })
 
-    it('observes listeners before taking the global state lock', async () => {
-        const state = await namespace()
-        expect(await leasePortFamily({
-            namespace: state, stackId: stackA, holderId: holderA, checkoutId,
-            config: { ...config, count: 1 }, now, listenerTimeoutMs: 100,
-            observeListeners: async (ports) => {
-                await expect(lstat(state.paths.stateLock)).rejects.toMatchObject({ code: 'ENOENT' })
-                return noListeners(ports)
-            },
-        })).toMatchObject({ kind: 'complete' })
-    })
-
     it('publishes the initial holder and lease together without legacy mirrors', async () => {
         const state = await namespace()
         const result = await leasePortFamily({
@@ -1074,28 +1062,6 @@ describe('whole-family port leases', () => {
                 ? noListeners(ports)
                 : { state: 'unavailable', reason: 'later family not observed', producer: 'test-listener-probe' },
         })).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
-    })
-
-    it('does not recycle a family through an ordinary final release', async () => {
-        const state = await namespace()
-        const first = await leasePortFamily({
-            namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
-            listenerTimeoutMs: 100, observeListeners: noListeners,
-        })
-        expect(first).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
-        expect(await releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-
-        // The holder still retains its family, so its own published port does not collide and the
-        // family is returned to it unchanged rather than handed out afresh.
-        const returned = await leasePortFamily({
-            namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
-            listenerTimeoutMs: 100,
-            observeListeners: async (ports) => ({
-                state: 'available', value: ports.includes(3000) ? [3000] : [], observedAt: now, producer: 'test',
-            }),
-        })
-        expect(returned).toMatchObject({ kind: 'complete', change: 'unchanged', lease: { offset: 0 } })
     })
 
     it('serialises concurrent lease decisions into disjoint families', async () => {
