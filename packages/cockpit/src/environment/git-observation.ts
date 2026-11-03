@@ -305,10 +305,6 @@ const issuedComparisonRevalidations = new WeakMap<object, ComparisonBinding & {
     readonly upstreamRef: string
     readonly state: 'match' | 'mismatch'
 }>()
-declare const gitAncestryObservationBrand: unique symbol
-export type GitAncestryObservation = Readonly<{ readonly [gitAncestryObservationBrand]: true }>
-const issuedGitAncestrySteps = new WeakMap<object, GitBinding & { readonly ancestor: string; readonly revision: string }>()
-const issuedGitAncestryObservations = new WeakSet<object>()
 const COMPARISON_OUTPUT_LIMIT = 4_096
 const comparisonCode = ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH
 
@@ -350,31 +346,6 @@ function comparisonStep(input: {
         }],
         filesystemChecks: [], compensation: [],
     })
-}
-
-export function createGitAncestryObservationStep(input: {
-    readonly git: GitObservationResult
-    readonly ancestor: string
-}): ExecutionStep | undefined {
-    const git = input.git.kind === 'complete' ? issuedGitResults.get(input.git) : undefined
-    if (!git || !/^[a-f0-9]{40}$/.test(input.ancestor) || git.evidence.revision === null || !/^[a-f0-9]{40}$/.test(git.evidence.revision)) return undefined
-    const step = comparisonStep({
-        id: 'git:comparison-ancestry', binding: git, env: git.env, timeoutMs: git.timeoutMs,
-        argv: [git.executable.canonicalPath, '-C', git.checkoutRoot, 'merge-base', '--is-ancestor', input.ancestor, git.evidence.revision],
-    })
-    if (step) issuedGitAncestrySteps.set(step, Object.freeze({ ...git, ancestor: input.ancestor, revision: git.evidence.revision }))
-    return step
-}
-
-export function observeGitAncestry(step: ExecutionStep, outcome: ExecuteProbeOutcome): GitAncestryObservation | undefined {
-    const binding = issuedGitAncestrySteps.get(step)
-    if (!binding) return undefined
-    const authenticated = authenticatedExecutionOutcome(outcome, step)
-    if (!authenticated || authenticated.kind !== 'complete' || authenticated.stdout.byteLength !== 0
-        || authenticated.stderr.byteLength !== 0) return undefined
-    const observation = {} as GitAncestryObservation
-    issuedGitAncestryObservations.add(observation)
-    return observation
 }
 
 export function createComparisonRemoteRefStep(input: {

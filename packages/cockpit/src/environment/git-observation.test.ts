@@ -15,7 +15,6 @@ import { cockpitId, checkoutId as deriveCheckoutId, stackId as deriveStackId } f
 import { createRuntimeAdapter, observeRuntimeTopology } from './runtime.js'
 import {
     createComparisonRemoteRefStep,
-    createGitAncestryObservationStep,
     createGitObservationStep,
     observeComparisonRemoteRef,
     observeComparisonRemoteRevalidation,
@@ -23,7 +22,6 @@ import {
     decodeGitObservation,
     inspectTrackedSecretFiles,
     observeGit,
-    observeGitAncestry,
     observeRunningCheckout,
 } from './git-observation.js'
 
@@ -157,38 +155,6 @@ describe('Git adjacency evidence', () => {
             await rm(first, { recursive: true, force: true })
             await rm(second, { recursive: true, force: true })
         }
-    })
-
-    it('admits ancestry only from the exact issued clean status and merge-base outcome', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-git-ancestry-'))
-        try {
-            execFileSync('git', ['init', '-b', 'main'], { cwd: root })
-            await writeFile(join(root, 'tracked.txt'), 'base\n')
-            execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
-            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'base'], { cwd: root })
-            const ancestor = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
-            await writeFile(join(root, 'tracked.txt'), 'current\n')
-            execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
-            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'current'], { cwd: root })
-            const executable = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
-            expect(executable.state).toBe('available')
-            if (executable.state !== 'available') return
-            const statusStep = createGitObservationStep({ executable: executable.value, checkoutRoot: root, env: {},
-                timeoutMs: 10_000, stackId, source: root, checkoutId })
-            if (!statusStep) throw new Error('Git status step unavailable')
-            const status = observeGit(statusStep, await executeProbe(statusStep), { stackId, checkoutId, source: root })
-            const ancestryStep = createGitAncestryObservationStep({ git: status, ancestor })
-            expect(ancestryStep).toBeDefined()
-            if (!ancestryStep) return
-            const outcome = await executeProbe(ancestryStep)
-            expect(observeGitAncestry(ancestryStep, outcome)).toBeDefined()
-            expect(observeGitAncestry({ ...ancestryStep } as never, outcome)).toBeUndefined()
-            expect(createGitAncestryObservationStep({ git: { ...status } as never, ancestor })).toBeUndefined()
-            const unrelated = 'f'.repeat(40)
-            const refusedStep = createGitAncestryObservationStep({ git: status, ancestor: unrelated })
-            expect(refusedStep).toBeDefined()
-            if (refusedStep) expect(observeGitAncestry(refusedStep, await executeProbe(refusedStep))).toBeUndefined()
-        } finally { await rm(root, { recursive: true, force: true }) }
     })
 
     it('keeps exact dirty counts and repository identity in both observations', () => {
