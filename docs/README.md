@@ -7,7 +7,8 @@ contributor pages live separately under docs/contributing/.
 ## Learn
 
 - [Tutorial](tutorial.md): run the synthetic example end to end.
-- [Getting started](getting-started.md): install cockpit and bring up your own product.
+- [Getting started](getting-started.md): install cockpit, bring up your own product, or move an
+  existing setup over one layer at a time.
 - [Agent adoption guide](agent-adoption.md): the situations and exact commands for an AI agent
   setting cockpit up, with the safety contract it works under.
 - [Concepts](concepts.md): the glossary and the terms diagnostics use.
@@ -15,7 +16,6 @@ contributor pages live separately under docs/contributing/.
 
 ## Guides
 
-- [Incremental adoption](adoption.md): move an existing setup over one layer at a time.
 - [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
 - [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.

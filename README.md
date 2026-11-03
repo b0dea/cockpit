@@ -87,34 +87,13 @@ versions.
 
 ## Quickstart
 
-You need Node.js, Git, and macOS or Linux ([versions](docs/getting-started.md#install-cockpit)).
-The synthetic example needs no Docker and no credentials.
+You need Node.js, Git, and macOS or Linux. cockpit is not on npm yet, so build the package as in
+[Install from source](docs/getting-started.md#install-from-source). Then follow the
+[tutorial](docs/tutorial.md): it copies the synthetic example out of this repository, installs the
+package there, previews the files cockpit would write, applies them, and breaks a generated file
+to watch `check` catch it. The example needs no Docker and no credentials.
 
-**1. Build the package from source.** cockpit is not on npm yet:
-
-```sh
-git clone https://github.com/b0dea/cockpit && cd cockpit
-npm ci --ignore-scripts && npm run build
-COCKPIT_PACKAGE_DIR="$(mktemp -d)"
-npm pack --workspace @b00dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
-```
-
-**2. Copy the example somewhere else and install the package there:**
-
-```sh
-rm -rf "${TMPDIR:-/tmp}/cockpit-demo" && cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo"
-cd "${TMPDIR:-/tmp}/cockpit-demo"
-npm init --yes
-npm install --save-dev "$COCKPIT_PACKAGE_DIR"/*.tgz
-./node_modules/.bin/cockpit --help
-```
-
-**3. Create the example's repositories** by running the bootstrap block in
-[examples/synthetic/README.md](examples/synthetic/README.md), then preview the files cockpit would
-write with `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run`.
-
-The [tutorial](docs/tutorial.md) carries on from here: apply the sync, break a generated file and
-watch `check` catch it, then read the configuration section by section.
+To set cockpit up for your own product, start at [Getting started](docs/getting-started.md).
 
 **Setting cockpit up with an AI agent?** Point it at the
 [agent adoption guide](docs/agent-adoption.md), or install the skill with
@@ -188,7 +167,7 @@ their subcommands. Every command and flag is in the [CLI reference](docs/cli-ref
 |---|---|
 | Try cockpit end to end | [Tutorial](docs/tutorial.md) |
 | Set it up for your own product | [Getting started](docs/getting-started.md) |
-| Move an existing setup over gradually | [Incremental adoption](docs/adoption.md) |
+| Move an existing setup over gradually | [Adopt an existing setup](docs/getting-started.md#adopt-an-existing-setup) |
 | Look up a term | [Concepts](docs/concepts.md) |
 | Look up a command or a config field | [Configuration essentials](docs/configuration-essentials.md), [CLI reference](docs/cli-reference.md), [Configuration reference](docs/configuration-reference.md) |
 | Fix a diagnostic | [Troubleshooting](docs/troubleshooting.md) |

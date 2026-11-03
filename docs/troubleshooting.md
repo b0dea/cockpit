@@ -1,8 +1,9 @@
 # Troubleshooting
 
-This page is for anyone holding a cockpit diagnostic code: what it means and what to do. Look the
-code up in the index at the end; remedies grouped by family are in the
-[environment reference](environment.md#respond-to-diagnostic-codes).
+This page is for anyone holding a cockpit diagnostic code: what it means and what to do. Every
+diagnostic message names what failed and how to fix it; the sections below cover the codes that
+need more than that, and [Codes with a fixed remedy](#codes-with-a-fixed-remedy) at the end lists
+every code whose remedy never changes.
 
 Human output spells common refusals as **What failed**, **Why it matters** and **Fix**. Use
 `--json` only when a program needs the machine-readable envelope. Each command's flags are in its
@@ -86,7 +87,7 @@ delete the existing path as a workaround.
 longer matches the bytes cockpit wrote. Keep the current bytes and find out who changed them
 before retrying. For a team's own `.claude/settings.json`, `.codex/config.toml` or
 `.codex/hooks.json`, the message names the `sync --adopt` command that keeps it; see
-[Adopt existing agent settings](adoption.md#adopt-existing-agent-settings).
+[Adopt existing agent settings](getting-started.md#adopt-existing-agent-settings).
 `SURFACE_ADOPTION_REFUSED` names the adopted key that would switch off or bypass the guard, or that
 cockpit writes with a different value; remove it from the named file and sync again.
 `SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be read or checked. Restore that source at its declared root and retry the dry run.

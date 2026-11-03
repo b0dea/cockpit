@@ -281,8 +281,7 @@ several: instructions, guards and settings. Each step stops for the human.
    needs a completed first bring-up. The diagnostics beside it are every other gap found without
    a running stack; `result.readiness` groups them ([Walk through readiness](#walk-through-readiness)).
    Clear them, then rerun the same command:
-   - The cockpit repository must be committed and clean
-     ([Preflight observations](environment.md#preflight-observations)). A new one reports
+   - The cockpit repository must be committed and clean. A new one reports
      `GIT_STATE_UNHEALTHY` (no commits yet). A person approves or runs the staging and the
      commit, not you: the guard asks on `git add <paths>` and denies a broad `git add -A` that
      covers a secrets directory, and the first commit stages the guard's own files. Show them
@@ -439,7 +438,7 @@ human the file, ask, then adopt it:
 
 Repeat `--adopt` once per file. OpenCode needs no adoption. What is merged, and which settings are
 refused with `SURFACE_ADOPTION_REFUSED`, is in
-[Adopt existing agent settings](adoption.md#adopt-existing-agent-settings).
+[Adopt existing agent settings](getting-started.md#adopt-existing-agent-settings).
 
 ### Add a repository
 
