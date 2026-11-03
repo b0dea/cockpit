@@ -477,6 +477,7 @@ Reads `cockpit.toml` from `--config`.
 | `--work-order` | string | unset |
 | `--verdict` | string | unset |
 | `--note` | string | unset |
+| `--evaluator` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -553,6 +554,7 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--criteria` | string | unset |
+| `--evaluator` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
