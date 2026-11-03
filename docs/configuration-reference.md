@@ -60,6 +60,11 @@ The values cockpit uses for a key the configuration leaves out.
     "install_policies": []
   },
   "surfaces": {
+    "tools": [
+      "claudecode",
+      "codexcli",
+      "opencode"
+    ],
     "overlays": [],
     "harnesses": [],
     "bundles": [],
@@ -658,6 +663,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
+| `tools` | Agent tools whose instructions, skills and settings sync writes and check compares. Defaults to the tools whose guard is measured (claudecode, codexcli, opencode); the other shipped targets are written only when listed. | array of string | `["claudecode","codexcli","opencode"]` | 1–5 items; each item: one of `"claudecode"`, `"codexcli"`, `"opencode"`, `"cursor"`, `"grokcli"` |
 | `overlays` | Team-owned rules, subagents, skills and hooks added to the generated surfaces. | array of table: [`[[surfaces.overlays]]`](#surfacesoverlays) | `[]` | at most 256 items |
 | `harnesses` | Agent tools beyond the shipped ones, with measured capabilities. | array of table: [`[[surfaces.harnesses]]`](#surfacesharnesses) | `[]` | at most 64 items |
 | `bundles` | Bundle formats to publish, such as a Claude plugin bundle. | array of string | `[]` | at most 1 item; each item: exactly `"claudecode-plugin"` |
@@ -992,23 +998,23 @@ cockpit checks these rules when it loads the configuration (`x-cockpit-runtime-c
 
 ## Skill size limits
 
-Agent tools load every skill's frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. The limits come from `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `738daf2662c9504c7493183159684508075aa0d0d5364ddb3f0f3719c4842eec`.
+Agent tools load every skill's frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. The limits come from `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `d5ae65d3f69fbb6a33db2e8a63f93b936a37c8c0566cabdc3f248de6018ed7da`.
 
 | Target | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
-| claudecode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| codexcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| opencode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| cursor | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| grokcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| claudecode | frontmatter_bytes | 8192 | each skill's procedure |
+| codexcli | frontmatter_bytes | 8192 | each skill's procedure |
+| opencode | frontmatter_bytes | 8192 | each skill's procedure |
+| cursor | frontmatter_bytes | 8192 | each skill's procedure |
+| grokcli | frontmatter_bytes | 8192 | each skill's procedure |
 
 | Skill entry point | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
-| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/setup.md` |
+| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/explain.md` |
+| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
+| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `2e36629aae96831d6346a1e5b4aa564c02d97d480079791c10c4de87438ea9c6`.
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `88a28da19effa9cea4276f018d7d02015c4250e6d623ef038d367ac25eab92e9`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `09cfb3fbd42d8c5e2409ce37594e8f854e147998187888f8c9c0bd9a65742834`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `bea13e418e4c3ad968e36c9f5426d96664fcdecced3fc43d6b527ada5571936f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `14241f1f7cef449a540a89f01e0e585fdabe418a147899d2ca1bee3da4975ffe`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

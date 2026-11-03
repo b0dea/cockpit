@@ -6,9 +6,10 @@ This generated index is for users choosing the command that owns their next oper
 
 ## Set up
 
-- `cockpit init`: Preview, then accept, a first cockpit setup for one agent tool.
+- `cockpit init`: Preview, then accept, a first cockpit setup for one or more agent tools.
 - `cockpit setup`: Clone or locate the declared sibling repositories and link them.
 - `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
+- `cockpit tool`: Add or remove an agent tool in cockpit.toml (tool add, tool remove).
 - `cockpit registry-resolve`: Turn a validated shell registry into data shell scripts can source.
 - `cockpit upgrade`: Move the exact cockpit pin to a newer version and re-run sync.
 

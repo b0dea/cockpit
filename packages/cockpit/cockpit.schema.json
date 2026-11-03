@@ -10800,6 +10800,27 @@
       "default": {},
       "type": "object",
       "properties": {
+        "tools": {
+          "default": [
+            "claudecode",
+            "codexcli",
+            "opencode"
+          ],
+          "description": "Agent tools whose instructions, skills and settings sync writes and check compares. Defaults to the tools whose guard is measured (claudecode, codexcli, opencode); the other shipped targets are written only when listed.",
+          "minItems": 1,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "claudecode",
+              "codexcli",
+              "opencode",
+              "cursor",
+              "grokcli"
+            ]
+          }
+        },
         "overlays": {
           "default": [],
           "description": "Team-owned rules, subagents, skills and hooks added to the generated surfaces.",

@@ -8,7 +8,7 @@ Each diagnostic message names what failed and how to fix it. Codes whose remedy 
 
 ## cockpit init
 
-Preview, then accept, a first cockpit setup for one agent tool.
+Preview, then accept, a first cockpit setup for one or more agent tools.
 
 Does not read `cockpit.toml`.
 
@@ -66,6 +66,24 @@ Reads `cockpit.toml` from `--config`.
 | `--purpose` | string | unset |
 | `--mount` | string | unset |
 | `--instruction-pointer` | boolean | `false` |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit tool
+
+Add or remove an agent tool in cockpit.toml (tool add, tool remove).
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--dry-run` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
