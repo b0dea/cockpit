@@ -82,7 +82,7 @@ describe('shipped skill contract', () => {
                 cursor: paths.map(path => `.cursor/skills/${path}`),
                 grokcli: paths.map(path => `.grok/skills/${path}`),
             } })
-        expect(await inspectRenderedSkillSet({ ...captured, declaredExtensions: ['inspect'], generated }))
+        expect(await inspectRenderedSkillSet({ ...captured, declaredExtensions: ['inspect'], generated, targets: SURFACE_TARGETS }))
             .toMatchObject({ kind: 'complete', skills: admitted.skills })
         for (const bytes of ['', '---\nloading: eager\nbudget: uncapped\n---\nInspect.\n',
             '---\nloading: pull\nbudget: uncapped\n---\n']) {
@@ -92,7 +92,7 @@ describe('shipped skill contract', () => {
         }
         expect(await inspectSkillSet(captured)).toMatchObject({ kind: 'refusal' })
         expect(await inspectSkillSet({ ...input(shipped), declaredExtensions: ['inspect'] })).toMatchObject({ kind: 'refusal' })
-        expect(await inspectRenderedSkillSet({ ...captured, generated })).toMatchObject({ kind: 'refusal' })
+        expect(await inspectRenderedSkillSet({ ...captured, generated, targets: SURFACE_TARGETS })).toMatchObject({ kind: 'refusal' })
     })
 
     it.each([null, 'inspect', ['inspect', 'inspect'], ['zeta', 'alpha'], ['cockpit-setup'], ['bad/name'],
@@ -345,7 +345,7 @@ describe('shipped skill contract', () => {
         expect(generated.kind, JSON.stringify(generated)).toBe('complete')
         if (generated.kind !== 'complete') return
 
-        const result = await inspectRenderedSkillSet({ ...input(sources), generated })
+        const result = await inspectRenderedSkillSet({ ...input(sources), generated, targets: SURFACE_TARGETS })
 
         expect(result).toMatchObject({ kind: 'complete', skills: ['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'] })
         if (result.kind !== 'complete') return
@@ -354,8 +354,12 @@ describe('shipped skill contract', () => {
 
         const missingSidecar = { ...generated, files: generated.files.filter(file =>
             file.path !== '.agents/skills/cockpit-setup/agents/openai.yaml') }
-        await expect(inspectRenderedSkillSet({ ...input(sources), generated: missingSidecar })).resolves.toMatchObject({
+        await expect(inspectRenderedSkillSet({ ...input(sources), generated: missingSidecar, targets: SURFACE_TARGETS })).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVENTORY_INVALID', target: 'codexcli' }],
+        })
+        // Skills rendered for a tool cockpit.toml does not list are refused, not published beside the listed ones.
+        await expect(inspectRenderedSkillSet({ ...input(sources), generated, targets: ['claudecode'] })).resolves.toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVENTORY_INVALID' }],
         })
     }, 120_000)
 

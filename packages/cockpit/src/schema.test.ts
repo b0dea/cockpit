@@ -190,7 +190,7 @@ describe('consumer surface declarations', () => {
             ports: { bases: {} },
             surfaces: { overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'] },
         })
-        expect(parsed.surfaces).toEqual({ overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'], adopted: [] })
+        expect(parsed.surfaces).toEqual({ tools: ['claudecode', 'codexcli', 'opencode'], overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'], adopted: [] })
     })
 
     // A cloned repository's cockpit.toml is hostile input: `dir` is resolved under the siblings
@@ -272,13 +272,17 @@ describe('consumer surface declarations', () => {
         expect(CockpitConfig.safeParse({ ...base, surfaces: { harnesses: [customHarness, customHarness] } }).success).toBe(false)
     })
 
-    it('preserves old configurations with empty consumer surface inputs', () => {
-        const parsed = CockpitConfig.parse({
+    it('defaults to the measured tools and lists any other shipped tool only when asked, never none or only unguarded ones', () => {
+        const base = {
             cockpit: { name: 'synthetic' },
             sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }],
             ports: { bases: {} },
-        })
-        expect(parsed.surfaces).toEqual({ overlays: [], harnesses: [], bundles: [], adopted: [] })
+        }
+        expect(CockpitConfig.parse(base).surfaces).toEqual({ tools: ['claudecode', 'codexcli', 'opencode'], overlays: [], harnesses: [], bundles: [], adopted: [] })
+        expect(CockpitConfig.parse({ ...base, surfaces: { tools: ['claudecode', 'cursor'] } }).surfaces.tools).toEqual(['claudecode', 'cursor'])
+        for (const tools of [[], ['cursor'], ['cursor', 'grokcli'], ['claudecode', 'claudecode'], ['claudecode', 'unknown']]) {
+            expect(CockpitConfig.safeParse({ ...base, surfaces: { tools } }).success, JSON.stringify(tools)).toBe(false)
+        }
     })
 })
 
@@ -641,6 +645,10 @@ describe('work and browser declarations', () => {
             expect(CockpitConfig.safeParse(config).success).toBe(false)
             expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(false)
         }
+        // A measured tool the cockpit does not list gets no browser wiring either.
+        const measured = { ...generatedConfig, environment, browser: { ...browser, resources } }
+        expect(CockpitConfig.safeParse(measured).success).toBe(true)
+        expect(CockpitConfig.safeParse({ ...measured, surfaces: { tools: ['claudecode'] } }).success).toBe(false)
     })
 
     it('retains explicit runner architectures and measured health provenance', () => {

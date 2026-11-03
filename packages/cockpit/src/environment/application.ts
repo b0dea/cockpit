@@ -5281,8 +5281,14 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
+    // Codex hook trust is advice for a Codex user; a cockpit that does not list Codex gets none.
+    const hookTrustFindings = async (): Promise<readonly EnvironmentDiagnostic[]> => {
+        const loaded = await config
+        return loaded.kind === 'complete' && loaded.result.config.surfaces.tools.includes('codexcli')
+            ? adapters.inspectHookTrust?.() ?? Object.freeze([]) : Object.freeze([])
+    }
     const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
-        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([]),
+        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
         doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? Object.freeze([])])
     const stateInventory = await adapters.readUnreadableState?.()
     const unreadableState = stateInventory?.kind === 'refusal'

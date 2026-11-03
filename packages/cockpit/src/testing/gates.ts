@@ -202,7 +202,7 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
     const lines = bytes.trimEnd().split('\n').length
     const guidePath = 'packages/cockpit/surfaces/references/testing-tiers.md'
     const checked = planSiblingProjection({ ...projection, standingSources: [...projection.standingSources.filter(source => source.path !== guidePath),
-        ...GUARD_SURFACE_TARGETS.map(target => ({ target,
+        ...GUARD_SURFACE_TARGETS.filter(target => projection.targets?.includes(target) ?? true).map(target => ({ target,
             path: guidePath, content: bytes, scope: 'always' as const }))] })
     if (checked.kind === 'refusal') return Object.freeze({ kind: 'refusal', reason: checked.diagnostic.message })
     const exceeded = checked.costs.find(cost => cost.status === 'exceeded')

@@ -65,6 +65,8 @@ export interface ProjectionPlannerInput {
     guideObservations: readonly GuideObservation[]
     standingSources: Array<{ target: SurfaceTarget; path: string; content: string; scope: 'always' | 'scoped' }>
     loadCharacterizations: Partial<Record<SurfaceTarget, LoadCostCharacterization | undefined>>
+    /** The tools cockpit.toml lists; grants and start-up costs cover exactly these. Every shipped tool when absent. */
+    targets?: readonly SurfaceTarget[]
 }
 
 export interface LoadCostCharacterization {
@@ -508,6 +510,7 @@ interface CapturedInput {
     readonly guideObservations: readonly GuideObservation[]
     readonly standingSources: readonly { readonly target: SurfaceTarget; readonly path: string; readonly content: string; readonly scope: 'always' | 'scoped' }[]
     readonly loadCharacterizations: Readonly<Partial<Record<SurfaceTarget, LoadCostCharacterization>>>
+    readonly targets: readonly SurfaceTarget[]
 }
 
 function target(value: JsonSnapshot | undefined): value is SurfaceTarget {
@@ -523,7 +526,7 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
     if (!isObject(value) || !exactKeys(value, [
         'canonicalMainCheckout', 'siblingsRoot', 'activeProfiles', 'guideCapLines', 'siblings',
         'mountedPaths', 'directoryGrants', 'guideObservations', 'standingSources', 'loadCharacterizations',
-    ], ['invocationCwd'])
+    ], ['invocationCwd', 'targets'])
         || typeof value.canonicalMainCheckout !== 'string' || !isAbsolute(value.canonicalMainCheckout)
         || typeof value.siblingsRoot !== 'string' || value.siblingsRoot.length === 0
         || typeof value.guideCapLines !== 'number' || !Number.isSafeInteger(value.guideCapLines) || value.guideCapLines <= 0
@@ -533,6 +536,8 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
         || !Array.isArray(value.standingSources) || !isObject(value.loadCharacterizations)
         || value.directoryGrants.length > GUIDE_COUNT_LIMIT * SURFACE_TARGETS.length
         || value.guideObservations.length > GUIDE_COUNT_LIMIT || value.standingSources.length > GUIDE_COUNT_LIMIT * SURFACE_TARGETS.length) return undefined
+    const targets = value.targets === undefined ? SURFACE_TARGETS : stringArray(value.targets)
+    if (!targets || targets.length === 0 || new Set(targets).size !== targets.length || !targets.every(item => target(item))) return undefined
     const activeProfiles = stringArray(value.activeProfiles)
     if (!activeProfiles || new Set(activeProfiles).size !== activeProfiles.length
         || activeProfiles.some(profile => !/^[a-z0-9][a-z0-9.-]*$/.test(profile))) return undefined
@@ -628,6 +633,7 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
         guideObservations,
         standingSources,
         loadCharacterizations,
+        targets: SURFACE_TARGETS.filter(item => targets.includes(item)),
     }
 }
 
@@ -747,7 +753,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
     const active = captured.siblings.filter(row => selected(row, profiles))
     const activeSlugs = new Set(active.map(row => row.slug))
     if (captured.mountedPaths.length !== active.length || captured.mountedPaths.some(row => !activeSlugs.has(row.slug))
-        || captured.directoryGrants.length !== active.length * SURFACE_TARGETS.length
+        || captured.directoryGrants.length !== active.length * captured.targets.length
         || captured.directoryGrants.some(row => !activeSlugs.has(row.slug))) {
         return refuse(diagnostic('PROJECTION_INPUT_INVALID', 'mounted paths and grants must exactly cover active sibling rows'))
     }
@@ -762,7 +768,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
                 target: sibling.slug, expected: resolvedDirectory, actual: mounted.path,
             }))
         }
-        for (const harness of SURFACE_TARGETS) {
+        for (const harness of captured.targets) {
             const declared = captured.directoryGrants.find(row => row.slug === sibling.slug && row.target === harness)
             if (!declared) return refuse(diagnostic('PROJECTION_INPUT_INVALID', `directory grant coverage is incomplete for ${sibling.slug}:${harness}`))
             if (declared.path !== resolvedDirectory) {
@@ -812,7 +818,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
     const guideCost = guides.reduce((sum, guide) => sum + lines(guide.bytes), 0)
 
     const costs: StandingCost[] = []
-    for (const harness of INSTRUCTION_TARGETS) {
+    for (const harness of INSTRUCTION_TARGETS.filter(item => captured.targets.includes(item))) {
         const characterization = captured.loadCharacterizations[harness]
         if (!characterization) {
             costs.push({ target: harness, status: 'unavailable', reason: 'load cost is not characterized' })

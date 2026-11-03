@@ -6,7 +6,7 @@ import { browserProxyAuthorityMatches } from './browser/proxy.js'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
 import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
-import { GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
+import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { RefusalError, errorCause } from './environment/contract.js'
 
 export const mechanism = {
@@ -1194,6 +1194,13 @@ export const CustomHarness = z.object({
 })
 
 export const Surfaces = z.object({
+    // A list rather than per-tool switches so `tool add` and `tool remove` edit one line. A cockpit with
+    // no guarded tool would render instructions and skills and enforce nothing, so one must be listed.
+    tools: z.array(z.enum(SURFACE_TARGETS)).min(1).max(SURFACE_TARGETS.length).default([...DEFAULT_SURFACE_TOOLS])
+        .refine(tools => !hasDuplicate(tools), 'each tool is listed once')
+        .refine(tools => tools.some(tool => (GUARD_SURFACE_TARGETS as readonly string[]).includes(tool)),
+            `list at least one tool cockpit has a guard for (${GUARD_SURFACE_TARGETS.join(', ')})`)
+        .describe(`Agent tools whose instructions, skills and settings sync writes and check compares. Defaults to the tools whose guard is measured (${DEFAULT_SURFACE_TOOLS.join(', ')}); the other shipped targets are written only when listed.`),
     overlays: z.array(SurfaceOverlay).max(256).default([]).describe('Team-owned rules, subagents, skills and hooks added to the generated surfaces.'),
     harnesses: z.array(CustomHarness).max(64).default([]).describe('Agent tools beyond the shipped ones, with measured capabilities.'),
     bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]).describe('Bundle formats to publish, such as a Claude plugin bundle.'),
@@ -1282,6 +1289,11 @@ export const CockpitConfig = z
         if (cfg.browser) {
             if (cfg.browser.resources && !cfg.environment.generated) {
                 ctx.addIssue({ code: 'custom', path: ['browser', 'resources'], message: 'browser resource ceilings require environment.generated' })
+            }
+            // A browser wired to a tool sync does not render would be a declaration that does nothing.
+            for (const [index, row] of cfg.browser.harnesses.entries()) if (!cfg.surfaces.tools.includes(row.target)) {
+                ctx.addIssue({ code: 'custom', path: ['browser', 'harnesses', index, 'target'],
+                    message: `browser harness ${row.target} is not in surfaces.tools; add it with npx --no cockpit tool add ${row.target} or remove this row` })
             }
             const proxyVariable = cfg.browser.proxy.host_variable
             if (proxyVariable !== undefined && cfg.ports.bases[proxyVariable] !== cfg.browser.proxy.proxy_port) {

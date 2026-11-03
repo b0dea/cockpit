@@ -108,7 +108,7 @@ export type InspectedSkillOutputProjection = InspectedBootstrapOutputs | Readonl
     files: readonly []
 }>
 
-const inspectedSkillResults = new WeakMap<object, Readonly<Record<SurfaceTarget, readonly string[]>>>()
+const inspectedSkillResults = new WeakMap<object, Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>>()
 const inspectedBootstrapOutputs = new WeakSet<object>()
 
 export function isInspectedBootstrapOutputs(value: unknown): value is InspectedBootstrapOutputs {
@@ -125,6 +125,8 @@ interface CapturedInput {
 
 interface CapturedRenderedInput extends CapturedInput {
     readonly generated: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>
+    /** The tools sync renders; only their skill copies are inspected and costed. */
+    readonly targets: readonly SurfaceTarget[]
 }
 
 interface SkillDeclaration {
@@ -211,8 +213,13 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
     // Rendered output carries every target's copy of each procedure, so it outgrows the generic
     // JSON limit with one extra skill; bundleSurfaceFiles below enforces the real output cap.
     const captured = snapshotGeneratedJson(input)
-    if (!object(captured) || !exact(captured, ['sources', 'collection', 'terminal', 'generated',
+    if (!object(captured) || !exact(captured, ['sources', 'collection', 'terminal', 'generated', 'targets',
         ...(Object.hasOwn(captured, 'declaredExtensions') ? ['declaredExtensions'] : [])])) return undefined
+    const targets = Array.isArray(captured.targets) && captured.targets.length > 0
+        && captured.targets.every(target => SURFACE_TARGETS.includes(target as SurfaceTarget))
+        && new Set(captured.targets).size === captured.targets.length
+        ? SURFACE_TARGETS.filter(target => (captured.targets as readonly JsonSnapshot[]).includes(target)) : undefined
+    if (!targets) return undefined
     const base = captureInput({ sources: captured.sources, collection: captured.collection, terminal: captured.terminal,
         ...(Object.hasOwn(captured, 'declaredExtensions') ? { declaredExtensions: captured.declaredExtensions } : {}) })
     const generated = captured.generated
@@ -226,7 +233,7 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
             && warning.code === 'SURFACE_GENERATOR_TRUST_WARNING' && SURFACE_TARGETS.includes(warning.target as SurfaceTarget)
             && warning.path === '.claude/settings.json' && typeof warning.message === 'string' && warning.message.length > 0)
         || !bundleSurfaceFiles(generated.files as unknown as readonly RenderedSurfaceFile[])) return undefined
-    return Object.freeze({ ...base, generated }) as unknown as CapturedRenderedInput
+    return Object.freeze({ ...base, generated, targets }) as unknown as CapturedRenderedInput
 }
 
 function parseEntryPoint(bytes: string): { frontmatter: JsonSnapshotObject; body: string; rawFrontmatter: string } | undefined {
@@ -392,9 +399,13 @@ function inspectRendered(
     captured: CapturedInput,
     declarations: readonly SkillDeclaration[],
     files: readonly RenderedSurfaceFile[],
+    targets: readonly SurfaceTarget[],
 ): SkillContractResult {
     const expected = expectedOutputs(declarations, captured.sources)
-    for (const target of SURFACE_TARGETS) {
+    if (files.some(file => !targets.includes(file.target) && file.path.startsWith(`${TARGET_PATH_PREFIX[file.target]}/`))) {
+        return refusal('SKILL_RENDER_INVENTORY_INVALID', 'rendered skills include a tool that is not listed')
+    }
+    for (const target of targets) {
         const prefix = `${TARGET_PATH_PREFIX[target]}/`
         const actual = files.filter(file => file.target === target && file.path.startsWith(prefix)).map(file => file.path).sort()
         if (actual.length !== expected[target].length || actual.some((path, index) => path !== [...expected[target]].sort()[index])) {
@@ -402,7 +413,7 @@ function inspectRendered(
         }
     }
     const costs: SkillStandingCost[] = []
-    for (const target of SURFACE_TARGETS) {
+    for (const target of targets) {
         let value = 0
         for (const file of files.filter(candidate => candidate.target === target && candidate.path.startsWith(`${TARGET_PATH_PREFIX[target]}/`))) {
             const bytes = renderedFrontmatterBytes(file)
@@ -433,9 +444,9 @@ function inspectRendered(
         collection,
         files,
     })
-    inspectedSkillResults.set(result, Object.freeze(Object.fromEntries(SURFACE_TARGETS.map(target => [
+    inspectedSkillResults.set(result, Object.freeze(Object.fromEntries(targets.map(target => [
         target, Object.freeze([...expected[target]].sort()),
-    ]))) as Readonly<Record<SurfaceTarget, readonly string[]>>)
+    ]))) as Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>)
     return result
 }
 
@@ -501,11 +512,12 @@ export function projectInspectedSkillOutputs(
     skill: typeof SHIPPED_SETUP_SKILL,
 ): InspectedSkillOutputProjection {
     const expected = typeof result === 'object' && result !== null ? inspectedSkillResults.get(result) : undefined
-    if (!expected || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== SHIPPED_SETUP_SKILL) {
+    const targetPaths = expected?.[target]
+    if (!expected || !targetPaths || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== SHIPPED_SETUP_SKILL) {
         return refusal('SKILL_PROJECTION_INVALID', 'skill output projection requires the exact issued inspection result and target')
     }
     const prefix = `${TARGET_PATH_PREFIX[target]}/${skill}/`
-    const paths = expected[target].filter(path => path.startsWith(prefix)).sort()
+    const paths = targetPaths.filter(path => path.startsWith(prefix)).sort()
     const files = result.files.filter(file => file.target === target && paths.includes(file.path))
         .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
     if (files.length !== paths.length || files.some((file, index) => file.path !== paths[index]
@@ -535,12 +547,12 @@ export async function inspectSkillSet(input: unknown): Promise<SkillContractResu
         expectedOutputs: expectedOutputs(declarations, captured.sources),
     })
     if (generated.kind !== 'complete') return generatedDiagnostic(generated.kind, generated.status, generated.diagnostics[0]!)
-    return inspectRendered(captured, declarations, generated.files)
+    return inspectRendered(captured, declarations, generated.files, SURFACE_TARGETS)
 }
 
 export async function inspectRenderedSkillSet(input: unknown): Promise<SkillContractResult> {
     const captured = captureRenderedInput(input)
     if (!captured) return refusal('SKILL_INPUT_INVALID', 'rendered skill contract input is invalid')
     const declarations = admitDeclarations(captured)
-    return Array.isArray(declarations) ? inspectRendered(captured, declarations, captured.generated.files) : declarations
+    return Array.isArray(declarations) ? inspectRendered(captured, declarations, captured.generated.files, captured.targets) : declarations
 }

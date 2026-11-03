@@ -9,6 +9,7 @@ import { parse as parseToml } from 'smol-toml'
 
 import { loadCockpitConfig } from '../config/load.js'
 import type { HolderId } from './contract.js'
+import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from './executable.js'
 import { observeGeneratedApplication, projectGeneratedApplicationMountSources } from './generated-application.js'
@@ -223,9 +224,10 @@ describe('generated application authenticated read batching', () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-generated-read-batch-')))
         roots.push(root)
         const configPath = join(root, 'cockpit.toml')
-        const declaration = (await readFile(fixture, 'utf8')).replace(
+        // Every shipped tool is listed so the surface inventory outgrows one 64-entry batch.
+        const declaration = `${(await readFile(fixture, 'utf8')).replace(
             'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
-        )
+        )}\n[surfaces]\ntools = ${JSON.stringify(SURFACE_TARGETS)}\n`
         await writeFile(configPath, declaration)
         await mkdir(join(root, 'app'), { recursive: true })
         await mkdir(join(root, 'fixtures'), { recursive: true })
@@ -524,11 +526,10 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             const openCode = JSON.parse((await readFile(join(root, 'opencode.jsonc'), 'utf8'))
                 .replace(/\/\* cockpit:owner:cockpit:[a-z0-9-]+:[a-f0-9]{64}:(?:start|end) \*\//g, ''))
             expect(Object.keys(openCode.mcp)).toEqual(['playwright'])
+            // Tools cockpit.toml does not list get neither the browser nor any other file.
             await expect(readFile(join(root, '.cursor/mcp.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-            expect(parseToml(await readFile(join(root, '.grok/config.toml'), 'utf8')).mcp_servers).toBeUndefined()
-            expect(result.result.paths).toEqual(expect.arrayContaining([
-                '.cursor/skills/cockpit-setup/SKILL.md', '.grok/skills/cockpit-setup/SKILL.md',
-            ]))
+            await expect(readFile(join(root, '.grok/config.toml'))).rejects.toMatchObject({ code: 'ENOENT' })
+            expect(result.result.paths.filter(path => path.startsWith('.cursor/') || path.startsWith('.grok/'))).toEqual([])
             const compose = parseYaml(await readFile(join(root, 'compose.generated.yml'), 'utf8'))
             expect(compose.services['cockpit-browser-runner'].healthcheck.start_period).toBe('15s')
             expect(compose.services['cockpit-browser-runner']).toMatchObject({ mem_limit: '1024m', cpus: 0.75 })

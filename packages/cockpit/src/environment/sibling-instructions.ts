@@ -56,8 +56,17 @@ async function classify(root: string): Promise<Classification> {
     return { state: linked ? 'linked' : 'unlinked', claudeImports, agents, claude }
 }
 
-/** One warning for each way a repository's root instruction files leave some agent tool without them. */
-export async function inspectSiblingInstructions(repository: Readonly<{ slug: string; root: string }>): Promise<readonly EnvironmentDiagnostic[]> {
+/**
+ * One warning for each way a repository's root instruction files leave a listed agent tool without
+ * them. A team that uses only Claude Code loses nothing when a repository keeps CLAUDE.md alone.
+ */
+export async function inspectSiblingInstructions(
+    repository: Readonly<{ slug: string; root: string }>,
+    tools: readonly string[],
+): Promise<readonly EnvironmentDiagnostic[]> {
+    const claude = tools.includes('claudecode')
+    // OpenCode falls back to CLAUDE.md when AGENTS.md is absent; Codex does not.
+    const agentsReaders = tools.includes('codexcli') || tools.includes('opencode')
     const target = `sibling:${repository.slug}`
     const findings: EnvironmentDiagnostic[] = []
     let classified: Classification
@@ -78,7 +87,7 @@ export async function inspectSiblingInstructions(repository: Readonly<{ slug: st
             fix: `make the instruction files at the root of ${repository.root} readable UTF-8 files, then rerun this command`,
         })]
     }
-    if (classified.state === 'agents-only') findings.push(Object.freeze({
+    if (classified.state === 'agents-only' && claude) findings.push(Object.freeze({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_AGENTS_ONLY' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_AGENTS_ONLY,
@@ -86,7 +95,7 @@ export async function inspectSiblingInstructions(repository: Readonly<{ slug: st
         target,
         fix: 'run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files',
     }))
-    if (classified.state === 'claude-only') findings.push(Object.freeze({
+    if (classified.state === 'claude-only' && tools.includes('codexcli')) findings.push(Object.freeze({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_CLAUDE_ONLY' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_CLAUDE_ONLY,
@@ -95,7 +104,7 @@ export async function inspectSiblingInstructions(repository: Readonly<{ slug: st
         target,
         fix: 'run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand',
     }))
-    if (classified.state === 'unlinked') findings.push(Object.freeze({
+    if (classified.state === 'unlinked' && claude && agentsReaders) findings.push(Object.freeze({
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'SIBLING_INSTRUCTIONS_UNLINKED' satisfies typeof ENVIRONMENT_CODES.SIBLING_INSTRUCTIONS_UNLINKED,

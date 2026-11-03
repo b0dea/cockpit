@@ -55,8 +55,7 @@ describe('nested generated publication', () => {
         expect(parents).toEqual([
             '.', '.agents', '.agents/skills/cockpit-setup/references',
             '.claude', '.claude/skills/cockpit-setup/references', '.cockpit/guards',
-            '.codex', '.codex/agents', '.cursor', '.cursor/skills/cockpit-setup/references',
-            '.grok', '.grok/skills/cockpit-setup/references', '.opencode', '.opencode/plugin',
+            '.codex', '.codex/agents', '.opencode', '.opencode/plugin',
             '.opencode/skills/cockpit-setup/references',
             'app', 'docs/cockpit', 'env/.secrets', 'fixtures', '.cockpit',
         ])

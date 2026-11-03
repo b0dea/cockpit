@@ -336,9 +336,12 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     }
     const configuredSet = new Set(configured as readonly string[])
     const parsedHarnesses = CustomHarness.array().safeParse(captured.customHarnesses)
+    const customNames = new Set(parsedHarnesses.success ? parsedHarnesses.data.map(harness => harness.name) : [])
+    // The listed built-in tools: any non-empty subset that includes a guarded one, as the schema admits.
+    const listedNative = new Set([...NATIVE_BUILT_INS].filter(target => configuredSet.has(target)))
     if (!parsedHarnesses.success || parsedHarnesses.data.some(harness => !configuredSet.has(harness.name))
-        || [...BUILT_INS].some(target => !configuredSet.has(target))
-        || configuredSet.size !== BUILT_INS.size + parsedHarnesses.data.length) return refuse('SURFACE_INPUT_INVALID', 'custom and built-in harness identities do not match the configured set')
+        || [...configuredSet].some(name => !customNames.has(name) && !BUILT_INS.has(name as SurfaceTarget))
+        || listedNative.size === 0) return refuse('SURFACE_INPUT_INVALID', 'custom and built-in harness identities do not match the configured set')
     const custom = customReceipts(parsedHarnesses.data, captured.customReceipts)
     if (!custom) return refuse('SURFACE_INPUT_INVALID', 'custom capability receipt is missing or does not match its authenticated declaration')
     const browser = captured.browser === null ? null : object(captured.browser)
@@ -389,15 +392,15 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     if (testing && (!tierGuide || !nativeHooks)) return refuse('SURFACE_INPUT_INVALID', 'testing projection must retain its validated objects')
     if (tierGuide && (typeof tierGuide.bytes !== 'string' || typeof tierGuide.lines !== 'number' || !Number.isSafeInteger(tierGuide.lines) || tierGuide.lines < 1
         || tierGuide.lines !== (tierGuide.bytes as string).trimEnd().split('\n').length
-        || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== NATIVE_BUILT_INS.size
+        || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== listedNative.size
         || tierGuide.costs.some(cost => !object(cost) || !exact(cost, ['target', 'status', 'metric', 'value', 'conditionalValue', 'cap', 'measuredOn', 'provenance', 'scopeSemantics'])
-            || typeof cost.target !== 'string' || !NATIVE_BUILT_INS.has(cost.target as SurfaceTarget) || cost.status !== 'within_cap'
+            || typeof cost.target !== 'string' || !listedNative.has(cost.target as SurfaceTarget) || cost.status !== 'within_cap'
             || cost.metric !== 'lines' || typeof cost.value !== 'number' || !Number.isSafeInteger(cost.value) || cost.value < 0
             || typeof cost.conditionalValue !== 'number' || !Number.isSafeInteger(cost.conditionalValue) || cost.conditionalValue < 0
             || typeof cost.cap !== 'number' || !Number.isSafeInteger(cost.cap) || cost.cap < cost.value || typeof cost.measuredOn !== 'string' || !DATE.test(cost.measuredOn)
             || typeof cost.provenance !== 'string' || cost.provenance.length === 0
             || cost.scopeSemantics !== 'conditional' && cost.scopeSemantics !== 'full')
-        || new Set(tierGuide.costs.map(cost => object(cost) ? cost.target : undefined)).size !== NATIVE_BUILT_INS.size)) {
+        || new Set(tierGuide.costs.map(cost => object(cost) ? cost.target : undefined)).size !== listedNative.size)) {
         return refuse('SURFACE_INPUT_INVALID', 'testing tier guide lost its bounded load-cost proof')
     }
 
@@ -490,7 +493,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         } else return refuse('SURFACE_INPUT_INVALID', 'browser emitted an unsupported physical path', path)
     }
     const instructionPaths = SURFACE_TARGETS.filter(target => configuredSet.has(target)).map(target => [target, 'AGENTS.md'] as const)
-    add(markdown, 'CLAUDE.md', { harnesses: ['claudecode'], scope: 'always', capability: 'instructed', bytes: '@AGENTS.md' })
+    if (configuredSet.has('claudecode')) add(markdown, 'CLAUDE.md', { harnesses: ['claudecode'], scope: 'always', capability: 'instructed', bytes: '@AGENTS.md' })
     if (typeof captured.instructions === 'string') for (const [target, path] of instructionPaths) {
         add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: captured.instructions })
     }

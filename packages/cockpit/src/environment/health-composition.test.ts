@@ -275,6 +275,10 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
 
         expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'CODEX_HOOK_UNTRUSTED',
             message: expect.stringContaining(`Codex has not trusted the guard hook in ${join(candidate.checkout, '.codex/hooks.json')}`) }))
+        // A team that does not list Codex gets no Codex advice, even beside a leftover hooks.json.
+        await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[surfaces]\ntools = ["claudecode"]\n`)
+        const claudeOnly = await runDoctor({ configPath: candidate.configPath }, adapters)
+        expect(claudeOnly.diagnostics.map(({ code }) => code)).not.toContain('CODEX_HOOK_UNTRUSTED')
     })
 
     it('warns from doctor when PATH holds a relative entry, under which the guard asks before every command', async () => {

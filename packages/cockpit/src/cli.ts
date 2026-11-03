@@ -610,8 +610,10 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             if (loaded.kind !== 'complete') return loaded
             const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
             if (metadata) return metadata
+            // Codex hook trust concerns a Codex user only; a leftover hooks.json of an unlisted Codex is stale, which check reports.
             const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
-                inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env })])
+                loaded.result.config.surfaces.tools.includes('codexcli')
+                    ? inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env }) : Promise.resolve([])])
             return { ...outcome, diagnostics: [...outcome.diagnostics, ...hookTrust], result: outcome.report
                 ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
                 : outcome.result }

@@ -1,7 +1,7 @@
 export const mechanism = {
     id: 'shipped-harness-registry',
     module: 'packages/cockpit/src/surfaces/harness-registry.ts',
-    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget', 'isMeasurementDate'],
+    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'DEFAULT_SURFACE_TOOLS', 'listedSurfaceTargets', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget', 'isMeasurementDate'],
 } as const
 
 // Guard firing and instruction loading for these harnesses are dated runs (the firing records below
@@ -84,6 +84,14 @@ export const SURFACE_TARGETS = Object.freeze(HARNESS_REGISTRY.map(row => row.tar
 export const GUARD_SURFACE_TARGETS = Object.freeze(HARNESS_REGISTRY
     .filter((row): row is Extract<HarnessRegistryRow, { readonly guard: { readonly capability: 'instructed' } }> => row.guard.capability === 'instructed')
     .map(row => row.target)) as readonly GuardSurfaceTarget[]
+// The tools a cockpit renders when cockpit.toml lists none: the ones whose guard firing is a dated run
+// of the real tool. A tool the matrix has not measured is rendered only when a team lists it.
+export const DEFAULT_SURFACE_TOOLS = GUARD_SURFACE_TARGETS
+
+/** The listed tools in registry order, so rendering and drift do not depend on how the list is spelled. */
+export function listedSurfaceTargets(tools: readonly string[]): readonly SurfaceTarget[] {
+    return Object.freeze(SURFACE_TARGETS.filter(target => tools.includes(target)))
+}
 // Native MCP and permission outputs can select executable programs or relax harness authority.
 // The guard derives its protected files from this owner so a new harness cannot omit the boundary.
 export const SURFACE_EXECUTION_CONTROL_PATHS = Object.freeze([...new Set(HARNESS_REGISTRY.flatMap(row =>

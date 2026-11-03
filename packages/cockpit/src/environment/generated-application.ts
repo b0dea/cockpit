@@ -34,7 +34,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { deriveRegistry, type DerivedRegistry } from '../registry-derivation.js'
 import { SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../surfaces/contract.js'
-import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, SURFACE_PUBLICATION_ANCHORS } from '../surfaces/harness-registry.js'
+import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, listedSurfaceTargets, SURFACE_PUBLICATION_ANCHORS } from '../surfaces/harness-registry.js'
 import { mergeAdoptedSurface } from '../surfaces/adoption.js'
 import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from '../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations, type ActiveSurfaceOverride, type SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -1891,9 +1891,10 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
 }
 
 function expectedSurfaceOutputs(
+    tools: readonly SurfaceTarget[],
     features: readonly SurfaceFeature[],
     sources: readonly SurfaceSourceFile[],
-): Readonly<Record<SurfaceTarget, readonly string[]>> {
+): Readonly<Partial<Record<SurfaceTarget, readonly string[]>>> {
     const has = (feature: SurfaceFeature) => features.includes(feature)
     const hasFor = (target: SurfaceTarget, feature: SurfaceFeature) => has(feature)
         && harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
@@ -1946,7 +1947,7 @@ function expectedSurfaceOutputs(
         rows.cursor.push(`.cursor/skills/${path}`)
         rows.grokcli.push(`.grok/skills/${path}`)
     }
-    return Object.freeze(Object.fromEntries(SURFACE_TARGETS.map(target => [target, Object.freeze([...new Set(rows[target])].sort(compareCodeUnits))]))) as Readonly<Record<SurfaceTarget, readonly string[]>>
+    return Object.freeze(Object.fromEntries(tools.map(target => [target, Object.freeze([...new Set(rows[target])].sort(compareCodeUnits))]))) as Readonly<Partial<Record<SurfaceTarget, readonly string[]>>>
 }
 
 function expectedClaudePluginOutputs(
@@ -2161,7 +2162,7 @@ function nativeSources(
         sources.push(Object.freeze({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` }))
     }
     const paths = (target: SurfaceTarget) => [...new Set(grants.filter(grant => grant.target === target).map(grant => grant.path))].sort(compareCodeUnits)
-    const claudeServers = mcp.result.harnesses.find(row => row.target === 'claudecode')!.servers
+    const claudeServers = mcp.result.harnesses.find(row => row.target === 'claudecode')?.servers ?? []
     const enabledMcpjsonServers = claudeServers.filter(server => server.enabled).map(server => server.name).sort()
     // Claude Code ignores `disabled` in `.mcp.json` and offers an unlisted server for one-click
     // approval; only this list keeps it off (measured with Claude Code 2.1.316 on 2026-11-02).
@@ -2557,6 +2558,9 @@ async function prepareSurfaces(
     manifest?: OwnershipManifest,
 ): Promise<PreparedEnvironment | RefusalOutcome> {
     const config = prepared.registry.config
+    // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
+    const tools = listedSurfaceTargets(config.surfaces.tools)
+    const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
     const profiles = [...prepared.rendered?.replay.profiles ?? []]
     const selected = config.sibling.filter(row => row.mount === 'always'
         || row.mount.startsWith('profile:') && profiles.includes(row.mount.slice('profile:'.length)))
@@ -2604,10 +2608,11 @@ async function prepareSurfaces(
         guideCapLines: config.cockpit.guide_cap,
         siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...projectionGuides(row)] })),
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),
-        directoryGrants: selected.flatMap(row => SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
+        directoryGrants: selected.flatMap(row => tools.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
         guideObservations: observedGuides.observations,
         standingSources: [],
         loadCharacterizations: GUIDE_LOAD_CHARACTERIZATIONS,
+        targets: tools,
     }
     let projection = planSiblingProjection(projectionInput)
     if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)
@@ -2632,7 +2637,7 @@ async function prepareSurfaces(
         declarations.push(...parsed.declarations)
         evidence.push(Object.freeze({ kind: 'mcp' as const, root, path: source.path, sha256: read.sha256, identity: sourceIdentity(read.identity) }))
     }
-    let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved: config.mcp.approved, targets: SURFACE_TARGETS })
+    let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved: config.mcp.approved, targets: tools })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
     const unapprovedMcpServers = Object.freeze(mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
         .map(row => Object.freeze({ name: row.server!, sha256: row.sha256!, sources: Object.freeze((row.sources ?? []).map(source =>
@@ -2737,7 +2742,7 @@ async function prepareSurfaces(
                 // The leased endpoint rewrites an approved argument, so the bound server carries its own digest.
                 approved: { ...Object.fromEntries(Object.entries(config.mcp.approved).filter(([name]) => name !== 'playwright')),
                     ...(browserTargets.size > 0 ? { playwright: mcpApprovalDigest(browserMcp, prepared.root) } : {}) },
-                targets: SURFACE_TARGETS,
+                targets: tools,
             })
             if (boundMcp.kind !== 'complete') throw new RefusalError(`bound browser MCP declaration was refused: ${boundMcp.diagnostic.code}`)
             mcp = Object.freeze({ ...boundMcp, result: Object.freeze({ ...boundMcp.result,
@@ -2787,7 +2792,7 @@ async function prepareSurfaces(
     const testingRegistry = prepared.workEnvironment.testing
         ? createGateRegistry(prepared.workEnvironment.testing.declarations)
         : TESTING_GUIDE_REGISTRY
-    const configuredHarnesses = [...SURFACE_TARGETS, ...config.surfaces.harnesses.map(row => row.name)].sort()
+    const configuredHarnesses = [...tools, ...config.surfaces.harnesses.map(row => row.name)].sort()
     const testingConfiguration = prepared.workEnvironment.testing
     const explicitNativeHooks = testingConfiguration?.nativeHookInstall === 'explicit-native'
         ? testingConfiguration.nativeHookPolicy
@@ -2831,7 +2836,7 @@ async function prepareSurfaces(
         || source.path.startsWith(`${feature}/`) || feature === 'rules' && source.path.startsWith('rules/')
         || feature === 'subagents' && source.path.startsWith('subagents/') || feature === 'skills' && source.path.startsWith('skills/')))
     const bundleEntries: SurfaceDesiredEntry[] = []
-    const expected = expectedSurfaceOutputs(features, generatedSources)
+    const expected = expectedSurfaceOutputs(tools, features, generatedSources)
     const bundleRequest = config.surfaces.bundles.includes('claudecode-plugin') ? (() => {
         const bundleFeatures = features.filter(feature => feature === 'mcp' || feature === 'subagents'
             || feature === 'skills' || feature === 'hooks')
@@ -2845,7 +2850,7 @@ async function prepareSurfaces(
         })
     })() : undefined
     const estate = generatedSources.length === 0 ? undefined : await generateSurfaceEstate({
-        batch: { targets: SURFACE_TARGETS, features, sources: generatedSources, expectedOutputs: expected },
+        batch: { targets: tools, features, sources: generatedSources, expectedOutputs: expected },
         ...(bundleRequest ? { bundle: bundleRequest } : {}),
     })
     if (estate && estate.kind !== 'complete') {
@@ -2900,7 +2905,7 @@ async function prepareSurfaces(
             .flatMap(overlay => overlay.sources.flatMap(source => /^skills\/([^/]+)\/SKILL\.md$/.exec(source.path)?.[1] ?? []))
             .filter(name => !shippedSkills.some(shipped => shipped === name))
             .sort(compareCodeUnits),
-        collection: skillAsset('skills/collection.json'), terminal: skillAsset('skills/procedures/onboarding.md'), generated })
+        collection: skillAsset('skills/collection.json'), terminal: skillAsset('skills/procedures/onboarding.md'), generated, targets: tools })
     if (skillInspection.kind !== 'complete') {
         const diagnostic = skillInspection.diagnostics[0]
         return refuse(diagnostic?.code ?? 'SKILL_RENDER_INVALID', diagnostic?.message ?? 'rendered skill set was refused', diagnostic?.target)
@@ -2936,6 +2941,8 @@ async function prepareSurfaces(
         configFile: relative(prepared.root, prepared.configPath),
     })
     if (restrictions.kind !== 'complete') return refuse(restrictions.code, restrictions.message, 'surfaces')
+    const listedRestrictions = Object.freeze({ ...restrictions,
+        targets: Object.freeze(restrictions.targets.filter(row => tools.includes(row.target))) })
 
     const customReceipts: CustomSurfaceReceipt[] = []
     const customSources: CustomSourceIdentity[] = []
@@ -2983,7 +2990,7 @@ async function prepareSurfaces(
     const rootInstructions = distinctGeneratedRoots[0]
     const commonRootInstructions = [rootInstructions?.replace(/\n+$/u, ''), instructions.replace(/\n+$/u, '')]
         .filter((value): value is string => value !== undefined && value.length > 0).join('\n') + '\n'
-    projectionInput.standingSources = GUARD_SURFACE_TARGETS.map(target => ({
+    projectionInput.standingSources = guardedTools.map(target => ({
         target,
         path: 'AGENTS.md',
         content: commonRootInstructions,
@@ -2996,7 +3003,7 @@ async function prepareSurfaces(
     if (!prepared.workEnvironment.testing && tierGuide.bytes !== stripDevelopmentMarkers(asset('references/testing-tiers.md').bytes)) {
         return refuse('SURFACE_INPUT_INVALID', 'the shipped testing tier guide differs from its canonical registry projection', 'references/testing-tiers.md')
     }
-    const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions, instructions,
+    const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions: listedRestrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
         skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
         browserRunner: browser && prepared.workEnvironment.browser && Object.hasOwn(prepared.workEnvironment.browser, 'endpoint')
