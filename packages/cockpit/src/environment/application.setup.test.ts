@@ -73,10 +73,10 @@ describe('setup application choreography', () => {
         }))
     })
 
-    it('names an effective registry refusal at setup issuance', async () => {
+    it('names a registry refusal at setup issuance', async () => {
         const { loaded, candidate } = await unissuedContextFixture(derivedRegistrySource())
         applicationOwners.registryDerivation.deriveRegistry = () => ({
-            kind: 'refusal', code: 'REGISTRY_EFFECTIVE_CONFIG_INVALID', message: 'synthetic effective conflict',
+            kind: 'refusal', code: 'REGISTRY_INPUT_INVALID', message: 'synthetic registry conflict',
         })
 
         const issued = await issueContext(candidate, loaded)
@@ -85,7 +85,7 @@ describe('setup application choreography', () => {
             kind: 'refusal',
             diagnostics: [{
                 code: 'SETUP_PATH_TYPE_INVALID',
-                message: expect.stringContaining('REGISTRY_EFFECTIVE_CONFIG_INVALID'),
+                message: expect.stringContaining('REGISTRY_INPUT_INVALID'),
             }],
         })
     })

@@ -87,7 +87,6 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'libexec/fenced-group-runner.cjs',
     'libexec/fenced-supervisor.cjs',
     'libexec/generated-filesystem.cjs',
-    'libexec/host-input-probe.cjs',
     'libexec/install-filesystem.cjs',
     'libexec/rulesync-generator.NOTICE.md',
     'libexec/rulesync-generator.cjs',

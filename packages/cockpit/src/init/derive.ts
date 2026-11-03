@@ -154,12 +154,9 @@ function instructionArgv(argument: string): string[] | undefined {
     } catch { return shellForm } // Docker itself reads an instruction that is not a JSON array as shell form.
 }
 
-export interface DockerfileHealthcheck { readonly argv: string[]; readonly options: readonly string[] }
 export interface DockerfileFacts {
     readonly command?: string[]
     readonly ports: number[]
-    /** The final stage's HEALTHCHECK: its CMD and raw options, `none` for HEALTHCHECK NONE, or `invalid` when it names neither. */
-    readonly healthcheck?: DockerfileHealthcheck | 'none' | 'invalid'
 }
 
 export function readDockerfileFacts(text: string): DockerfileFacts {
@@ -167,12 +164,11 @@ export function readDockerfileFacts(text: string): DockerfileFacts {
     let ports: number[] = []
     let entrypoint: string[] | undefined
     let cmd: string[] | undefined
-    let healthcheck: DockerfileFacts['healthcheck']
     for (const line of joinLogical(text)) {
         const [keyword = '', ...rest] = line.split(/\s+/)
         const argument = line.slice(keyword.length).trim()
         switch (keyword.toUpperCase()) {
-            case 'FROM': ports = []; entrypoint = undefined; cmd = undefined; healthcheck = undefined; break
+            case 'FROM': ports = []; entrypoint = undefined; cmd = undefined; break
             case 'EXPOSE':
                 for (const token of rest) {
                     const match = /^(\d{1,5})(?:\/(?:tcp|udp))?$/i.exec(token)
@@ -181,57 +177,14 @@ export function readDockerfileFacts(text: string): DockerfileFacts {
                 break
             case 'ENTRYPOINT': entrypoint = instructionArgv(argument); break
             case 'CMD': cmd = instructionArgv(argument); break
-            case 'HEALTHCHECK': {
-                if (/^none$/i.test(argument)) { healthcheck = 'none'; break }
-                const match = /^((?:--[a-z-]+=\S+\s+)*)CMD\s+(.+)$/i.exec(argument)
-                const argv = match ? instructionArgv(match[2]!.trim()) : undefined
-                healthcheck = match && argv ? { argv, options: match[1]!.trim().split(/\s+/).filter(Boolean) } : 'invalid'
-                break
-            }
         }
     }
     // A shell-form ENTRYPOINT ignores CMD; an exec-form one receives CMD as arguments.
     const shellEntrypoint = entrypoint?.[0] === 'sh' && entrypoint[1] === '-c' && entrypoint.length === 3
     const command = entrypoint === undefined ? cmd : shellEntrypoint ? entrypoint : [...entrypoint, ...(cmd ?? [])]
-    return { ...(command === undefined ? {} : { command }), ports: [...new Set(ports)],
-        ...(healthcheck === undefined ? {} : { healthcheck }) }
+    return { ...(command === undefined ? {} : { command }), ports: [...new Set(ports)] }
 }
 
-// Docker's documented values for the options a HEALTHCHECK leaves out.
-const DOCKER_HEALTHCHECK_DEFAULTS = { interval: 30, timeout: 30, 'start-period': 0, retries: 3 } as const
-const DOCKER_DURATION = /^(?=\d)(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/
-
-/** A generated-service health declaration from a final-stage HEALTHCHECK, or why none is proposed. */
-function healthProposal(service: string, healthcheck: DockerfileHealthcheck): { value: unknown; reason: string } | { skipped: string } {
-    const stated = new Map<string, string>()
-    for (const option of healthcheck.options) {
-        const [name = '', value = ''] = option.slice(2).split('=', 2)
-        stated.set(name, value)
-    }
-    const seconds: Record<string, number> = {}
-    for (const name of ['interval', 'timeout', 'start-period'] as const) {
-        const value = stated.get(name)
-        const match = value === undefined ? undefined : DOCKER_DURATION.exec(value)
-        if (value !== undefined && !match) return { skipped: `HEALTHCHECK --${name}=${value} is not a whole number of seconds, so no health probe is proposed` }
-        seconds[name] = match ? Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0) : DOCKER_HEALTHCHECK_DEFAULTS[name]
-    }
-    const retries = stated.has('retries') ? Number(stated.get('retries')) : DOCKER_HEALTHCHECK_DEFAULTS.retries
-    if (!Number.isInteger(retries) || retries < 1 || retries > 100) return { skipped: `HEALTHCHECK --retries=${stated.get('retries')} is not between 1 and 100, so no health probe is proposed` }
-    for (const name of ['interval', 'timeout'] as const) {
-        if (seconds[name]! < 1 || seconds[name]! > 3600) return { skipped: `HEALTHCHECK --${name} is not between 1 and 3600 seconds, so no health probe is proposed` }
-    }
-    if (seconds['start-period']! > 3600) return { skipped: 'HEALTHCHECK --start-period exceeds 3600 seconds, so no health probe is proposed' }
-    const defaulted = (['interval', 'timeout', 'start-period', 'retries'] as const).filter(name => !stated.has(name))
-    const startPeriod = Math.max(seconds['start-period']!, 1)
-    return {
-        value: { property: 'the Dockerfile HEALTHCHECK command exits 0',
-            probe: { location: 'in-stack', service, cwd: '.', argv: healthcheck.argv, timeout_seconds: seconds.timeout },
-            interval_seconds: seconds.interval, timeout_seconds: seconds.timeout, retries, start_period_seconds: startPeriod },
-        reason: `the final stage of the Dockerfile declares this HEALTHCHECK, run in the service's own image${defaulted.length === 0 ? ''
-            : `; ${defaulted.map(name => `--${name}`).join(', ')} ${defaulted.length === 1 ? 'is' : 'are'} unset, so Docker's defaults apply`}${seconds['start-period'] === 0
-            ? '; Docker counts failures from the first check, and the schema\'s shortest start period is 1 second' : ''}; probe.service names the service by its repository, so change it with the service id`,
-    }
-}
 
 function envNames(text: string): string[] {
     const names = new Set<string>()
@@ -546,35 +499,26 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                 reason: `no test entry point was found, so no [testing] gate is proposed for ${slug}; looked for ${TEST_ENTRY_LOOKED_FOR}` })
             // setup resolves a non-none toolchain to exactly one install policy and refuses without
             // one, so the toolchain is proposed together with the policy row the interview must hold.
-            if (node) facts.push({ fields: ['sibling', 'environment.install_policies', 'environment.generated'], target: `${slug}.toolchain`, value: 'node',
+            if (node) facts.push({ fields: ['sibling', 'environment.install_policies'], target: `${slug}.toolchain`, value: 'node',
                 provenance: { kind: 'inferred', source: relative(directory.path, node.lockfile),
-                    reason: `${node.lockfile} is ${node.manager}'s lockfile, so the node toolchain is proposed; setup then needs exactly one environment.install_policies row with toolchain "node" and lockfile "${node.lockfile}" and refuses INSTALL_POLICY_MISSING without it, so declare that row with the product's own volume, install and load_probe commands, and mount that volume in the generated service that runs the product (a [[environment.generated.volumes]] row with purpose = "dependencies", which the config refuses GENERATED_DEPENDENCY_VOLUME_MISSING without), or keep toolchain "none", as a cockpit with no runtime environment must, since it is never asked for install policies` } })
+                    reason: `${node.lockfile} is ${node.manager}'s lockfile, so the node toolchain is proposed; setup then needs exactly one environment.install_policies row with toolchain "node" and lockfile "${node.lockfile}" and refuses INSTALL_POLICY_MISSING without it, or keep toolchain "none", as a cockpit with no runtime environment must, since it is never asked for install policies` } })
             const dockerfile = await readHere('Dockerfile')
             const parsed = dockerfile === undefined ? undefined : readDockerfileFacts(dockerfile)
             if (parsed) {
                 const source = relative(directory.path, 'Dockerfile')
-                if (parsed.command) facts.push({ fields: ['estate.runnable', 'environment.generated'], target: `${slug}.command`,
+                if (parsed.command) facts.push({ fields: ['estate.runnable', 'environment.compose_files'], target: `${slug}.command`,
                     value: parsed.command, provenance: { kind: 'inferred', source,
                         reason: 'the final stage of the Dockerfile sets this ENTRYPOINT/CMD' } })
-                if (parsed.ports.length > 0) facts.push({ fields: ['environment.generated', 'ports.bases'], target: `${slug}.container_ports`,
+                if (parsed.ports.length > 0) facts.push({ fields: ['environment.compose_files', 'ports.bases'], target: `${slug}.container_ports`,
                     value: parsed.ports, provenance: { kind: 'inferred', source,
                         reason: 'the final stage of the Dockerfile EXPOSEs these container ports' } })
-                const health = parsed.healthcheck
-                if (health === 'none') skipped.push({ source, reason: 'the final stage disables its health check with HEALTHCHECK NONE, so no health probe is proposed' })
-                else if (health === 'invalid') skipped.push({ source, reason: 'the final stage HEALTHCHECK names neither NONE nor CMD with --name=value options, so no health probe is proposed' })
-                else if (health) {
-                    const proposal = healthProposal(slug, health)
-                    if ('skipped' in proposal) skipped.push({ source, reason: proposal.skipped })
-                    else facts.push({ fields: ['environment.generated'], target: `${slug}.health`, value: proposal.value,
-                        provenance: { kind: 'inferred', source, reason: proposal.reason } })
-                }
             }
             // The image's own command wins: a package script is what runs when no Dockerfile says.
             const scripts = parsed?.command ? undefined : field(await readJsonHere('package.json'), 'scripts')
             const runScripts = PACKAGE_RUN_SCRIPTS.filter(name => { const value = field(scripts, name); return typeof value === 'string' && value.trim() !== '' })
             if (runScripts.length > 0) {
                 const [script, ...others] = runScripts
-                facts.push({ fields: ['estate.runnable', 'environment.generated'], target: `${slug}.command`,
+                facts.push({ fields: ['estate.runnable', 'environment.compose_files'], target: `${slug}.command`,
                     value: [node?.manager ?? 'npm', 'run', script!], provenance: { kind: 'inferred', source: relative(directory.path, 'package.json'),
                         reason: `package.json has a ${script} script and no Dockerfile in this repository sets ENTRYPOINT/CMD; ${managerReason(node)}${others.length
                             ? `; ${others.join(' and ')} ${others.length === 1 ? 'is' : 'are'} also declared, so replace the command if the stack should run that instead` : ''}` } })
@@ -606,7 +550,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             if (text === undefined) continue
             const source = relative(directory.path, template)
             const names = envNames(text)
-            if (slug !== undefined && template === '.env.example' && names.length > 0) facts.push({ fields: ['environment.generated'],
+            if (slug !== undefined && template === '.env.example' && names.length > 0) facts.push({ fields: ['environment.compose_files'],
                 target: `${slug}.env_names`, value: names,
                 provenance: { kind: 'inferred', source, reason: 'these variable names appear in .env.example; their values are never read' } })
             for (const name of names) {
@@ -627,7 +571,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             if (document !== undefined) {
                 if (source === '..' || source.startsWith('../') || isAbsolute(source)) {
                     skipped.push({ source,
-                        reason: `is outside the cockpit root, so environment.compose_files cannot represent it; write a compose.yml at the cockpit root that reaches each checkout through its sibling variable${slug === undefined ? '' : ` (such as \${${deriveSiblingVariable(slug)}})`} and answer environment.compose_files = ["compose.yml"], or choose generated environment configuration; then rerun ${initCommand({ root: configurationRoot })} with the options you ran it with` })
+                        reason: `is outside the cockpit root, so environment.compose_files cannot represent it; write a compose.yml at the cockpit root that reaches each checkout through its sibling variable${slug === undefined ? '' : ` (such as \${${deriveSiblingVariable(slug)}})`} and answer environment.compose_files = ["compose.yml"]; then rerun ${initCommand({ root: configurationRoot })} with the options you ran it with` })
                 } else composeFiles.push({ source, document })
             }
             break
@@ -661,7 +605,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                 const key = `${service.name}\0${service.image}`
                 if (seenServices.has(key)) continue
                 seenServices.add(key)
-                facts.push({ fields: ['environment.generated'], target: `services.${service.name}`, value: { image: service.image },
+                facts.push({ fields: ['environment.compose_files'], target: `services.${service.name}`, value: { image: service.image },
                     provenance: { kind: 'inferred', source,
                         reason: `workflow job "${service.job}" runs the backing service "${service.name}" from this image` } })
             }
@@ -713,10 +657,10 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     }
     // compose-first resolves every relative path against the first listed file's directory, so one
     // product Compose file can be run in place but several cannot be listed together.
-    if (composeFiles.length === 1) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: [composeFiles[0]!.source],
+    if (composeFiles.length === 1) facts.unshift({ fields: ['environment.compose_files'], target: 'environment.compose_files', value: [composeFiles[0]!.source],
         provenance: { kind: 'inferred', source: composeFiles[0]!.source,
-            reason: 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment' } })
+            reason: 'a Compose file already exists, so cockpit can run it as written' } })
     else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
-        reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"], or choose generated environment configuration` })
+        reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"]` })
     return Object.freeze({ facts: Object.freeze(facts), skipped: Object.freeze(skipped) })
 }

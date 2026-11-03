@@ -11,7 +11,7 @@ You look at the running product and report what you saw. You do not change code:
 yourself has nobody left to check it, so hand it to whoever owns the repository.
 
 1. **Orient before driving.** Read `cockpit.toml` for the application entry points (the routes), the
-   sign-in setup and the persona source named under the data fixtures. Run
+   sign-in setup and the test users the product's seed creates. Run
    `npx --no cockpit doctor --config cockpit.toml --json` and confirm the stack is up; a page that fails because the
    stack is down is not a finding, and neither is a refusal that says nothing answered at a URL. Done when you can
    list the routes, the roles and the sign-in state you will use.

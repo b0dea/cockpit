@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,25 +13,6 @@ const launcher = join(repositoryRoot, 'packages/cockpit/bin/cockpit.mjs')
 const scratch = mkdtempSync(join(tmpdir(), 'cockpit-example-'))
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
-
-function copyExample(name: string) {
-    const root = join(scratch, name)
-    cpSync(join(repositoryRoot, 'examples/synthetic'), root, { recursive: true })
-    mkdirSync(join(root, 'repositories/app'), { recursive: true })
-    mkdirSync(join(root, 'repositories/web'), { recursive: true })
-    mkdirSync(join(root, 'fixtures'), { recursive: true })
-    writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
-    writeFileSync(join(root, 'repositories/app/.gitignore'), '.env\n')
-    writeFileSync(join(root, 'repositories/app/package.json'), '{"name":"synthetic-app","version":"0.0.0","scripts":{"build":"node --check probe.mjs","test":"node --check probe.mjs"}}\n')
-    writeFileSync(join(root, 'repositories/app/package-lock.json'), '{"name":"synthetic-app","version":"0.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"synthetic-app","version":"0.0.0"}}}\n')
-    writeFileSync(join(root, 'repositories/app/probe.mjs'), 'process.exitCode = 0\n')
-    for (const directory of [root, join(root, 'repositories/app'), join(root, 'repositories/web')]) {
-        execFileSync('git', ['init', '--quiet', directory])
-    }
-    execFileSync('git', ['-C', join(root, 'repositories/app'), 'add', '.gitignore', 'package.json', 'package-lock.json', 'probe.mjs'])
-    execFileSync('git', ['-C', join(root, 'repositories/app'), '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'synthetic fixture'])
-    return root
-}
 
 // Everything an agent session can load from a synced cockpit: the shared guides and every
 // generated skill, agent and settings directory.
@@ -73,127 +54,7 @@ function run(root: string, argv: string[]) {
     return { ...result, response: result.stdout ? JSON.parse(result.stdout) : undefined }
 }
 
-describe('the public synthetic cockpit', () => {
-    it('executes every classified non-destructive command in the synthetic example README', () => {
-        const root = copyExample('complete')
-        const readme = readFileSync(join(root, 'README.md'), 'utf8')
-        const { executable, humanOnly } = inventory(readme)
-
-        expect(executable.map(argv => argv.slice(0, 2))).toEqual([
-            ['./node_modules/.bin/cockpit', 'sync'], ['./node_modules/.bin/cockpit', 'sync'],
-            ['./node_modules/.bin/cockpit', 'setup'], ['./node_modules/.bin/cockpit', 'check'],
-        ])
-        expect(humanOnly.map(argv => argv.slice(0, 2))).toEqual([
-            ['npm', 'init'], ['npm', 'install'],
-            ['mkdir', '-p'], ['printf', '\'[{"id":"synthetic"}]\\n\''],
-            ['printf', '\'.env\\n\''],
-            ['printf', '\'%s\\n\''], ['printf', '\'%s\\n\''], ['printf', '\'process.exitCode'],
-            ['git', 'init'], ['git', 'init'], ['git', 'init'],
-            ['git', '-C'], ['git', '-C'],
-            ['git', '-C'], ['git', '-C'],
-        ])
-        for (const argv of executable) {
-            if (argv[1] === 'setup') {
-                const app = join(root, 'repositories/app')
-                execFileSync('git', ['-C', app, 'add', '.env.example'])
-                execFileSync('git', ['-C', app, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
-                    'commit', '--quiet', '-m', 'generated synthetic template'])
-            }
-            const result = run(root, argv)
-            expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
-            expect(result.stderr).toBe('')
-            expect(result.response.invocation.exitCode).toBe(0)
-        }
-        const rerun = run(root, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
-        expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0)
-        expect(rerun.response.result.siblings.map((row: { changed: boolean }) => row.changed)).toEqual([false, false])
-        expect(existsSync(join(root, 'repositories/web/.git'))).toBe(true)
-        expect(existsSync(join(root, '.cockpit/generated-environment-ownership.json'))).toBe(true)
-        expect(existsSync(join(root, 'compose.generated.yml'))).toBe(true)
-        expect(existsSync(join(root, 'repositories/app/.env'))).toBe(true)
-        expect(existsSync(join(root, 'app/.env.example'))).toBe(false)
-    })
-
-    it('fails for a missing sibling and stale generated output', () => {
-        const missing = copyExample('missing-sibling')
-        expect(run(missing, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
-        execFileSync('git', ['-C', join(missing, 'repositories/app'), 'add', '.env.example'])
-        execFileSync('git', ['-C', join(missing, 'repositories/app'), '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
-            'commit', '--quiet', '-m', 'generated synthetic template'])
-        rmSync(join(missing, 'repositories/web'), { recursive: true })
-        // web is an existing checkout (acquire "none"): setup reports it absent and leaves it alone,
-        // and check refuses the cockpit until it is back.
-        const absent = run(missing, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
-        expect(absent.response.diagnostics).toContainEqual(expect.objectContaining({ code: 'SETUP_NONE_ABSENT', target: join(realpathSync(missing), 'repositories/web') }))
-        const missingResult = run(missing, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
-        expect(missingResult.status).toBe(2)
-        expect(missingResult.response.diagnostics).toEqual([expect.objectContaining({ code: 'SIBLING_MISSING', target: 'sibling:web' })])
-
-        const stale = copyExample('stale')
-        expect(run(stale, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
-        const generated = join(stale, '.agents/skills/cockpit-setup/SKILL.md')
-        expect(existsSync(generated)).toBe(true)
-        writeFileSync(generated, `${readFileSync(generated, 'utf8')}\nstale\n`)
-        const staleResult = run(stale, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
-        expect(staleResult.status).toBe(2)
-        expect(staleResult.response.diagnostics.map((row: { code: string }) => row.code)).toContain('SURFACE_STATE_CONFLICT')
-    })
-
-    it('renders a valid Compose file from the minimal example and reports its undecided subjects', () => {
-        const root = join(scratch, 'minimal')
-        cpSync(join(repositoryRoot, 'examples/minimal'), root, { recursive: true })
-        execFileSync('git', ['init', '--quiet', root])
-        const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
-        expect(executable.map(argv => argv.slice(1, 2))).toEqual([['sync'], ['sync'], ['check']])
-        const results = executable.map(argv => {
-            const result = run(root, argv)
-            expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
-            return result
-        })
-        expect(results[0]!.response.result.changes).toContainEqual({ operation: 'write', path: 'compose.generated.yml' })
-        const compose = readFileSync(join(root, 'compose.generated.yml'), 'utf8')
-        expect(compose).toContain('    build:\n      context: api\n')
-        const native = spawnSync('docker', ['compose', '-f', join(root, 'compose.generated.yml'), 'config', '-q'], {
-            cwd: root, encoding: 'utf8', env: { ...process.env, COCKPIT_OWNER_ID: 'synthetic-owner', COCKPIT_STACK_ID: 'synthetic-stack' },
-        })
-        if (native.error) {
-            expect({ kind: 'unavailable', reason: (native.error as NodeJS.ErrnoException).code ?? 'native Compose did not return' }).toMatchObject({ kind: 'unavailable' })
-        } else expect(native.status, native.stderr).toBe(0)
-        expect(readFileSync(join(root, 'docs/cockpit/environment-decisions.md'), 'utf8')).toContain('## service:api\n\n- Status: **undecided**')
-        const check = results[2]!.response
-        expect(check.result.currentness.decisions).toEqual({
-            path: 'docs/cockpit/environment-decisions.md', undecided: 2, subjects: ['port:api:http', 'service:api'],
-        })
-        expect(check.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'GENERATED_DECISIONS_UNDECIDED' }))
-
-        // A host path no generated service mounts reaches no container, so check refuses it.
-        const configPath = join(root, 'cockpit.toml')
-        writeFileSync(configPath, readFileSync(configPath, 'utf8').replace('[environment]\n', '[environment]\ngenerated_host_paths = [".cache"]\n'))
-        expect(run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
-        const unmounted = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
-        expect(unmounted.status, unmounted.stdout).toBe(2)
-        expect(unmounted.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([{
-            severity: 'error', code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
-            message: 'environment.generated_host_paths lists .cache, but no generated service bind-mounts it, a path inside it or a directory that holds it, and no [browser] writes there, so the entry hands nothing to a container',
-        }])
-        expect(unmounted.response.guidance).toContainEqual({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
-            text: expect.stringMatching(/^remove "\.cache" from environment\.generated_host_paths in cockpit\.toml, .*then run npx --no cockpit check --config /) })
-    })
-
-    it('validates the browser variant of the minimal example up to the port lease that up creates', () => {
-        const root = join(scratch, 'minimal-browser')
-        cpSync(join(repositoryRoot, 'examples/minimal'), root, { recursive: true })
-        execFileSync('git', ['init', '--quiet', root])
-        // Every declared digest, pin and runner field is checked before the lease, so the only
-        // refusal left for a correct example is the one its README answers by running up first.
-        const result = run(root, ['cockpit', 'sync', '--config', 'cockpit.browser.toml', '--json'])
-        expect(result.status, result.stdout).toBe(2)
-        expect(result.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error'))
-            .toEqual([expect.objectContaining({ code: 'GENERATED_INPUT_INVALID', target: 'browser' })])
-        expect(result.response.guidance).toContainEqual({ code: 'GENERATED_INPUT_INVALID', target: 'browser',
-            text: `run npx --no cockpit up --config ${join(realpathSync(root), 'cockpit.browser.toml')}, which leases the ports and publishes the runner; sync works while that lease is held` })
-    })
-
+describe('the minimal example cockpit', () => {
     it('opens the generated guide with what the cockpit is, how to work in it and the rules with their reasons', () => {
         const root = join(scratch, 'minimal-guide')
         cpSync(join(repositoryRoot, 'examples/minimal'), root, { recursive: true })
@@ -229,7 +90,7 @@ const DOCKER_ABSENT = 'Executable was not found in the supplied search path: doc
 const docker = await resolveDockerExecutable(process.env)
 const dockerAbsent = docker.state !== 'available' && docker.reason === DOCKER_ABSENT
 
-describe('cockpits without a generated environment', () => {
+describe('the compose-first and docs-only example cockpits', () => {
     function readsTopology(check: ReturnType<typeof run>): boolean {
         if (!dockerAbsent) return true
         expect(check.status, `${check.stdout}\n${check.stderr}`).toBe(2)
@@ -314,6 +175,44 @@ describe('cockpits without a generated environment', () => {
         // cockpit does not rewrite published interfaces, so the example itself binds loopback.
         expect([...compose.matchAll(/^ {4}ports: \["([^"]+)"\]$/gm)].map(match => match[1]))
             .toEqual(['127.0.0.1:${API_HOST_PORT:-4200}:3000', '127.0.0.1:${WEB_HOST_PORT:-4300}:3000'])
+    })
+
+    it('runs the minimal example README commands and refuses a host path no Compose service mounts', () => {
+        const root = copyPlainExample('minimal', 'minimal')
+        const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
+        expect(executable.map(argv => argv.slice(1, 2))).toEqual([['sync'], ['sync'], ['check']])
+        const [preview, sync, check] = executable.map(argv => run(root, argv))
+        for (const result of [preview!, sync!]) expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
+        expect(preview!.response.result.changes).toContainEqual({ operation: 'write', path: 'compose.cockpit.yml' })
+        if (!readsTopology(check!)) return
+        expect(check!.status, `${check!.stdout}\n${check!.stderr}`).toBe(0)
+
+        // A host path no Compose service mounts reaches no container, so check refuses it.
+        const configPath = join(root, 'cockpit.toml')
+        writeFileSync(configPath, readFileSync(configPath, 'utf8').replace('[environment]\n', '[environment]\ngenerated_host_paths = [".cache"]\n'))
+        expect(run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
+        const unmounted = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(unmounted.status, unmounted.stdout).toBe(2)
+        expect(unmounted.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([
+            expect.objectContaining({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
+                message: expect.stringContaining('environment.generated_host_paths lists .cache, but no Compose service bind-mounts') })])
+        expect(unmounted.response.guidance).toContainEqual({ code: 'GENERATED_HOST_PATH_UNMOUNTED', target: 'environment.generated_host_paths:.cache',
+            text: expect.stringMatching(/remove "\.cache" from environment\.generated_host_paths in cockpit\.toml; then run npx --no cockpit check --config /) })
+    })
+
+    it('fails check for a missing sibling and for a hand-edited surface', () => {
+        const missing = syncedComposeFirst('missing-sibling')
+        rmSync(join(missing, 'web'), { recursive: true })
+        const missingResult = run(missing, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(missingResult.status).toBe(2)
+        expect(missingResult.response.diagnostics).toContainEqual(expect.objectContaining({ code: 'SIBLING_MISSING', target: 'sibling:web' }))
+
+        const stale = syncedComposeFirst('stale')
+        const generated = join(stale, '.agents/skills/cockpit-setup/SKILL.md')
+        writeFileSync(generated, `${readFileSync(generated, 'utf8')}\nstale\n`)
+        const staleResult = run(stale, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(staleResult.status).toBe(2)
+        expect(staleResult.response.diagnostics.map((row: { code: string }) => row.code)).toContain('SURFACE_STATE_CONFLICT')
     })
 
     it('preserves build-beside extensions when sync upgrades producer ownership', () => {

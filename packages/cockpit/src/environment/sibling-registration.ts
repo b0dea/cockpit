@@ -501,7 +501,7 @@ interface Reference { readonly where: string; readonly detail: string }
 
 const siblingVariable = (row: Sibling) => new RegExp(`(?<![A-Z0-9_])${row.var}(?![A-Z0-9_])`)
 
-/** Every place outside the row itself that names the sibling by slug or exported variable. */
+/** Every place outside the row itself that names the sibling's exported variable. */
 function referencesTo(config: CockpitConfig, index: number): Reference[] {
     const row = config.sibling[index]!
     const variable = siblingVariable(row)
@@ -512,10 +512,7 @@ function referencesTo(config: CockpitConfig, index: number): Reference[] {
         } else if (Array.isArray(value)) {
             value.forEach((item, position) => walk(item, `${path}[${position}]`))
         } else if (value !== null && typeof value === 'object') {
-            for (const [key, item] of Object.entries(value)) {
-                if (key === 'sibling' && item === row.slug) found.push({ where: `${path}.sibling`, detail: `references sibling "${row.slug}"` })
-                else walk(item, path === '' ? key : `${path}.${key}`)
-            }
+            for (const [key, item] of Object.entries(value)) walk(item, path === '' ? key : `${path}.${key}`)
         }
     }
     walk({ ...config, sibling: config.sibling.filter((_, position) => position !== index) }, '')
@@ -573,12 +570,8 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
     const failure = await commit(configPath, loaded.result.source.sha256, prepared, 'remove')
     if (failure) return failure
 
-    const flagged = [
-        ...(row.derives?.generated ? [`the generated environment files derived from ${row.slug}'s generated row`] : []),
-    ]
     const message = `removed sibling "${row.slug}" from ${configPath}. The checkout at ${resolve(dirname(configPath), config.cockpit.siblings_root, row.dir)} and every generated file were left alone.\n`
-        + (flagged.length > 0 ? `The next sync will flag these for review: ${flagged.join('; ')}.\n` : '')
         + `Comments above the removed table were kept. Run \`${cockpitCommand('sync', { config: configPath, args: '--dry-run' })}\` to see exactly what changes before syncing.\n`
     return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: message,
-        result: Object.freeze({ action: 'removed', config: configPath, slug: row.slug, dir: row.dir, flaggedForReview: flagged, next: cockpitCommand('sync', { config: configPath, args: '--dry-run' }) }) })
+        result: Object.freeze({ action: 'removed', config: configPath, slug: row.slug, dir: row.dir, next: cockpitCommand('sync', { config: configPath, args: '--dry-run' }) }) })
 }

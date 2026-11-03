@@ -8,7 +8,6 @@ import { posix } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { commandGroups, commands } from '../packages/cockpit/src/command-table.js'
-import { DECISIONS_PATH } from '../packages/cockpit/src/schema.js'
 
 export const mechanism = {
     id: 'documentation-checks',
@@ -20,7 +19,7 @@ export const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const INDEXES = { consumer: 'docs/README.md', contributor: 'docs/contributing/README.md' } as const
 // The consumer paths docs may name with `cockpit:ref consumer=`: files cockpit reads or writes in a
 // consumer's cockpit, not in this repository.
-const CONSUMER_PATHS = new Set(['cockpit.toml', DECISIONS_PATH])
+const CONSUMER_PATHS = new Set(['cockpit.toml'])
 
 export interface Diagnostic { readonly path: string; readonly line: number; readonly code: string; readonly message: string }
 export interface ProseLine { readonly line: number; readonly prose: string; readonly comments: readonly string[] }

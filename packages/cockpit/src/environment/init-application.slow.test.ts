@@ -27,8 +27,10 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     const packageBytes = JSON.stringify({ scripts: { start: 'node server.mjs' } })
     await writeFile(join(f.root, 'app/package.json'), packageBytes)
     await writeFile(join(f.root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
+    await writeFile(join(f.root, 'compose.yml'),
+        'services:\n  app:\n    image: synthetic.invalid/app:1\n    ports: ["127.0.0.1:${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["./app:/app"]\n')
     const sourceConfig = parseToml(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
-        sibling: Record<string, unknown>[]; ports: { bases: unknown }; environment: { install_policies: unknown; generated: unknown }
+        sibling: Record<string, unknown>[]; ports: { bases: unknown }; environment: { install_policies: unknown }
     }
     if (largePurpose) sourceConfig.sibling[0]!.purpose = 'p'.repeat(65_000)
     const synchronizeInputs: boolean[] = []
@@ -117,7 +119,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
                 : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
-                : question.field === 'environment.generated' ? sourceConfig.environment.generated
+                : question.field === 'environment.compose_files' ? ['compose.yml']
                 : question.field === 'environment.machine'
                     ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
@@ -140,7 +142,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     await writeFile(join(f.root, 'app/package.json'), packageBytes)
     await writeFile(f.destination, artifact.artifact!)
     expect(await loadCockpitConfig(f.destination)).toMatchObject({ kind: 'complete', status: 0,
-        result: { config: { cockpit: expect.not.objectContaining({ scope: expect.anything() }), environment: { generated: expect.any(Object) } } } })
+        result: { config: { cockpit: expect.not.objectContaining({ scope: expect.anything() }), environment: { compose_files: ['compose.yml'] } } } })
     const completed = await runInitApplication(accepted, adapters)
     expect(completed, JSON.stringify(completed)).toMatchObject({ kind: 'complete', status: 0,
         result: { stage: 'environment-verified' } })
@@ -193,7 +195,7 @@ it.each([
             : question.field === 'ports.bases' ? { WEB_HOST_PORT: 4100 }
                 : question.field === 'environment.install_policies' ? []
                     : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
-                        : question.field === 'environment.generated' ? { compose_files: ['compose.yml'] }
+                        : question.field === 'environment.compose_files' ? ['compose.yml']
                             : question.field === 'environment.machine'
                                 ? { runtime_memory_mb: 256, runtime_cpus: 1, free_disk_mb: 512, cold_start_seconds: 120 }
                                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
@@ -275,7 +277,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
     await writeFile(join(f.root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
     const sourceConfig = parseToml(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
         sibling: { purpose: string }[]; ports: { bases: Record<string, number> }; environment: {
-            install_policies: { load_probe: string[] }[]; generated: { services: { command: string[] }[] }
+            install_policies: { load_probe: string[] }[]
         }
     }
     const guards = { hosted_db_hosts: [] as string[], vendor_endpoint_hosts: [] as string[] }
@@ -284,7 +286,6 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
     } else {
         sourceConfig.sibling[0]!.purpose = 'p'.repeat(60_000)
         sourceConfig.ports.bases['A'.repeat(60_000)] = 4101
-        sourceConfig.environment.generated.services[0]!.command.push(...Array.from({ length: 5 }, () => 'a'.repeat(8_000)))
         sourceConfig.environment.install_policies[0]!.load_probe.push('a'.repeat(60_000))
         for (let index = 0; index < 128; index += 1) {
             const host = `${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${index}.example.test`
@@ -317,7 +318,8 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
                     : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
-                        : question.field === 'environment.generated' ? sourceConfig.environment.generated
+                        : question.field === 'environment.compose_files' ? ['compose.yml',
+                            ...bound === 'artifact' ? Array.from({ length: 5 }, (_, index) => `${'c'.repeat(8_000)}${index}.yml`) : []]
                             : question.field === 'environment.machine'
                                 ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
                                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }

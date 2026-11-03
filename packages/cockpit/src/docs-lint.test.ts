@@ -19,7 +19,7 @@ describe('documentation checks', () => {
         expect(page([
             '<!-- cockpit:ref path=packages/cockpit/src/cli.ts --> <!-- cockpit:ref schema=surfaces.overlays[].replaces.sha256 -->',
             '<!-- cockpit:ref command=work intake --> <!-- cockpit:ref command=work --> <!-- cockpit:ref consumer=cockpit.toml -->',
-            '<!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> <!-- an ordinary comment -->',
+            '<!-- an ordinary comment -->',
         ].join('\n'))).toEqual([])
         expect(page([
             '<!-- cockpit:ref path=packages/cockpit/src/missing.ts -->',

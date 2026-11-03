@@ -50,8 +50,16 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generat
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
-import { guardInstalledDirectories, guardLauncherEvidence, guardSearchDirectories, guardSearchPathRelativeEntry, guardSecretFiles, guardSensitivePathsBelow,
-    guardTrackedSensitivePaths, guardUnignoredSensitivePaths } from '../guards/protected-locations.js'
+import {
+    guardInstalledDirectories,
+    guardLauncherEvidence,
+    guardSearchDirectories,
+    guardSearchPathRelativeEntry,
+    guardSecretFiles,
+    guardSensitivePathsBelow,
+    guardTrackedSensitivePaths,
+    guardUnignoredSensitivePaths,
+} from '../guards/protected-locations.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
@@ -75,12 +83,11 @@ import {
     recordLifecycleStarted,
     resolveLifecycleStage,
     type CurrentLifecycleRecord,
-    type GeneratedLifecycleReplay,
     type LifecycleHistoryTransition,
     type LifecycleRecordValue,
     type RuntimeInputs,
 } from './lifecycle-stage.js'
-import { generatedApplicationProjection, prepareGeneratedEnvironmentCurrentness, type GeneratedApplicationProjection, type GeneratedEnvironmentCurrentness } from './generated-application.js'
+import { prepareGeneratedEnvironmentCurrentness, type GeneratedEnvironmentCurrentness } from './generated-application.js'
 import { observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime, declaresNothingToRun, DeclarationRefusalError } from './declaration.js'
 import { readinessReport, type ReadinessReport } from '../readiness.js'
@@ -88,12 +95,6 @@ import type { ReleaseFreshness } from '../freshness.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import type { ActiveSurfaceOverride, SurfaceUpgradeFinding } from '../surfaces/merge.js'
 import { SURFACE_FEATURES } from '../surfaces/contract.js'
-import { isInstallObservation, projectInstallProgress, type PlanInstallInput } from './installs.js'
-import { isHostObservation } from './host-observation.js'
-import { isGeneratedObservation } from './generated-stack.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
-import { isDataModeCompletion, isDataModeObservation, readDataModeOutcome, consumeDataModeOutcomeProjection, type DataModeExecutionResult } from './data-plane.js'
-import { isExternalDependencyObservation, isExternalDependencyObservationProjection, projectExternalDependencyProgress } from './external-dependencies.js'
 import type { EnvironmentSeedPlan, EnvironmentSeedResult } from './templates.js'
 import {
     observeInstallPolicyLockfiles,
@@ -156,7 +157,6 @@ import {
     admitRuntimeServiceRevalidation,
     createRuntimeServiceHealthPlan,
     createRuntimeServicePlan,
-    admitBuiltImageLauncher,
     createRuntimeServiceRevalidationPlan,
     observeRuntimeServiceColdStart,
     resolveRuntimeServiceOrder,
@@ -285,9 +285,9 @@ export interface GuardEvaluationApplicationAdapters {
     readonly execute?: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }
 
-// `npx --no cockpit logs --service <id>` is an ordinary invocation only for a declared service. A generated
-// stack declares its services; a compose-first cockpit's services are whatever its own Compose files
-// resolve to, so they are read from Compose rather than guessed, and an unreadable topology refuses.
+// `npx --no cockpit logs --service <id>` is an ordinary invocation only for a declared service. A
+// cockpit's services are whatever its own Compose files resolve to, so they are read from Compose
+// rather than guessed, and an unreadable topology refuses.
 async function guardServiceIds(
     config: CockpitConfig,
     root: string,
@@ -298,7 +298,6 @@ async function guardServiceIds(
     }>,
 ): Promise<readonly string[] | string> {
     const runtime = declaredRuntime(config.environment)
-    if (runtime === 'generated') return config.environment.generated!.services.map(service => service.id)
     if (runtime === 'none') return Object.freeze([])
     const docker = observe.resolveDocker ? await observe.resolveDocker() : undefined
     if (docker?.state !== 'available') return docker?.reason ?? 'no Docker executable resolver is bound'
@@ -911,16 +910,6 @@ interface AcquiredPorts {
     readonly retainOnFailure: () => void
 }
 
-interface GeneratedProgress {
-    readonly applied: readonly string[]
-    readonly notApplied: readonly string[]
-    readonly attempted?: readonly string[]
-}
-
-type GeneratedCommandOutcome<T> = EnvironmentCommandOutcome<T> & {
-    readonly progressEvidence?: readonly unknown[]
-}
-
 // Readiness adapters resolve to undefined when they cannot vouch for their evidence. When the
 // owner they consulted refused with its own diagnostics (an occupied port family, a held state
 // lock, a stopped runtime), they hand those to `refuse` instead: collapsing them into a generic
@@ -937,13 +926,13 @@ interface LifecycleCommandAdapters {
     withRuntimeReadiness<T>(context: LifecycleRunContext, use: (runtime: RuntimeReadiness) => Promise<T>, ports?: PortLeaseProjection, refuse?: ReadinessRefusal<T>, purpose?: RuntimeReadinessPurpose): Promise<T | undefined>
 }
 
+export type SeedOutcome =
+    | Readonly<{ kind: 'none' | 'current' | 'ran' }>
+    | Readonly<{ kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] }>
+
 export interface UpCommandAdapters extends LifecycleCommandAdapters {
-    withMachineFloorReadiness?<T>(context: LifecycleRunContext, use: (observations: readonly EnvironmentObservation[]) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
-    prepareGeneratedEnvironment?(context: LifecycleRunContext, ports: PortLeaseProjection): Promise<GeneratedApplicationProjection | undefined>
-    completeGeneratedEnvironment?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<EnvironmentCommandOutcome<EnvironmentObservation>>
-    completeGeneratedDependencies?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<GeneratedCommandOutcome<readonly EnvironmentObservation[]>>
-    completeGeneratedData?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<EnvironmentCommandOutcome<DataModeExecutionResult | EnvironmentObservation>>
-    completeGeneratedVendors?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<GeneratedCommandOutcome<EnvironmentObservation>>
+    /** Runs environment.seed once the stack is healthy, when a resettable volume is newer than the last seed. */
+    seed?(context: LifecycleRunContext, up: Extract<UpCommandResult, { kind: 'complete' }>['result']): Promise<SeedOutcome>
     withLifecycleStage<T>(context: LifecycleRunContext, use: (stage: LifecycleStageProjection) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
     withAcquiredPorts<T>(context: LifecycleRunContext, use: (ports: AcquiredPorts) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
 }
@@ -1032,7 +1021,9 @@ export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
     ports: PortLeaseProjection['lease']['ports']
     entrypoints: PortLeaseProjection['entrypoints']
     coldStart?: Readonly<{ measuredMillis: number; limitMillis: number; headroomMillis: number }>
-}>> & { readonly progress?: GeneratedProgress }
+    /** Present when environment.seed is declared: whether this up ran it or found the data current. */
+    seed?: 'ran' | 'current'
+}>>
 
 export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{
     stackId: StackId
@@ -2407,14 +2398,6 @@ function forwardedRefusal(
     return { kind: 'refusal', status: 2, result: null, diagnostics }
 }
 
-const generatedBringupRuns = new WeakMap<LifecycleRunContext, GeneratedApplicationProjection>()
-const generatedBringupProgress = new WeakMap<LifecycleRunContext, GeneratedProgress>()
-
-function generatedReplay(projection: GeneratedApplicationProjection): GeneratedLifecycleReplay {
-    return Object.freeze({ runtimeSha256: projection.runtimeSha256, generation: projection.generation,
-        profiles: projection.profiles, mounts: projection.mounts })
-}
-
 export { decodeLifecycleRecord } from './lifecycle-stage.js'
 
 async function readLifecycleRecord(context: LifecycleRunContext): Promise<CurrentLifecycleRecord | null | UpCommandResult> {
@@ -2519,9 +2502,7 @@ type ServiceAdmission =
     | { readonly kind: 'stale' }
     | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence | RuntimeServiceObservation }
 
-/** A start can also be refused before Compose starts anything, with a diagnostic of its own. */
 type ServiceStart = Exclude<ServiceAdmission, { readonly kind: 'failure' }>
-    | { readonly kind: 'refused'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
     /** `stop` is present once Compose was asked to start the service. */
     | (Extract<ServiceAdmission, { readonly kind: 'failure' }> & { readonly stop?: ExecutionStep })
 
@@ -2568,13 +2549,6 @@ async function startService(
 ): Promise<ServiceStart> {
     const plan = createRuntimeServicePlan({ topology, service })
     if (plan.kind !== 'planned') return { kind: 'failure' }
-    if (plan.build && plan.launcher) {
-        const buildOutcome = await adapters.execute(plan.build)
-        const admitted = admitBuiltImageLauncher(buildOutcome.kind === 'complete'
-            ? { plan, buildOutcome, launcherOutcome: await adapters.execute(plan.launcher) }
-            : { plan, buildOutcome })
-        if (admitted.kind === 'refusal') return { kind: 'refused', diagnostics: admitted.diagnostics }
-    }
     const started = await startPlannedService(plan, adapters)
     return started.kind === 'failure' ? { ...started, stop: plan.stop } : started
 }
@@ -2700,316 +2674,6 @@ function orderedRuntimeServices(topology: RuntimeTopologyEvidence): RuntimeTopol
     return Object.freeze(order.map((serviceId) => byId.get(serviceId)!))
 }
 
-async function prepareGeneratedBringup(
-    context: LifecycleRunContext,
-    adapters: UpCommandAdapters,
-    rememberAcquisition: (value: LeasePortFamilyResult, projection: PortLeaseProjection) => void,
-): Promise<UpCommandResult | undefined> {
-    const declared = await withLifecycleConfiguration(context, async (configuration) => {
-        const loaded = consumeEffectiveConfiguration(configuration)
-        return loaded.kind === 'complete'
-            ? Object.freeze({ kind: 'complete' as const, value: loaded.config.environment.generated !== undefined })
-            : loaded
-    })
-    if (declared === undefined) return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        'cockpit.toml changed or became unreadable while up ran, so it could not be read again', context.configPath,
-        'finish editing cockpit.toml, run npx --no cockpit check --config <your cockpit.toml>, then rerun npx --no cockpit up --config <your cockpit.toml>')
-    if (declared.kind === 'refusal') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        registryRefusalMessage(declared), context.configPath,
-        'correct cockpit.toml where the message points, run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit up --config <your cockpit.toml>')
-    if (declared.kind === 'unavailable') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        'lifecycle configuration authority was already consumed', context.configPath,
-        'rerun npx --no cockpit up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up')
-    if (!declared.value) return undefined
-    const existing = await readLifecycleRecord(context)
-    const completedCoTenant = existing && !('status' in existing) && existing.value.holderId !== context.holderId
-        && existing.value.generatedReplay !== undefined
-        && existing.value.generatedProgress?.notApplied.length === 0
-        && ['publication', 'generated', 'dependencies', 'data', 'external-dependencies', 'seeded']
-            .every(stage => existing.value.generatedProgress?.applied.includes(stage))
-    if (!adapters.prepareGeneratedEnvironment || !adapters.completeGeneratedEnvironment || !adapters.completeGeneratedDependencies
-        || !adapters.completeGeneratedData || !adapters.completeGeneratedVendors) {
-        return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-            'generated lifecycle composition is unavailable', context.configPath)
-    }
-    let prepared: GeneratedApplicationProjection | undefined
-    let portRefusal: readonly EnvironmentDiagnostic[] | undefined
-    try {
-        prepared = await adapters.withAcquiredPorts(context, async (ports) => {
-            if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) return undefined
-            const generated = await adapters.prepareGeneratedEnvironment!(context, ports.projection)
-            rememberAcquisition(ports.leaseResult, ports.projection)
-            return generated
-        }, (diagnostics) => { portRefusal = diagnostics; return undefined })
-    }
-    catch (error) { return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-        `generated publication failed: ${errorCause(error)}`, context.configPath) }
-    if (portRefusal) return forwardedRefusal(portRefusal)
-    const projected = generatedApplicationProjection(prepared)
-    if (!projected || projected.sourceSha256 !== context.source.sha256 || projected.runtimeSha256 !== context.runtimeSha256) {
-        return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-            'generated publication authority does not match lifecycle configuration', context.configPath)
-    }
-    generatedBringupRuns.set(context, projected)
-    if (completedCoTenant) return undefined
-    generatedBringupProgress.set(context, Object.freeze({ applied: Object.freeze(['publication']),
-        notApplied: Object.freeze(['generated', 'dependencies', 'data', 'external-dependencies', 'seeded']) }))
-    return undefined
-}
-
-async function completeGeneratedBringup(
-    context: LifecycleRunContext,
-    adapters: UpCommandAdapters,
-    runtime: RuntimeReadiness,
-    services: readonly RuntimeServiceEvidence[],
-): Promise<UpCommandResult | undefined> {
-    const projection = generatedBringupRuns.get(context)
-    if (!projection) return undefined
-    const selection = await withLifecycleConfiguration(context, async (configuration) => {
-        const loaded = consumeEffectiveConfiguration(configuration)
-        if (loaded.kind !== 'complete') return loaded
-        const generated = loaded.config.environment.generated
-        const binding = lifecycleConfigurationSources.get(context)
-        if (!generated || !binding) return Object.freeze({ kind: 'unavailable' as const })
-        const dependencies: { slug: string; checkoutId: CheckoutId; lockfilePath: string; target: string; policy: PlanInstallInput['policy'] }[] = []
-        for (const sibling of loaded.config.sibling.filter(({ toolchain }) => toolchain !== 'none')) {
-            const services = generated.services.filter(({ sibling: owner }) => owner === sibling.slug)
-            if (services.length !== 1) return Object.freeze({ kind: 'unavailable' as const })
-            const policies = services[0]!.mounts.flatMap((mount) => {
-                if (mount.kind !== 'volume') return []
-                const volume = generated.volumes.find(({ id }) => id === mount.source)
-                if (!volume || volume.purpose !== 'dependencies' || !volume.install_policy) return []
-                const policy = loaded.config.environment.install_policies.find((candidate) =>
-                    candidate.volume === volume.install_policy && candidate.toolchain === sibling.toolchain)
-                return policy ? [{ policy, target: mount.target }] : []
-            })
-            if (policies.length !== 1) return Object.freeze({ kind: 'unavailable' as const })
-            const selected = policies[0]!
-            if (selected.policy.install.length === 0 || selected.policy.load_probe.length === 0) {
-                return Object.freeze({ kind: 'unavailable' as const })
-            }
-            const checkoutRoot = resolve(binding.siblingsRoot, sibling.dir)
-            const lockfilePath = resolve(checkoutRoot, selected.policy.lockfile)
-            if (!confinedPath(binding.siblingsRoot, checkoutRoot) || !confinedPath(checkoutRoot, lockfilePath)) {
-                return Object.freeze({ kind: 'unavailable' as const })
-            }
-            dependencies.push({ slug: sibling.slug, checkoutId: deriveCheckoutId({ checkoutPath: checkoutRoot }),
-                lockfilePath, target: selected.target, policy: {
-                    volume: selected.policy.volume, lockfile: selected.policy.lockfile,
-                    install: Object.freeze([...selected.policy.install]) as readonly [string, ...string[]],
-                    load_probe: Object.freeze([...selected.policy.load_probe]) as readonly [string, ...string[]],
-                } })
-        }
-        return Object.freeze({ kind: 'complete' as const, dependencies, mode: generated.data?.default_mode,
-            vendors: generated.vendors.map(({ id }) => id) })
-    })
-    if (selection?.kind === 'refusal') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        registryRefusalMessage(selection), context.stackId,
-        'correct cockpit.toml where the message points, run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit up --config <your cockpit.toml>')
-    // The loader refuses a configuration this selection cannot plan, so reaching here means cockpit.toml
-    // or the running stack changed while up ran.
-    if (!selection || selection.kind !== 'complete' || runtime.topology.stackId !== context.stackId
-        || runtime.topology.configSha256 !== projection.runtimeSha256
-        || runtime.topology.services.some((service) => service.generation !== projection.generation
-            || service.sourceSha256 !== projection.runtimeSha256)) {
-        return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            'cockpit.toml or the running stack changed while up ran, so the started containers no longer match the declaration up planned from', context.stackId,
-            'run npx --no cockpit down --config <your cockpit.toml> to remove the containers this up started, then rerun npx --no cockpit up --config <your cockpit.toml>')
-    }
-    const current = (value: EnvironmentObservation, issued: (value: unknown) => boolean) => issued(value)
-        && value.stackId === context.stackId && value.observed.state === 'available'
-        && value.freshness.state === 'current'
-        && observationSatisfiesExpectation(value)
-        && isCanonicalTimestamp(value.observed.observedAt)
-        && Date.parse(value.observed.observedAt) <= Date.now()
-        && Date.parse(value.observed.observedAt) >= Date.parse(runtime.topology.observationWindow.startedAt)
-    const stages = ['publication', 'generated', 'dependencies', 'data', 'external-dependencies', 'seeded']
-    const previous = await readLifecycleRecord(context)
-    if (!previous || 'status' in previous) return previous ?? lifecycleRefusal(
-        ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID, 'generated completion requires persisted lifecycle progress', context.stackId)
-    if (previous.value.holderId !== context.holderId
-        || !isDeepStrictEqual(previous.value.generatedReplay, generatedReplay(projection))) return lifecycleRefusal(
-        ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID, 'generated progress identity changed', context.stackId)
-    let persistedProgress = previous
-    const applied = [...new Set(['publication', ...(previous.value.generatedProgress?.applied ?? [])])]
-    const pending = new Set(previous.value.generatedProgress?.notApplied ?? [])
-    const attempted = new Set(previous.value.generatedProgress?.attempted ?? [])
-    const progress = (): GeneratedProgress => Object.freeze({ applied: Object.freeze([...applied]),
-        notApplied: Object.freeze([...new Set([...stages, ...pending])].filter((stage) => !applied.includes(stage) && !attempted.has(stage))),
-        ...(attempted.size ? { attempted: Object.freeze([...attempted].filter((step) => !applied.includes(step))) } : {}) })
-    const merge = (value: GeneratedProgress | undefined) => {
-        if (!value) return
-        for (const step of value.applied) {
-            if (!applied.includes(step)) applied.push(step)
-            pending.delete(step)
-            attempted.delete(step)
-        }
-        for (const step of value.notApplied) if (!applied.includes(step)) pending.add(step)
-        for (const step of value.attempted ?? []) if (!applied.includes(step)) attempted.add(step)
-    }
-    const checkpoint = async (): Promise<UpCommandResult | undefined> => {
-        const value = progress()
-        generatedBringupProgress.set(context, value)
-        const publication = await publishLifecycleRecord(context, persistedProgress.record,
-            Object.freeze({ ...persistedProgress.value, generatedProgress: value }))
-        if ('status' in publication) return publication
-        if (publication.kind === 'indeterminate') return lifecycleRefusal(
-            ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE, publication.message, publication.target)
-        if (publication.kind !== 'complete') return lifecycleRefusal(
-            ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'generated progress publication returned no record', context.stackId)
-        const current = decodeLifecycleRecord(publication.value, context)
-        if (!current) return lifecycleRefusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            'published generated progress is malformed', context.stackId)
-        persistedProgress = current
-        return undefined
-    }
-    const refusal = async (result: UpCommandResult): Promise<UpCommandResult> => {
-        const failure = await checkpoint()
-        return { ...result, progress: progress(),
-            ...(failure ? { diagnostics: uniqueDiagnostics([...result.diagnostics, ...failure.diagnostics]) } : {}) }
-    }
-    const unavailable = (code: EnvironmentDiagnostic['code'], stage: string) => refusal(lifecycleRefusal(code,
-        `generated ${stage} evidence is unavailable or does not match current lifecycle authority`, context.stackId))
-    try {
-        const generated = await adapters.completeGeneratedEnvironment!(context, runtime, services, projection)
-        if (generated.kind === 'refusal') return refusal(generated)
-        if (generated.kind !== 'complete' || !current(generated.result, isGeneratedObservation)) {
-            return unavailable(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE, 'runtime')
-        }
-        if (!applied.includes('generated')) applied.push('generated')
-        const generatedCheckpoint = await checkpoint()
-        if (generatedCheckpoint) return { ...generatedCheckpoint, progress: progress() }
-        const dependencies = await adapters.completeGeneratedDependencies!(context, runtime, services, projection)
-        const dependencyEvidence = dependencies.kind === 'complete' ? dependencies.result : dependencies.progressEvidence ?? []
-        if (!Array.isArray(dependencyEvidence) || dependencyEvidence.length > selection.dependencies.length) {
-            return unavailable(ENVIRONMENT_CODES.INSTALL_STATE_UNHEALTHY, 'dependency progress')
-        }
-        const dependencySlugs = new Set<string>()
-        for (const observation of dependencyEvidence) {
-            const matching = selection.dependencies.filter(({ checkoutId, lockfilePath, target, policy }) => isInstallObservation(observation, {
-                checkoutId, lockfilePath, target, policy, stackId: context.stackId,
-                configSha256: projection.runtimeSha256, generation: projection.generation,
-            }))
-            if (matching.length !== 1 || !isInstallObservation(observation)
-                || observation.stackId !== context.stackId || observation.freshness.state !== 'current'
-                || !isCanonicalTimestamp(observation.observed.observedAt)
-                || Date.parse(observation.observed.observedAt) < Date.parse(runtime.topology.observationWindow.startedAt)
-                || Date.parse(observation.observed.observedAt) > Date.now()) {
-                return unavailable(ENVIRONMENT_CODES.INSTALL_STATE_UNHEALTHY, 'dependency progress')
-            }
-            const slug = matching[0]!.slug
-            const verified = projectInstallProgress(observation)
-            if (!verified || dependencySlugs.has(slug)) return unavailable(ENVIRONMENT_CODES.INSTALL_STATE_UNHEALTHY, 'dependency progress')
-            dependencySlugs.add(slug)
-            merge({ applied: verified.applied.map((role) => `dependency:${slug}:${role}`),
-                notApplied: verified.notApplied.map((role) => `dependency:${slug}:${role}`),
-                attempted: verified.attempted?.map((role) => `dependency:${slug}:${role}`) })
-        }
-        merge({ applied: [], notApplied: selection.dependencies.flatMap(({ slug }) => ['install', 'load', 'stamp'].map((role) => `dependency:${slug}:${role}`)) })
-        if (dependencies.kind === 'refusal') return refusal(dependencies)
-        if (dependencies.kind !== 'complete' || dependencies.result.length !== selection.dependencies.length
-            || dependencies.result.some((value) => !current(value, isInstallObservation))) {
-            return unavailable(ENVIRONMENT_CODES.INSTALL_STATE_UNHEALTHY, 'dependencies')
-        }
-        if (!applied.includes('dependencies')) applied.push('dependencies')
-        const dependencyCheckpoint = await checkpoint()
-        if (dependencyCheckpoint) return { ...dependencyCheckpoint, progress: progress() }
-        // A stack that declares no data has no data step; the stage completes with nothing applied,
-        // as external dependencies do for a stack without vendors.
-        const mode = selection.mode
-        if (mode === undefined) merge({ applied: ['data'], notApplied: [] })
-        else {
-            const data = await adapters.completeGeneratedData!(context, runtime, services, projection)
-            if (data.kind === 'refusal') {
-                const failed = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
-                    configSha256: projection.runtimeSha256, generation: projection.generation, mode })
-                const recorded = failed && consumeDataModeOutcomeProjection(failed)
-                if (recorded?.outcome.kind === 'refusal' && isCanonicalTimestamp(recorded.observedAt)
-                    && Date.parse(recorded.observedAt) >= Date.parse(runtime.topology.observationWindow.startedAt)
-                    && Date.parse(recorded.observedAt) <= Date.now()) {
-                    merge({ ...recorded.outcome, attempted: recorded.outcome.attempted.map(({ id }) => id) })
-                }
-                return refusal(data)
-            }
-            if (data.kind !== 'complete'
-                || !((isDataModeCompletion(data.result, {
-                        stackId: context.stackId, configSha256: projection.runtimeSha256,
-                        generation: projection.generation, mode,
-                        earliestMs: Date.parse(runtime.topology.observationWindow.startedAt), latestMs: Date.now(),
-                    }) && data.result.mode === mode)
-                    || (isDataModeObservation(data.result) && current(data.result, isDataModeObservation)
-                        && data.result.source === `data-mode:${projection.runtimeSha256}:${projection.generation}`))) {
-                return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data')
-            }
-            const persisted = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
-                configSha256: projection.runtimeSha256, generation: projection.generation, mode })
-            const durable = persisted && consumeDataModeOutcomeProjection(persisted)
-            if (!durable || durable.outcome.kind !== 'complete') return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data history')
-            merge({ applied: ['data', ...durable.outcome.applied], notApplied: [] })
-        }
-        const dataCheckpoint = await checkpoint()
-        if (dataCheckpoint) return { ...dataCheckpoint, progress: progress() }
-        if (selection.vendors.length > 0) {
-            const vendors = await adapters.completeGeneratedVendors!(context, runtime, services, projection)
-            const vendorEvidence = vendors.progressEvidence ?? []
-            if (!Array.isArray(vendorEvidence) || vendorEvidence.length > selection.vendors.length) {
-                return unavailable(ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE, 'vendor progress')
-            }
-            const vendorIds = new Set<string>()
-            let vendorsAvailable = true
-            for (const observation of vendorEvidence) {
-                if (!isExternalDependencyObservationProjection(observation) || !observation.dependency
-                    || !selection.vendors.includes(observation.dependency.id)
-                    || !isExternalDependencyObservationProjection(observation, {
-                        stackId: context.stackId, sourceSha256: projection.runtimeSha256, generation: projection.generation,
-                        purpose: 'startup', dependencyId: observation.dependency.id,
-                    })
-                    || !isCanonicalTimestamp(observation.observedAt)
-                    || Date.parse(observation.observedAt) < Date.parse(runtime.topology.observationWindow.startedAt)
-                    || Date.parse(observation.observedAt) > Date.now()) {
-                    return unavailable(ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE, 'vendor progress')
-                }
-                const id = observation.dependency.id
-                const verified = projectExternalDependencyProgress(observation)
-                if (!verified || vendorIds.has(id)) return unavailable(ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE, 'vendor progress')
-                vendorIds.add(id)
-                vendorsAvailable &&= observation.state === 'available'
-                merge({ applied: verified.applied.map((role) => `vendor:${id}:${role}`),
-                    notApplied: verified.notApplied.map((role) => `vendor:${id}:${role}`),
-                    attempted: verified.attempted?.map((role) => `vendor:${id}:${role}`) })
-            }
-            if (vendors.kind === 'refusal') return refusal(vendors)
-            if (vendors.kind !== 'complete' || !vendorsAvailable || vendorIds.size !== selection.vendors.length
-                || !current(vendors.result, (value) => isExternalDependencyObservation(value, 'startup'))) {
-                return unavailable(ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE, 'external dependencies')
-            }
-        }
-        if (!applied.includes('external-dependencies')) applied.push('external-dependencies')
-        const vendorCheckpoint = await checkpoint()
-        if (vendorCheckpoint) return { ...vendorCheckpoint, progress: progress() }
-        const sourceCurrent = await withLifecycleConfiguration(context, async () => true)
-        if (!sourceCurrent) return refusal(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            'cockpit.toml changed while up completed the generated environment', context.stackId,
-            'run npx --no cockpit down --config <your cockpit.toml> to remove the containers this up started, then rerun npx --no cockpit up --config <your cockpit.toml>'))
-        for (const service of services) {
-            const revalidated = await revalidateService(runtime.topology, { service: service.service, containerId: service.containerId }, adapters)
-            if (revalidated.kind !== 'complete') return unavailable(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'runtime service')
-        }
-        const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
-            holderId: context.holderId, checkoutId: context.checkoutId, config: context.ports })
-        if (retained.kind !== 'complete') return refusal({ kind: 'refusal', status: 2, result: null, diagnostics: retained.diagnostics })
-        const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
-            holderId: context.holderId, observedAt: new Date().toISOString() })
-        if (seeded.kind === 'refusal') return refusal({ kind: 'refusal', status: 2, result: null, diagnostics: seeded.diagnostics })
-        if (!applied.includes('seeded')) applied.push('seeded')
-        const seededCheckpoint = await checkpoint()
-        return seededCheckpoint ? { ...seededCheckpoint, progress: progress() } : undefined
-    } catch (error) {
-        return refusal(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-            `generated lifecycle completion failed: ${errorCause(error)}`, context.stackId))
-    }
-}
-
 async function executeUpRound(
     context: LifecycleRunContext,
     adapters: UpCommandAdapters,
@@ -3019,17 +2683,22 @@ async function executeUpRound(
     initialAcquisition: PortLeaseProjection | undefined,
 ): Promise<UpRoundResult> {
     const operate = async (runtime: RuntimeReadiness, stage: LifecycleStageProjection, ports: AcquiredPorts): Promise<UpRoundResult> => {
+        // The floor is measured with the runtime readiness, so a machine below it is refused
+        // before any service starts rather than discovered as a slow or failed start.
+        const belowFloor = runtime.hostObservations.find((observation) => !observationSatisfiesExpectation(observation))
+        if (belowFloor) return { kind: 'complete' as const, result: machineFloorRefusal(belowFloor) }
         const current = await readLifecycleRecord(context)
         if (current !== null && 'kind' in current && current.kind !== 'complete') {
             return { kind: 'complete' as const, result: current }
         }
         const stored = current as CurrentLifecycleRecord | null
-        const generated = generatedBringupRuns.get(context)
         const teardownComplete = stored?.value.teardownComplete === true
-        if (stored && generated && !teardownComplete && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
-            // The replay names the runtime declarations, so only a change that reaches the containers
-            // lands here. `up` never recreates a running stack in place; `down` removes it by its
-            // ownership labels whatever the configuration says now.
+        // The recorded inputs name what the stack was started from, and sleep keeps them, so a
+        // stopped stack whose Compose files or runtime declarations changed is refused as a running
+        // one is: `up` never recreates a recorded stack in place, and `down` removes it by its
+        // ownership labels whatever the configuration says now.
+        if (stored && !teardownComplete && stored.value.runtimeInputs !== undefined
+            && !isDeepStrictEqual(stored.value.runtimeInputs, runtime.inputs)) {
             return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
                 changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path))) }
         }
@@ -3060,8 +2729,6 @@ async function executeUpRound(
         const completedServiceIds = stored ? new Set(stored.value.completedServices.map(({ service }) => service)) : undefined
         const progressComplete = stored !== null && completedServiceIds?.size === runtime.topology.services.length
             && runtime.topology.services.every(({ id }) => completedServiceIds.has(id))
-            && (stored.value.generatedReplay === undefined
-                || stored.value.generatedProgress !== undefined && stored.value.generatedProgress.notApplied.length === 0)
         const previousHolderActive = stored !== null
             && ports.projection.ownership.holderIds.includes(stored.value.holderId)
         const currentHolderActive = ports.projection.ownership.holderIds.includes(context.holderId)
@@ -3127,11 +2794,12 @@ async function executeUpRound(
             operationGeneration,
         })
         if (admission.kind === 'refusal') {
-            // A compose-first stack has no generated replay to compare, so a declaration edit shows
-            // only as changed work. Restarting it from scratch recreated healthy containers under
-            // the new declaration, and stopped them when their labels no longer matched; a fully
-            // started stack is refused instead, as a generated one is.
-            if (stored && !resetProgress && !generated && progressComplete) {
+            // A declaration edit shows only as changed work. Restarting it from scratch recreated
+            // healthy containers under the new declaration, and stopped them when their labels no
+            // longer matched; a fully started stack is refused instead. `up` never recreates a
+            // running stack in place; `down` removes it by its ownership labels whatever the
+            // configuration says now.
+            if (stored && !resetProgress && progressComplete) {
                 return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
                     changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path))) }
             }
@@ -3180,8 +2848,6 @@ async function executeUpRound(
             holderId: context.holderId,
             ...planned.plan.progress,
             runtimeInputs: runtime.inputs,
-            ...(generated ? { generatedReplay: generatedReplay(generated),
-                ...(stored?.value.generatedProgress ? { generatedProgress: stored.value.generatedProgress } : {}) } : {}),
         })
         if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
             // The first lifecycle data starts its durable history, as `setup` does (an existing
@@ -3222,12 +2888,9 @@ async function executeUpRound(
             ) }
         }
         if (planned.kind === 'noop') {
-            const generatedCompletion = await completeGeneratedBringup(context, adapters, runtime, completedEvidence)
-            if (generatedCompletion) return { kind: 'complete' as const, result: generatedCompletion }
             return { kind: 'complete' as const, result: {
                 kind: 'complete', status: 0, diagnostics: planned.plan.diagnostics,
                 result: { stackId: context.stackId, change: 'unchanged', ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints },
-                ...(generatedBringupProgress.has(context) ? { progress: generatedBringupProgress.get(context) } : {}),
             } satisfies UpCommandResult }
         }
         for (let index = issuance.firstIncompleteServiceIndex; index < orderedServices.length; index += 1) {
@@ -3235,7 +2898,6 @@ async function executeUpRound(
             ports.retainOnFailure()
             rememberRuntimeStart()
             const admitted = await startService(issuance.topology, service.id, adapters)
-            if (admitted.kind === 'refused') return { kind: 'complete' as const, result: forwardedRefusal(admitted.diagnostics) }
             if (admitted.kind !== 'complete') {
                 const logDiagnostics = await reportFailedService(
                     admitted.kind === 'failure' ? admitted.logs : undefined,
@@ -3307,8 +2969,6 @@ async function executeUpRound(
             limitMillis: coldStartObservation.expectation.value,
             headroomMillis: coldStartObservation.expectation.value - coldStartObservation.observed.value,
         })
-        const generatedCompletion = await completeGeneratedBringup(context, adapters, runtime, completedEvidence)
-        if (generatedCompletion) return { kind: 'complete' as const, result: generatedCompletion }
         return { kind: 'complete' as const, result: {
             kind: 'complete', status: 0, diagnostics: planned.plan.diagnostics,
             result: {
@@ -3318,7 +2978,6 @@ async function executeUpRound(
                 entrypoints: ports.projection.entrypoints,
                 coldStart,
             },
-            ...(generatedBringupProgress.has(context) ? { progress: generatedBringupProgress.get(context) } : {}),
         } satisfies UpCommandResult }
     }
     const unavailable = () => ({ kind: 'complete' as const, result: lifecycleRefusal(
@@ -3333,38 +2992,6 @@ async function executeUpRound(
                 diagnostic.target ?? context.stackId)
             : diagnostic)),
     })
-    if (generatedBringupRuns.has(context)) {
-        const earliest = Date.now()
-        const expected = new Set<string>([
-            ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR,
-            ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR,
-            ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR,
-        ])
-        const floor = await adapters.withMachineFloorReadiness?.(context, async (observations) => {
-            const now = Date.now()
-            if (observations.length !== expected.size || !observations.every(isHostObservation)
-                || new Set(observations.map(({ code }) => code)).size !== expected.size
-                || observations.some((observation) => !expected.has(observation.code)
-                    || observation.stackId !== context.stackId || observation.observed.state !== 'available'
-                    || observation.freshness.state !== 'current' || !isCanonicalTimestamp(observation.observed.observedAt)
-                    || Date.parse(observation.observed.observedAt) < earliest || Date.parse(observation.observed.observedAt) > now)) return undefined
-            const failed = observations.find((observation) => !observationSatisfiesExpectation(observation))
-            return failed ? machineFloorRefusal(failed) : true
-        }, forwardedRefusal)
-        if (floor !== true) return floor ? { kind: 'complete', result: floor } : unavailable()
-        return await adapters.withLifecycleStage(context, async (stage) => await adapters.withAcquiredPorts(context, async (ports) => {
-            if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) {
-                return { kind: 'complete' as const, result: lifecycleRefusal(
-                    ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-                    'port acquisition does not match the current lifecycle authority',
-                    context.stackId,
-                ) }
-            }
-            const outcome = await adapters.withRuntimeReadiness(context, (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
-            rememberAcquisition(ports.leaseResult, ports.projection)
-            return outcome
-        }, refused) ?? unavailable(), refused) ?? unavailable()
-    }
     return await adapters.withLifecycleStage(context, async (stage) => await adapters.withAcquiredPorts(context, async (ports) => {
             if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) {
                 return { kind: 'complete' as const, result: lifecycleRefusal(
@@ -3455,19 +3082,6 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
     if (earlier.kind === 'refusal') return lifecycleRefusal(earlier.code, earlier.message, earlier.target)
     if (earlier.name !== undefined) return lifecycleRefusal(ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME,
         earlierNameRefusalMessage(context.source.path, earlier.name), context.stackId)
-    const generatedPreparation = await prepareGeneratedBringup(context, adapters, rememberAcquisition)
-    if (generatedPreparation) {
-        if (!acquired) return generatedPreparation
-        const compensation = await compensateAcquiredPortHolder({
-            namespace: context.namespace,
-            leaseResult: acquired,
-            now: new Date().toISOString(),
-        })
-        return compensation.kind === 'refusal' ? {
-            ...generatedPreparation,
-            diagnostics: uniqueDiagnostics([...generatedPreparation.diagnostics, ...compensation.diagnostics]),
-        } : generatedPreparation
-    }
     let forceReset = false
     for (let attempt = 0; attempt < 3; attempt += 1) {
         const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition, rememberRuntimeStart, initialAcquisition)
@@ -3475,12 +3089,17 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
             forceReset = round.forceReset
             continue
         }
-        const result: UpCommandResult = round.result.progress || !generatedBringupProgress.has(context)
-            ? round.result : { ...round.result, progress: generatedBringupProgress.get(context) }
-        if (result.kind === 'complete' && !generatedBringupRuns.has(context)) {
+        let result = round.result
+        if (result.kind === 'complete') {
             const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
                 holderId: context.holderId, observedAt: new Date().toISOString() })
             if (seeded.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: seeded.diagnostics }
+            // The stack stays up when its seed fails: the containers are healthy, and the next up
+            // runs the seed again because no success was recorded.
+            const data = await adapters.seed?.(context, result.result)
+            if (data?.kind === 'refusal') return { kind: 'refusal', status: 2, result: null,
+                diagnostics: uniqueDiagnostics([...result.diagnostics, ...data.diagnostics]) }
+            if (data?.kind === 'ran' || data?.kind === 'current') result = { ...result, result: { ...result.result, seed: data.kind } }
         }
         if (result.kind === 'refusal' && releasable()) {
             const compensation = await compensateAcquiredPortHolder({
@@ -3510,15 +3129,14 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
             return {
                 ...primary,
                 diagnostics: uniqueDiagnostics([...primary.diagnostics, ...compensation.diagnostics]),
-                ...(generatedBringupProgress.has(context) ? { progress: generatedBringupProgress.get(context) } : {}),
             }
         }
     }
-    return { ...lifecycleRefusal(
+    return lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
         'lifecycle progress could not be reset from fresh evidence',
         context.stackId,
-    ), ...(generatedBringupProgress.has(context) ? { progress: generatedBringupProgress.get(context) } : {}) }
+    )
 }
 
 // The wrapped agent reaches the stack the way its Compose files do: each `[ports.bases]` name holds
@@ -3696,7 +3314,6 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(adapters.execute)),
         })
         if (reaped.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: reaped.diagnostics }
-        if (reaped.interruptedRestore) noticeLifecycleRun(context, reaped.interruptedRestore)
     }
     const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
     if (unheld) return unheld
@@ -3894,7 +3511,6 @@ async function invalidateCompletedLifecycle(
         operationGeneration,
         completedServices: Object.freeze([]),
         ...(purpose === 'down' ? { teardownComplete: true as const } : {
-            ...(stored.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
             ...(stored.value.runtimeInputs ? { runtimeInputs: stored.value.runtimeInputs } : {}),
         }),
     })
@@ -4519,14 +4135,10 @@ export interface ComparisonRemoteInput {
 
 export interface HealthObservationProducers {
     readonly surfaces: () => Promise<readonly EnvironmentObservation[]>
-    readonly generated: () => Promise<readonly EnvironmentObservation[]>
-    readonly data: () => Promise<readonly EnvironmentObservation[]>
     readonly envSchema: () => Promise<readonly EnvironmentObservation[]>
-    readonly external: () => Promise<readonly EnvironmentObservation[]>
     readonly claims: () => Promise<readonly EnvironmentObservation[]>
     readonly git: () => Promise<readonly EnvironmentObservation[]>
     readonly host: () => Promise<readonly EnvironmentObservation[]>
-    readonly installs: () => Promise<readonly EnvironmentObservation[]>
     readonly lifecycle: () => Promise<readonly EnvironmentObservation[]>
     readonly ports: () => Promise<readonly EnvironmentObservation[]>
     readonly runtime: () => Promise<readonly EnvironmentObservation[]>
@@ -4656,7 +4268,7 @@ interface DoctorFreshness {
 }
 
 export interface DoctorDeclaration {
-    readonly subject: 'runtime' | 'resource-ceilings' | 'data-modes' | 'vendor-guards'
+    readonly subject: 'runtime' | 'reset-volumes' | 'seed'
     readonly state: 'declared' | 'not-declared'
     readonly source: string
     readonly reason: string
@@ -4674,40 +4286,30 @@ export interface ApplicationDoctorEvaluation {
     readonly readiness?: ReadinessReport
 }
 
-// Resource ceilings, data modes and vendor guards are rendered into a generated stack. A cockpit that
-// runs its own Compose file, or none, has not declared them, and doctor says so instead of letting an
-// absent check read as a passed one.
 type LoadedDoctorConfig = Awaited<ReturnType<typeof loadCockpitConfig>>
 
+// What reset and up do to product data rests on these declarations; doctor names an absent one
+// instead of letting it read as a passed check.
 async function doctorDeclarations(loading: Promise<LoadedDoctorConfig>): Promise<readonly DoctorDeclaration[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete') return Object.freeze([])
-    const config = loaded.result.config
-    const runtime = declaredRuntime(config.environment)
-    const generated = config.environment.generated
-    const absent = runtime === 'none' ? 'no runtime environment is declared'
-        : runtime === 'compose' ? 'a compose-first cockpit runs its own Compose file; cockpit declares and enforces this only for environment.generated'
-            : 'the generated environment declares none'
+    const environment = loaded.result.config.environment
+    const runtime = declaredRuntime(environment) === 'compose'
+    const absent = runtime ? 'not declared in cockpit.toml' : 'no runtime environment is declared'
     const row = (subject: DoctorDeclaration['subject'], declared: boolean, source: string, reason: string): DoctorDeclaration =>
         Object.freeze({ subject, state: declared ? 'declared' as const : 'not-declared' as const, source, reason: declared ? reason : absent })
     return Object.freeze([
-        Object.freeze(runtime === 'none'
-            ? { subject: 'runtime' as const, state: 'not-declared' as const, source: 'environment',
-                reason: 'neither environment.compose_files nor environment.generated is declared; runtime commands refuse' }
-            : { subject: 'runtime' as const, state: 'declared' as const,
-                source: runtime === 'generated' ? 'environment.generated' : 'environment.compose_files',
-                reason: runtime === 'generated' ? 'cockpit renders and owns the Compose file' : 'cockpit runs the declared Compose files' }),
-        row('resource-ceilings', !!generated && (generated.services.some(service => service.resources) || !!config.browser?.resources),
-            'environment.generated.services[].resources', 'generated services declare resource ceilings'),
-        row('data-modes', !!generated?.data, 'environment.generated.data', 'the generated stack declares its data modes'),
-        row('vendor-guards', !!generated?.vendors.some(vendor => vendor.egress_guard),
-            'environment.generated.vendors[].egress_guard', 'generated vendors declare egress guards'),
+        row('runtime', runtime, 'environment.compose_files', runtime ? 'cockpit runs the declared Compose files'
+            : 'environment.compose_files is not declared; runtime commands refuse'),
+        row('reset-volumes', environment.resettable_volumes.length > 0, 'environment.resettable_volumes',
+            'reset may delete and recreate these volumes'),
+        row('seed', environment.seed !== undefined, 'environment.seed', 'up runs the seed when a resettable volume is new'),
     ])
 }
 
 // The guard denies agent commands that reach these hosts. Two empty lists deny nothing, and that
 // looks exactly like a guard that is working, so doctor says so. A declared runtime is the signal
-// that hosted environments exist; generated vendors live under it, so it covers them too. Both keys
+// that hosted environments exist. Both keys
 // written as empty lists, as init records an explicit "none", is a decision and is not warned about.
 async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
@@ -4788,7 +4390,6 @@ export interface LogsCommandInput {
 export type LogRequestBase = Omit<LogRequest, 'since' | 'tail' | 'follow'>
 
 export interface LogObservation {
-    readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
     readonly ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>
     readonly request: LogRequestBase
     readonly restart?: RestartWindow
@@ -4847,8 +4448,7 @@ interface PreparedHealthObservation {
 const issuedHealthObservationSources = new WeakMap<object, PreparedHealthObservation>()
 
 const healthProducerNames = Object.freeze([
-    'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-    'generated', 'data', 'external', 'envSchema', 'surfaces',
+    'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'surfaces',
 ] as const)
 
 function applicationDiagnostic(
@@ -5529,7 +5129,7 @@ export async function runLogs(
         return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation is unavailable for service ${service}: ${errorCause(error)}`)
     }
     if (signal?.aborted) return logsCancelled(json)
-    const observed = ownDataValues(observation, ['request'], ['restart', 'generatedComposeAuthority', 'ownComposeAuthority'])
+    const observed = ownDataValues(observation, ['request'], ['restart', 'ownComposeAuthority'])
     const request = ownDataValues(observed?.request, logRequestBaseKeys, ['restartBatches'])
     if (!request || request.service !== service) {
         return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation does not match service ${service}`)
@@ -5537,7 +5137,6 @@ export async function runLogs(
     const resolvedRequest = Object.freeze({ ...request, since, tail, follow }) as unknown as LogRequest
     const plan = planLogs(
         resolvedRequest,
-        observed?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined,
         observed?.ownComposeAuthority as Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }> | undefined,
     )
     if (plan.kind !== 'planned') return logsRefusal(plan.code, plan.reason)

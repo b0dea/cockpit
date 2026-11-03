@@ -1,0 +1,17 @@
+# The api sibling built from its own Dockerfile, on the port [ports.bases] leases, bound to
+# 127.0.0.1 so the stack is not exposed to the network. The api directory is bind-mounted because
+# cockpit.toml declares it mount = "always". `init: true` runs a minimal init as PID 1 so
+# `cockpit sleep` and `down` stop node on SIGTERM instead of waiting out the stop grace.
+services:
+  api:
+    build: ${API_DIR:-./api}
+    init: true
+    command: ["node", "server.mjs"]
+    ports: ["127.0.0.1:${API_HOST_PORT:-4100}:3000"]
+    volumes: ["./api:/app"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 4
+      start_period: 20s

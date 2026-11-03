@@ -1,12 +1,7 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { parse } from 'smol-toml'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createReadCommandAdapters } from './read-composition.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { runLogs } from './application.js'
-import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
-import { planLogs } from './logs.js'
 import { RefusalError } from './contract.js'
 
 const sha = (value: string) => value.padEnd(64, value[0] ?? 'a').slice(0, 64)
@@ -46,11 +41,7 @@ const lifecycleRecord = Object.freeze({
 })
 
 const controls = vi.hoisted(() => ({
-    generated: undefined as undefined | Record<string, unknown>,
-    generatedApplication: undefined as undefined | Readonly<Record<string, unknown>>,
-    generatedComposeSource: undefined as string | undefined,
-    generatedReplay: false,
-    generatedReplayGeneration: undefined as string | undefined,
+    composeSource: undefined as string | undefined,
     lifecycleHolderId: undefined as string | undefined,
     incomplete: false,
     multipleServices: false,
@@ -77,9 +68,7 @@ vi.mock('../config/load.js', async (importOriginal) => ({
     loadCockpitConfig: vi.fn(async () => ({ kind: 'complete', result: {
         source: { ...source, sha256: controls.configSha256 ?? source.sha256 },
         runtimeSha256: controls.configSha256 ?? source.sha256,
-        config: { cockpit: { siblings_root: '.' }, sibling: [{ var: 'APP_DIR', dir: 'app' }], environment: controls.generated
-            ? { generated: controls.generated }
-            : { compose_files: ['compose.yml'] } },
+        config: { cockpit: { siblings_root: '.' }, sibling: [{ var: 'APP_DIR', dir: 'app' }], environment: { compose_files: ['compose.yml'] } },
     } })),
     consumeLoadedConfigProjection: vi.fn((value) => value),
 }))
@@ -121,9 +110,6 @@ vi.mock('./lifecycle-composition.js', () => ({
             },
             lifecycle: {},
         }) }),
-        withGeneratedRuntime: vi.fn(async (_context, _readiness, use) => controls.generatedApplication
-            ? use({ application: controls.generatedApplication })
-            : undefined),
     })),
 }))
 
@@ -154,11 +140,11 @@ vi.mock('./executable.js', async (importOriginal) => ({
 vi.mock('node:fs/promises', () => ({
     realpath: vi.fn(async (path: string) => path),
     lstat: vi.fn(async () => ({ isFile: () => true, isSymbolicLink: () => false,
-        size: Buffer.byteLength(controls.generatedComposeSource ?? 'services: {}'), dev: 1, ino: 2 })),
+        size: Buffer.byteLength(controls.composeSource ?? 'services: {}'), dev: 1, ino: 2 })),
     open: vi.fn(async () => ({
         stat: vi.fn(async () => ({ isFile: () => true,
-            size: Buffer.byteLength(controls.generatedComposeSource ?? 'services: {}'), dev: 1, ino: 2, mtimeMs: 1 })),
-        readFile: vi.fn(async () => Buffer.from(controls.generatedComposeSource ?? 'services: {}')),
+            size: Buffer.byteLength(controls.composeSource ?? 'services: {}'), dev: 1, ino: 2, mtimeMs: 1 })),
+        readFile: vi.fn(async () => Buffer.from(controls.composeSource ?? 'services: {}')),
         close: vi.fn(async () => undefined),
     })),
 }))
@@ -167,14 +153,6 @@ vi.mock('./state.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('./state.js')>(),
     readState: vi.fn(async () => {
         controls.lifecycleReads += 1
-        const application = controls.generatedApplication
-        const selectedBase = controls.generatedReplay ? { ...lifecycleRecord, value: { ...lifecycleRecord.value, generatedReplay: {
-            runtimeSha256: typeof application?.runtimeSha256 === 'string' ? application.runtimeSha256 : source.sha256,
-            generation: controls.generatedReplayGeneration
-                ?? (typeof application?.generation === 'string' ? application.generation : sha('8')),
-            profiles: Array.isArray(application?.profiles) ? application.profiles : ['application'],
-            mounts: Array.isArray(application?.mounts) ? application.mounts : ['app'],
-        } } } : lifecycleRecord
         const selectedRecord = controls.multipleServices
             ? { ...lifecycleRecord, value: { ...lifecycleRecord.value, completedServices: [
                 ...lifecycleRecord.value.completedServices,
@@ -184,7 +162,7 @@ vi.mock('./state.js', async (importOriginal) => ({
                 ? { ...lifecycleRecord, value: { ...lifecycleRecord.value, completedServices: [
                     { service: 'api', containerId: controls.containerId },
                 ] } }
-                : selectedBase
+                : lifecycleRecord
         const selected = controls.lifecycleHolderId
             ? { ...selectedRecord, value: { ...selectedRecord.value, holderId: controls.lifecycleHolderId } }
             : selectedRecord
@@ -241,11 +219,7 @@ vi.mock('./evidence.js', async (importOriginal) => {
 
 describe('production read command composition', () => {
     beforeEach(() => {
-        controls.generated = undefined
-        controls.generatedApplication = undefined
-        controls.generatedComposeSource = undefined
-        controls.generatedReplay = false
-        controls.generatedReplayGeneration = undefined
+        controls.composeSource = undefined
         controls.lifecycleHolderId = undefined
         controls.incomplete = false
         controls.multipleServices = false
@@ -358,82 +332,8 @@ describe('production read command composition', () => {
         expect(getter).not.toHaveBeenCalled()
     })
 
-    it('reads completed lifecycle records carrying generated replay metadata', async () => {
-        controls.generatedReplay = true
-        const adapters = createReadCommandAdapters({ configPath: source.path, env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli', timeoutMs: 5_000 }, vi.fn(async () => ({ kind: 'complete' })) as never)
-        const observation = await adapters.logs.observe({ configPath: source.path, service: 'api' })
-        expect(observation.request.containerId).toBe(containerId)
-    })
-
-    it('transfers retained ports and renderer authority through the generated log route', async () => {
-        const fixture = parse(readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
-            environment: { generated: Record<string, unknown> }
-        }
-        const generation = sha('8')
-        const rendered = renderGeneratedEnvironment({
-            declaration: fixture.environment.generated as never,
-            sourceSha256: source.sha256,
-            generation,
-            stackId,
-            cockpitId: lifecycleRecord.cockpitId,
-            portDefaults: { APP_HOST_PORT: 4100 },
-            siblingDirectories: { app: 'app' },
-        })
-        expect(rendered.kind).toBe('complete')
-        if (rendered.kind !== 'complete') throw new Error(rendered.reason)
-        const authority = projectGeneratedComposeArtifactAuthority(rendered)
-        expect(authority).toBeDefined()
-        controls.generated = fixture.environment.generated
-        controls.generatedComposeSource = rendered.compose
-        controls.generatedReplay = true
-        controls.generatedApplication = Object.freeze({
-            sourceSha256: source.sha256,
-            runtimeSha256: source.sha256,
-            generation,
-            generatedComposeAuthority: authority!,
-            profiles: rendered.replay.profiles,
-            mounts: rendered.replay.mounts,
-            inspection: Object.freeze({ kind: 'passed', files: Object.freeze([]) }),
-        })
-        const adapters = createReadCommandAdapters({
-            configPath: source.path,
-            env: { PATH: '/synthetic' },
-            sessionId: 'cockpit-cli',
-            timeoutMs: 5_000,
-        }, vi.fn(async () => ({ kind: 'complete' })) as never)
-
-        const observation = await adapters.logs.observe({ configPath: source.path, service: 'api' })
-        expect(controls.readinessPorts).toHaveLength(1)
-        expect(controls.readinessPorts[0]).toMatchObject({ lease: { stackId, ports: { APP_HOST_PORT: 4100 } } })
-        expect(observation.generatedComposeAuthority).toBe(authority)
-        const request = Object.freeze({ ...observation.request, since: '5m', tail: 100, follow: false })
-        expect(planLogs(request, observation.generatedComposeAuthority)).toMatchObject({ kind: 'planned' })
-        expect(planLogs(request, { ...authority! })).toMatchObject({ kind: 'unavailable' })
-
-        const wrongGeneration = renderGeneratedEnvironment({
-            declaration: fixture.environment.generated as never,
-            sourceSha256: source.sha256,
-            generation: sha('9'),
-            stackId,
-            cockpitId: lifecycleRecord.cockpitId,
-            portDefaults: { APP_HOST_PORT: 4100 },
-            siblingDirectories: { app: 'app' },
-        })
-        expect(wrongGeneration.kind).toBe('complete')
-        if (wrongGeneration.kind !== 'complete') throw new Error(wrongGeneration.reason)
-        expect(planLogs(request, projectGeneratedComposeArtifactAuthority(wrongGeneration)))
-            .toMatchObject({ kind: 'unavailable' })
-
-        controls.lifecycleHolderId = `holder:${sha('7')}:session`
-        await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toThrow('lifecycle holder authority changed')
-        controls.lifecycleHolderId = undefined
-        controls.generatedReplayGeneration = sha('7')
-        await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toThrow('generated lifecycle replay authority changed')
-    })
-
     it('transfers retained port and sibling authority through compose-first logs', async () => {
-        controls.generatedComposeSource = 'services:\n  api:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n'
+        controls.composeSource = 'services:\n  api:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n'
         const adapters = createReadCommandAdapters({
             configPath: source.path,
             env: { PATH: '/synthetic' },

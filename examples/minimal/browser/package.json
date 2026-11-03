@@ -1,8 +1,0 @@
-{
-  "name": "tinya-browser",
-  "version": "0.0.0",
-  "private": true,
-  "devDependencies": {
-    "@playwright/test": "1.64.0"
-  }
-}

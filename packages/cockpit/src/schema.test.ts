@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
-import { Autonomy, Browser, EntrypointDerivative, Environment, GeneratedService, InstallPolicy, Sibling, Testing, Work } from './schema.js'
+import { Autonomy, Browser, EntrypointDerivative, Environment, InstallPolicy, Sibling, Testing, Work } from './schema.js'
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
@@ -80,63 +80,16 @@ describe('declared guard hosts', () => {
         ]) expect(Guards.safeParse({ allow: [allow] }).success, JSON.stringify(allow)).toBe(false)
     })
 })
-const operation = { location: 'in-stack', service: 'app', cwd: '.', argv: ['node', 'synthetic-operation.mjs'], timeout_seconds: 30, provenance }
-const structuralDecisions = [
-    ['service-app', 'service', 'app'],
-    ['volume-dependencies', 'volume', 'dependencies'],
-    ['volume-product-data', 'volume', 'product-data'],
-    ['data-default', 'data-default', 'seeded'],
-    ['data-mode-empty', 'data-mode', 'empty'],
-    ['data-mode-seeded', 'data-mode', 'seeded'],
-    ['data-mode-restored', 'data-mode', 'restored'],
-    ['restore-policy', 'restore', 'policy'],
-    ['mount-dependencies', 'mount', 'app:volume:dependencies:/app/node_modules'],
-    ['mount-product-data', 'mount', 'app:volume:product-data:/app/data'],
-    ['mount-source', 'mount', 'app:bind:.:/app/source'],
-    ['port-web', 'port', 'app:web'],
-].map(([id, subject, subject_id]) => ({ id, subject, subject_id, decided_on: '2026-09-26', decision: `Synthetic ${subject}`, rejected: ['Undeclared structure'], reason: 'Reproducible environment', provenance }))
-const generatedConfig = {
+const stackConfig = {
     cockpit: { name: 'synthetic' },
-    sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', toolchain: 'node', purpose: 'Synthetic service', environment_files: [{ template: '.env.example', instance: '.env' }] }],
+    sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', toolchain: 'node', purpose: 'Synthetic service', environment_files: [{ template: '.env.example', instance: '.env' }],
+        derives: { mcp_sources: [{ path: '.mcp.json', provenance }] } }],
     ports: { bases: { WEB_PORT: 4100 } },
     environment: {
+        compose_files: ['compose.yml'],
         resettable_volumes: ['product-data'],
+        seed: { argv: ['npm', 'run', 'seed'], timeout_seconds: 300 },
         install_policies: [{ toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'ci'], load_probe: ['node', 'synthetic-probe.mjs'] }],
-        generated: {
-            compose_file: 'compose.generated.yml',
-            services: [{
-                id: 'app', sibling: 'app', role: 'service', profiles: [], command: ['node', 'server.mjs'],
-                image: { reference: `example.invalid/synthetic@sha256:${'a'.repeat(64)}`, reason: 'Stable synthetic runtime', architectures: ['amd64', 'arm64'], manifest_probe: operation, provenance },
-                ports: [{ name: 'web', host_variable: 'WEB_PORT', internal: 3000, host_ip: '127.0.0.1' }],
-                mounts: [{ kind: 'volume', source: 'dependencies', target: '/app/node_modules' }, { kind: 'volume', source: 'product-data', target: '/app/data' }, { kind: 'bind', source: '.', target: '/app/source', source_type: 'directory' }],
-                dependencies: [],
-                health: { property: 'Synthetic route resolves', probe: operation, tool_probe: operation, interval_seconds: 5, timeout_seconds: 3, retries: 3, start_period_seconds: 20, measurement: { duration_seconds: 15, provenance } },
-                toolchain_pins: [{ path: '.node-version', pinned: '22.0.0', observed: '22.0.0', provenance }],
-                provenance,
-            }],
-            volumes: [{ id: 'dependencies', purpose: 'dependencies', install_policy: 'dependencies', provenance }, { id: 'product-data', purpose: 'product-data', provenance }],
-            data: {
-                volume: 'product-data',
-                default_mode: 'seeded',
-                modes: ['empty', 'seeded', 'restored'].map((mode) => ({ mode, operations: (mode === 'empty' ? ['schema'] : mode === 'seeded' ? ['schema', 'sweep', 'fixtures'] : ['schema', 'restore', 'rewrite']).map((kind, index, kinds) => ({ id: kind, kind, operation, prerequisites: [], after: kinds.slice(0, index), fresh_volume_only: mode === 'restored', provenance })), probes: [operation], provenance })),
-                fixtures: { persona_source: 'fixtures/personas.json', persona_outputs: [{ path: 'fixtures/personas.generated.ts', format: 'typescript', reason: 'Synthetic importer cannot read JSON' }], volume_tag: 'synthetic-volume', pagination_warning: 'Default fixtures do not cover large lists', volume_operations: [operation], volume_probes: [operation], provenance },
-                restore: { rewrites: [{ category: 'object-store', operation, reason: 'Use local synthetic storage' }], untouched: ['identities', 'third-party-ids', 'personal-data', 'timer-state'], provenance },
-            },
-            vendors: ['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture, index) => ({
-                id: posture, posture, reason: 'Synthetic vendor posture', provenance,
-                endpoints: [{ variable: `SYNTHETIC_ENDPOINT_${index}`, sink: 'http://app:3000/sink', runtime_service: 'app', supplier: { sibling: 'app', template: '.env.example' } }],
-                loader_probe: operation, route_probe: operation, egress_probe: operation,
-                placeholder: `cockpit:absent:${posture}`,
-                callback_reachability: { reachable: false, alternative: 'Synthetic local replay', reason: 'Synthetic sender cannot reach this stack' },
-                ...(posture === 'vendor-sandbox' ? { expiry: { expires_on: '2027-01-01', reason: 'Synthetic trial expiry', probe: operation } } : {}),
-                ...(posture === 'stubbed' ? {
-                    stub: { rejection_probe: operation, outage_probe: operation },
-                    callback: { enable: operation, timestamp_source: operation, fresh_window_seconds: 60, fixture: { path: 'fixtures/callback.raw', sha256: 'b'.repeat(64) }, sign: operation, dispatch: operation, tamper_probe: operation },
-                    tls: { generate_at_start: operation, append_trust_probe: operation, hostname_probe: operation },
-                } : {}),
-            })),
-            decisions: { entries: [...structuralDecisions, ...['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'].map((posture) => ({ id: posture, subject: 'vendor', subject_id: posture, decided_on: '2026-09-26', decision: posture, rejected: ['Undeclared live endpoint'], reason: 'Explicit local behavior', provenance }))] },
-        },
     },
 }
 
@@ -286,50 +239,43 @@ describe('consumer surface declarations', () => {
     })
 })
 
-describe('generated environment declarations', () => {
+describe('environment declarations', () => {
     it('declares one repository as an ordinary estate with no scope setting to narrow its surfaces', () => {
-        expect(CockpitConfig.parse(generatedConfig).sibling).toHaveLength(1)
-        const scoped = { ...generatedConfig, cockpit: { ...generatedConfig.cockpit, scope: 'stack' } }
+        expect(CockpitConfig.parse(stackConfig).sibling).toHaveLength(1)
+        const scoped = { ...stackConfig, cockpit: { ...stackConfig.cockpit, scope: 'stack' } }
         expect(CockpitConfig.safeParse(scoped).success).toBe(false)
         expect(publishedCockpitValidator(scoped)).toBe(false)
     })
 
     it('loads a complete consumer-neutral declaration through runtime and editor schemas', () => {
-        const parsed = CockpitConfig.safeParse(generatedConfig)
+        const parsed = CockpitConfig.safeParse(stackConfig)
         expect(parsed.success, parsed.success ? '' : parsed.error.message).toBe(true)
         const validate = publishedCockpitValidator
-        expect(validate(generatedConfig), JSON.stringify(validate.errors)).toBe(true)
+        expect(validate(stackConfig), JSON.stringify(validate.errors)).toBe(true)
     })
 
     it('round-trips the declaration through the canonical TOML loader', async () => {
-        const directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-schema-'))
+        const directory = await mkdtemp(join(tmpdir(), 'cockpit-environment-schema-'))
         try {
             const path = join(directory, 'cockpit.toml')
-            await writeFile(path, stringify(generatedConfig))
+            await writeFile(path, stringify(stackConfig))
             const loaded = await loadCockpitConfig(path)
             expect(loaded.kind).toBe('complete')
-            if (loaded.kind === 'complete') expect(loaded.result.config.environment.generated).toEqual(generatedConfig.environment.generated)
+            if (loaded.kind === 'complete') expect(loaded.result.config.environment).toMatchObject(stackConfig.environment)
         } finally {
             await rm(directory, { recursive: true, force: true })
         }
     })
 
     it.each([
-        ['floating image', (config: typeof generatedConfig) => { config.environment.generated.services[0].image.reference = 'example.invalid/synthetic:latest' }],
-        ['unbounded command', (config: typeof generatedConfig) => { config.environment.generated.services[0].command = Array(257).fill('argument') }],
-        ['path traversal', (config: typeof generatedConfig) => { config.environment.generated.compose_file = '../compose.yml' }],
-        ['missing posture reason', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].reason = '' }],
-        ['invalid measurement date', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.measurement.provenance.observed_on = '2026-99-99' }],
-        ['whitespace reason', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].reason = '   ' }],
-        ['undeclared posture', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].posture = 'invented' }],
-        ['missing expiry', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.vendors[3], 'expiry') }],
-        ['missing stub controls', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.vendors[1], 'stub') }],
-        ['host operation with service', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.probe.location = 'host' }],
-        ['inferred unconfirmed provenance', (config: typeof generatedConfig) => { config.environment.generated.services[0].provenance.kind = 'inferred' }],
-        ['open-ended decision subject', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries[0].subject = 'structure' }],
-        ['uppercase endpoint URL spelling', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].sink = 'HTTP://APP:3000/sink' }],
+        ['an environment.generated table', (config: typeof stackConfig) => { Reflect.set(config.environment, 'generated', { compose_file: 'compose.generated.yml' }) }],
+        ['a sibling derives.generated row', (config: typeof stackConfig) => { Reflect.set(config.sibling[0]!.derives, 'generated', {}) }],
+        ['an empty seed command', (config: typeof stackConfig) => { config.environment.seed.argv = [] }],
+        ['a seed timeout past one hour', (config: typeof stackConfig) => { config.environment.seed.timeout_seconds = 3601 }],
+        ['an unknown seed field', (config: typeof stackConfig) => { Reflect.set(config.environment.seed, 'cwd', 'app') }],
+        ['an inferred unconfirmed provenance', (config: typeof stackConfig) => { config.sibling[0]!.derives.mcp_sources[0]!.provenance = { ...provenance, kind: 'inferred' } }],
     ])('rejects %s through runtime and editor schemas', (_name, mutate) => {
-        const config = structuredClone(generatedConfig)
+        const config = structuredClone(stackConfig)
         mutate(config)
         expect(CockpitConfig.safeParse(config).success).toBe(false)
         const validate = publishedCockpitValidator
@@ -337,86 +283,24 @@ describe('generated environment declarations', () => {
     })
 
     it.each([
-        ['duplicate identities', (config: typeof generatedConfig) => { config.environment.generated.services.push({ ...config.environment.generated.services[0], command: ['node', 'other.mjs'] }) }],
-        ['undeclared service', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.probe.service = 'missing' }],
-        ['undeclared sibling', (config: typeof generatedConfig) => { config.environment.generated.services[0].sibling = 'missing' }],
-        ['undeclared lease', (config: typeof generatedConfig) => { config.environment.generated.services[0].ports[0].host_variable = 'MISSING_PORT' }],
-        ['undeclared policy', (config: typeof generatedConfig) => { Reflect.set(config.environment.generated.volumes[0], 'install_policy', 'missing') }],
-        ['undeclared resettable volume', (config: typeof generatedConfig) => { Reflect.set(config.environment, 'resettable_volumes', ['product-dta']) }],
-        ['too-short measured start', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.start_period_seconds = 1 }],
-        ['nonlocal sink', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].sink = 'https://vendor.invalid/' }],
-        ['forward operation reference', (config: typeof generatedConfig) => { config.environment.generated.data.modes[1].operations[0].after = ['fixtures'] }],
-        ['dependency policy mismatch', (config: typeof generatedConfig) => {
-            config.environment.install_policies.push({ ...config.environment.install_policies[0], volume: 'other-dependencies', lockfile: 'other-lock.json' })
-            config.environment.generated.volumes[0].install_policy = 'other-dependencies'
-        }],
-        ['dependency volume mounted at two targets', (config: typeof generatedConfig) => {
-            const mounts = config.environment.generated.services[0].mounts
-            mounts.push({ ...mounts[0]!, target: '/different/dependencies' })
-        }],
-        ['unmounted dependency volume', (config: typeof generatedConfig) => {
-            config.environment.generated.services[0].mounts.splice(0, 1)
-            config.environment.generated.decisions.entries.splice(8, 1)
-        }],
-        ['undeclared endpoint supplier sibling', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].supplier.sibling = 'missing' }],
-        ['undeclared endpoint supplier template', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].supplier.template = 'missing.env' }],
-        ['duplicate endpoint variable', (config: typeof generatedConfig) => { config.environment.generated.vendors[1].endpoints[0].variable = config.environment.generated.vendors[0].endpoints[0].variable }],
-        ['duplicate published lease in one service', (config: typeof generatedConfig) => {
-            config.environment.generated.services[0].ports.push({ name: 'admin', host_variable: 'WEB_PORT', internal: 3001, host_ip: '127.0.0.1' })
-            config.environment.generated.decisions.entries.push({ ...config.environment.generated.decisions.entries[11], id: 'port-admin', subject_id: 'app:admin' })
-        }],
-        ['duplicate published lease across services', (config: typeof generatedConfig) => {
-            config.sibling.push({ ...config.sibling[0], slug: 'worker', dir: 'worker', var: 'WORKER_DIR' })
-            const worker = { ...structuredClone(config.environment.generated.services[0]), id: 'worker', sibling: 'worker', dependencies: [], ports: [{ name: 'worker', host_variable: 'WEB_PORT', internal: 3001, host_ip: '127.0.0.1' }] }
-            worker.health.probe.service = 'worker'
-            worker.health.tool_probe.service = 'worker'
-            config.environment.generated.services.push(worker)
-            const decision = config.environment.generated.decisions.entries[0]
-            config.environment.generated.decisions.entries.push(
-                { ...decision, id: 'service-worker', subject: 'service', subject_id: 'worker' },
-                ...worker.mounts.map((mount, index) => ({ ...decision, id: `worker-mount-${index}`, subject: 'mount', subject_id: `worker:${mount.kind}:${mount.source}:${mount.target}` })),
-                { ...decision, id: 'worker-port', subject: 'port', subject_id: 'worker:worker' },
-            )
-        }],
-        ['changed data-default decision', (config: typeof generatedConfig) => { config.environment.generated.data.default_mode = 'restored' }],
-        ['seeded mode without fixtures', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.data, 'fixtures') }],
-        ['restored mode without restore', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.data, 'restore') }],
-        ['restore without a restored mode', (config: typeof generatedConfig) => {
-            config.environment.generated.data.modes.pop()
-            config.environment.generated.decisions.entries = config.environment.generated.decisions.entries.filter(({ subject_id }) => subject_id !== 'restored')
-        }],
-        ['default mode outside the declared modes', (config: typeof generatedConfig) => {
-            config.environment.generated.data.modes = config.environment.generated.data.modes.filter(({ mode }) => mode === 'empty')
-            Reflect.deleteProperty(config.environment.generated.data, 'restore')
-            config.environment.generated.decisions.entries = config.environment.generated.decisions.entries.filter(({ subject }) => !['data-mode', 'restore'].includes(subject))
-        }],
-    ])('enforces the runtime-only %s relation without claiming editor enforcement', (_name, mutate) => {
-        const config = structuredClone(generatedConfig)
+        ['resettable volume without Compose files', (config: typeof stackConfig) => { Reflect.set(config.environment, 'compose_files', []); Reflect.deleteProperty(config.environment, 'seed') }, 'environment.resettable_volumes[]', 'declared_compose_volume_key'],
+        ['seed without resettable volumes', (config: typeof stackConfig) => { config.environment.resettable_volumes = [] }, 'environment.seed', 'requires_resettable_volumes'],
+    ])('enforces the runtime-only %s relation without claiming editor enforcement', (_name, mutate, path, rule) => {
+        const config = structuredClone(stackConfig)
         mutate(config)
         const parsed = CockpitConfig.safeParse(config)
         expect(parsed.success).toBe(false)
         if (!parsed.success) expect(parsed.error.issues.some((issue) => issue.code === 'custom')).toBe(true)
         const schema = JSON.parse(renderCockpitSchema())
-        expect(schema['x-cockpit-editor-limitations']).toContainEqual({ path: 'environment.generated', rule: 'declared_sibling_service_volume_policy_mount_port_references' })
+        expect(schema['x-cockpit-runtime-checks']).toContainEqual({ path, rule })
     })
 
-    it('accepts the minimal example and requires exactly one of image or build in runtime and editor schemas', async () => {
+    it('accepts the minimal example through runtime and editor schemas', async () => {
         const minimal = parseToml(await readFile(fileURLToPath(new URL('../../../examples/minimal/cockpit.toml', import.meta.url)), 'utf8'))
         const validate = publishedCockpitValidator
         const parsed = CockpitConfig.safeParse(minimal)
         expect(parsed.success, parsed.success ? '' : parsed.error.message).toBe(true)
         expect(validate(minimal), JSON.stringify(validate.errors)).toBe(true)
-        const service = (config: typeof minimal) => (config as { environment: { generated: { services: Record<string, unknown>[] } } }).environment.generated.services[0]!
-        const both = structuredClone(minimal)
-        service(both).image = generatedConfig.environment.generated.services[0]!.image
-        const neither = structuredClone(minimal)
-        Reflect.deleteProperty(service(neither), 'build')
-        const escaped = structuredClone(minimal)
-        service(escaped).build = { context: '../outside' }
-        for (const config of [both, neither, escaped]) {
-            expect(CockpitConfig.safeParse(config).success).toBe(false)
-            expect(validate(config)).toBe(false)
-        }
     })
 
     it('lets a declaration omit observed_on only when this configuration file is its source', async () => {
@@ -424,38 +308,24 @@ describe('generated environment declarations', () => {
         try {
             const path = join(directory, 'cockpit.toml')
             const undated = (source: string) => {
-                const config = structuredClone(generatedConfig)
-                config.environment.generated.services[0]!.provenance = { source, kind: 'declared', reason: 'Written in the configuration' } as typeof provenance
+                const config = structuredClone(stackConfig)
+                config.sibling[0]!.derives.mcp_sources[0]!.provenance = { source, kind: 'declared', reason: 'Written in the configuration' } as typeof provenance
                 return config
             }
             await writeFile(path, stringify(undated('cockpit.toml')))
             expect((await loadCockpitConfig(path)).kind).toBe('complete')
             await writeFile(path, stringify(undated('docs/runtime.md')))
             expect(await loadCockpitConfig(path)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                message: expect.stringContaining('environment.generated.services.0.provenance: provenance without observed_on must name this configuration file (cockpit.toml)'),
+                message: expect.stringContaining('sibling.0.derives.mcp_sources.0.provenance: provenance without observed_on must name this configuration file (cockpit.toml)'),
                 fix: expect.stringContaining('observed_on'),
             })] })
             const measured = undated('cockpit.toml')
-            measured.environment.generated.services[0]!.provenance.kind = 'measured'
+            measured.sibling[0]!.derives.mcp_sources[0]!.provenance.kind = 'measured'
             expect(CockpitConfig.safeParse(measured).success).toBe(false)
             expect(publishedCockpitValidator(measured)).toBe(false)
         } finally {
             await rm(directory, { recursive: true, force: true })
         }
-    })
-
-    it.each([
-        ['zero port', 'http://app:0/sink', true],
-        ['maximum port', 'http://app:65535/sink', true],
-        ['out-of-range port', 'http://app:65536/sink', false],
-        ['five-digit out-of-range port', 'http://app:99999/sink', false],
-    ])('keeps runtime and editor endpoint parity at the %s boundary', (_name, sink, accepted) => {
-        const config = structuredClone(generatedConfig)
-        config.environment.generated.vendors[0].endpoints[0].sink = sink
-        const validate = publishedCockpitValidator
-
-        expect(CockpitConfig.safeParse(config).success).toBe(accepted)
-        expect(validate(config), JSON.stringify(validate.errors)).toBe(accepted)
     })
 })
 
@@ -498,8 +368,8 @@ describe('entrypoint kind ownership', () => {
         ] as const
         for (const [address, accepted] of cases) {
             const declaration = { ...base, ...address }
-            const config = { ...generatedConfig, environment: {
-                ...generatedConfig.environment, entrypoint_derivatives: [declaration],
+            const config = { ...stackConfig, environment: {
+                ...stackConfig.environment, entrypoint_derivatives: [declaration],
             } }
             expect(EntrypointDerivative.safeParse(declaration).success, JSON.stringify(address)).toBe(accepted)
             expect(CockpitConfig.safeParse(config).success, JSON.stringify(address)).toBe(accepted)
@@ -553,45 +423,33 @@ describe('work and browser declarations', () => {
         artifacts: { runner: '.browser/runner', mcp: '.browser/mcp', cli: '.browser/cli', auth: '.browser/auth', debugger: '.browser/debugger' },
     }
 
-    it('accepts only effective browser resource ceilings with confirmed provenance in both schemas', () => {
-        const resources = { memory_mb: 768, cpus: 0.5, provenance }
-        const validate = publishedCockpitValidator
-        const config = { ...generatedConfig, environment: { ...generatedConfig.environment,
+    // The runner these described was a service cockpit rendered into its own Compose file.
+    it('refuses the rendered-runner fields through runtime and editor schemas', () => {
+        const config = { ...stackConfig, environment: { ...stackConfig.environment,
             addressing: 'hostname', authentication: 'real', generated_host_paths: Object.values(browser.artifacts),
             posture_requirements: [{ requirement: 'authenticated-route', addressing: 'hostname', authentication: 'real' }],
         } }
-        const check = (declaration: unknown, accepted: boolean) => {
+        const accepted = { ...config, browser }
+        expect(CockpitConfig.safeParse(accepted).success).toBe(true)
+        for (const declaration of [
+            { ...browser, resources: { memory_mb: 768, cpus: 0.5, provenance } },
+            { ...browser, runner_health_measurement: { duration_seconds: 15, provenance: { ...provenance, kind: 'measured' } } },
+            { ...browser, images: { ...browser.images, runner: { ...browser.images.runner, architectures: ['arm64'] } } },
+        ]) {
             const candidate = { ...config, browser: declaration }
-            expect(CockpitConfig.safeParse(candidate).success).toBe(accepted)
-            expect(validate(candidate), JSON.stringify(validate.errors)).toBe(accepted)
+            expect(CockpitConfig.safeParse(candidate).success).toBe(false)
+            expect(publishedCockpitValidator(candidate)).toBe(false)
         }
-        check({ ...browser, resources }, true)
-        check({ ...browser, resources: { ...resources, cpus: 0.01, memory_mb: 6 } }, true)
-        const local = { ...browser, resources }
-        Reflect.deleteProperty(local, 'endpoint')
-        check(local, false)
-        const overlay = { ...config, environment: { ...config.environment }, browser: { ...browser, resources } }
-        Reflect.deleteProperty(overlay.environment, 'generated')
-        expect(CockpitConfig.safeParse(overlay).success).toBe(false)
-        expect(validate(overlay), JSON.stringify(validate.errors)).toBe(false)
-        for (const invalid of [
-            { ...resources, cpus: Number.MIN_VALUE },
-            { ...resources, cpus: Number.MAX_VALUE },
-            { ...resources, memory_mb: 5 },
-            { ...resources, provenance: { ...provenance, kind: 'inferred' } },
-        ]) check({ ...browser, resources: invalid }, false)
-        check({ ...browser, resources: { ...resources, provenance: { ...provenance, kind: 'inferred', confirmed: true } } }, true)
     })
 
     it('drives a browser signed out for a product with no sign-in, without a requirement tagged for it', () => {
-        const environment = { ...generatedConfig.environment,
+        const environment = { ...stackConfig.environment,
             addressing: 'hostname', authentication: 'none', generated_host_paths: Object.values(browser.artifacts),
             posture_requirements: [{ requirement: 'local-route', addressing: 'hostname' }],
         }
-        const signedOut = { ...browser, authentication: { policy: 'none', states: [] },
-            resources: { memory_mb: 768, cpus: 0.5, provenance } }
-        expect(CockpitConfig.safeParse({ ...generatedConfig, environment, browser: signedOut }).success).toBe(true)
-        expect(CockpitConfig.safeParse({ ...generatedConfig, environment, browser: { ...signedOut, authentication: browser.authentication } }).success).toBe(false)
+        const signedOut = { ...browser, authentication: { policy: 'none', states: [] } }
+        expect(CockpitConfig.safeParse({ ...stackConfig, environment, browser: signedOut }).success).toBe(true)
+        expect(CockpitConfig.safeParse({ ...stackConfig, environment, browser: { ...signedOut, authentication: browser.authentication } }).success).toBe(false)
     })
 
     it('keeps WIP and attempt controls lower-only and each decision to agent, person or ci', () => {
@@ -640,33 +498,21 @@ describe('work and browser declarations', () => {
     })
 
     it('refuses browser harnesses whose native transport has no measured support', () => {
-        const environment = { ...generatedConfig.environment,
+        const environment = { ...stackConfig.environment,
             addressing: 'hostname', authentication: 'real', generated_host_paths: Object.values(browser.artifacts),
             posture_requirements: [{ requirement: 'authenticated-route', addressing: 'hostname', authentication: 'real' }],
         }
-        const resources = { memory_mb: 768, cpus: 0.5, provenance }
         for (const target of ['cursor', 'grokcli']) {
-            const declaration = { ...browser, harnesses: [{ target, version: '1.2.3' }], resources }
-            const config = { ...generatedConfig, environment, browser: declaration }
+            const declaration = { ...browser, harnesses: [{ target, version: '1.2.3' }] }
+            const config = { ...stackConfig, environment, browser: declaration }
             expect(Browser.safeParse(declaration).success).toBe(false)
             expect(CockpitConfig.safeParse(config).success).toBe(false)
             expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(false)
         }
         // A measured tool the cockpit does not list gets no browser wiring either.
-        const measured = { ...generatedConfig, environment, browser: { ...browser, resources } }
+        const measured = { ...stackConfig, environment, browser }
         expect(CockpitConfig.safeParse(measured).success).toBe(true)
         expect(CockpitConfig.safeParse({ ...measured, surfaces: { tools: ['claudecode'] } }).success).toBe(false)
-    })
-
-    it('retains explicit runner architectures and measured health provenance', () => {
-        const input = { ...browser, images: { ...browser.images, runner: { ...browser.images.runner, architectures: ['arm64'] } },
-            runner_health_measurement: { duration_seconds: 15, provenance: { ...provenance, kind: 'measured' } } }
-        expect(Browser.parse(input)).toMatchObject({ images: { runner: { architectures: ['arm64'] } },
-            runner_health_measurement: input.runner_health_measurement })
-        expect(Browser.safeParse({ ...input, images: { ...input.images, runner: { ...input.images.runner, architectures: ['arm64', 'arm64'] } } }).success).toBe(false)
-        expect(Browser.safeParse({ ...input, runner_health_measurement: { duration_seconds: 0, provenance } }).success).toBe(false)
-        expect(Browser.safeParse({ ...input, runner_health_measurement: { duration_seconds: 15,
-            provenance: { ...provenance, kind: 'inferred', confirmed: false } } }).success).toBe(false)
     })
 
     it('defaults network exposure to loopback and requires a reason for declared wider rules', () => {
@@ -689,21 +535,6 @@ describe('work and browser declarations', () => {
         expect(Browser.safeParse({ ...browser, project, proxy: { ...browser.proxy, host_variable: 'BROWSER_PORT' } }).success).toBe(true)
         expect(Browser.safeParse({ ...browser, project: { ...browser.project, manifest: 'package.json' } }).success).toBe(false)
         expect(Browser.safeParse({ ...browser, project: { ...browser.project, manifest_sha256: 'd'.repeat(64) } }).success).toBe(false)
-        const service = generatedConfig.environment.generated.services[0]!
-        const { host_ip: _hostIp, ...unboundPort } = service.ports[0]!
-        expect(GeneratedService.parse({ ...service, ports: [unboundPort] }).ports[0]?.host_ip).toBe('127.0.0.1')
-        for (const host_ip of ['127.0.0.1', '::1', '0.0.0.0', '::']) expect(GeneratedService.safeParse({ ...service,
-            ports: [{ ...service.ports[0], host_ip }] }).success).toBe(true)
-        expect(GeneratedService.safeParse({ ...service, ports: [{ ...service.ports[0], host_ip: 'host.invalid' }] }).success).toBe(false)
-        expect(GeneratedService.safeParse({ ...service, host_aliases: [
-            { hostname: 'app.example.invalid', address: '127.0.0.1' },
-            { hostname: 'api.example.invalid', address: '::1' },
-        ] }).success).toBe(true)
-        for (const host_aliases of [
-            [{ hostname: 'app.example.invalid', address: 'not-an-address' }],
-            [{ hostname: '../app.invalid', address: '127.0.0.1' }],
-            [{ hostname: 'app.example.invalid', address: '127.0.0.1' }, { hostname: 'app.example.invalid', address: '::1' }],
-        ]) expect(GeneratedService.safeParse({ ...service, host_aliases }).success).toBe(false)
     })
 
     it('rejects unsafe browser posture, artifact and authentication declarations', () => {
@@ -749,64 +580,6 @@ describe('work and browser declarations', () => {
         // A selection that never places the value would run the stage unselected under a selected verdict.
         expect(Testing.safeParse(selecting({ test: ['-t'] })).success).toBe(false)
         expect(Testing.safeParse(selecting({ suite: ['{value}'] })).success).toBe(false)
-    })
-})
-
-function vendorClientPolicyConfig() {
-    const config = structuredClone(generatedConfig)
-    return { ...config, environment: { ...config.environment, generated: { ...config.environment.generated,
-        vendors: config.environment.generated.vendors.map((vendor, index) => ({ ...vendor,
-            nonempty_variables: [`SYNTHETIC_TOKEN_${index}`],
-            egress_guard: { flag: `ALLOW_SYNTHETIC_BACKEND_${index}`, enabled_value: '1', local_service: 'app' },
-        })),
-    } } }
-}
-
-describe('vendor client policy declarations', () => {
-    it('accepts explicit vendor client policy through runtime and editor schemas', () => {
-        const config = vendorClientPolicyConfig()
-        expect(CockpitConfig.safeParse(config).success).toBe(true)
-        const validate = publishedCockpitValidator
-        expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
-    })
-
-    it('rejects malformed vendor client policy through runtime and editor schemas', () => {
-        for (const policy of [
-            { nonempty_variables: [] },
-            { nonempty_variables: ['invalid-variable'] },
-            { nonempty_variables: ['TOKEN', 'TOKEN'] },
-            { egress_guard: { flag: 'invalid-variable', enabled_value: '1', local_service: 'app' } },
-            { egress_guard: { flag: 'ALLOW_SYNTHETIC', enabled_value: '', local_service: 'app' } },
-            { egress_guard: { flag: 'ALLOW_SYNTHETIC', enabled_value: 'not a token', local_service: 'app' } },
-            { egress_guard: { flag: 'ALLOW_SYNTHETIC', enabled_value: '1', local_service: 'app', extra: true } },
-        ]) {
-            const config = vendorClientPolicyConfig()
-            Object.assign(config.environment.generated.vendors[0], policy)
-            expect(CockpitConfig.safeParse(config).success).toBe(false)
-            const validate = publishedCockpitValidator
-            expect(validate(config)).toBe(false)
-        }
-    })
-
-    it('rejects vendor client policy aliases across every variable role', () => {
-        const changes: Array<(config: ReturnType<typeof vendorClientPolicyConfig>) => void> = [
-            (config) => { config.environment.generated.vendors[1].nonempty_variables = [...config.environment.generated.vendors[0].nonempty_variables] },
-            (config) => { config.environment.generated.vendors[1].egress_guard.flag = config.environment.generated.vendors[0].egress_guard.flag },
-            (config) => { config.environment.generated.vendors[1].egress_guard.flag = config.environment.generated.vendors[0].nonempty_variables[0] },
-            (config) => { config.environment.generated.vendors[0].nonempty_variables = [config.environment.generated.vendors[1].endpoints[0].variable] },
-            (config) => { config.environment.generated.vendors[0].egress_guard.flag = config.environment.generated.vendors[1].endpoints[0].variable },
-        ]
-        for (const change of changes) {
-            const config = vendorClientPolicyConfig()
-            change(config)
-            expect(CockpitConfig.safeParse(config).success).toBe(false)
-        }
-    })
-
-    it('rejects vendor client policy that names an undeclared egress backend', () => {
-        const config = vendorClientPolicyConfig()
-        config.environment.generated.vendors[0].egress_guard.local_service = 'undeclared-backend'
-        expect(CockpitConfig.safeParse(config).success).toBe(false)
     })
 })
 

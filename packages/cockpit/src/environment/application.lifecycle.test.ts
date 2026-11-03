@@ -45,7 +45,6 @@ vi.mock('./ports.js', async (importOriginal) => {
 import { consumeLoadedConfigProjection, loadCockpitConfig, type LoadedCockpitConfig } from '../config/load.js'
 import {
     withLifecycleConfiguration,
-    decodeLifecycleRecord,
     runSleep,
     runSession,
     runUp,
@@ -53,7 +52,7 @@ import {
     type LifecycleRunContext,
     type UpCommandAdapters,
 } from './application.js'
-import { lifecycleHistoryAddress, readState } from './state.js'
+import { readState } from './state.js'
 import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage, projectLifecycleStage } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
@@ -322,56 +321,8 @@ describe('lifecycle application contracts', () => {
         expect(up).not.toHaveBeenCalled()
     })
 
-    it('derives row-owned ports and entrypoints from authenticated configuration', async () => {
-        const { configPath, context } = await lifecycleContextFixture(derivedRegistrySource())
-
-        expect(context.source.path).toBe(configPath)
-        expect(context.ports.bases.WORKER_HOST_PORT).toBe(4250)
-        expect(context.entrypointDerivatives).toContainEqual({
-            name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/',
-        })
-    })
-
-    it('restores generated progress only alongside its complete replay identity', async () => {
+    it('acquires ports before runtime readiness and compensates a newly acquired holder when readiness fails', async () => {
         const { context } = await lifecycleContextFixture()
-        const replay = { runtimeSha256: 'a'.repeat(64), generation: 'b'.repeat(64), profiles: ['default'], mounts: ['app:/workspace/app'] }
-        const progress = { applied: ['publication', 'dependency:app:install', 'dependency:app:load'], notApplied: ['seeded'], attempted: ['dependency:app:stamp'] }
-        const record = { format: 'cockpit-state/v1' as const, kind: 'lifecycle' as const,
-            cockpitId: context.cockpitId, subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),
-            value: { holderId: context.holderId, workBasisSha256: 'c'.repeat(64), operationGeneration: 'd'.repeat(64),
-                completedServices: [], generatedReplay: replay, generatedProgress: progress } }
-        expect(decodeLifecycleRecord(record, context)?.value.generatedProgress).toEqual(progress)
-        const { generatedReplay, ...withoutReplay } = record.value
-        expect(decodeLifecycleRecord({ ...record, value: withoutReplay }, context)).toBeUndefined()
-        expect(decodeLifecycleRecord({ ...record, value: { ...record.value,
-            generatedProgress: { ...progress, notApplied: ['publication'] } } }, context)).toBeUndefined()
-        expect(decodeLifecycleRecord({ ...record, subjectId: `stack:${'e'.repeat(64)}` }, context)).toBeUndefined()
-    })
-
-    it('requires genuine generated publication before runtime readiness', async () => {
-        const source = readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')
-        for (const projected of [undefined, { sourceSha256: 'a'.repeat(64), generation: 'b'.repeat(64), profiles: [], mounts: [], inspection: { kind: 'passed', files: [] } }]) {
-            const { context } = await lifecycleContextFixture(source)
-            const readiness = vi.fn(async () => undefined)
-            const result = await runUp({ configPath: context.configPath }, {
-                load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-                prepareGeneratedEnvironment: async () => projected,
-                completeGeneratedEnvironment: async () => undefined,
-                completeGeneratedDependencies: async () => undefined,
-                completeGeneratedData: async () => undefined,
-                completeGeneratedVendors: async () => undefined,
-                withRuntimeReadiness: readiness,
-            } as never)
-            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ENVIRONMENT_UNAVAILABLE' })] })
-            expect(readiness).not.toHaveBeenCalled()
-            expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({ kind: 'missing' })
-            expect(await readState(lifecycleHistoryAddress(context.namespace, context.stackId)!)).toMatchObject({ kind: 'missing' })
-        }
-    })
-
-    it('acquires ports before generated publication and compensates a newly acquired holder when publication fails', async () => {
-        const source = readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')
-        const { context } = await lifecycleContextFixture(source)
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_HOST_PORT: 4100 }) })
         const leaseResult = Object.freeze({ kind: 'complete' as const, change: 'acquired' as const,
             holderId: context.holderId, recordRevision: 2, lease })
@@ -386,24 +337,20 @@ describe('lifecycle application contracts', () => {
         applicationOwners.ports.compensateAcquiredPortHolder = compensate
         const result = await runUp({ configPath: context.configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withLifecycleStage: async (_context: typeof context, use: (stage: never) => Promise<unknown>) => use({} as never),
             withAcquiredPorts: async (
                 _context: typeof context,
                 use: (ports: { leaseResult: typeof leaseResult; projection: typeof projection; retainOnFailure: () => void }) => Promise<unknown>,
             ) => { events.push('ports'); return use({ leaseResult, projection, retainOnFailure: vi.fn() }) },
-            prepareGeneratedEnvironment: async (_context: typeof context, currentPorts: typeof projection) => {
-                events.push('publication')
+            withRuntimeReadiness: async (_context: typeof context, _use: unknown, currentPorts: typeof projection) => {
+                events.push('readiness')
                 expect(currentPorts).toBe(projection)
                 return undefined
             },
-            completeGeneratedEnvironment: async () => undefined,
-            completeGeneratedDependencies: async () => undefined,
-            completeGeneratedData: async () => undefined,
-            completeGeneratedVendors: async () => undefined,
-            withRuntimeReadiness: async () => { throw new Error('runtime readiness must not run') },
             execute: vi.fn(),
         } as never)
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ENVIRONMENT_UNAVAILABLE' })] })
-        expect(events).toEqual(['ports', 'publication', 'compensate'])
+        expect(result).toMatchObject({ kind: 'refusal' })
+        expect(events).toEqual(['ports', 'readiness', 'compensate'])
         expect(compensate).toHaveBeenCalledOnce()
     })
 
@@ -581,7 +528,7 @@ describe('lifecycle application contracts', () => {
             recordRevision: 2, holderCount: 1, holderIds: [context.holderId] }
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => {
                 const stage = await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() })
                 if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
@@ -639,7 +586,7 @@ describe('lifecycle application contracts', () => {
         const executed: string[] = []
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -710,7 +657,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -763,7 +710,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),

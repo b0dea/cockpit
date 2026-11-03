@@ -52,45 +52,14 @@ function fixture(source?: string): { configPath: string; target: string } {
 
 function derivedRegistrySource(): string {
     const config = parse(readFileSync(new URL('../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')) as any
-    const service = structuredClone(config.environment.generated.services[0])
     const policy = structuredClone(config.environment.install_policies[0])
-    const provenance = structuredClone(service.provenance)
-    for (const operation of [service.image.manifest_probe, service.image.registry_auth_probe, service.health.probe, service.health.tool_probe]) {
-        if (operation) operation.service = 'worker'
-    }
-    service.ports = [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3000 }]
-    const { id: _id, sibling: _sibling, mounts: _mounts, profiles: _profiles, ...derivedService } = service
-    void _id
-    void _sibling
-    void _mounts
-    void _profiles
-    const decision = (id: string, subject: string, subject_id: string) => ({
-        id, subject, subject_id, decided_on: '2026-09-26', decision: `Synthetic ${subject}`,
-        rejected: ['Undeclared structure'], reason: 'Reproducible environment',
-        provenance,
-    })
+    const provenance = { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'Synthetic declaration' }
     config.sibling.push({
         slug: 'worker', dir: 'worker', mount: 'profile:worker', acquire: 'none', var: 'WORKER_DIR',
         toolchain: 'node', purpose: 'Synthetic profile worker',
-        derives: { generated: {
-            service: derivedService,
-            checkout_mount: { target: '/workspace/worker' },
-            additional_mounts: [{ kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' }],
-            // 4200 would be stack 1's APP_HOST_PORT under the default step of 100.
-            port_defaults: { WORKER_HOST_PORT: 4250 },
-            entrypoints: [{ name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/' }],
-            volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', provenance }],
-            install_policies: [{ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' }],
-            decisions: [
-                decision('service-worker', 'service', 'worker'),
-                decision('volume-worker-dependencies', 'volume', 'worker-dependencies'),
-                decision('mount-worker-checkout', 'mount', 'worker:bind:.:/workspace/worker'),
-                decision('mount-worker-dependencies', 'mount', 'worker:volume:worker-dependencies:/workspace/node_modules'),
-                decision('port-worker-http', 'port', 'worker:http'),
-            ],
-            provenance,
-        } },
+        derives: { mcp_sources: [{ path: '.mcp.json', provenance }] },
     })
+    config.environment.install_policies.push({ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' })
     return stringify(config)
 }
 

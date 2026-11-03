@@ -14,21 +14,8 @@ const root = resolve(import.meta.dirname, '../../../..')
 const laneFixture = readFileSync(join(root, 'fixtures/registries/lane-dialect.sh'), 'utf8')
 const tierFixture = readFileSync(join(root, 'fixtures/registries/tier-dialect.sh'), 'utf8')
 const generatedConfig = parseToml(readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')) as {
-    sibling: unknown[]; environment: { install_policies: unknown; generated: unknown }
+    sibling: unknown[]; environment: { install_policies: unknown }
 }
-const generatedDeclaration = generatedConfig.environment.generated
-const registryGeneratedDeclaration = structuredClone(generatedDeclaration) as {
-    vendors: unknown[]; decisions: { entries: { subject: string }[] }
-}
-registryGeneratedDeclaration.vendors = []
-registryGeneratedDeclaration.decisions.entries = registryGeneratedDeclaration.decisions.entries
-    .filter(entry => entry.subject !== 'vendor')
-const portlessGeneratedDeclaration = structuredClone(generatedDeclaration) as {
-    services: { ports: unknown[] }[]; decisions: { entries: { subject: string }[] }
-}
-portlessGeneratedDeclaration.services[0]!.ports = []
-portlessGeneratedDeclaration.decisions.entries = portlessGeneratedDeclaration.decisions.entries
-    .filter(entry => entry.subject !== 'port')
 const machineFloor = { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
 const localPosture = { addressing: 'port', authentication: 'none',
     posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
@@ -384,7 +371,7 @@ describe('public estate observation', () => {
         } })).toMatchObject({ kind: 'gap-draft', question: { field: 'cockpit.name' } })
     })
 
-    it('resolves a single unknown runnable gap only when its service and command match generated topology', async () => {
+    it('resolves a single unknown runnable gap and completes the interview with the Compose files that run it', async () => {
         const estateRoot = temporaryPath('unknown-estate')
         mkdirSync(join(estateRoot, 'app'), { recursive: true })
         writeFileSync(join(estateRoot, 'app/pyproject.toml'), '[project]\nname = "app"\n')
@@ -412,15 +399,6 @@ describe('public estate observation', () => {
                 message: 'the sibling answer must declare exactly the repositories init observed (app (dir "app")); it declares app (dir "different-app"), which init did not observe; it omits app (dir "app")',
                 fix: 'declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml>' }],
         })
-        // A sibling row's generated service is planned like the baseline's, so its host operations are refused at the answer too.
-        const rowSibling = (parseToml(readFileSync(join(root, 'packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')) as {
-            sibling: { derives: { generated: { service: { image: { manifest_probe: Record<string, unknown> } } } } }[] }).sibling[0]!
-        const { service: _probeService, ...rowProbe } = rowSibling.derives.generated.service.image.manifest_probe
-        rowSibling.derives.generated.service.image.manifest_probe = { ...rowProbe, location: 'host', argv: ['docker', 'image', 'inspect', 'worker'] }
-        expect(await documentObservedCommand({ root: canonical, configuration: { ...configuration, answers: [...configuration.answers,
-            answerQuestion(pending.question!, [...generatedConfig.sibling, rowSibling])] } })).toMatchObject({ kind: 'refusal',
-            diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'sibling',
-                message: expect.stringMatching(/^sibling\.1\.derives\.generated\.service\.image\.manifest_probe runs "docker" on the host/) }] })
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await documentObservedCommand({ root: canonical, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'estate.runnable' } })
@@ -435,14 +413,8 @@ describe('public estate observation', () => {
             configuration.answers.push(answerQuestion(pending.question!, value))
         }
         pending = await documentObservedCommand({ root: canonical, configuration })
-        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
-        const mismatched = structuredClone(generatedDeclaration) as { services: { command: string[] }[] }
-        mismatched.services[0]!.command = ['node', 'other.mjs']
-        expect(await documentObservedCommand({ root: canonical, configuration: { ...configuration,
-            answers: [...configuration.answers, answerQuestion(pending.question!, mismatched)] } })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH' }],
-        })
-        configuration.answers.push(answerQuestion(pending.question!, generatedDeclaration))
+        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.compose_files' } })
+        configuration.answers.push(answerQuestion(pending.question!, ['compose.yml']))
         pending = await documentObservedCommand({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, machineFloor))
         pending = await documentObservedCommand({ root: canonical, configuration })
@@ -677,18 +649,8 @@ describe('operator-confirmed document completion', () => {
         const generated = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer],
         } })
-        expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
-        // Loading cockpit.toml refuses a host command other than node; accepting the answer left init
-        // to fail only after it had written cockpit.toml, when the answer could no longer be reset.
-        const hostProbe = structuredClone(registryGeneratedDeclaration) as unknown as { services: { image: { manifest_probe: Record<string, unknown> } }[] }
-        const { service: _service, ...probe } = hostProbe.services[0]!.image.manifest_probe
-        hostProbe.services[0]!.image.manifest_probe = { ...probe, location: 'host', argv: ['docker', 'manifest', 'inspect', 'app'] }
-        expect(await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, hostProbe)],
-        } })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'environment.generated',
-            message: expect.stringContaining('environment.generated.services.0.image.manifest_probe runs "docker" on the host'),
-            fix: expect.stringContaining('make argv[0] of the host operation "node"') }] })
-        const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
+        expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.compose_files' } })
+        const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],
         } })
@@ -726,7 +688,7 @@ describe('operator-confirmed document completion', () => {
         expect(await loadCockpitConfig(configPath)).toMatchObject({ kind: 'complete', status: 0 })
     })
 
-    it('completes compose-first from a Compose file the checkout already has instead of a generated environment', async () => {
+    it('completes compose-first from a Compose file the checkout already has', async () => {
         const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
         const nameAnswer = await answerName(input)
         const configuration = { sourceObservationSha256, answers: [nameAnswer] }
@@ -734,9 +696,7 @@ describe('operator-confirmed document completion', () => {
         const afterPorts = await documentCommand({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer] } })
         const policyAnswer = answer(afterPorts.question!, generatedConfig.environment.install_policies)
         const generated = await documentCommand({ ...input, configuration: { ...configuration, answers: [nameAnswer, portAnswer, policyAnswer] } })
-        // compose_files is its own answers-file field, not a value of environment.generated.
-        expect(generated.question!.why).toContain('compose_files = ["compose.yml"] under [environment] in an answers file')
-        const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
+        const composeAnswer = answer(generated.question!, ['compose.yml'])
         // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
         // product requirement: it is asked, never defaulted.
         const machine = await documentCommand({ ...input, configuration: {
@@ -770,9 +730,8 @@ describe('operator-confirmed document completion', () => {
         const complete = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, testingAnswer, guardAnswer, confirmDefaults(defaults.question!)] } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
-        const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; generated?: unknown; machine?: unknown } }
+        const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; machine?: unknown } }
         expect(document.environment.compose_files).toEqual(['compose.yml'])
-        expect(document.environment.generated).toBeUndefined()
         expect(document.environment.machine).toEqual(machineFloor)
         expect(document.environment).toMatchObject(localPosture)
         // "none" is a recorded decision, not a missing answer: no gate, and the file says why.
@@ -792,7 +751,7 @@ describe('operator-confirmed document completion', () => {
         expect(parseToml(tested.artifact!)).toMatchObject({ testing: { ...declaredTesting, native_hooks: { install: 'inspect' } } })
 
         const empty = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, { compose_files: [] })] } })
+            ...configuration, answers: [nameAnswer, portAnswer, policyAnswer, answer(generated.question!, [])] } })
         expect(empty).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             message: expect.stringContaining('at least one path') }] })
     })
@@ -835,8 +794,8 @@ describe('operator-confirmed document completion', () => {
         const generated = await documentCommand({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer],
         } })
-        expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
-        const generatedAnswer = answer(generated.question!, portlessGeneratedDeclaration)
+        expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.compose_files' } })
+        const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await documentCommand({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer],
         } })
@@ -869,17 +828,8 @@ describe('operator-confirmed document completion', () => {
         expect(parseToml(defaults.artifact!)).toEqual(parseToml(complete.artifact!))
         expect(complete.artifact).toContain('# Decision: seeded data: not declared')
         expect(complete.artifact).toContain('# Decision: signed-in users: not declared')
-        const declared = await documentCommand({ ...base, configuration: {
-            ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer,
-                answer(testData.question!, { seeded_data: true, signed_in_users: true }), generatedAnswer, machineAnswer, postureAnswer, testingAnswer,
-                guardAnswer, confirmDefaults(defaults.question!)],
-        } })
-        expect(declared).toMatchObject({ kind: 'complete', status: 0 })
-        expect(declared.artifact).toContain('# Decision: seeded data: declared by the product-owned seeded mode')
-        expect(declared.artifact).toContain('# Decision: signed-in users: required but unresolved')
         const requiredTestData = answer(testData.question!, { seeded_data: true, signed_in_users: true })
-        const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
+        const composeAnswer = answer(generated.question!, ['compose.yml'])
         const unresolvedDefaults = await documentCommand({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer, testingAnswer,
@@ -938,7 +888,7 @@ describe('operator-confirmed document completion', () => {
         const generated = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer],
         } })
-        const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
+        const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [nameAnswer, valid, policyAnswer, generatedAnswer],
         } })
@@ -990,7 +940,7 @@ describe('operator-confirmed document completion', () => {
         const generated = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer],
         } })
-        const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
+        const generatedAnswer = answer(generated.question!, ['compose.yml'])
         const machine = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [nameAnswer, portAnswer, policyAnswer, generatedAnswer],
         } })
@@ -1025,7 +975,7 @@ describe('operator-confirmed document completion', () => {
             let pending = await documentCommand({ root: estateRoot, configuration })
             for (const value of ['single-product', generatedConfig.sibling, { APP_HOST_PORT: 4100 },
                 generatedConfig.environment.install_policies, { seeded_data: false, signed_in_users: false },
-                generatedDeclaration, machineFloor, localPosture, 'none', guardHosts]) {
+                ['compose.yml'], machineFloor, localPosture, 'none', guardHosts]) {
                 configuration.answers.push(answer(pending.question!, value))
                 pending = await documentCommand({ root: estateRoot, configuration })
             }
@@ -1164,7 +1114,6 @@ describe('operator-confirmed document completion', () => {
         expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE' }))
         expect(completed.artifact).toMatch(/^# Decision: guards: the operator stated that no non-local environment/m)
         const parsed = CockpitConfig.parse(parseToml(completed.artifact!))
-        expect(parsed.environment.generated).toBeUndefined()
         expect(parsed.environment.compose_files).toEqual([])
     })
 })

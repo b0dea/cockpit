@@ -128,7 +128,7 @@ describe('init operator command', () => {
     })
 
     it('returns a direct reset result or non-routing refusal without probing another root', async () => {
-        const reset = { field: 'environment.generated' }
+        const reset = { field: 'environment.compose_files' }
         const direct = { ...pending(), result: { ...pending().result!, resetAnswer: {
             ...reset, revision: 1, invalidatedFields: [reset.field], previewSha256: 'e'.repeat(64),
         } } }
@@ -168,11 +168,11 @@ describe('init operator command', () => {
         const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
 
         const preview = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
-            field: 'environment.generated',
+            field: 'environment.compose_files',
         } }, { interactive: false, json: true }, io, application)
 
         expect(preview).toMatchObject({ kind: 'pending', result: { root: dedicated, resetAnswer: {
-            field: 'environment.generated', previewSha256: resetDigest,
+            field: 'environment.compose_files', previewSha256: resetDigest,
         } } })
         expect(calls).toEqual([
             `${product}:none:preview`, `${product}:none:discover`, `${dedicated}:dedicated:preview`,
@@ -180,7 +180,7 @@ describe('init operator command', () => {
 
         calls.length = 0
         const accepted = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
-            field: 'environment.generated', acceptedPreviewSha256: resetDigest,
+            field: 'environment.compose_files', acceptedPreviewSha256: resetDigest,
         } }, { interactive: false, json: true }, io, application)
         expect(accepted).toMatchObject({ kind: 'pending', result: { root: dedicated } })
         expect(calls).toEqual([
@@ -189,7 +189,7 @@ describe('init operator command', () => {
         ])
 
         const stale = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
-            field: 'environment.generated', acceptedPreviewSha256: 'f'.repeat(64),
+            field: 'environment.compose_files', acceptedPreviewSha256: 'f'.repeat(64),
         } }, { interactive: false, json: true }, io, application)
         expect(stale).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
     })
@@ -236,7 +236,7 @@ describe('init operator command', () => {
         const walk = (given: string[]) => {
             const sent: string[] = []
             const questions = [asking('sibling'), asking('ports.bases'), asking('environment.install_policies'),
-                asking('environment.test_data'), asking('environment.generated'), asking('environment.machine'),
+                asking('environment.test_data'), asking('environment.compose_files'), asking('environment.machine'),
                 asking('environment.posture'), asking('guards'),
                 asking('configuration.defaults', defaultsDigest)]
             const application = async (input: { accepted: boolean; greenfieldAnswer?: { bytes: string } }) => {
@@ -256,7 +256,7 @@ describe('init operator command', () => {
             expect(outcome.kind).toBe('complete')
             expect(sent).toEqual([
                 '[{"slug":"app"}]', '{}', '[]', '{"seeded_data":false,"signed_in_users":false}',
-                '{"compose_files":["compose.yml"]}', JSON.stringify(machine), JSON.stringify(posture), JSON.stringify(guards),
+                '["compose.yml"]', JSON.stringify(machine), JSON.stringify(posture), JSON.stringify(guards),
                 JSON.stringify({ confirmed: true, sha256: defaultsDigest }),
             ])
         })
@@ -371,19 +371,20 @@ describe('init operator command', () => {
             expect(created).toEqual([])
         })
 
-        it('names an answers key that matches no interview field and an ambiguous environment answer', async () => {
+        it('names an answers key that matches no interview field, including an environment table cockpit no longer has', async () => {
             const unknown = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [], ports: { base: {} } } } },
                 noTerminal, async () => pending())
             expect(unknown).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_FIELD_UNKNOWN',
                 message: expect.stringContaining('names no interview field: ports.base;') }] })
 
-            const ambiguous = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+            const removed = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true, unattended: { previewSha256: digest, answers: {
                     sibling: [], ports: { bases: {} }, environment: { install_policies: [],
                         test_data: { seeded_data: false, signed_in_users: false }, generated: {}, compose_files: ['compose.yml'] } } } },
                 noTerminal, walk([]).application)
-            expect(ambiguous).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_AMBIGUOUS' }] })
+            expect(removed).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_FIELD_UNKNOWN',
+                message: expect.stringContaining('names no interview field: environment.generated') }] })
         })
     })
 })

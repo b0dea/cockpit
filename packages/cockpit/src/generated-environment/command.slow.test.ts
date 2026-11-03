@@ -22,13 +22,23 @@ import { installedPackageMetadata } from '../package-metadata.js'
 
 import { createGeneratedCommandFixture, stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 
-const { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, surfaceConsumer, digest,
+const { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, composeConsumer, surfaceConsumer, digest,
     staleRemovalAuthority, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
 
+// A newly guarded host changes the generated guide, so sync has a publication to prepare without
+// any other declaration change.
+async function guardAnotherHost(configPath: string) {
+    const declaration = await readFile(configPath, 'utf8')
+    const guarded = declaration.replace('vendor_endpoint_hosts = [ "api.vendor.example.test" ]',
+        'vendor_endpoint_hosts = [ "api.vendor.example.test", "second.vendor.example.test" ]')
+    if (guarded === declaration) throw new Error('the fixture names no vendor host to extend')
+    await writeFile(configPath, guarded)
+}
+
 describe('public generated repair', () => {
     it('previews and explicitly applies identical changes through each exact prepared plan once', async () => {
-        const { root, configPath } = await consumer('public-repair')
+        const { root, configPath } = await composeConsumer('public-repair')
         const admit = vi.spyOn(publicationTransaction, 'admitPublicationPlan')
         const run = vi.spyOn(publicationTransaction, 'runPublicationPlan')
         try {
@@ -45,7 +55,7 @@ describe('public generated repair', () => {
             expect(dry).toMatchObject({ kind: 'complete', result: { dryRun: true, changes: preview.changes } })
             expect(run.mock.calls[0]![0]).toBe(first.plan)
             expect(admit).toHaveBeenCalledTimes(1)
-            await expect(lstat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await expect(lstat(join(root, 'compose.cockpit.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
             await expect(lstat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
             const repeated = await applyGeneratedEnvironmentRepair(preview.repairAuthority)
             expect(repeated).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })] })
@@ -72,7 +82,7 @@ describe('public generated repair', () => {
 })
 
 it('prepares canonical currentness with genuine producer facts and no wall-clock field', async () => {
-    const { root, configPath } = await consumer('producer-currentness')
+    const { root, configPath } = await composeConsumer('producer-currentness')
     const first = '2026-10-22T12:00:00.000Z'
     const later = '2026-10-23T12:00:00.000Z'
     expect(await syncGeneratedEnvironment({ configPath }, { now: () => first })).toMatchObject({ kind: 'complete' })
@@ -82,7 +92,7 @@ it('prepares canonical currentness with genuine producer facts and no wall-clock
         sourceRevision: installedPackageMetadata.cockpitSourceRevision })
     const admission = vi.spyOn(publicationTransaction, 'admitPublicationPlan')
     try {
-        const outputPaths = ['app/.env.example', 'compose.generated.yml', 'docs/cockpit/environment-decisions.md', 'fixtures/personas.generated.ts']
+        const outputPaths = ['compose.cockpit.yml']
         const canonicalReads: { action: string; entries: { path: string; maxBytes: number; action: string }[] }[] = []
         const current = await prepareGeneratedEnvironmentCurrentness({ configPath }, {
             now: () => later,
@@ -97,17 +107,17 @@ it('prepares canonical currentness with genuine producer facts and no wall-clock
         expect(current.storedProducer).toEqual(JSON.parse(before).producer)
         expect(admission).toHaveBeenCalledTimes(1)
         expect(await readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8')).toBe(before)
-        expect(canonicalReads).toEqual([{ action: 'read-batch', entries: outputPaths.map(path => ({ path, maxBytes: 16_777_216, action: 'read-file' })) }])
+        expect(canonicalReads).toEqual([{ action: 'read-file', entries: outputPaths.map(path => ({ path, maxBytes: 16_777_216, action: 'read-file' })) }])
     } finally { admission.mockRestore() }
 })
 
 it('keeps the committed ownership manifest byte-identical during a later no-op sync', async () => {
-    const { root, configPath } = await consumer('producer-currentness-noop')
+    const { root, configPath } = await composeConsumer('producer-currentness-noop')
     const first = '2026-10-22T12:00:00.000Z'
     const later = '2026-10-23T12:00:00.000Z'
     expect(await syncGeneratedEnvironment({ configPath }, { now: () => first })).toMatchObject({ kind: 'complete' })
     const before = await readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8')
-    const outputPaths = ['app/.env.example', 'compose.generated.yml', 'docs/cockpit/environment-decisions.md', 'fixtures/personas.generated.ts']
+    const outputPaths = ['compose.cockpit.yml']
     const canonicalReads: { action: string; entries: { path: string; maxBytes: number; action: string }[] }[] = []
     expect(await syncGeneratedEnvironment({ configPath }, {
         now: () => later,
@@ -122,7 +132,7 @@ it('keeps the committed ownership manifest byte-identical during a later no-op s
 })
 
 it('records a changed producer identity as the actual installed producer', async () => {
-    const { root, configPath } = await consumer('producer-migration')
+    const { root, configPath } = await composeConsumer('producer-migration')
     expect(await syncGeneratedEnvironment({ configPath }, { now: () => '2026-10-22T12:00:00.000Z' })).toMatchObject({ kind: 'complete' })
     const path = join(root, '.cockpit/generated-environment-ownership.json')
     const prior = JSON.parse(await readFile(path, 'utf8'))
@@ -132,7 +142,7 @@ it('records a changed producer identity as the actual installed producer', async
     const current = await prepareGeneratedEnvironmentCurrentness({ configPath }, { now: () => '2026-10-23T12:00:00.000Z' })
     expect(current.storedProducer).toEqual(prior.producer)
     expect(current.changes).toEqual([{ operation: 'write', path: '.cockpit/generated-environment-ownership.json' }])
-    const outputPaths = ['app/.env.example', 'compose.generated.yml', 'docs/cockpit/environment-decisions.md', 'fixtures/personas.generated.ts']
+    const outputPaths = ['compose.cockpit.yml']
     const canonicalReads: { action: string; entries: { path: string; maxBytes: number; action: string }[]; afterPublication: boolean }[] = []
     let published = false
     expect(await syncGeneratedEnvironment({ configPath }, {
@@ -148,53 +158,8 @@ it('records a changed producer identity as the actual installed producer', async
     expect(JSON.parse(await readFile(path, 'utf8')).producer).toEqual({ package: installedPackageMetadata.name,
         version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision })
     expect(canonicalReads).toHaveLength(1)
-    expect(canonicalReads).toEqual([{ action: 'read-batch', entries: outputPaths.map(path => ({ path, maxBytes: 16_777_216, action: 'read-file' })), afterPublication: true }])
+    expect(canonicalReads).toEqual([{ action: 'read-file', entries: outputPaths.map(path => ({ path, maxBytes: 16_777_216, action: 'read-file' })), afterPublication: true }])
 }, 120_000)
-
-
-describe('generated sibling-root authority', () => {
-    it('publishes a generated build from an authenticated sibling beside the cockpit without writing into it', async () => {
-        const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-build-estate-')))
-        roots.push(estate)
-        const { root, configPath } = await consumer('sibling-build', estate)
-        const sibling = join(estate, 'api')
-        await mkdir(sibling)
-        const dockerfile = 'FROM synthetic.invalid/runtime@sha256:' + 'a'.repeat(64) + '\n'
-        await writeFile(join(sibling, 'Dockerfile'), dockerfile)
-        await writeFile(configPath, `
-[cockpit]
-name = "sibling-build"
-siblings_root = ".."
-
-[[sibling]]
-slug = "api"
-dir = "api"
-mount = "always"
-acquire = "none"
-var = "API_DIR"
-purpose = "Synthetic API"
-
-[ports]
-bases = {}
-
-[environment.generated]
-compose_file = "compose.generated.yml"
-
-[[environment.generated.services]]
-id = "api"
-sibling = "api"
-command = ["node", "server.mjs"]
-build = { context = ".", dockerfile = "Dockerfile" }
-health = { property = "Synthetic API responds", interval_seconds = 2, timeout_seconds = 2, retries = 10, start_period_seconds = 1, probe = { location = "in-stack", service = "api", cwd = ".", argv = ["node", "--version"], timeout_seconds = 30 } }
-`)
-        const result = await syncGeneratedEnvironment({ configPath })
-        expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
-        expect(await readFile(join(root, 'compose.generated.yml'), 'utf8')).toContain('context: ../api')
-        expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        expect(await readdir(sibling)).toEqual(['Dockerfile'])
-        expect(await readFile(join(sibling, 'Dockerfile'), 'utf8')).toBe(dockerfile)
-    }, 120_000)
-})
 
 
 describe('selected bootstrap target', () => {
@@ -300,7 +265,7 @@ describe('selected bootstrap target', () => {
     })
 
     it('adopts only the exact state publication and anchored bootstrap outputs during first sync', async () => {
-        const { root, configPath } = await consumer('bootstrap-adoption')
+        const { root, configPath } = await composeConsumer('bootstrap-adoption')
         const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
@@ -347,8 +312,7 @@ describe('selected bootstrap target', () => {
             .toEqual(expect.arrayContaining(prepared.result.files.map(file => expect.objectContaining({ path: file.path, sha256: file.sha256 }))))
         // One repository is an ordinary estate: adopting the bootstrap skills does not narrow what is published.
         expect(manifest.entries.map((entry: { path: string }) => entry.path)).toEqual(expect.arrayContaining(['AGENTS.md', '.cockpit/guards/bash-guard.sh']))
-        await expect(readFile(join(root, 'compose.generated.yml'), 'utf8')).resolves.toContain('services:')
-        await expect(readFile(join(root, 'fixtures/personas.generated.ts'), 'utf8')).resolves.toContain('first')
+        await expect(readFile(join(root, 'compose.cockpit.yml'), 'utf8')).resolves.toContain('services:')
         expect(await syncGeneratedEnvironment({ configPath,
             bootstrapState: { publication, address } })).toMatchObject({ kind: 'refusal' })
         const resumed = await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address })
@@ -358,7 +322,7 @@ describe('selected bootstrap target', () => {
         expect('authority' in resumed).toBe(false)
         expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli',
             address: { ...address, checkoutRoot: root + '-other' } })).toMatchObject({ kind: 'refusal' })
-        await writeFile(join(root, 'compose.generated.yml'), 'drift after initial sync\n')
+        await writeFile(join(root, 'compose.cockpit.yml'), 'drift after initial sync\n')
         expect(await generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address }))
             .toMatchObject({ kind: 'complete', canonicalOwnership: true })
         expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
@@ -410,11 +374,9 @@ it('recreates deleted shared-region outputs with only the cockpit region', async
     const shared = ['AGENTS.md', 'opencode.jsonc']
     const originals = await Promise.all(shared.map(path => readFile(join(root, path), 'utf8')))
     await Promise.all(shared.map(path => rm(join(root, path))))
-    await rm(join(root, 'compose.generated.yml'))
     const recreated = await syncGeneratedEnvironment({ configPath })
     expect(recreated, JSON.stringify(recreated.diagnostics)).toMatchObject({ kind: 'complete' })
     expect(await Promise.all(shared.map(path => readFile(join(root, path), 'utf8')))).toEqual(originals)
-    await expect(stat(join(root, 'compose.generated.yml'))).resolves.toBeDefined()
     expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
 }, 120_000)
 
@@ -493,7 +455,11 @@ it('consumes vendor and exact build/test authority through installed hook regist
 }, 120_000)
 
 it('admits the npx and installed-path launcher spellings only while they run the installed cockpit', async () => {
+    // A person runs a writing sync here, so the guard asks for it rather than allowing it.
     const { root, configPath } = await surfaceConsumer('launcher-spellings', { custom: `
+[autonomy]
+sync = "person"
+
 [testing]
 stages = [{ id = "quick", command = ["sh", "-c", "echo ok"], requires_stack = false }]
 gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synthetic gate" }]
@@ -567,7 +533,8 @@ native_hooks = { install = "inspect" }
 }, 120_000)
 
 it('rolls back the whole guard publication when a staged registration cannot be published', async () => {
-    const { root, configPath } = await surfaceConsumer('guard-rollback', { mcp: { command: '/usr/bin/true' } })
+    // A person approves each server, so removing the recorded approval changes the published settings.
+    const { root, configPath } = await surfaceConsumer('guard-rollback', { mcp: { command: '/usr/bin/true' }, custom: '\n[autonomy]\nmcp_approve = "person"\n' })
     await writeFile(join(root, 'app/.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
     const initial = await syncGeneratedEnvironment({ configPath })
     if (initial.kind !== 'complete') throw new Error(JSON.stringify(initial))
@@ -611,68 +578,39 @@ it('keeps the installed guard untouched when replacement handler authentication 
 }, 120_000)
 
 describe('generated environment command', () => {
-    it('updates every declared persona projection from the authenticated source', async () => {
-        const { root, configPath } = await consumer('personas')
-        const declaration = await readFile(configPath, 'utf8')
-        await writeFile(configPath, declaration.replace(
-            '[[environment.generated.data.fixtures.persona_outputs]]\npath = "fixtures/personas.generated.ts"\nformat = "typescript"\nreason = "Synthetic typed consumer"',
-            '[[environment.generated.data.fixtures.persona_outputs]]\npath = "fixtures/personas.generated.ts"\nformat = "typescript"\nreason = "Synthetic typed consumer"\n\n[[environment.generated.data.fixtures.persona_outputs]]\npath = "fixtures/personas.generated.json"\nformat = "json"\nreason = "Synthetic JSON consumer"',
-        ))
-        const synced = await syncGeneratedEnvironment({ configPath })
-        expect(synced).toMatchObject({ kind: 'complete' })
-        if (synced.kind !== 'complete') return
-        const projected = synced.result.paths.filter((path) => path.startsWith('fixtures/personas.generated.'))
-        expect(projected).toEqual(['fixtures/personas.generated.json', 'fixtures/personas.generated.ts'])
-        const before = await bytes(root, projected)
-
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
-        const drift = await checkGeneratedEnvironment({ configPath })
-        expect(drift).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT' })] })
-        const resynced = await syncGeneratedEnvironment({ configPath })
-        expect(resynced.kind).toBe('complete')
-        const after = await bytes(root, projected)
-        expect(after['fixtures/personas.generated.json']).not.toBe(before['fixtures/personas.generated.json'])
-        expect(after['fixtures/personas.generated.ts']).not.toBe(before['fixtures/personas.generated.ts'])
-    }, 120_000)
+    // Dropping compose_files leaves the ownership override cockpit wrote for it behind.
+    const withoutCompose = (declaration: string) => declaration.replace('\n[environment]\ncompose_files = ["compose.yml"]\n', '\n')
 
     it('removes exact stale outputs after declaration changes', async () => {
-        const removable = await consumer('removed-output')
+        const removable = await composeConsumer('removed-output')
         expect((await syncGeneratedEnvironment({ configPath: removable.configPath })).kind).toBe('complete')
-        const declaration = await readFile(removable.configPath, 'utf8')
-        await writeFile(removable.configPath, declaration.replace(
-            'path = "fixtures/personas.generated.ts"',
-            'path = "fixtures/personas.generated.json"',
-        ).replace('format = "typescript"', 'format = "json"'))
+        await writeFile(removable.configPath, withoutCompose(await readFile(removable.configPath, 'utf8')))
         const stale = await checkGeneratedEnvironment({ configPath: removable.configPath })
         expect(stale).toMatchObject({
             kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_ARTIFACT', target: 'fixtures/personas.generated.ts' })],
+            diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_ARTIFACT', target: 'compose.cockpit.yml' })],
         })
-        const stalePersona = await readFile(join(removable.root, 'fixtures/personas.generated.ts'))
+        const staleOverride = await readFile(join(removable.root, 'compose.cockpit.yml'))
         const retained = await syncGeneratedEnvironment(
             { configPath: removable.configPath },
-            staleRemovalAuthority([{ path: 'fixtures/personas.generated.ts', kind: 'file', sha256: digest(stalePersona) }]),
+            staleRemovalAuthority([{ path: 'compose.cockpit.yml', kind: 'file', sha256: digest(staleOverride) }]),
         )
         expect(retained.kind).toBe('complete')
-        await expect(stat(join(removable.root, 'fixtures/personas.generated.ts'))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(stat(join(removable.root, 'compose.cockpit.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
         expect((await checkGeneratedEnvironment({ configPath: removable.configPath })).kind).toBe('complete')
     }, 120_000)
 
     it('preserves changed stale outputs after declaration changes', async () => {
-        const changed = await consumer('changed-removed-output')
+        const changed = await composeConsumer('changed-removed-output')
         expect((await syncGeneratedEnvironment({ configPath: changed.configPath })).kind).toBe('complete')
-        const changedDeclaration = await readFile(changed.configPath, 'utf8')
-        await writeFile(changed.configPath, changedDeclaration.replace(
-            'path = "fixtures/personas.generated.ts"',
-            'path = "fixtures/personas.generated.json"',
-        ).replace('format = "typescript"', 'format = "json"'))
-        await writeFile(join(changed.root, 'fixtures/personas.generated.ts'), 'consumer bytes\n')
+        await writeFile(changed.configPath, withoutCompose(await readFile(changed.configPath, 'utf8')))
+        await writeFile(join(changed.root, 'compose.cockpit.yml'), 'consumer bytes\n')
         const refused = await syncGeneratedEnvironment({ configPath: changed.configPath })
         expect(refused).toMatchObject({
             kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_ARTIFACT_DRIFT', target: 'fixtures/personas.generated.ts' })],
+            diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_ARTIFACT_DRIFT', target: 'compose.cockpit.yml' })],
         })
-        expect(await readFile(join(changed.root, 'fixtures/personas.generated.ts'), 'utf8')).toBe('consumer bytes\n')
+        expect(await readFile(join(changed.root, 'compose.cockpit.yml'), 'utf8')).toBe('consumer bytes\n')
     })
 
     it('refuses symlink ancestry and compensates a partial publication', async () => {
@@ -683,7 +621,7 @@ describe('generated environment command', () => {
         await symlink(outside, join(linked.root, 'app'))
         const refused = await syncGeneratedEnvironment({ configPath: linked.configPath })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_SIBLING_ROOT_INVALID', target: 'sibling' })] })
-        await expect(stat(join(outside, '.env.example'))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readdir(outside)).toEqual([])
 
         // A teammate's clone has no siblings yet; one with no recorded remote says how to obtain it.
         const absent = await consumer('absent-sibling')
@@ -698,7 +636,7 @@ describe('generated environment command', () => {
         expect(initial.kind).toBe('complete')
         if (initial.kind !== 'complete') return
         const original = await bytes(partial.root, initial.result.paths)
-        await writeFile(join(partial.root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
+        await guardAnotherHost(partial.configPath)
         let changedInput = false
         const adapters: Partial<GeneratedEnvironmentCommandAdapters> = {
             execute: async (step) => {
@@ -716,7 +654,6 @@ describe('generated environment command', () => {
         expect(changedInput).toBe(true)
         expect(failed).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })] })
         expect(await bytes(partial.root, initial.result.paths)).toEqual(original)
-        expect(await readFile(join(partial.root, 'app/.env.example'), 'utf8')).toBe(original['app/.env.example'])
         expect(await readFile(join(partial.root, 'unmanaged.txt'), 'utf8')).toBe('keep\n')
 
         const changed = await consumer('changed-ancestry')
@@ -736,25 +673,24 @@ describe('generated environment command', () => {
             kind: 'refusal',
             diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED' })],
         })
-        await expect(stat(join(changedOutside, '.env.example'))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readdir(changedOutside)).toEqual([])
     })
 
     it('does not publish or compensate through a parent replaced during publication', async () => {
         const consumerRoot = await consumer('publication-race')
         expect((await syncGeneratedEnvironment({ configPath: consumerRoot.configPath })).kind).toBe('complete')
-        const original = await readFile(join(consumerRoot.root, 'docs/cockpit/environment-decisions.md'), 'utf8')
-        const declaration = await readFile(consumerRoot.configPath, 'utf8')
-        await writeFile(consumerRoot.configPath, declaration.replace('Keep the synthetic environment reproducible', 'Keep the updated synthetic environment reproducible'))
+        const original = await readFile(join(consumerRoot.root, '.cockpit/generated-environment-ownership.json'), 'utf8')
+        await guardAnotherHost(consumerRoot.configPath)
         let swapped = false
-        const held = join(consumerRoot.root, 'docs/cockpit-held')
+        const held = join(consumerRoot.root, '.cockpit-held')
         const outcome = await syncGeneratedEnvironment(
             { configPath: consumerRoot.configPath },
             {
                 execute: async (step) => {
-                    if (!swapped && publicationGroups(step, 'prepare').some(group => group.parent === 'docs/cockpit')) {
+                    if (!swapped && publicationGroups(step, 'prepare').some(group => group.parent === '.cockpit')) {
                         swapped = true
-                        await rename(join(consumerRoot.root, 'docs/cockpit'), held)
-                        await mkdir(join(consumerRoot.root, 'docs/cockpit'))
+                        await rename(join(consumerRoot.root, '.cockpit'), held)
+                        await mkdir(join(consumerRoot.root, '.cockpit'))
                     }
                     return executeProbe(step)
                 },
@@ -765,28 +701,26 @@ describe('generated environment command', () => {
             kind: 'refusal',
             diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })],
         })
-        await expect(stat(join(consumerRoot.root, 'docs/cockpit/environment-decisions.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-        expect(await readFile(join(held, 'environment-decisions.md'), 'utf8')).toBe(original)
+        await expect(stat(join(consumerRoot.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(join(held, 'generated-environment-ownership.json'), 'utf8')).toBe(original)
         expect(await readFile(join(consumerRoot.root, 'unmanaged.txt'), 'utf8')).toBe('keep\n')
     })
 
     it('restores a group when publication fails after its first target mutation', async () => {
-        const { root, configPath } = await consumer('interrupted-group')
-        const declaration = await readFile(configPath, 'utf8')
-        await writeFile(configPath, declaration.replace(
-            '[[environment.generated.data.fixtures.persona_outputs]]\npath = "fixtures/personas.generated.ts"\nformat = "typescript"\nreason = "Synthetic typed consumer"',
-            '[[environment.generated.data.fixtures.persona_outputs]]\npath = "fixtures/personas.generated.ts"\nformat = "typescript"\nreason = "Synthetic typed consumer"\n\n[[environment.generated.data.fixtures.persona_outputs]]\npath = "fixtures/personas.generated.json"\nformat = "json"\nreason = "Synthetic JSON consumer"',
-        ))
+        const { root, configPath } = await composeConsumer('interrupted-group')
         const initial = await syncGeneratedEnvironment({ configPath })
         expect(initial.kind).toBe('complete')
         if (initial.kind !== 'complete') return
-        const paths = ['fixtures/personas.generated.json', 'fixtures/personas.generated.ts']
+        // Two outputs in the root change together: the guide names the new host, and the override
+        // labels the new service.
+        const paths = ['AGENTS.md', 'compose.cockpit.yml']
         const before = await bytes(root, paths)
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
+        await guardAnotherHost(configPath)
+        await writeFile(join(root, 'compose.yml'), `${await readFile(join(root, 'compose.yml'), 'utf8')}  worker:\n    image: node@sha256:${'9'.repeat(64)}\n`)
         let planted = false
         const outcome = await syncGeneratedEnvironment({ configPath }, {
             execute: async (step) => {
-                const group = publicationGroups(step, 'publish').find(group => group.parent === 'fixtures')
+                const group = publicationGroups(step, 'publish').find(group => group.parent === '.' && group.entries.length > 1)
                 if (!planted && group) {
                     planted = true
                     const stage = group.entries[1]!.stage
@@ -802,14 +736,14 @@ describe('generated environment command', () => {
             diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })],
         })
         expect(await bytes(root, paths)).toEqual(before)
-        expect((await readdir(join(root, 'fixtures'))).filter((name) => name.startsWith('.cockpit-'))).toEqual([])
+        expect((await readdir(root)).filter((name) => name.startsWith('.cockpit-'))).toEqual([])
     })
 
     it('retains recovery records when publication finalization is not confirmed', async () => {
         const { root, configPath } = await consumer('finalization-recovery')
         const initial = await syncGeneratedEnvironment({ configPath })
         expect(initial.kind).toBe('complete')
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
+        await guardAnotherHost(configPath)
         let refused = false
         const outcome = await syncGeneratedEnvironment({ configPath }, {
             execute: async (step) => {
@@ -826,7 +760,7 @@ describe('generated environment command', () => {
             diagnostics: [expect.objectContaining({ code: 'GENERATED_COMPENSATION_FAILED' })],
         })
         expect(refused).toBe(true)
-        expect(await readFile(join(root, 'fixtures/personas.generated.ts'), 'utf8')).toBe('export default [\n  {\n    "id": "changed"\n  }\n] as const\n')
+        expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toContain('second.vendor.example.test')
         if (outcome.kind !== 'refusal') return
         const target = outcome.diagnostics[0]?.target
         if (!target) throw new Error('compensation diagnostic omitted the recovery target')

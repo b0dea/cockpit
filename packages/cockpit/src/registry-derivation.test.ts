@@ -14,34 +14,7 @@ function baseline(): CockpitConfigValue {
 
 function derivedConfig(): Record<string, unknown> {
     const config = structuredClone(baseline())
-    const service = structuredClone(config.environment.generated!.services[0]!)
-    const policy = structuredClone(config.environment.install_policies[0]!)
-    const provenance = structuredClone(service.provenance)
-    const operationOwners = [
-        service.image!.manifest_probe,
-        service.image!.registry_auth_probe,
-        service.health.probe,
-        service.health.tool_probe,
-    ]
-    for (const operation of operationOwners) if (operation) operation.service = 'worker'
-    service.ports = [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3000, host_ip: '127.0.0.1' }]
-    const { id: _id, sibling: _sibling, mounts: _mounts, profiles: _profiles, ...derivedService } = service
-    void _id
-    void _sibling
-    void _mounts
-    void _profiles
-
-    const decision = (id: string, subject: string, subject_id: string) => ({
-        id,
-        subject,
-        subject_id,
-        decided_on: '2026-09-26',
-        decision: `Synthetic ${subject}`,
-        rejected: ['Undeclared structure'],
-        reason: 'Reproducible environment',
-        provenance,
-    })
-
+    const provenance = { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'Synthetic declaration' }
     config.sibling.push({
         slug: 'worker',
         dir: 'worker',
@@ -51,57 +24,19 @@ function derivedConfig(): Record<string, unknown> {
         toolchain: 'node',
         purpose: 'Synthetic profile worker',
         environment_files: [{ template: '.env.worker.example', instance: '.env.worker' }],
-        derives: {
-            generated: {
-                service: derivedService,
-                checkout_mount: { target: '/workspace/worker' },
-                additional_mounts: [{ kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' }],
-                port_defaults: { WORKER_HOST_PORT: 4250 },
-                entrypoints: [{ name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/',
-                    hostname: 'worker.sample.localhost', scheme: 'https' }],
-                volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', provenance }],
-                install_policies: [{ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' }],
-                decisions: [
-                    decision('service-worker', 'service', 'worker'),
-                    decision('volume-worker-dependencies', 'volume', 'worker-dependencies'),
-                    decision('mount-worker-checkout', 'mount', 'worker:bind:.:/workspace/worker'),
-                    decision('mount-worker-dependencies', 'mount', 'worker:volume:worker-dependencies:/workspace/node_modules'),
-                    decision('port-worker-http', 'port', 'worker:http'),
-                ],
-                provenance,
-            },
-            mcp_sources: [{ path: '.mcp.json', provenance }],
-        },
+        derives: { mcp_sources: [{ path: '.mcp.json', provenance }] },
     } as never)
     return config as unknown as Record<string, unknown>
 }
 
 describe('registry derivation', () => {
-    it('folds one profile sibling into the complete effective configuration and reference indexes', () => {
-        const input = derivedConfig()
-        // A row-derived volume is one of the stack's volumes, so reset may name it.
-        Reflect.set(input.environment as object, 'resettable_volumes', ['worker-dependencies'])
-        const result = deriveRegistry(input)
+    it('indexes the MCP sources and secret paths the siblings declare and drops derives from the configuration', () => {
+        const result = deriveRegistry(derivedConfig())
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
-        expect(result.result.config.environment.resettable_volumes).toEqual(['worker-dependencies'])
-
-        const worker = result.result.config.environment.generated!.services.find(({ id }) => id === 'worker')!
-        expect(worker).toMatchObject({
-            id: 'worker', sibling: 'worker', profiles: ['worker'],
-            mounts: [
-                { kind: 'bind', source: '.', target: '/workspace/worker', source_type: 'directory' },
-                { kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' },
-            ],
-        })
-        expect(result.result.config.ports.bases.WORKER_HOST_PORT).toBe(4250)
-        expect(result.result.config.environment.entrypoint_derivatives).toContainEqual({
-            name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/',
-            hostname: 'worker.sample.localhost', scheme: 'https',
-        })
         expect(result.result.mcpSources).toEqual([{
             slug: 'worker', siblingDir: 'worker', path: '.mcp.json',
-            provenance: worker.provenance,
+            provenance: { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'Synthetic declaration' },
         }])
         expect(result.result.config.sibling[1].environment_files).toEqual([
             { template: '.env.worker.example', instance: '.env.worker' },
@@ -110,53 +45,23 @@ describe('registry derivation', () => {
             { slug: 'app', siblingDir: 'app', path: '.env', kind: 'instance' },
             { slug: 'worker', siblingDir: 'worker', path: '.env.worker', kind: 'instance' },
         ])
-        expect(result.result.origins).toEqual([{ slug: 'worker', provenance: worker.provenance }])
         expect(result.result.config.sibling[1]).not.toHaveProperty('derives')
         expect(Object.isFrozen(result.result)).toBe(true)
         expect(Object.isFrozen(result.result.config)).toBe(true)
     })
 
     it.each([
-        ['missing provenance', (config: any) => { delete config.sibling[1].derives.generated.provenance }],
-        ['generated host row', (config: any) => {
-            config.sibling[1].mount = 'host'
-            config.sibling[1].gate = 'operator'
-            config.sibling[1].host_reason = 'Requires a host display'
-        }],
-        ['missing row port default', (config: any) => { config.sibling[1].derives.generated.port_defaults = {} }],
-        ['extra row port default', (config: any) => { config.sibling[1].derives.generated.port_defaults.EXTRA_PORT = 4300 }],
-        ['equal global port authority', (config: any) => {
-            config.sibling[1].derives.generated.port_defaults = { APP_HOST_PORT: 4100 }
-            config.sibling[1].derives.generated.service.ports[0].host_variable = 'APP_HOST_PORT'
-            config.sibling[1].derives.generated.entrypoints[0].port = 'APP_HOST_PORT'
-        }],
-        ['foreign entrypoint port', (config: any) => { config.sibling[1].derives.generated.entrypoints[0].port = 'APP_HOST_PORT' }],
-        ['foreign decision subject', (config: any) => { config.sibling[1].derives.generated.decisions[0].subject_id = 'app' }],
-        ['duplicate volume identity', (config: any) => {
-            config.sibling[1].derives.generated.volumes[0].id = 'dependencies'
-            config.sibling[1].derives.generated.volumes[0].install_policy = 'dependencies'
-            config.sibling[1].derives.generated.install_policies[0].volume = 'dependencies'
-            config.sibling[1].derives.generated.additional_mounts[0].source = 'dependencies'
-        }],
-        ['undeclared resettable volume', (config: any) => { config.environment.resettable_volumes = ['worker-dependencie'] }],
-        ['duplicate policy selector', (config: any) => { config.sibling[1].derives.generated.install_policies[0].lockfile = 'package-lock.json' }],
-        ['existing generated cross-check failure', (config: any) => { config.sibling[1].derives.generated.service.health.probe.service = 'app' }],
+        ['missing provenance', (config: any) => { delete config.sibling[1].derives.mcp_sources[0].provenance }],
+        ['empty derives', (config: any) => { config.sibling[1].derives.mcp_sources = [] }],
         ['duplicate MCP reference', (config: any) => { config.sibling[1].derives.mcp_sources.push(config.sibling[1].derives.mcp_sources[0]) }],
         ['unsafe MCP reference', (config: any) => { config.sibling[1].derives.mcp_sources[0].path = '../mcp.json' }],
+        ['a generated row', (config: any) => { config.sibling[1].derives.generated = {} }],
     ])('refuses %s without returning a partial candidate', (_label, mutate) => {
         const config = derivedConfig()
         mutate(config)
         const result = deriveRegistry(config)
-        expect(result.kind).toBe('refusal')
+        expect(result).toMatchObject({ kind: 'refusal', code: 'REGISTRY_INPUT_INVALID' })
         expect(result).not.toHaveProperty('result')
-    })
-
-    it('names the missing global generated baseline', () => {
-        const config = derivedConfig() as any
-        delete config.environment.generated
-        expect(deriveRegistry(config)).toMatchObject({
-            kind: 'refusal', code: 'REGISTRY_GENERATED_BASELINE_MISSING',
-        })
     })
 
     it.each([

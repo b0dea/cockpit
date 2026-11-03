@@ -1,7 +1,6 @@
 import { createInterface } from 'node:readline/promises'
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
-import type { PortLeaseProjection } from '../environment/ports.js'
 import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
 import { runSyncAdoption, type SyncAdoptionInput, type SyncAdoptionOutcome } from './adopt.js'
 import {
@@ -73,9 +72,8 @@ export function applySelectedBootstrapSurface(
 export function prepareGeneratedEnvironmentCurrentness(
     input: GeneratedEnvironmentCommandInput,
     adapters?: Partial<GeneratedEnvironmentCommandAdapters>,
-    portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCurrentness> {
-    return prepareCurrentness(input, adapters, portLease)
+    return prepareCurrentness(input, adapters)
 }
 
 export function applyGeneratedEnvironmentRepair(
@@ -88,9 +86,8 @@ export function applyGeneratedEnvironmentRepair(
 export function syncGeneratedEnvironment(
     input: GeneratedEnvironmentSyncInput,
     adapters?: Partial<GeneratedEnvironmentCommandAdapters>,
-    portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
-    return synchronize(input, adapters, portLease)
+    return synchronize(input, adapters)
 }
 
 export function syncTeamGeneratedEnvironment(
@@ -107,9 +104,8 @@ export function adoptAndSyncGeneratedEnvironment(input: SyncAdoptionInput): Prom
 
 export function checkGeneratedEnvironment(
     input: GeneratedEnvironmentCommandInput,
-    portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
-    return check(input, portLease)
+    return check(input)
 }
 
 export interface GeneratedEnvironmentDispatchOutcome {

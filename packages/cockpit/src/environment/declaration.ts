@@ -1,7 +1,6 @@
 // Which runtime a configuration declares, read from the declaration alone. A cockpit may declare
-// none (it publishes harness surfaces only), its own Compose files, or a generated environment;
-// `generated` wins when both are present because it owns the Compose file it renders. Observing
-// what Compose resolves from those files belongs to compose-topology.ts, not here.
+// none (it publishes harness surfaces only) or its own Compose files. Observing what Compose
+// resolves from those files belongs to compose-topology.ts, not here.
 import type { CockpitConfig } from '../schema.js'
 import { ENVIRONMENT_CODES, type EnvironmentDiagnostic, RefusalError } from './contract.js'
 
@@ -11,16 +10,15 @@ export const mechanism = {
     exports: ['declaredRuntime', 'declaresNothingToRun', 'runtimeNotDeclared', 'serviceNotDeclared', 'DeclarationRefusalError'],
 } as const
 
-export type DeclaredRuntime = 'generated' | 'compose' | 'none'
+export type DeclaredRuntime = 'compose' | 'none'
 
-export function declaredRuntime(environment: Pick<CockpitConfig['environment'], 'generated' | 'compose_files'>): DeclaredRuntime {
-    if (environment.generated) return 'generated'
+export function declaredRuntime(environment: Pick<CockpitConfig['environment'], 'compose_files'>): DeclaredRuntime {
     return environment.compose_files.length > 0 ? 'compose' : 'none'
 }
 
 // A machine floor alone still has something to measure: preflight checks this laptop against it,
 // so only a cockpit that declares no runtime and no floor has nothing for runtime commands to do.
-export function declaresNothingToRun(environment: Pick<CockpitConfig['environment'], 'generated' | 'compose_files' | 'machine'>): boolean {
+export function declaresNothingToRun(environment: Pick<CockpitConfig['environment'], 'compose_files' | 'machine'>): boolean {
     return declaredRuntime(environment) === 'none' && environment.machine === undefined
 }
 
@@ -32,7 +30,7 @@ export function runtimeNotDeclared(target: string): EnvironmentDiagnostic {
         code: 'ENVIRONMENT_NOT_DECLARED' satisfies typeof ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED,
         message: 'this cockpit declares no runtime environment, so there is nothing to start, stop, observe or measure; sync and check publish and verify the harness surfaces only',
         target,
-        fix: 'declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml>',
+        fix: 'declare environment.compose_files = ["compose.yml"] to run your Compose file, then run npx --no cockpit sync --config <your cockpit.toml>',
     })
 }
 

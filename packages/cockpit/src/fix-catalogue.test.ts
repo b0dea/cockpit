@@ -18,7 +18,7 @@ afterEach(async () => {
 
 describe('executable remedy catalogue', () => {
     const diagnostic = { severity: 'error' as const, code: 'GENERATED_ARTIFACT_DRIFT', message: 'Owned artifact differs',
-        target: 'fixtures/personas.generated.ts', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' }
+        target: 'compose.cockpit.yml', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' }
     const context = { resolvedConfigPath: '/workspace/cockpit.toml', generatedTargets: [diagnostic.target] }
 
     it('refuses unregistered guidance and unbound or unsafe command inputs', () => {
@@ -76,17 +76,16 @@ describe('executable remedy catalogue', () => {
     it('clears real generated drift by executing exactly the admitted argv without a shell', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-remedy-')))
         roots.push(root)
+        // The compose-first example under a configuration name a shell would misread.
+        cpSync(resolve('examples/compose-first'), root, { recursive: true })
         const configPath = join(root, "demo'$(false); config.toml")
-        const declaration = (await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8'))
-            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
-        await mkdir(join(root, 'app'))
-        await mkdir(join(root, 'fixtures'))
-        await writeFile(configPath, declaration)
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
+        await writeFile(configPath, await readFile(join(root, 'cockpit.toml'), 'utf8'))
+        await rm(join(root, 'cockpit.toml'))
         const synced = await syncGeneratedEnvironment({ configPath })
         expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
         if (synced.kind !== 'complete') throw new Error('Synthetic remedy setup failed')
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
+        const canonical = await readFile(join(root, diagnostic.target), 'utf8')
+        await writeFile(join(root, diagnostic.target), `${canonical}# edited by hand\n`)
         const before = await checkGeneratedEnvironment({ configPath })
         expect(before).toMatchObject({ kind: 'refusal', status: 2,
             diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', target: diagnostic.target })] })
@@ -117,7 +116,7 @@ describe('executable remedy catalogue', () => {
         // Claude settings trust warning belongs to a run that writes those settings, which this one does not.
         expect(executed.stderr).toBe('')
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0, diagnostics: [] })
-        expect(await readFile(join(root, diagnostic.target), 'utf8')).toContain('"changed"')
+        expect(await readFile(join(root, diagnostic.target), 'utf8')).toBe(canonical)
     })
 })
 
@@ -251,9 +250,7 @@ describe('printed cockpit commands', () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-printed-surface-')))
         roots.push(root)
         const example = join(root, 'example')
-        cpSync(resolve('examples/synthetic'), example, { recursive: true })
-        for (const directory of ['repositories/app', 'repositories/web', 'fixtures']) await mkdir(join(example, directory), { recursive: true })
-        await writeFile(join(example, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
+        cpSync(resolve('examples/compose-first'), example, { recursive: true })
         execFileSync('git', ['init', '--quiet', example])
         const synced = await syncGeneratedEnvironment({ configPath: join(example, 'cockpit.toml') })
         expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
@@ -269,7 +266,7 @@ describe('printed cockpit commands', () => {
         expect(documents.map(([path]) => path)).toEqual(expect.arrayContaining([
             'packages/cockpit/surfaces/skills/cockpit-fix.skill.md', 'packages/cockpit/surfaces/skills/procedures/setup.md',
             'packages/cockpit/surfaces/references/testing-tiers.md', 'docs/getting-started.md']))
-        const sources = [...documents, ['examples/synthetic AGENTS.md as synced', await readFile(join(example, 'AGENTS.md'), 'utf8')] as const]
+        const sources = [...documents, ['examples/compose-first AGENTS.md as synced', await readFile(join(example, 'AGENTS.md'), 'utf8')] as const]
 
         const prefix = /(?:npx --no |\.\/node_modules\/\.bin\/)cockpit(?![\w-])/g
         const printed: { at: string; command: string }[] = []

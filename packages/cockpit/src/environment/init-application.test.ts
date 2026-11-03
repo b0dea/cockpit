@@ -367,7 +367,7 @@ describe('init application', () => {
                     target: 'checkout.container_ports', value: [3000],
                     provenance: expect.objectContaining({ source: '../checkout/Dockerfile' }),
                 })] }),
-                expect.objectContaining({ field: 'environment.generated', inferred: expect.arrayContaining([
+                expect.objectContaining({ field: 'environment.compose_files', inferred: expect.arrayContaining([
                     expect.objectContaining({ target: 'environment.compose_files', value: ['compose.yml'],
                         provenance: expect.objectContaining({ source: 'compose.yml' }) }),
                     expect.objectContaining({ target: 'checkout.command', value: ['node', 'server.mjs'],
@@ -406,7 +406,7 @@ describe('init application', () => {
         expect(outcome).toMatchObject({ kind: 'pending', result: {
             estate: { classification: 'one-sibling', runnable: [{ slug: 'app', disposition: 'confirmed' }] },
             interview: { outstanding: expect.arrayContaining([
-                expect.objectContaining({ field: 'environment.generated', inferred: expect.arrayContaining([
+                expect.objectContaining({ field: 'environment.compose_files', inferred: expect.arrayContaining([
                     expect.objectContaining({ target: inferredTarget }),
                 ]) }),
                 expect.objectContaining({ field: 'environment.machine' }),
@@ -709,7 +709,7 @@ describe('init application', () => {
     it('lists every outstanding field with its inferred values and provenance before and after acceptance', async () => {
         const f = fixture()
         const infer: NonNullable<InitApplicationAdapters['infer']> = async ({ repositories }) => ({
-            facts: [{ fields: ['environment.generated', 'ports.bases'], target: `${repositories[0]!.slug}.container_ports`, value: [3000],
+            facts: [{ fields: ['environment.compose_files', 'ports.bases'], target: `${repositories[0]!.slug}.container_ports`, value: [3000],
                 provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }],
             skipped: [{ source: 'app/.github/workflows/ci.yml', reason: 'is not valid YAML' }],
         })
@@ -723,7 +723,7 @@ describe('init application', () => {
         // The name is asked even when the directory name is a valid one: agents renamed cockpits by hand
         // afterwards, and a rename after sync is a migration, not an edit.
         expect(planned.map(row => row.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies',
-            'environment.test_data', 'environment.generated', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults'])
+            'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults'])
         expect(planned.find(row => row.field === 'cockpit.name')!.inferred).toEqual([{ target: 'cockpit.name', value: 'checkout',
             provenance: { kind: 'inferred', source: f.root, reason: 'the cockpit root directory name' } }])
         expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
@@ -739,7 +739,7 @@ describe('init application', () => {
             questionId: named.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
         expect(second.result!.interview).toMatchObject({ answered: ['cockpit.name', 'sibling'] })
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
-            'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.machine',
+            'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine',
             'environment.posture', 'testing', 'guards', 'configuration.defaults'])
     })
 

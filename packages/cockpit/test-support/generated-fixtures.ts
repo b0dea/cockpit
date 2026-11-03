@@ -1,21 +1,13 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { readFile, rm, writeFile, mkdir, chmod, realpath, lstat } from 'node:fs/promises'
+import { readFile, rm, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { expect } from 'vitest'
-import { parse as parseYaml } from 'yaml'
 
-import { executeProbe } from '../src/environment-exec/execute.js'
-import type { ExecutionStep, HolderId } from '../src/environment/contract.js'
-import { checkoutId, cockpitId, stackId } from '../src/environment/identity.js'
-import { deriveEntrypoints, projectPortLeaseResult } from '../src/environment/ports.js'
-import { leasePortFamilyFixture } from './port-lease-fixture.js'
-import { createRuntimeAdapter, createRuntimeTopologyPlan, admitRuntimeTopology, projectRuntimeExecutionEnvironment } from '../src/environment/runtime.js'
-import { selectStateRoot } from '../src/environment/state.js'
+import type { ExecutionStep } from '../src/environment/contract.js'
 import {
-    type GeneratedApplicationProjection,
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedStaleRemovalApprovalRequest,
 } from '../src/environment/generated-application.js'
@@ -77,10 +69,20 @@ export function createGeneratedCommandFixture() {
         )
         await writeFile(configPath, declaration)
         await mkdir(join(root, 'app'), { recursive: true })
-        await mkdir(join(root, 'fixtures'), { recursive: true })
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
         await writeFile(join(root, 'unmanaged.txt'), 'keep\n')
         return { root, configPath }
+    }
+
+    // The same cockpit running its own compose.yml, so sync also owns compose.cockpit.yml. Sync and
+    // its ownership render read the Compose file directly; only check needs a Docker CLI.
+    async function composeConsumer(name: string, parentDirectory?: string) {
+        const result = await consumer(name, parentDirectory)
+        await writeFile(result.configPath, `${await readFile(result.configPath, 'utf8')}\n[environment]\ncompose_files = ["compose.yml"]\n`)
+        await writeFile(join(result.root, 'compose.yml'), [
+            'services:', '  app:', `    image: node@sha256:${'8'.repeat(64)}`,
+            '    ports: ["127.0.0.1:${APP_HOST_PORT:-4100}:3000"]', '    volumes: ["./app:/app"]', '',
+        ].join('\n'))
+        return result
     }
 
     const surfaceFeatures = ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const
@@ -246,111 +248,5 @@ export function createGeneratedCommandFixture() {
         return Object.fromEntries(await Promise.all(paths.map(async (path) => [path, await readFile(join(root, path), 'utf8')])))
     }
 
-    async function generatedRuntime(
-        root: string,
-        application: GeneratedApplicationProjection,
-        serviceGeneration = application.generation,
-        reportedSources?: Readonly<Record<string, readonly string[]>>,
-        bases: Readonly<Record<string, number>> = { APP_HOST_PORT: 4100 },
-    ) {
-        const composePath = join(root, 'compose.generated.yml')
-        const compose = await readFile(composePath, 'utf8')
-        const document = parseYaml(compose) as { services: Record<string, { image: string; labels: Record<string, string>
-            volumes?: { type: string; source: string; target: string }[]; ports?: { target: number; published: string }[] }> }
-        const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
-        const stack = stackId({ cockpitId: currentCockpit, checkoutId: checkoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
-        const labels = (service: { labels: Record<string, string> }): Record<string, string> => ({
-            ...service.labels,
-            'dev.b0dea.cockpit.stack-id': stack,
-            'dev.b0dea.cockpit.owner-id': currentCockpit,
-            'dev.b0.cockpit.generation': serviceGeneration,
-        })
-        const selected = await selectStateRoot({ platform: 'linux', home: root, cockpitId: currentCockpit })
-        if (selected.kind !== 'complete') throw new Error('port state unavailable')
-        const observedAt = new Date().toISOString()
-        const lease = await leasePortFamilyFixture({
-            namespace: selected.value,
-            stackId: stack,
-            holderId: `holder:${'a'.repeat(64)}:session` as HolderId,
-            checkoutId: checkoutId({ checkoutPath: root }),
-            config: { step: 10, count: 1, bases },
-            now: observedAt,
-            listenerTimeoutMs: 1_000,
-            listenerEvidence: [{
-                ports: Object.values(bases),
-                observation: { state: 'available', value: [], observedAt, producer: 'generated-command-control' },
-            }],
-        })
-        if (lease.kind !== 'complete') throw new Error('port lease unavailable')
-        const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
-        if (entrypoints.kind !== 'complete') throw new Error('port entrypoints unavailable')
-        const portLeaseProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-        if (!portLeaseProjection) throw new Error('port projection unavailable')
-        // Compose reports each published `${VARIABLE:-default}` port as the leased value.
-        const published = (value: string) => String(lease.lease.ports[/^\$\{([A-Z][A-Z0-9_]*):-\d+\}$/.exec(value)?.[1] ?? '']!)
-        const services = Object.fromEntries(Object.entries(document.services).map(([id, service]) => [id, {
-            image: service.image, labels: labels(service), healthcheck: { test: ['CMD', 'true'] },
-            volumes: (service.volumes ?? []).filter(({ type }) => type === 'bind').map((mount, index) =>
-                ({ ...mount, source: reportedSources?.[id]?.[index] ?? resolve(root, mount.source) })),
-            ...(service.ports ? { ports: service.ports.map(port => ({ target: port.target, published: published(port.published) })) } : {}),
-        }]))
-        const expectedMountSources = [...new Set(Object.values(services).flatMap(service => service.volumes.map(({ source }) => source)))].sort()
-        const bin = join(root, '.test-bin')
-        const docker = join(bin, 'docker')
-        await mkdir(bin, { recursive: true })
-        await writeFile(docker, `#!${process.execPath}
-    const args = process.argv.slice(2)
-    if (process.env.COCKPIT_STACK_ID !== ${JSON.stringify(stack)} || process.env.COCKPIT_OWNER_ID !== ${JSON.stringify(currentCockpit)}) process.exit(8)
-    if (args.includes('config')) process.stdout.write(${JSON.stringify(JSON.stringify({
-            services,
-        }))})
-    else process.exit(7)
-    `)
-        await chmod(docker, 0o700)
-        const executable = Object.freeze({
-            canonicalPath: docker,
-            invocationPath: docker,
-            sha256: createHash('sha256').update(await readFile(docker)).digest('hex'),
-            executionMode: 'verified-path' as const,
-        })
-        const composeSha256 = createHash('sha256').update(compose).digest('hex')
-        const batchId = createHash('sha256').update(serviceGeneration).digest('hex')
-        const preview = createRuntimeAdapter({
-            runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
-            composeVersion: '2.39.2', executable, operation: 'validate', cwd: root,
-            composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: composePath, source: compose, sha256: composeSha256 }],
-            projectName: 'synthetic', env: {}, ports: Object.values(lease.lease.ports),
-            labels: { stackId: stack, configSha256: application.runtimeSha256, batchId },
-            timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources,
-        }, { generatedComposeAuthority: application.generatedComposeAuthority!, portLeaseProjection })
-        if (preview.kind !== 'preview') throw new Error('runtime preview unavailable')
-        const topologyPlan = createRuntimeTopologyPlan({
-            runtimePlan: preview.plan,
-            stackId: stack,
-            configSha256: application.runtimeSha256,
-            batchId,
-            observationWindow: {
-                startedAt: new Date(Date.now() - 1_000).toISOString(),
-                expiresAt: new Date(Date.now() + 60_000).toISOString(),
-            },
-        })
-        if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
-        const admitted = admitRuntimeTopology({ plan: topologyPlan, outcome: await executeProbe(topologyPlan.step) })
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const publicEnv = projectRuntimeExecutionEnvironment(admitted.topology)
-        if (!publicEnv) throw new Error('runtime environment unavailable')
-        return {
-            topology: admitted.topology,
-            runtime: Object.freeze({
-                root,
-                executable,
-                composeFiles: Object.freeze([{ path: composePath, sha256: composeSha256 }]),
-                projectName: 'synthetic',
-                publicEnv,
-                stdoutLimitBytes: 1_048_576,
-                stderrLimitBytes: 1_048_576,
-            }),
-        }
-    }
-    return { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, skillSurfaces, customHarness, enforcedCustomHarness, unavailableCustomHarness, surfaceConsumer, digest, staleRemovalAuthority, writeCustomModule, ownership, runGeneratedGuard, bytes, generatedRuntime }
+    return { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, composeConsumer, skillSurfaces, customHarness, enforcedCustomHarness, unavailableCustomHarness, surfaceConsumer, digest, staleRemovalAuthority, writeCustomModule, ownership, runGeneratedGuard, bytes }
 }

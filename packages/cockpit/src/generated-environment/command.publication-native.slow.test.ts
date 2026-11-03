@@ -5,19 +5,12 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
-import { parse as parseYaml } from 'yaml'
 
-import { loadCockpitConfig } from '../config/load.js'
 import { CockpitConfig } from '../schema.js'
-import type { HolderId } from '../environment/contract.js'
-import { checkoutId, cockpitId, publicationCockpitId, stackId } from '../environment/identity.js'
-import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
-import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
+import { cockpitId, publicationCockpitId } from '../environment/identity.js'
 import { mcpApprovalDigest } from '../surfaces/mcp.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
-import { selectStateRoot, transactState } from '../environment/state.js'
 import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
-import { recordLifecycleStarted } from '../environment/lifecycle-stage.js'
 import {
     generatedApplicationProjection,
     observeGeneratedApplicationSurfaces,
@@ -49,10 +42,6 @@ describe('public surface publication transaction', () => {
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = estate
             declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
-            // Vendor templates require cockpit-relative output paths.
-            declaration.environment.generated!.vendors = []
-            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
-                .filter(entry => entry.subject !== 'vendor')
             // Every shipped tool is listed so each tool's grant spelling is checked.
             declaration.surfaces.tools = [...SURFACE_TARGETS]
             // A person approves each server here, so only the one whose digest is recorded is enabled.
@@ -200,9 +189,6 @@ describe('public surface publication transaction', () => {
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = estate
             declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
-            declaration.environment.generated!.vendors = []
-            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
-                .filter(entry => entry.subject !== 'vendor')
             // A host-mounted sibling has no directory grant, and the root sibling is the cockpit checkout itself.
             declaration.sibling.push(CockpitConfig.shape.sibling.element.parse({ slug: 'hosted', dir: 'hosted', mount: 'host', host_reason: 'Synthetic host-only service', gate: 'operator', acquire: 'none',
                 var: 'HOSTED_DIR', purpose: 'Synthetic host-mounted service', environment_files: [{ template: '.env.example', instance: '.env' }] }))
@@ -217,10 +203,12 @@ describe('public surface publication transaction', () => {
             expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
         })
 
+        // cockpit renders no browser runner, so the browser is always a local launch: no playwright
+        // MCP server or browser skill is published, and the work authorities still carry the project.
         it.each([
-            { name: 'preapproved remote in a nested configuration', layout: 'nested', remote: true, preapproved: true, serialized: false, openCode: true },
-            { name: 'remote without preapproval in a linked worktree', layout: 'worktree', remote: true, preapproved: false, serialized: true, openCode: false },
-            { name: 'local fallback in a standalone directory', layout: 'standalone', remote: false, preapproved: true, serialized: false, openCode: true },
+            { name: 'a nested configuration', layout: 'nested', preapproved: true, serialized: false, openCode: true },
+            { name: 'a linked worktree without preapproval', layout: 'worktree', preapproved: false, serialized: true, openCode: false },
+            { name: 'a standalone directory', layout: 'standalone', preapproved: true, serialized: false, openCode: true },
         ])('publishes source-bound browser and testing surfaces through the canonical transaction ($name)', async variant => {
             let mainCheckout: string | undefined
             let currentCheckoutPath: string | undefined
@@ -278,12 +266,10 @@ mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic d
 playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i', mcpImage, '--endpoint', 'ws://localhost:3001/'], cwd: fixture.root, envNames: [] }, fixture.root)}"
 
 [browser]
-engine = "${variant.remote ? 'firefox' : 'chromium'}"
+engine = "chromium"
 harnesses = [{ target = "claudecode", version = "2.1.220" }, { target = "codexcli", version = "0.149.0" }${variant.openCode ? ', { target = "opencode", version = "1.18.15" }' : ''}]
-images = { runner = { architectures = ["arm64"], reference = ${JSON.stringify(runnerImage)}, driver_version = "1.2.3" }, mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
-runner_health_measurement = { duration_seconds = 15, provenance = { source = "synthetic-browser.toml", observed_on = "2026-10-24", kind = "measured", reason = "Synthetic browser readiness measurement" } }
+images = { runner = { reference = ${JSON.stringify(runnerImage)}, driver_version = "1.2.3" }, mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
 project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(digest(manifestBytes))}, lockfile = "app/package-lock.json", sha256 = ${JSON.stringify(projectSha256)}, driver_version = "1.2.3" }
-endpoint = "ws://localhost:3001/"
 max_clients = 4
 proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
 resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
@@ -303,9 +289,7 @@ native_hooks = { install = "inspect" }
                 await writeFile(join(fixture.root, '.browser/auth/shared.json'), '{}', { mode: 0o600 })
             }
             const browserDeclaration = additions.replace('request_preapproval = true', `request_preapproval = ${variant.preapproved}`)
-            await writeFile(fixture.configPath, declaration.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4100\nBROWSER_PORT = 3001')
-                .replace('[environment.generated]', `${environment}[environment.generated]`)
-                + (variant.remote ? browserDeclaration : browserDeclaration.replace('endpoint = "ws://localhost:3001/"\n', '')))
+            await writeFile(fixture.configPath, `${declaration.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4100\nBROWSER_PORT = 3001')}\n${environment}${browserDeclaration}`)
             const stateHome = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-testing-state-')))
             roots.push(stateHome)
             const priorHome = process.env.HOME
@@ -313,68 +297,9 @@ native_hooks = { install = "inspect" }
             process.env.HOME = stateHome
             process.env.XDG_STATE_HOME = join(stateHome, 'state')
             try {
-                const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: mainCheckout })
-                const currentCheckout = checkoutId({ checkoutPath: currentCheckoutPath })
-                const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
-                if (process.platform !== 'darwin' && process.platform !== 'linux') throw new Error('browser port platform unavailable')
-                const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
-                    xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoots: [mainCheckout, currentCheckoutPath], cockpitId: currentCockpit })
-                if (namespace.kind !== 'complete') throw new Error('browser port state unavailable')
-                const currentHolder = `holder:${'c'.repeat(64)}:session` as HolderId
-                const observedAt = new Date().toISOString()
-                const loadedBrowser = await loadCockpitConfig(fixture.configPath)
-                if (loadedBrowser.kind !== 'complete') throw new Error('browser port declaration unavailable')
-                const family = loadedBrowser.result.config.ports
-                const lease = await leasePortFamilyFixture({ namespace: namespace.value, stackId: currentStack, holderId: currentHolder,
-                    checkoutId: currentCheckout, config: family, now: observedAt, listenerTimeoutMs: 1_000,
-                    listenerEvidence: Array.from({ length: family.count }, (_, index) => ({
-                        ports: Object.values(family.bases).map(base => base + index * family.step),
-                        observation: { state: 'available' as const, value: index === 0 ? [family.bases.APP_HOST_PORT!] : [], observedAt, producer: 'browser-publication-control' },
-                    })) })
-                if (lease.kind !== 'complete') throw new Error('browser port lease unavailable')
-                expect(lease.lease.offset).toBeGreaterThan(0)
-                const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
-                if (entrypoints.kind !== 'complete') throw new Error('browser entrypoint authority unavailable')
-                const ports = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-                if (!ports) throw new Error('browser port projection unavailable')
-                const started = await recordLifecycleStarted({ namespace: namespace.value, stackId: currentStack,
-                    holderId: currentHolder, observedAt })
-                if (started.kind === 'refusal') throw new Error('browser lifecycle history unavailable')
-                const lifecycleAddress = namespace.value.paths.lifecycle(currentStack)
-                const lifecycle = await transactState(namespace.value, lifecycleAddress, { ownerId: currentHolder }, () => ({
-                    format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: currentCockpit, subjectId: currentStack,
-                    revision: 0, updatedAt: observedAt, value: { holderId: currentHolder,
-                        workBasisSha256: 'd'.repeat(64), operationGeneration: 'e'.repeat(64), completedServices: [] },
-                }))
-                if (lifecycle.kind !== 'complete') throw new Error('browser lifecycle authority unavailable')
-                const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {}, ports)
+                const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath })
                 expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
                 if (synchronized.kind !== 'complete') throw new Error('browser and testing surfaces were not synchronized')
-                const compose = parseYaml(await readFile(join(fixture.root, 'compose.generated.yml'), 'utf8'))
-                if (variant.remote) {
-                    const runner = compose.services['cockpit-browser-runner']
-                    // Names resolve on the host through the client's exposed network, so the runner
-                    // container carries no alias that would point them at its own loopback.
-                    expect(runner).not.toHaveProperty('extra_hosts')
-                    expect(runner.command[runner.command.indexOf('--max-clients') + 1]).toBe(variant.serialized ? '1' : '4')
-                    expect(runner.command.slice(0, 3)).toEqual(['/bin/sh', '/cockpit/browser-runner.sh', 'serve'])
-                    expect(runner.healthcheck.test).toEqual(['CMD-SHELL', "'/bin/sh' '/cockpit/browser-runner.sh' 'check' 'localhost:3001' '3001'"])
-                    expect(runner.command).toContain('localhost:3001')
-                    expect(runner.command).toContain('localhost:${BROWSER_PORT:-3001}')
-                    const runnerPath = join(fixture.root, '.cockpit/browser/runner.sh')
-                    // Generated files are committed, so they get the mode any new file gets here, not a private one.
-                    const control = `${fixture.root}.mode-control`
-                    await writeFile(control, '', { mode: 0o644 })
-                    try {
-                        expect((await stat(runnerPath)).mode & 0o777).toBe((await stat(control)).mode & 0o777)
-                    } finally { await rm(control, { force: true }) }
-                    const launch = runner.command.slice(0, runner.command.indexOf('serve'))
-                        .map((value: string) => value === '/cockpit/browser-runner.sh' ? runnerPath : value)
-                    const checked = spawnSync(launch[0], [...launch.slice(1), 'invalid'], { encoding: 'utf8', timeout: 5_000 })
-                    expect(checked.error).toBeUndefined()
-                    expect(checked.status).toBe(2)
-                    expect(checked.stderr).toBe('browser runner operation is invalid\n')
-                } else expect(compose.services).not.toHaveProperty('cockpit-browser-runner')
                 const application = generatedApplicationProjection(synchronized.result.application)
                 if (!application) throw new Error('generated application projection was not issued')
                 const installedSkills = application.surfaceSelftest.entries.filter(entry => entry.kind === 'file'
@@ -436,57 +361,23 @@ native_hooks = { install = "inspect" }
                 expect(digest(authorities.evaluator.bytes)).toBe(authorities.evaluator.sha256)
                 expect(authorities.installedSkills.map(({ path }) => path)).toEqual(expect.arrayContaining([
                     '.agents/skills/cockpit-setup/SKILL.md',
-                    ...(variant.remote ? ['.claude/skills/cockpit-browser/SKILL.md'] : []),
                     '.opencode/skills/cockpit-fix/SKILL.md',
                 ]))
                 expect(authorities.browser).toMatchObject({
                     mcp: { name: 'playwright', source: { path: 'browser.mcp.json', sha256: digest(await readFile(join(fixture.root, 'browser.mcp.json'))) } },
                     skillTemplate: { path: 'skills/cockpit-browser.skill.md' },
                 })
-                if (variant.remote) {
-                    const preparation = authorities.browser?.runner?.debugger
-                    expect(preparation?.argv[(preparation?.argv.indexOf('--max-clients') ?? -1) + 1]).toBe(variant.serialized ? '1' : '4')
-                    expect(preparation?.argv.slice(0, 3)).toEqual(['/bin/sh', join(fixture.root, '.cockpit/browser/runner.sh'), 'debugger'])
-                    expect(preparation?.launcher.path).toBe(join(fixture.root, '.cockpit/browser/runner.sh'))
-                    const endpoint = `ws://localhost:${lease.lease.ports.BROWSER_PORT}/`
-                    expect(authorities.browser!.mcp.args).toEqual(['run', '--rm', '-i', mcpImage, '--endpoint', endpoint])
-                    expect(authorities.browser!.mcp.args).toContain(endpoint)
-                    expect(authorities.browser!.mcp.args).not.toContain('ws://localhost:3001/')
-                    const wrapper = `.cockpit/mcp/${digest('playwright')}.sh`
-                    const wrapperBytes = await readFile(join(fixture.root, wrapper), 'utf8')
-                    expect(wrapperBytes).toContain(`'${endpoint}'`)
-                    expect(wrapperBytes).not.toContain("'ws://localhost:3001/'")
-                    const ownership = JSON.parse(await readFile(join(fixture.root, '.cockpit/generated-environment-ownership.json'), 'utf8')) as {
-                        entries: { path: string; harnesses: string[] }[]
-                    }
-                    expect(ownership.entries.find(row => row.path === wrapper)?.harnesses).toEqual([
-                        'claudecode',
-                        ...(variant.preapproved ? ['codexcli'] : []),
-                        ...(variant.openCode ? ['opencode'] : []),
-                    ])
-                }
                 expect(authorities.testing.registry).toMatchObject({ kind: 'bound', gates: [{ id: 'focused' }] })
                 const mcp = JSON.parse(await readFile(join(fixture.root, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
-                expect(Object.keys(mcp.mcpServers).sort()).toEqual(variant.remote ? ['playwright', 'unrelated'] : ['unrelated'])
-                if (variant.remote) expect(mcp.mcpServers.playwright).toMatchObject({ command: '/bin/sh' })
+                expect(Object.keys(mcp.mcpServers).sort()).toEqual(['unrelated'])
                 const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
                     mcp_servers: Record<string, unknown>
                 }
-                expect(Object.keys(codex.mcp_servers).sort()).toEqual(variant.remote && variant.preapproved
-                    ? ['playwright', 'unrelated'] : ['unrelated'])
-                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.remote && variant.openCode)
-                // The shipped reference carries a docs-verification marker that is stripped from consumer output.
-                const browserReference = (await readFile(resolve('packages/cockpit/surfaces/references/browser.md'), 'utf8'))
-                    .replace(/^<!-- cockpit:verified version=\S+ -->\n\n/m, '')
-                expect(browserReference).not.toContain('cockpit:verified')
+                expect(Object.keys(codex.mcp_servers).sort()).toEqual(['unrelated'])
+                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(false)
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
-                    const path = join(fixture.root, prefix, 'skills/cockpit-browser/references/browser.md')
-                    if (variant.remote && (prefix === '.claude' || prefix === '.agents' && variant.preapproved
-                        || prefix === '.opencode' && variant.openCode)) expect(await readFile(path, 'utf8')).toBe(browserReference)
-                    else await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' })
+                    await expect(lstat(join(fixture.root, prefix, 'skills/cockpit-browser/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
                 }
-                if (variant.remote) expect(await readFile(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'), 'utf8')).toContain('name: cockpit-browser')
-                else await expect(lstat(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
                 expect(await readFile(join(fixture.root, 'CLAUDE.md'), 'utf8')).toContain('@AGENTS.md')
                 expect(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')).toContain('`focused` (unit)')
                 await expect(lstat(join(fixture.root, '.githooks/pre-push'))).rejects.toMatchObject({ code: 'ENOENT' })

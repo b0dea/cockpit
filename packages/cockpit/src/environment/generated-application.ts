@@ -28,7 +28,7 @@ import {
     type ConsumedWorkEnvironmentConfig,
 } from '../config/load.js'
 import { renderBrowserSurfaces } from '../browser/surfaces.js'
-import { bindBrowserRuntimePortLease, browserClientLimit, resolveBrowserRuntime, type BrowserRuntimeProjection } from '../browser/runtime.js'
+import { resolveBrowserRuntime, type BrowserRuntimeProjection } from '../browser/runtime.js'
 import { resolveObservationPostures } from './posture-observation.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -81,55 +81,53 @@ import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-di
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
 import {
-    nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, portablePublicationPaths, admitPublicationPlan, authorizePublicationPlan, runPublicationPlan,
-    type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
-    type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
+    nodeAuthority,
+    readAnchoredFile,
+    readAnchoredEntry,
+    readAnchoredBatches,
+    readPersonaSource,
+    expectedState,
+    portablePublicationPaths,
+    admitPublicationPlan,
+    authorizePublicationPlan,
+    runPublicationPlan,
+    type AnchoredEntry,
+    type AnchoredBatchReadResult,
+    type PublicationMutation,
+    type DirectoryIdentity,
+    type PersonaSourceIdentity,
+    type GeneratedStaleRemovalApprovalRequest,
+    type GeneratedStaleRemovalApproval,
+    type PublicationPlan,
 } from '../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, errorCause, parseJsonText, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId, RefusalError, tryParseJson, hasErrorCode } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId, RefusalError, tryParseJson, hasErrorCode } from './contract.js'
 import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
-import { assessComposeTopology, compareBindSources, composeProjectDirectory, observeComposeTopology } from './compose-topology.js'
+import { assessComposeTopology, composeProjectDirectory, observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime } from './declaration.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
+import { earlierNameRefusalMessage, findStackUnderEarlierName, resolveLifecycleStage } from './lifecycle-stage.js'
 import {
-    admitGeneratedObservation,
-    createGeneratedObservationExecution,
-    inspectGeneratedEnvironment,
-    observeGeneratedEnvironmentHealth,
-    projectGeneratedComposeArtifactAuthority,
-    projectGeneratedRuntimeAuthority,
-    resolveGeneratedDataOperation,
-    renderGeneratedEnvironment,
-    undecidedGeneratedDecisions,
-    type GeneratedDataOperation,
-    type GeneratedObservationRuntime,
-    type GeneratedRuntimeAuthority,
-    type GeneratedHostInputRoot,
-    type GeneratedEnvironmentResult,
-} from './generated-stack.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
-import { projectPersonaOutputs, type DataStepContext } from './data-plane.js'
-import { decodeLifecycleRecord, earlierNameRefusalMessage, findStackUnderEarlierName, resolveLifecycleStage } from './lifecycle-stage.js'
-import { authenticateStatePublication, observeConfiguration, readState, selectBootstrapStateRoot, selectStateRoot,
-    type BootstrapStateAddress, type BootstrapStateRecord, type StateNamespace, type StateResult } from './state.js'
-import {
-    deriveEntrypoints,
-    inspectPortLeaseProjection,
-    observeRetainedPortFamily,
-    projectRetainedPortFamilyResult,
-    type PortLeaseProjection,
-} from './ports.js'
+    authenticateStatePublication,
+    observeConfiguration,
+    readState,
+    selectBootstrapStateRoot,
+    selectStateRoot,
+    type BootstrapStateAddress,
+    type BootstrapStateRecord,
+    type StateNamespace,
+    type StateResult,
+} from './state.js'
 import { TESTING_GUIDE_REGISTRY, createGateRegistry, renderTierGuide, type GateRegistry } from '../testing/gates.js'
 import { NATIVE_HOOK_COST_SCRIPT, projectNativeHooks, type NativeHookEntry, type NativeHookPolicy } from '../testing/hooks.js'
-import type { RuntimeTopologyEvidence } from './runtime.js'
 import { observeGeneratedCheckoutIdentity, revalidateGeneratedCheckoutIdentity, type GeneratedCheckoutIdentity } from './setup-observation.js'
 
 export const mechanism = {
     id: 'generated-environment-application',
     module: 'packages/cockpit/src/environment/generated-application.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'syncTeamGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationMountSources', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplicationSurfaces', 'observeGeneratedApplicationHealth', 'observeGeneratedApplication', 'isGeneratedApplicationSurfaceObservation', 'surfaceObservationDeclarations'],
+    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'syncTeamGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'observeGeneratedApplicationSurfaces', 'isGeneratedApplicationSurfaceObservation', 'surfaceObservationDeclarations'],
 } as const
 
 export const surfaceObservationDeclarations = Object.freeze([
@@ -227,11 +225,7 @@ interface PreparedEnvironment {
     readonly personaSource: Readonly<{ path: string; sha256: string }>
     readonly personaSourceIdentity: PersonaSourceIdentity
     readonly generation: string
-    // Present only when environment.generated is declared; a surfaces-only or compose-first cockpit renders no stack.
-    readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
-    readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
     readonly generated: readonly OwnedBytes[]
-    readonly persona: readonly OwnedBytes[]
     readonly owned: readonly OwnedBytes[]
     readonly surfaces: readonly SurfaceDesiredEntry[]
     readonly compactSurfacePaths: ReadonlySet<string>
@@ -257,13 +251,8 @@ interface PreparedEnvironment {
     readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[]; sha256: string }>[]
     readonly registry: DerivedRegistry
     readonly siblingRoots: AuthenticatedSiblingRoots
-    readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
-    readonly hostInputs: readonly GeneratedHostInput[]
     readonly workEnvironment: ConsumedWorkEnvironmentConfig
     readonly workApplication?: WorkApplicationAuthorityRecord
-    readonly browserRunner?: BrowserRunnerAuthority
-    readonly portLease?: PortLeaseProjection
-    readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
     readonly guardHandler?: GuardHandlerIdentity
     // Each mounted sibling's absolute directory, which `sync` writes to machine-local files that the
@@ -438,10 +427,6 @@ export interface GeneratedApplicationProjection {
     /** The stack identity the generated files were rendered for; see `runtimeDeclarationSha256`. */
     readonly runtimeSha256: string
     readonly generation: string
-    /** Absent when no generated environment is declared; there is then no cockpit-rendered Compose file to authenticate. */
-    readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
-    readonly profiles: readonly string[]
-    readonly mounts: readonly string[]
     readonly activeSurfaceOverrides: readonly ActiveSurfaceOverride[]
     readonly changedOverrideOriginals: readonly SurfaceUpgradeFinding[]
     readonly inspection: Readonly<{
@@ -559,17 +544,11 @@ export type GeneratedEnvironmentCommandOutcome = (CompleteOutcome | RefusalOutco
         storedProducer: GeneratedProducer | null
         currentProducer: GeneratedEnvironmentCurrentness['currentProducer']
         repair: ReturnType<typeof proposeGeneratedEnvironmentRepair>
-        decisions?: GeneratedDecisionReport
     }>
 }>
 
-// Undecided subjects are reported, never refused: the log shows them, and check counts them.
-export type GeneratedDecisionReport = Readonly<{ path: string; undecided: number; subjects: readonly string[] }>
-
 const defaultAdapters: GeneratedEnvironmentCommandAdapters = { observeSource: observeConfigSource, execute: executeProbe }
 const OWNERSHIP_PATH = '.cockpit/generated-environment-ownership.json'
-const SECRET_IGNORE_PATH = 'env/.secrets/.gitignore'
-const SECRET_IGNORE_BYTES = '# cockpit-owned: secret resolver material stays outside Git\n*\n'
 const SHA256 = /^[a-f0-9]{64}$/
 const MAX_OWNERSHIP_BYTES = 1_048_576
 const COMPOSE_SOURCE_BYTES = 1_048_576
@@ -603,22 +582,11 @@ const WORK_ASSETS = Object.freeze([
     'scripts/browser-runner.sh',
 ] as const)
 type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof REFERENCE_ASSETS[number] | typeof WORK_ASSETS[number]
-interface GeneratedHostInput {
-    readonly root: GeneratedHostInputRoot
-    readonly source: string
-    readonly type: 'file' | 'directory'
-    readonly mount: boolean
-}
-
 interface GeneratedApplicationRecord {
     readonly root: string
     readonly stackId: ReturnType<typeof stackId>
     readonly currentPublication: true | false
     readonly siblingRoots: AuthenticatedSiblingRoots
-    readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
-    readonly hostInputs: readonly GeneratedHostInput[]
-    readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
-    readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
     readonly workApplication?: WorkApplicationAuthorityRecord
     readonly surfaceSelftest: GeneratedSurfaceSelftestProjection
@@ -766,12 +734,9 @@ function complete(
         sourceSha256: prepared.sourceSha256,
         runtimeSha256: prepared.runtimeSha256,
         generation: prepared.generation,
-        ...(prepared.generatedComposeAuthority ? { generatedComposeAuthority: prepared.generatedComposeAuthority } : {}),
         surfaceSelftest: prepared.surfaceSelftest,
         activeSurfaceOverrides: prepared.activeSurfaceOverrides,
         changedOverrideOriginals: prepared.changedOverrideOriginals,
-        profiles: Object.freeze([...prepared.rendered?.replay.profiles ?? []]),
-        mounts: Object.freeze([...prepared.rendered?.replay.mounts ?? []]),
         inspection: Object.freeze({
             kind: 'passed' as const,
             files: Object.freeze(prepared.owned.map(({ path, sha256: digest }) => Object.freeze({ path, sha256: digest, ownership: 'whole-file' as const }))),
@@ -779,8 +744,7 @@ function complete(
     })
     issuedApplicationProjections.set(application, Object.freeze({
         root: prepared.root, stackId: prepared.stackId, currentPublication: !dryRun,
-        siblingRoots: prepared.siblingRoots, hostInputRoots: prepared.hostInputRoots, hostInputs: prepared.hostInputs,
-        ...(prepared.rendered && prepared.inspection ? { rendered: prepared.rendered, inspection: prepared.inspection } : {}),
+        siblingRoots: prepared.siblingRoots,
         node: prepared.node, surfaceSelftest: prepared.surfaceSelftest, surfaceHealth: prepared.surfaceHealth,
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
     }))
@@ -819,10 +783,6 @@ function generatedPathFacts(prepared: PreparedEnvironment, applicability: 'decla
     const manifest = encodeOwnershipManifest(prepared).manifest
     const declarations: GeneratedPathDeclaration[] = [
         ...prepared.generated.map(file => ({ producer: 'generated-environment' as const, applicability,
-            entry: manifest.entries.find(entry => entry.path === file.path)! })),
-        ...prepared.owned.filter(file => file.path === SECRET_IGNORE_PATH).map(file => ({ producer: 'generated-environment' as const, applicability,
-            entry: manifest.entries.find(entry => entry.path === file.path)! })),
-        ...prepared.persona.map(file => ({ producer: 'environment-data-plane' as const, applicability,
             entry: manifest.entries.find(entry => entry.path === file.path)! })),
         ...prepared.surfaces.map(file => ({ producer: 'surface-render' as const, applicability,
             entry: manifest.entries.find(entry => entry.path === file.path)! })),
@@ -1199,102 +1159,6 @@ async function bootstrapPublishedSurfaces(
     })))
 }
 
-export function projectGeneratedApplicationNodeExecutable(application: GeneratedApplicationProjection): ResolvedExecutable | undefined {
-    if (application === null || typeof application !== 'object') return undefined
-    return issuedApplicationProjections.get(application)?.node
-}
-
-interface GeneratedHostInputRefusal {
-    readonly kind: 'refusal'
-    readonly path: string
-    readonly expectedType: 'file' | 'directory'
-}
-
-export async function projectGeneratedApplicationMountSources(application: GeneratedApplicationProjection): Promise<readonly string[] | GeneratedHostInputRefusal | undefined> {
-    const record = application !== null && typeof application === 'object' ? issuedApplicationProjections.get(application) : undefined
-    if (!record?.rendered || !await siblingRootsCurrent(record.siblingRoots)) return undefined
-    const sources: string[] = []
-    const roots = new Set([...Object.values(record.hostInputRoots), ...record.hostInputs.map(input => input.root)])
-    try {
-        for (const root of roots) {
-            const status = await lstat(root.path)
-            if (await realpath(root.path) !== root.path || !status.isDirectory() || status.isSymbolicLink()
-                || status.dev !== root.dev || status.ino !== root.ino) return undefined
-        }
-        // The later generated observations diagnose running services. Admit the exact declared
-        // host inputs here so Compose cannot follow an existing link before those probes run.
-        for (const input of record.hostInputs) {
-            const root = input.root
-            const target = resolve(root.path, input.source)
-            const refusal: GeneratedHostInputRefusal = Object.freeze({ kind: 'refusal', path: target, expectedType: input.type })
-            if (!containedPath(root.path, target)) return refusal
-            const parts = relative(root.path, target).split(sep).filter(Boolean)
-            let current = root.path
-            if (parts.length === 0 && input.type !== 'directory') return refusal
-            try {
-                for (const [index, part] of parts.entries()) {
-                    current = resolve(current, part)
-                    const status = await lstat(current)
-                    const directory = index < parts.length - 1 || input.type === 'directory'
-                    if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())) return refusal
-                }
-                if (await realpath(target) !== target) return refusal
-            } catch { /* an unobservable host input is refused with its path and expected type. */ return refusal }
-            if (input.mount) sources.push(target)
-        }
-        for (const root of roots) {
-            const status = await lstat(root.path)
-            if (await realpath(root.path) !== root.path || !status.isDirectory() || status.isSymbolicLink()
-                || status.dev !== root.dev || status.ino !== root.ino) return undefined
-        }
-    } catch { /* an unobservable root refuses the host inputs. */ return undefined }
-    return Object.freeze([...new Set(sources)].sort())
-}
-
-function generatedApplicationRuntimeAuthority(
-    application: GeneratedApplicationProjection,
-    input: unknown,
-): GeneratedRuntimeAuthority | undefined {
-    const record = application !== null && typeof application === 'object'
-        ? issuedApplicationProjections.get(application)
-        : undefined
-    const captured = ownRecord(input)
-    const runtime = captured ? ownRecord(captured.runtime) : undefined
-    const hostExecutables = runtime?.hostExecutables === undefined ? {} : ownRecord(runtime.hostExecutables)
-    if (!record?.rendered || !captured || !exactKeys(captured, ['runtime', 'topology']) || !runtime || !hostExecutables
-        || runtime.root !== record.root || Object.hasOwn(hostExecutables, 'node')) return undefined
-    return projectGeneratedRuntimeAuthority({
-        rendered: record.rendered,
-        hostInputRoots: record.hostInputRoots,
-        topology: captured.topology as RuntimeTopologyEvidence,
-        runtime: Object.freeze({
-            ...runtime,
-            hostExecutables: Object.freeze({ ...hostExecutables, node: record.node }),
-        }) as unknown as GeneratedObservationRuntime,
-    })
-}
-
-export function projectGeneratedApplicationRuntimeAuthority(
-    application: GeneratedApplicationProjection,
-    input: Readonly<{ topology: RuntimeTopologyEvidence; runtime: GeneratedObservationRuntime }>,
-): GeneratedRuntimeAuthority | undefined {
-    return generatedApplicationRuntimeAuthority(application, input)
-}
-
-export function resolveGeneratedApplicationOperation(
-    application: GeneratedApplicationProjection,
-    input: Readonly<{ topology: RuntimeTopologyEvidence; runtime: GeneratedObservationRuntime }>,
-    operation: GeneratedDataOperation,
-    context: DataStepContext,
-): ExecutionStep | undefined {
-    const authority = generatedApplicationRuntimeAuthority(application, input)
-    return authority ? resolveGeneratedDataOperation({
-        authority,
-        operation,
-        context,
-    }) : undefined
-}
-
 export function observeGeneratedApplicationSurfaces(
     application: GeneratedApplicationProjection,
 ): readonly EnvironmentObservation[] | undefined {
@@ -1363,35 +1227,6 @@ export function isGeneratedApplicationSurfaceObservation(value: unknown): value 
 
 function generatedApplicationSurfaceObservationIssuedAt(value: unknown): number | undefined {
     return value !== null && typeof value === 'object' ? issuedSurfaceObservations.get(value) : undefined
-}
-
-export async function observeGeneratedApplicationHealth(
-    application: GeneratedApplicationProjection,
-    input: Readonly<{ topology: RuntimeTopologyEvidence; runtime: GeneratedObservationRuntime }>,
-    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-): Promise<Readonly<{ environment: EnvironmentObservation; registryAuthentication: EnvironmentObservation }> | undefined> {
-    const record = application !== null && typeof application === 'object'
-        ? issuedApplicationProjections.get(application)
-        : undefined
-    const authority = generatedApplicationRuntimeAuthority(application, input)
-    if (!record?.rendered || !record.inspection || !authority || typeof execute !== 'function') return undefined
-    const admissions = []
-    for (const observation of record.rendered.observations) {
-        const execution = createGeneratedObservationExecution({ authority, observation })
-        if (execution.kind !== 'planned') return undefined
-        const admission = admitGeneratedObservation({ execution, outcome: await execute(execution.step) })
-        if (!admission) return undefined
-        admissions.push(admission)
-    }
-    return observeGeneratedEnvironmentHealth({ rendered: record.rendered, inspection: record.inspection, admissions })
-}
-
-export async function observeGeneratedApplication(
-    application: GeneratedApplicationProjection,
-    input: Readonly<{ topology: RuntimeTopologyEvidence; runtime: GeneratedObservationRuntime }>,
-    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-): Promise<EnvironmentObservation | undefined> {
-    return (await observeGeneratedApplicationHealth(application, input, execute))?.environment
 }
 
 function commandInput(input: unknown): GeneratedEnvironmentCommandInput | undefined {
@@ -1488,128 +1323,6 @@ async function expectedOutputExists(prepared: PreparedEnvironment): Promise<bool
     return false
 }
 
-function renderPersona(format: 'json' | 'typescript', source: Buffer): Uint8Array {
-    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(source)) as unknown
-    const json = `${JSON.stringify(value, null, 2)}\n`
-    return Buffer.from(format === 'json' ? json : `export default ${json.trimEnd()} as const\n`)
-}
-
-async function projectBrowserRunner(
-    workEnvironment: ConsumedWorkEnvironmentConfig,
-    declaration: NonNullable<DerivedRegistry['config']['environment']['generated']>,
-    portDefaults: Readonly<Record<string, number>>,
-    root: string,
-    node: ResolvedExecutable,
-    adapters: GeneratedEnvironmentCommandAdapters,
-) {
-    const browser = workEnvironment.browser
-    if (!browser || !Object.hasOwn(browser, 'endpoint')) return undefined
-    const missing = [
-        browser.project.manifest === undefined || browser.project.manifestSha256 === undefined ? 'browser.project.manifest+manifest_sha256' : undefined,
-        browser.proxy.hostVariable === undefined ? 'browser.proxy.host_variable' : undefined,
-        browser.images.runner.architectures === undefined ? 'browser.images.runner.architectures' : undefined,
-        browser.runnerHealthMeasurement === undefined ? 'browser.runner_health_measurement' : undefined,
-    ].filter((value): value is string => value !== undefined)
-    if (missing.length > 0) return Object.freeze({ kind: 'refusal' as const,
-        message: `a generated browser runner (browser.endpoint is set) requires explicit ${missing.join(', ')}`,
-        fix: 'declare the missing [browser] fields as in the browser example in docs/work-and-browser.md, or remove browser.endpoint to drive a local browser, then run npx --no cockpit up --config <your cockpit.toml>' })
-    const manifestPath = browser.project.manifest!
-    const manifestSha256 = browser.project.manifestSha256!
-    const hostVariable = browser.proxy.hostVariable!
-    const architectures = browser.images.runner.architectures!
-    const healthMeasurement = browser.runnerHealthMeasurement!
-    if (portDefaults[hostVariable] !== browser.proxy.proxyPort) return Object.freeze({ kind: 'refusal' as const,
-        message: `browser.proxy.host_variable ${hostVariable} must be a [ports.bases] entry whose value is browser.proxy.proxy_port (${browser.proxy.proxyPort})`,
-        fix: 'add the proxy host variable to [ports.bases] with browser.proxy.proxy_port as its value, then run npx --no cockpit up --config <your cockpit.toml>' })
-    // The served runner reaches the application through the connecting client's exposed network,
-    // so names resolve on the host, where .localhost is loopback; a rule for any other name or
-    // address would be configuration that no resolver in the path applies.
-    const unreachable = browser.resolver.find(({ hostname, address }) => !hostname.endsWith('.localhost')
-        || !['127.0.0.1', '::1'].includes(address))
-    if (unreachable) return Object.freeze({ kind: 'refusal' as const,
-        message: `browser.resolver maps ${unreachable.hostname} to ${unreachable.address}, but a generated browser runner resolves application names on the host, where only .localhost names reach loopback`,
-        fix: 'map a .localhost hostname to 127.0.0.1 or ::1, or remove browser.endpoint to drive a local browser that applies the rule, then run npx --no cockpit up --config <your cockpit.toml>' })
-    const reads = await readAnchoredBatches(root, [
-        Object.freeze({ path: browser.project.lockfile, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }),
-        Object.freeze({ path: manifestPath, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }),
-    ], node, adapters)
-    if (!reads || reads.kind !== 'complete' || reads.results.length !== 2) return Object.freeze({ kind: 'refusal' as const,
-        message: `the browser project ${manifestPath} and ${browser.project.lockfile} could not be read inside the cockpit root`,
-        fix: 'commit the browser project package.json and its npm package-lock.json at the declared paths, then run npx --no cockpit up --config <your cockpit.toml>' })
-    const [lockfile, manifest] = reads.results
-    if (!lockfile || !manifest || lockfile.kind !== 'complete' || manifest.kind !== 'complete') return Object.freeze({ kind: 'refusal' as const,
-        message: `the browser project ${manifestPath} and ${browser.project.lockfile} must both exist as regular files inside the cockpit root`,
-        fix: 'commit the browser project package.json and its npm package-lock.json at the declared paths, then run npx --no cockpit up --config <your cockpit.toml>' })
-    const stale = [
-        lockfile.sha256 !== browser.project.sha256 ? `browser.project.sha256 for ${browser.project.lockfile} (now ${lockfile.sha256})` : undefined,
-        manifestSha256 !== manifest.sha256 ? `browser.project.manifest_sha256 for ${manifestPath} (now ${manifest.sha256})` : undefined,
-    ].filter((value): value is string => value !== undefined)
-    if (stale.length > 0) return Object.freeze({ kind: 'refusal' as const,
-        message: `the declared browser project digests differ from the files: ${stale.join('; ')}`,
-        fix: 'review the browser project change, set the declared digest to the file\'s current sha256, then run npx --no cockpit up --config <your cockpit.toml>' })
-    const parseProjectJson = (bytes: Uint8Array, path: string, expected: string): Readonly<{ value: unknown }> | string => {
-        let text: string
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
-        catch (error) { if (!(error instanceof TypeError)) throw error; return `the browser project ${path} is not valid UTF-8; expected ${expected}` }
-        const parsed = parseJsonText(text, `the browser project ${path}`, expected)
-        return 'refusal' in parsed ? parsed.refusal : parsed
-    }
-    const parsedManifest = parseProjectJson(manifest.bytes, manifestPath, 'an npm package.json object')
-    const parsedLock = parseProjectJson(lockfile.bytes, browser.project.lockfile, 'an npm package-lock.json object')
-    if (typeof parsedManifest === 'string' || typeof parsedLock === 'string') return Object.freeze({ kind: 'refusal' as const,
-        message: [parsedManifest, parsedLock].filter(value => typeof value === 'string').join('; '),
-        fix: 'regenerate the browser project lockfile with npm install in its directory, then update both digests' })
-    const packageJson = parsedManifest.value
-    const lockJson = parsedLock.value
-    const dependencies = ownRecord(packageJson)?.dependencies
-    const devDependencies = ownRecord(packageJson)?.devDependencies
-    const declared = ownRecord(dependencies)?.['@playwright/test'] ?? ownRecord(devDependencies)?.['@playwright/test']
-    const packages = ownRecord(ownRecord(lockJson)?.packages)
-    const installed = ownRecord(packages?.['node_modules/@playwright/test'])?.version
-    if (typeof declared !== 'string' || installed !== browser.project.driverVersion) return Object.freeze({ kind: 'refusal' as const,
-        message: `${manifestPath} must depend on @playwright/test and ${browser.project.lockfile} must lock it at browser.project.driver_version ${browser.project.driverVersion} (locked: ${typeof installed === 'string' ? installed : 'none'})`,
-        fix: 'run npm install --save-exact --save-dev @playwright/test@<driver_version> in the browser project directory, then update both digests' })
-    const provenance = Object.freeze({ ...healthMeasurement.provenance })
-    const allowedHosts = browser.proxy.allowedHosts.map(host => host.replace(/:\d+$/, `:\${${hostVariable}:-${browser.proxy.proxyPort}}`))
-    const endpoint = new URL(browser.endpoint!)
-    const fixedArgs = ['--manifest', '/cockpit/project/package.json', '--lockfile', '/cockpit/project/package-lock.json',
-        '--manifest-sha256', manifest.sha256, '--lock-sha256', lockfile.sha256, '--driver-version', browser.project.driverVersion,
-        '--server-port', String(browser.proxy.serverPort), '--proxy-port', String(browser.proxy.proxyPort), '--max-clients', String(browserClientLimit(browser.maxClients, browser.authentication.policy)),
-        '--artifacts', '/cockpit/artifacts', '--engine', browser.engine, '--ws-path', endpoint.pathname,
-        ...[...new Set([...browser.proxy.allowedHosts, ...allowedHosts])].flatMap(host => ['--allowed-host', host])]
-    const command = ['/bin/sh', '/cockpit/browser-runner.sh', 'serve', ...fixedArgs]
-    const probe = Object.freeze({ location: 'in-stack' as const, service: 'cockpit-browser-runner', cwd: '.' as const,
-        argv: Object.freeze(['/bin/sh', '/cockpit/browser-runner.sh', 'check', browser.proxy.allowedHosts[0]!, String(browser.proxy.proxyPort)]), timeout_seconds: 10, provenance })
-    // Checked inside the running runner: generated observations authenticate no host executable but
-    // Node, so a host `docker manifest inspect` could never be planned and every up refused.
-    const manifestProbe = Object.freeze({ location: 'in-stack' as const, service: 'cockpit-browser-runner', cwd: '.' as const,
-        argv: Object.freeze(['node', '-e', 'process.exit(process.argv.slice(1).includes({ x64: "amd64", arm64: "arm64" }[process.arch]) ? 0 : 1)',
-            ...architectures]), timeout_seconds: 30, provenance })
-    const reason = 'The package manifest path and digest are explicitly declared.'
-    return Object.freeze({ service: Object.freeze({
-        id: 'cockpit-browser-runner', sibling: declaration.services[0]!.sibling, role: 'service' as const, profiles: Object.freeze([]),
-        ...(browser.resources ? { resources: browser.resources } : {}),
-        command: Object.freeze(command), image: Object.freeze({ reference: browser.images.runner.reference,
-            reason: 'The configured browser runner image is digest-pinned; the running runner checks that its own architecture is one of the declared architectures.', architectures,
-            manifest_probe: manifestProbe, provenance }),
-        ports: Object.freeze([{ name: 'browser-proxy', host_variable: hostVariable, host_ip: browser.proxy.bind, internal: browser.proxy.proxyPort }]),
-        mounts: Object.freeze([
-            { kind: 'environment-file' as const, source: '.cockpit/browser/runner.sh', target: '/cockpit/browser-runner.sh', source_type: 'file' as const },
-            { kind: 'environment-file' as const, source: manifestPath, target: '/cockpit/project/package.json', source_type: 'file' as const },
-            { kind: 'environment-file' as const, source: browser.project.lockfile, target: '/cockpit/project/package-lock.json', source_type: 'file' as const },
-            { kind: 'bind' as const, source: browser.artifacts.runner, target: '/cockpit/artifacts', source_type: 'directory' as const },
-        ]), dependencies: Object.freeze([]), health: Object.freeze({ property: 'Host-filtered browser WebSocket proxy accepts the configured authority.',
-            probe, tool_probe: probe, interval_seconds: 5, timeout_seconds: 10, retries: 12,
-            start_period_seconds: Math.max(10, Math.ceil(healthMeasurement.duration_seconds)),
-            measurement: healthMeasurement }), toolchain_pins: Object.freeze([]), provenance,
-    }), authority: Object.freeze({
-        serviceId: 'cockpit-browser-runner' as const, hostVariable, proxyPort: browser.proxy.proxyPort,
-        manifest: Object.freeze({ path: manifestPath, sha256: manifest.sha256, identity: sourceIdentity(manifest.identity),
-            provenance: 'declared' as const, reason }),
-        lockfile: Object.freeze({ path: browser.project.lockfile, sha256: lockfile.sha256, identity: sourceIdentity(lockfile.identity) }),
-    }) })
-}
-
 // A ledger recorded under another name means `cockpit.name` was renamed. Publishing under the new
 // name is safe for the files, but a stack still recorded under the old one would be left where
 // down cannot reach it, so the rename waits until that stack is down.
@@ -1627,29 +1340,7 @@ async function renamedStackRefusal(prepared: PreparedEnvironment): Promise<Refus
         : refuse(ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME, earlierNameRefusalMessage(prepared.configPath, earlier.name), prepared.configPath)
 }
 
-async function retainedPortLease(
-    config: DerivedRegistry['config'],
-    checkout: GeneratedCheckoutIdentity,
-    currentStack: ReturnType<typeof stackId>,
-): Promise<PortLeaseProjection | undefined> {
-    if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined
-    const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
-        xdgStateHome: process.env.XDG_STATE_HOME,
-        checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath], cockpitId: checkout.cockpitId })
-    if (namespace.kind !== 'complete') return undefined
-    const stored = await readState(namespace.value.paths.lifecycle(currentStack))
-    if (stored.kind !== 'complete') return undefined
-    const lifecycle = decodeLifecycleRecord(stored.value, { cockpitId: checkout.cockpitId, stackId: currentStack })
-    if (!lifecycle) return undefined
-    const retained = await observeRetainedPortFamily({ namespace: namespace.value, stackId: currentStack,
-        holderId: lifecycle.value.holderId, checkoutId: checkout.checkoutId, config: config.ports })
-    if (retained.kind !== 'complete') return undefined
-    const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: config.environment.entrypoint_derivatives })
-    if (entrypoints.kind !== 'complete') return undefined
-    return projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
-}
-
-async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdapters, portLease?: PortLeaseProjection): Promise<PreparedEnvironment | RefusalOutcome> {
+async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdapters): Promise<PreparedEnvironment | RefusalOutcome> {
     const request = commandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const loaded = await loadCockpitConfig(request.configPath)
@@ -1666,14 +1357,13 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const derived = deriveRegistry(loaded.result.config)
     if (derived.kind !== 'complete') return refuse(derived.code, derived.message, loaded.result.source.path)
     const config = derived.result.config
-    // Without a generated declaration nothing environment-shaped is rendered or owned here: the
-    // cockpit either runs its own Compose files or declares no runtime, and still gets its surfaces.
-    const declaration = config.environment.generated
-    if (!declaration && workEnvironment.browser && Object.hasOwn(workEnvironment.browser, 'endpoint')) return refuse(
+    // A remote runner was a service cockpit rendered into its own Compose file, which it no longer
+    // writes; refusing here keeps browser.endpoint from reading as a runner that exists.
+    if (workEnvironment.browser && Object.hasOwn(workEnvironment.browser, 'endpoint')) return refuse(
         'GENERATED_DECLARATION_MISSING',
-        'a remote browser runner is rendered into the generated environment, and this configuration declares none',
+        'browser.endpoint names a remote browser runner, and cockpit renders no runner service',
         'browser',
-        'declare [environment.generated] for the runner, or remove browser.endpoint',
+        'remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml>',
     )
     const root = dirname(loaded.result.source.path)
     const authenticatedSiblings = await authenticateSiblingRoots(root, derived.result.config, loaded.result.source.path)
@@ -1684,7 +1374,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         authenticatedSiblings.fix,
     )
     const siblingRoots = authenticatedSiblings.roots
-    const runtimeCheckout = declaration || workEnvironment.browser || config.environment.compose_files.length > 0
+    const runtimeCheckout = workEnvironment.browser || config.environment.compose_files.length > 0
         ? await observeGeneratedCheckoutIdentity({ source: loaded.result.source, cockpitName: config.cockpit.name,
             env: process.env }) : undefined
     if (runtimeCheckout?.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
@@ -1694,10 +1384,6 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
     const currentCheckout = runtimeCheckout?.checkoutId ?? checkoutId({ checkoutPath: root })
     const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
-    const suppliedPorts = portLease === undefined ? undefined : inspectPortLeaseProjection(portLease)
-    if (portLease !== undefined && (!suppliedPorts || suppliedPorts.lease.stackId !== currentStack)) {
-        return refuse('GENERATED_INPUT_INVALID', 'the generated environment port lease authority is invalid', 'browser')
-    }
     // Derived from the runtime declarations, not the file bytes, so rewording a purpose or a guard
     // keeps the running stack's identity.
     const generation = sha256(`generated-environment\0${loaded.result.runtimeSha256}`)
@@ -1707,67 +1393,8 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'the current Node executable could not be authenticated',
         process.execPath,
     )
-    const browserRunner = declaration
-        ? await projectBrowserRunner(workEnvironment, declaration, config.ports.bases, root, node, adapters) : undefined
-    if (browserRunner && 'kind' in browserRunner) return refuse('GENERATED_DECLARATION_INVALID', browserRunner.message, 'browser', browserRunner.fix)
-    const projectedRunner = browserRunner && !('kind' in browserRunner) ? browserRunner : undefined
-    const inspectedPorts = suppliedPorts ?? (projectedRunner && runtimeCheckout
-        ? await retainedPortLease(config, runtimeCheckout, currentStack)
-        : undefined)
-    if (projectedRunner && !inspectedPorts) return refuse(
-        'GENERATED_INPUT_INVALID',
-        'a generated browser runner is published with its leased proxy port, and this stack holds no port lease yet',
-        'browser',
-        'run npx --no cockpit up --config <your cockpit.toml>, which leases the ports and publishes the runner; sync works while that lease is held',
-    )
-    const hostInputRoots: Record<string, GeneratedHostInputRoot> = {}
-    for (const service of declaration?.services ?? []) {
-        if (!service.mounts.some(mount => mount.kind !== 'volume') && service.toolchain_pins.length === 0) continue
-        const sibling = siblingRoots.siblings.get(service.sibling)
-        if (!sibling) return refuse('GENERATED_SIBLING_ROOT_INVALID', 'a generated service names an unauthenticated sibling', service.id)
-        hostInputRoots[service.id] = Object.freeze({ path: sibling.root, ...sibling.identity })
-    }
-    if (projectedRunner) {
-        const status = await lstat(root)
-        if (!status.isDirectory() || status.isSymbolicLink() || await realpath(root) !== root) return refuse(
-            'GENERATED_SIBLING_ROOT_INVALID', 'the browser input root is not a canonical ordinary directory', 'browser')
-        hostInputRoots[projectedRunner.service.id] = Object.freeze({ path: root, dev: status.dev, ino: status.ino })
-    }
-    const hostInputs: GeneratedHostInput[] = []
-    for (const service of [...declaration?.services ?? [], ...projectedRunner ? [projectedRunner.service] : []]) {
-        const sibling = siblingRoots.siblings.get(service.sibling)
-        const inputRoot = hostInputRoots[service.id] ?? (sibling ? Object.freeze({ path: sibling.root, ...sibling.identity }) : undefined)
-        if (!inputRoot) return refuse('GENERATED_SIBLING_ROOT_INVALID', 'a generated service names an unauthenticated sibling', service.id)
-        for (const mount of service.mounts) {
-            if (mount.kind !== 'volume') hostInputs.push(Object.freeze({
-                root: inputRoot, source: mount.source, type: mount.source_type!, mount: true,
-            }))
-        }
-        if ('build' in service && service.build) hostInputs.push(
-            Object.freeze({ root: inputRoot, source: service.build.context, type: 'directory', mount: false }),
-            Object.freeze({ root: inputRoot, source: join(service.build.context, service.build.dockerfile ?? 'Dockerfile'), type: 'file', mount: false }),
-        )
-    }
-    const rendered = declaration ? renderGeneratedEnvironment({
-        declaration,
-        sourceSha256: loaded.result.runtimeSha256,
-        generation,
-        stackId: currentStack,
-        cockpitId: currentCockpit,
-        portDefaults: config.ports.bases,
-        siblingDirectories: Object.fromEntries([...siblingRoots.siblings].map(([slug, sibling]) =>
-            [slug, relative(root, sibling.root) || '.'])),
-        ...(projectedRunner ? { browserRunner: { service: projectedRunner.service } } : {}),
-    }) : undefined
-    if (rendered && rendered.kind !== 'complete') return refuse(rendered.code, rendered.reason, loaded.result.source.path)
-    const generatedComposeAuthority = rendered && projectGeneratedComposeArtifactAuthority(rendered)
-    if (rendered && !generatedComposeAuthority) return refuse(
-        'GENERATED_RENDER_UNAUTHENTICATED',
-        'the generated Compose authority could not be issued',
-        loaded.result.source.path,
-    )
     let composeOwnership: OwnedBytes | undefined
-    if (!declaration && config.environment.compose_files.length > 0) {
+    if (config.environment.compose_files.length > 0) {
         const sources = []
         for (const reference of config.environment.compose_files) {
             const read = await readAnchoredFile(root, reference, COMPOSE_SOURCE_BYTES, node, adapters)
@@ -1781,14 +1408,9 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target)
         composeOwnership = Object.freeze({ path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) })
     }
-    const generated = Object.freeze([
-        ...(rendered?.manifest ?? []).map(({ path, bytes, sha256: digest }) => Object.freeze({ path, bytes, sha256: digest })),
-        ...(composeOwnership ? [composeOwnership] : []),
-    ])
-    // The anchored source read pins the publication root's identity for the whole sync. A stack
-    // without fixtures has no persona source, so the configuration file itself is the anchor.
-    const fixtures = declaration?.data?.fixtures
-    const sourcePath = fixtures?.persona_source ?? relative(root, loaded.result.source.path)
+    const generated = Object.freeze(composeOwnership ? [composeOwnership] : [])
+    // The anchored read of the configuration file pins the publication root's identity for the whole sync.
+    const sourcePath = relative(root, loaded.result.source.path)
     const sourceTarget = await safePath(root, sourcePath, false)
     if (!sourceTarget) return refuse(
         'GENERATED_PERSONA_SOURCE_UNAVAILABLE',
@@ -1799,32 +1421,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     if (!source) {
         return refuse('GENERATED_PERSONA_SOURCE_UNAVAILABLE', 'the declared persona source is unreadable', sourcePath)
     }
-    const persona = fixtures && declaration ? projectPersonaOutputs(
-        declaration,
-        { path: sourcePath, bytes: source.bytes },
-        (output, bytes) => renderPersona(output.format, bytes),
-    ) : Object.freeze({ source: Object.freeze({ path: sourcePath, sha256: source.sha256 }), outputs: Object.freeze([]) })
-    if (!persona) return refuse('GENERATED_PERSONA_INVALID', 'the declared persona projection is invalid', sourcePath)
-    const personaFiles = persona.outputs.map((output) => Object.freeze({
-        path: output.path,
-        bytes: Buffer.from(output.bytesBase64, 'base64').toString('utf8'),
-        sha256: output.sha256,
-    }))
-    // The secrets directory holds the generated stack's resolver material; without one there is none to keep out of Git.
-    const secretFiles = declaration
-        ? [Object.freeze({ path: SECRET_IGNORE_PATH, bytes: SECRET_IGNORE_BYTES, sha256: sha256(SECRET_IGNORE_BYTES) })] : []
-    const secretRoot = resolve(root, dirname(SECRET_IGNORE_PATH))
-    if (declaration) try {
-        const status = await lstat(secretRoot)
-        if (!status.isDirectory() || status.isSymbolicLink() || (status.mode & 0o777) !== 0o700) {
-            return refuse('GENERATED_PATH_UNSAFE', 'the central secrets directory must be a mode-0700 non-symbolic directory', dirname(SECRET_IGNORE_PATH))
-        }
-    } catch (error) {
-        if (!hasErrorCode(error, 'ENOENT')) {
-            return refuse('GENERATED_PATH_UNSAFE', 'the central secrets directory could not be authenticated', dirname(SECRET_IGNORE_PATH))
-        }
-    }
-    const owned = Object.freeze([...generated, ...personaFiles, ...secretFiles].sort((left, right) => compareCodeUnits(left.path, right.path)))
+    const owned = Object.freeze([...generated].sort((left, right) => compareCodeUnits(left.path, right.path)))
     if (new Set(owned.map(({ path }) => path)).size !== owned.length
         || owned.some(({ path }) => path === OWNERSHIP_PATH)
         || owned.some(({ path }) => [loaded.result.source.path, sourceTarget].includes(resolve(root, path)))) {
@@ -1837,12 +1434,6 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     }
     const producedAt = (adapters.now ?? (() => new Date().toISOString()))()
     const now = producedAt.slice(0, 10)
-    const canonical = rendered && inspectGeneratedEnvironment({
-        rendered,
-        candidates: generated.map(({ path, bytes }) => ({ path, bytes })),
-        now,
-    })
-    if (canonical && canonical.kind !== 'passed') return refuse(canonical.code, canonical.reason, canonical.target)
     return Object.freeze({
         root,
         cockpitId: publishedCockpit,
@@ -1851,12 +1442,10 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
         runtimeSha256: loaded.result.runtimeSha256,
-        personaSource: Object.freeze({ path: sourcePath, sha256: persona.source.sha256 }),
+        personaSource: Object.freeze({ path: sourcePath, sha256: source.sha256 }),
         personaSourceIdentity: source.identity,
         generation,
-        ...(rendered && generatedComposeAuthority && canonical ? { rendered, generatedComposeAuthority, inspection: canonical } : {}),
         generated,
-        persona: Object.freeze(personaFiles),
         owned,
         surfaces: Object.freeze([]),
         compactSurfacePaths: new Set<string>(),
@@ -1874,11 +1463,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         unapprovedMcpServers: Object.freeze([]),
         registry: derived.result,
         siblingRoots,
-        hostInputRoots: Object.freeze(hostInputRoots),
-        hostInputs: Object.freeze(hostInputs),
         workEnvironment,
-        ...(projectedRunner ? { browserRunner: projectedRunner.authority } : {}),
-        ...(inspectedPorts ? { portLease: inspectedPorts } : {}),
         node,
         now,
         producedAt,
@@ -2536,17 +2121,6 @@ async function projectExplicitNativeHooks(
     }
 }
 
-function bindBrowserMcpDeclaration(
-    declaration: McpDeclaration,
-    configuredEndpoint: string,
-    boundEndpoint: string,
-): McpDeclaration | undefined {
-    const indexes = declaration.args.flatMap((value, index) => value === configuredEndpoint ? [index] : [])
-    if (indexes.length !== 1) return undefined
-    return Object.freeze({ ...declaration,
-        args: declaration.args.map((value, index) => index === indexes[0] ? boundEndpoint : value) })
-}
-
 async function prepareSurfaces(
     prepared: PreparedEnvironment,
     priorOwned: readonly SurfacePriorOwnedEntry[],
@@ -2557,9 +2131,7 @@ async function prepareSurfaces(
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
     const tools = listedSurfaceTargets(config.surfaces.tools)
     const guardedTools = GUARD_SURFACE_TARGETS.filter(target => tools.includes(target))
-    const profiles = [...prepared.rendered?.replay.profiles ?? []]
-    const selected = config.sibling.filter(row => row.mount === 'always'
-        || row.mount.startsWith('profile:') && profiles.includes(row.mount.slice('profile:'.length)))
+    const selected = config.sibling.filter(row => row.mount === 'always')
     const requiredSlugs = new Set([...selected.map(row => row.slug), ...prepared.registry.mcpSources.map(row => row.slug)])
     const siblingRoots = new Map<string, string>()
     const sourceRoots: SourceRootIdentity[] = []
@@ -2600,7 +2172,7 @@ async function prepareSurfaces(
     const projectionInput: ProjectionPlannerInput = {
         canonicalMainCheckout: prepared.root,
         siblingsRoot: config.cockpit.siblings_root,
-        activeProfiles: profiles,
+        activeProfiles: [],
         guideCapLines: config.cockpit.guide_cap,
         siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...projectionGuides(row)] })),
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),
@@ -2709,19 +2281,8 @@ async function prepareSurfaces(
                 ...browserConfiguration,
                 postures: Object.freeze({ authorities: Object.freeze([authority]), stages: Object.freeze([stage.authority]) }),
             }, namespace.value)
-            const runtime = prepared.browserRunner
-                ? prepared.portLease && bindBrowserRuntimePortLease(configuredRuntime, prepared.portLease)
-                : configuredRuntime
-            if (!runtime) throw new RefusalError('browser runtime could not be bound to the authenticated port lease')
-            if (prepared.browserRunner && runtime.connection.kind !== 'remote') {
-                throw new RefusalError('browser runtime did not retain a remote endpoint after port binding')
-            }
-            const browserMcp = prepared.browserRunner && runtime.connection.kind === 'remote'
-                ? bindBrowserMcpDeclaration(playwright[0]!, browserConfiguration.endpoint!, runtime.connection.endpoint)
-                : playwright[0]!
-            if (!browserMcp) return refuse('MCP_DECLARATION_INVALID',
-                `the playwright MCP server must pass browser.endpoint (${browserConfiguration.endpoint}) as exactly one argument, so cockpit can bind it to the leased proxy port`,
-                'playwright', 'pass browser.endpoint verbatim as one argument of the playwright server in its MCP source file, then run npx --no cockpit sync --config <your cockpit.toml>')
+            const runtime = configuredRuntime
+            const browserMcp = playwright[0]!
             const browserSkill = asset('skills/cockpit-browser.skill.md')
             browser = renderBrowserSurfaces({
                 runtime,
@@ -2751,40 +2312,11 @@ async function prepareSurfaces(
                     servers: Object.freeze(row.servers.filter(server => server.name !== 'playwright' || browserTargets.has(row.target))),
                 }))),
             }) })
-            const runnerAsset = asset('scripts/browser-runner.sh')
-            const debuggerPreparation: BrowserDebuggerPreparation | undefined = prepared.browserRunner && browserConfiguration.headed
-                ? Object.freeze({
-                    kind: 'foreground-browser-debugger' as const,
-                    cwd: prepared.root,
-                    launcher: Object.freeze({ path: resolve(prepared.root, '.cockpit/browser/runner.sh'), sha256: runnerAsset.sha256 }),
-                    argv: Object.freeze([
-                        '/bin/sh', resolve(prepared.root, '.cockpit/browser/runner.sh'), 'debugger',
-                        '--manifest', resolve(prepared.root, prepared.browserRunner.manifest.path),
-                        '--lockfile', resolve(prepared.root, prepared.browserRunner.lockfile.path),
-                        '--manifest-sha256', prepared.browserRunner.manifest.sha256,
-                        '--lock-sha256', prepared.browserRunner.lockfile.sha256,
-                        '--driver-version', browserConfiguration.project.driverVersion,
-                        '--server-port', String(browserConfiguration.proxy.serverPort), '--proxy-port', '0',
-                        '--max-clients', String(runtime.server.maxClients),
-                        '--artifacts', resolve(prepared.root, browserConfiguration.artifacts.debugger),
-                        ...browserConfiguration.proxy.allowedHosts.flatMap(host => ['--allowed-host', host]),
-                        ...browserConfiguration.resolver.flatMap(({ hostname, address }) => ['--resolver-rule', `MAP ${hostname} ${address}`]),
-                        '--engine', browserConfiguration.engine, '--deadline-seconds', '3600',
-                    ]),
-                    deadlineSeconds: 3600,
-                    foreground: true as const,
-                }) : undefined
-            if (debuggerPreparation) issuedBrowserDebuggerPreparations.set(debuggerPreparation, runtime)
-            const runner = prepared.browserRunner && debuggerPreparation ? Object.freeze({
-                ...prepared.browserRunner,
-                debugger: debuggerPreparation,
-            }) : prepared.browserRunner
             browserAuthority = Object.freeze({
                 runtime,
                 namespace: namespace.value,
                 mcp: browserMcp,
                 skillTemplate: browserSkill,
-                ...(runner ? { runner } : {}),
             })
         } catch (error) {
             return refuse('SURFACE_INPUT_INVALID', `browser surface projection was refused: ${errorCause(error)}`, 'browser')
@@ -2973,7 +2505,7 @@ async function prepareSurfaces(
         name: config.cockpit.name,
         configFile: relative(prepared.root, prepared.configPath),
         siblings: config.sibling.map(row => ({ dir: row.dir, purpose: row.purpose, acquire: row.acquire })),
-        hasStack: config.environment.generated !== undefined || config.environment.compose_files.length > 0,
+        hasStack: config.environment.compose_files.length > 0,
         guards: { declaredDatabaseHosts: config.guards.hosted_db_hosts, declaredVendorHosts: config.guards.vendor_endpoint_hosts,
             pushRefusedBranches: config.guards.protected_branches },
         skills: [
@@ -3645,7 +3177,6 @@ async function preparePublication(
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
     seed?: PreparedEnvironment,
     knownOwnership?: OwnershipState,
-    portLease?: PortLeaseProjection,
 ): Promise<RefusalOutcome | Readonly<{
     prepared: PreparedEnvironment; ownership: OwnershipState; plan: PublicationPlan
 }> | Readonly<{
@@ -3654,7 +3185,7 @@ async function preparePublication(
     const request = syncCommandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const adapters = mergedAdapters(adapterOverrides)
-    const base = seed ?? await prepare({ configPath: request.configPath }, adapters, portLease)
+    const base = seed ?? await prepare({ configPath: request.configPath }, adapters)
     if ('status' in base) return base
     const ownership = knownOwnership ?? await readOwnership(base, adapters)
     if (ownership.kind === 'unsupported') return refuse(
@@ -3750,8 +3281,6 @@ export interface GeneratedEnvironmentCurrentness {
     readonly fixContext: FixContext
     readonly repairAuthority?: GeneratedEnvironmentRepairAuthority
     readonly repairRefusal?: RefusalOutcome
-    readonly decisions?: GeneratedDecisionReport
-    readonly unmountedHostPaths?: readonly string[]
 }
 
 interface RepairRecord {
@@ -3767,31 +3296,18 @@ function issueRepairAuthority(record: RepairRecord): GeneratedEnvironmentRepairA
     return authority
 }
 
-// A generated host path that no generated service binds hands nothing to a container, while reset
-// still deletes it. A declared [browser] owns exactly these paths as the artifact roots its commands
-// write on the host, so they are in use whether or not a runner mounts them.
-function unmountedGeneratedHostPaths(prepared: PreparedEnvironment): readonly string[] {
-    if (prepared.workEnvironment.browser) return Object.freeze([])
-    const binds = prepared.hostInputs.filter(({ mount }) => mount).map(({ root, source }) => resolve(root.path, source))
-    const declared = new Map(prepared.workEnvironment.generatedHostPaths.map((path) => [resolve(prepared.root, path), path]))
-    return Object.freeze(compareBindSources(binds, [...declared.keys()]).missing.map((path) => declared.get(path)!))
-}
-
 export async function prepareGeneratedEnvironmentCurrentness(
     input: GeneratedEnvironmentCommandInput,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
-    portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCurrentness> {
     const adapters = mergedAdapters(adapterOverrides)
-    const base = await prepare(input, adapters, portLease)
+    const base = await prepare(input, adapters)
     const ownership = 'status' in base ? undefined : await readOwnership(base, adapters)
     const publication = 'status' in base ? base : await preparePublication(input, adapters, base, ownership)
     const prepared = 'prepared' in publication ? publication.prepared : undefined
     const outcome = 'status' in publication ? publication : await checkCanonicalGeneratedEnvironment(input, prepared, adapters)
     const authority = prepared && 'plan' in publication
         ? issueRepairAuthority({ prepared, plan: publication.plan, adapters }) : undefined
-    const decisions = prepared?.rendered && undecidedGeneratedDecisions(prepared.rendered)
-    const unmountedHostPaths = prepared?.rendered && unmountedGeneratedHostPaths(prepared)
     return Object.freeze({
         outcome,
         changes: 'plan' in publication ? publication.plan.changes : Object.freeze([]),
@@ -3801,8 +3317,6 @@ export async function prepareGeneratedEnvironmentCurrentness(
         fixContext: Object.freeze({ resolvedConfigPath: prepared?.configPath ?? null,
             generatedTargets: Object.freeze(prepared ? [...prepared.owned, ...prepared.surfaces].map(row => row.path) : []) }),
         ...(authority ? { repairAuthority: authority } : {}),
-        ...(decisions ? { decisions } : {}),
-        ...(unmountedHostPaths ? { unmountedHostPaths } : {}),
         ...('status' in publication ? { repairRefusal: publication }
             : 'refusal' in publication ? { repairRefusal: publication.refusal } : {}),
     })
@@ -3811,13 +3325,12 @@ export async function prepareGeneratedEnvironmentCurrentness(
 async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters>,
-    portLease?: PortLeaseProjection,
     metadataChanges: readonly TeamMetadataChange[] = [],
 ): Promise<RefusalOutcome | Readonly<{ kind: 'complete'; authority: GeneratedEnvironmentRepairAuthority; dryRun: boolean }>> {
     const request = syncCommandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const adapters = mergedAdapters(adapterOverrides)
-    const publication = await preparePublication(request, adapters, undefined, undefined, portLease)
+    const publication = await preparePublication(request, adapters)
     if ('status' in publication) return publication
     if ('refusal' in publication) return publication.refusal
     if (metadataChanges.length > 0) {
@@ -3842,9 +3355,8 @@ async function prepareGeneratedEnvironmentSync(
 export async function syncGeneratedEnvironment(
     input: GeneratedEnvironmentSyncInput,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
-    portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
-    const prepared = await prepareGeneratedEnvironmentSync(input, adapterOverrides, portLease)
+    const prepared = await prepareGeneratedEnvironmentSync(input, adapterOverrides)
     return prepared.kind === 'refusal' ? prepared : applyGeneratedEnvironmentRepair(prepared.authority, { dryRun: prepared.dryRun })
 }
 
@@ -3856,7 +3368,7 @@ export async function syncTeamGeneratedEnvironment(
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const metadata = await prepareTeamMetadata(request.configPath)
     if (metadata.kind === 'refusal') return refuse(metadata.code, metadata.message, metadata.target, metadata.fix)
-    const prepared = await prepareGeneratedEnvironmentSync(request, adapterOverrides, undefined, metadata.authority.changes)
+    const prepared = await prepareGeneratedEnvironmentSync(request, adapterOverrides, metadata.authority.changes)
     if (prepared.kind === 'refusal') return prepared
     if (!prepared.dryRun) {
         const record = issuedRepairs.get(prepared.authority)!
@@ -3968,10 +3480,9 @@ async function checkCanonicalGeneratedEnvironment(
         && !prepared.owned.some(file => file.path === row.path))
     if (staleEnvironment.length > 0) return refuse('GENERATED_STALE_ARTIFACT', 'a formerly owned generated artifact remains in durable ownership metadata', staleEnvironment[0]!.path,
         'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
-    const generatedCandidates: Array<{ path: string; bytes: string }> = []
     const required = generatedPathFacts(prepared, 'required-after-sync')
     if (required.kind !== 'complete') return refuse(required.diagnostic.code, required.diagnostic.message, required.diagnostic.target)
-    const canonicalReads = await readAnchoredBatches(prepared.root, [...prepared.generated, ...prepared.persona].map(file => Object.freeze({
+    const canonicalReads = await readAnchoredBatches(prepared.root, prepared.generated.map(file => Object.freeze({
         path: file.path, maxBytes: MAX_GENERATED_BYTES, action: 'read-file' as const,
     })), prepared.node, adapters)
     // An indexed refusal omits the prefix receipts. Reobserve only that prefix to retain
@@ -3989,28 +3500,11 @@ async function checkCanonicalGeneratedEnvironment(
             if (classification.kind !== 'complete' || classification.paths[0]?.state === 'unknown') return refuse(
                 'GENERATED_ARTIFACT_MISSING', 'owned generated artifact could not be classified safely', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>',
             )
-            generatedCandidates.push({ path: file.path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) })
+            if (classification.paths[0]?.state !== 'unchanged') return refuse(
+                'GENERATED_ARTIFACT_DRIFT', 'owned generated artifact differs from canonical bytes', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>',
+            )
         } catch (error) {
             return refuse('GENERATED_ARTIFACT_MISSING', `owned generated artifact became unreadable: ${errorCause(error)}`, file.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
-        }
-    }
-    const inspected = prepared.rendered
-        && inspectGeneratedEnvironment({ rendered: prepared.rendered, candidates: generatedCandidates, now: prepared.now })
-    if (inspected && inspected.kind !== 'passed') return refuse(inspected.code, inspected.reason, inspected.target, 'run npx --no cockpit sync --config <your cockpit.toml>')
-    for (const [personaIndex, file] of prepared.persona.entries()) {
-        const index = prepared.generated.length + personaIndex
-        const read = canonicalReads?.kind === 'complete' ? canonicalReads.results[index]
-            : canonicalReads?.kind === 'invalid' && index < canonicalReads.index
-                ? await readAnchoredFile(prepared.root, file.path, MAX_GENERATED_BYTES, prepared.node, adapters)
-                : undefined
-        if (!read || read.kind !== 'complete') {
-            return refuse('GENERATED_ARTIFACT_MISSING', 'owned persona artifact became unreadable', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
-        }
-        const fact = required.facts.find(fact => fact.path === file.path)!
-        const classification = classifyGeneratedPaths([fact], [{ path: file.path, kind: 'file', bytes: read.bytes,
-            confinement: 'confined', identity: sourceIdentity(read.identity) }])
-        if (classification.kind !== 'complete' || classification.paths[0]?.state !== 'unchanged') {
-            return refuse('GENERATED_ARTIFACT_DRIFT', 'owned persona artifact differs from canonical bytes', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
         }
     }
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
@@ -4041,7 +3535,7 @@ async function checkCanonicalGeneratedEnvironment(
 }
 
 // A cockpit running its own Compose files owns that topology, so check reads it as Compose resolves
-// it and reports what would break parallel stacks; a generated stack was rendered to avoid all of it.
+// it and reports what would break parallel stacks.
 async function composeTopologyDiagnostics(
     configPath: string,
     sourceSha256: string,
@@ -4076,33 +3570,18 @@ async function composeTopologyDiagnostics(
 
 export async function checkGeneratedEnvironment(
     input: GeneratedEnvironmentCommandInput,
-    portLease?: PortLeaseProjection,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
 ): Promise<GeneratedEnvironmentCommandOutcome> {
     const adapters = mergedAdapters(adapterOverrides)
-    const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters, portLease)
-    const undecided = currentness.decisions
-    const findings = currentness.outcome.kind === 'complete' ? [
-        ...await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters),
-        ...(currentness.unmountedHostPaths ?? []).map((path) => ({
-            severity: 'error' as const, code: 'GENERATED_HOST_PATH_UNMOUNTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_PATH_UNMOUNTED,
-            target: `environment.generated_host_paths:${path}`,
-            message: `environment.generated_host_paths lists ${path}, but no generated service bind-mounts it, a path inside it or a directory that holds it, and no [browser] writes there, so the entry hands nothing to a container`,
-            fix: `remove "${path}" from environment.generated_host_paths in cockpit.toml, or bind-mount it from a generated service whose sibling directory contains it; then run npx --no cockpit check --config <your cockpit.toml>`,
-        })),
-    ] : []
-    const diagnostics = currentness.outcome.kind === 'complete' && undecided && undecided.undecided > 0
-        ? Object.freeze([...currentness.outcome.diagnostics, {
-            severity: 'info' as const, code: 'GENERATED_DECISIONS_UNDECIDED', target: undecided.path,
-            message: `${undecided.undecided} structural subject${undecided.undecided === 1 ? ' has' : 's have'} no decision entry and ${undecided.undecided === 1 ? 'is' : 'are'} listed as undecided: ${undecided.subjects.join(', ')}; record each under environment.generated.decisions.entries when it is decided`,
-        }, ...findings])
-        : Object.freeze([...currentness.outcome.diagnostics, ...findings])
+    const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters)
+    const findings = currentness.outcome.kind === 'complete'
+        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters) : []
+    const diagnostics = Object.freeze([...currentness.outcome.diagnostics, ...findings])
     const outcome = findings.some(row => row.severity === 'error')
         ? Object.freeze({ kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics })
         : Object.freeze({ ...currentness.outcome, diagnostics })
     return Object.freeze({ ...outcome, fixContext: currentness.fixContext, report: Object.freeze({
         storedProducer: currentness.storedProducer, currentProducer: currentness.currentProducer,
         repair: proposeGeneratedEnvironmentRepair(currentness),
-        ...(undecided ? { decisions: undecided } : {}),
     }) })
 }

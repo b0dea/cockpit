@@ -542,7 +542,6 @@ describe('guard policy construction', () => {
             ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path)), join(root, 'cockpit.toml')])
         expect(policy.protectedIdentities[1]).toEqual({ path: join(root, 'app/config/runtime.env'), identity: null,
             ancestors: ['app', 'app/config'].map(path => guardIdentity(lstatSync(join(root, path)))) })
-        expect(input.configuration.config.environment.generated?.vendors[0].endpoints[0].sink).toBe('https://app:3000/messages')
         expect(Object.isFrozen(result.result)).toBe(true)
         expect(Object.isFrozen(policy)).toBe(true)
         for (const values of [policy.allowedRoots, policy.instances, policy.protectedIdentities, policy.protectedBranches, policy.hostedDatabaseHosts, policy.vendorHosts,
@@ -609,11 +608,11 @@ describe('guard policy construction', () => {
         }
     })
 
-    it('admits logs only for services the declared Compose files resolve to when no generated environment is declared', async () => {
+    it('admits logs only for services the declared Compose files resolve to', async () => {
         const { configPath } = fixture()
         const root = realpathSync(dirname(configPath))
         const source = CockpitConfig.parse(parse(readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')))
-        const { generated: _generated, ...environment } = source.environment
+        const environment = source.environment
         mkdirSync(join(root, 'app'), { recursive: true })
         writeFileSync(join(root, 'app/package-lock.json'), '{}')
         writeFileSync(join(root, 'compose.yml'), 'services:\n  api:\n    image: busybox\n  worker:\n    image: busybox\n')

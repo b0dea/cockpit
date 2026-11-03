@@ -195,12 +195,13 @@ cold_start_seconds = 300
         }
         const machine = (coldStart: number) => `\n[environment]\ncompose_files = ["compose.yml"]\nresettable_volumes = ["data"]\n[environment.machine]\nruntime_memory_mb = 512\nruntime_cpus = 1\nfree_disk_mb = 1024\ncold_start_seconds = ${coldStart}\n`
         const floored = await identity(`${validConfig}${machine(120)}`)
-        // The floor, the cold-start budget and the reset list are held on the host, not in a
-        // container, so raising them leaves a running stack alone.
+        // The floor, the cold-start budget, the reset list and the seed command are held on the
+        // host, not in a container, so changing them leaves a running stack alone.
         for (const hostOnly of [
             `${validConfig}${machine(600)}`,
             `${validConfig}${machine(120).replace('runtime_memory_mb = 512', 'runtime_memory_mb = 1024')}`,
             `${validConfig}${machine(120).replace('["data"]', '["data", "cache"]')}`,
+            `${validConfig}${machine(120).replace('["data"]\n', '["data"]\nseed = { argv = ["npm", "run", "seed"], timeout_seconds = 60 }\n')}`,
         ]) expect((await identity(hostOnly)).runtime, hostOnly).toBe(floored.runtime)
         const base = await identity(validConfig)
         const unused ='[[sibling]]\nslug = "docs"\ndir = "docs"\nmount = "none"\nacquire = "none"\nvar = "DOCS_DIR"\npurpose = "Synthetic docs"\n'
@@ -220,30 +221,6 @@ cold_start_seconds = 300
             validConfig.replace('dir = "api-service"', 'dir = "api"'),
             validConfig.replace('[ports]', `${unused.replace('mount = "none"', 'mount = "always"')}\n[ports]`),
         ]) expect((await identity(runtime)).runtime, runtime).not.toBe(base.runtime)
-
-        // A generated stack: prose, provenance and the order of the tables the renderer sorts reach
-        // no container; a port, image or mount does.
-        const stack = readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
-        const generated = await identity(stack)
-        const swapped = (text: string, first: string, second: string) => text.replace(first, '\0').replace(second, first).replace('\0', second)
-        const dataMount = '[[environment.generated.services.mounts]]\nkind = "volume"\nsource = "product-data"\ntarget = "/workspace/data"\n'
-        const sourceMount = '[[environment.generated.services.mounts]]\nkind = "bind"\nsource = "."\ntarget = "/workspace/source"\nsource_type = "directory"\n'
-        for (const cosmetic of [
-            stack.replace('property = "Application route returns its expected document"', 'property = "The application route answers"'),
-            stack.replaceAll('reason = "Synthetic declaration"', 'reason = "Synthetic declaration, reworded"'),
-            stack.replace('reason = "Pinned synthetic runtime"', 'reason = "Pinned runtime the product ships on"'),
-            stack.replace('duration_seconds = 15', 'duration_seconds = 18'),
-            swapped(stack, dataMount, sourceMount),
-        ]) {
-            const edited = await identity(cosmetic)
-            expect(edited.file).not.toBe(generated.file)
-            expect(edited.runtime, cosmetic).toBe(generated.runtime)
-        }
-        for (const runtime of [
-            stack.replace('internal = 3000', 'internal = 3001'),
-            stack.replace('node@sha256:83f487e0', 'node@sha256:93f487e0'),
-            stack.replace('target = "/workspace/source"', 'target = "/workspace/app"').replace('app:bind:.:/workspace/source', 'app:bind:.:/workspace/app'),
-        ]) expect((await identity(runtime)).runtime, runtime).not.toBe(generated.runtime)
     })
 
     it('reports provenance from the native canonical config path', async () => {
@@ -349,8 +326,6 @@ cold_start_seconds = 30
 
     it('retains explicit browser engine, manifest identity and configured proxy lease', async () => {
         const configured = workEnvironmentConfig.replace('[browser]\n', '[browser]\nengine = "webkit"\nnetwork_exposure = "*.example.invalid"\nnetwork_exposure_reason = "Declared isolated service access"\n')
-            .replace('runner = { reference =', 'runner = { architectures = ["arm64"], reference =')
-            .replace('max_clients = 1', 'runner_health_measurement = { duration_seconds = 15, provenance = { source = "synthetic-browser.toml", observed_on = "2026-10-24", kind = "measured", reason = "Synthetic readiness measurement" } }\nmax_clients = 1')
             .replace('bases = { APP_PORT = 4100 }', 'bases = { APP_PORT = 4100, BROWSER_PORT = 3001 }')
             .replace('project = { lockfile =', `project = { manifest = "package.json", manifest_sha256 = "${'d'.repeat(64)}", lockfile =`)
             .replace('proxy = { server_port =', 'proxy = { host_variable = "BROWSER_PORT", server_port =')
@@ -358,7 +333,6 @@ cold_start_seconds = 30
         if (loaded.kind === 'refusal') throw new Error(`fixture configuration did not load: ${JSON.stringify(loaded.diagnostics)}`)
         const consumed = consumeWorkEnvironmentConfigProjection(projectWorkEnvironmentConfig(loaded.result)!)
         expect(consumed?.browser).toMatchObject({ engine: 'webkit', networkExposure: '*.example.invalid', networkExposureReason: 'Declared isolated service access',
-            images: { runner: { architectures: ['arm64'] } }, runnerHealthMeasurement: { duration_seconds: 15, provenance: { kind: 'measured' } },
             project: { manifest: 'package.json', manifestSha256: 'd'.repeat(64) }, proxy: { hostVariable: 'BROWSER_PORT' } })
         expect(consumed?.browser?.proxy).not.toHaveProperty('widerExposure')
         for (const variable of ['MISSING_PORT', 'APP_PORT']) {
@@ -441,77 +415,6 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null, status: 2 }))
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code, fix: expect.stringContaining(fix) })])
         expect(JSON.stringify(outcome)).not.toContain('ssh://example.invalid/api.git')
-    })
-
-    it('refuses a host operation that names an executable other than node, naming the operation', async () => {
-        const image = `node@sha256:${'d'.repeat(64)}`
-        const withManifestProbe = (argv: readonly string[]) => `${readFileSync(resolve('examples/minimal/cockpit.toml'), 'utf8')}
-[[environment.generated.services]]
-id = "idle"
-sibling = "api"
-command = ["node", "-e", "setInterval(() => {}, 1000)"]
-image = { reference = "${image}", reason = "Synthetic sidecar", architectures = ["arm64"], manifest_probe = { location = "host", cwd = ".", argv = ${JSON.stringify(argv)}, timeout_seconds = 30 } }
-health = { property = "the process answers", probe = { location = "in-stack", service = "idle", cwd = ".", argv = ["node", "-e", "0"], timeout_seconds = 10 }, interval_seconds = 5, timeout_seconds = 3, retries = 4, start_period_seconds = 20 }
-`
-        const refused = await loadCockpitConfig(fixture(withManifestProbe(['docker', 'image', 'inspect', image])))
-        expect(refused).toMatchObject({ kind: 'refusal', result: null, diagnostics: [{
-            severity: 'error', code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED',
-            message: expect.stringContaining('environment.generated.services.1.image.manifest_probe runs "docker" on the host'),
-            fix: expect.stringContaining('location = "in-stack"'),
-        }] })
-
-        expect((await loadCockpitConfig(fixture(withManifestProbe(['node', '-e', '0'])))).kind).toBe('complete')
-
-        // A sibling row's generated service is planned with the baseline's, so its host operations are refused the same way.
-        const baseline = readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
-            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
-        const row = readFileSync(resolve('packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')
-        const hostRow = row.replace(/(\[sibling\.derives\.generated\.service\.image\.manifest_probe\]\n)location = "in-stack"\nservice = "worker"\ncwd = "\."\nargv = \["node", "probe\.mjs", "manifest"\]/,
-            '$1location = "host"\ncwd = "."\nargv = ["docker", "image", "inspect", "worker"]')
-        expect(hostRow).not.toBe(row)
-        expect((await loadCockpitConfig(fixture(`${baseline}\n${row}`))).kind).toBe('complete')
-        expect(await loadCockpitConfig(fixture(`${baseline}\n${hostRow}`))).toMatchObject({ kind: 'refusal', diagnostics: [{
-            code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED',
-            message: expect.stringMatching(/^sibling\.\d+\.derives\.generated\.service\.image\.manifest_probe runs "docker" on the host/),
-        }] })
-    })
-
-    it('refuses a toolchain sibling whose generated service mounts no dependency volume, naming the field and the fix', async () => {
-        // up installed into the mounted dependency volume and refused this shape only after starting
-        // the containers, while check and doctor passed it.
-        const baseline = readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
-            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
-        // The shape a first-time setup produced: a node sibling and a node install policy, with no
-        // dependency volume declared or mounted (and so no decisions about one).
-        const unmounted = [
-            /\[\[environment\.generated\.services\.mounts\]\]\nkind = "volume"\nsource = "dependencies"\n[^[]*/,
-            /\[\[environment\.generated\.volumes\]\]\nid = "dependencies"\n[\s\S]*?(?=\[\[)/,
-            /\[\[environment\.generated\.decisions\.entries\]\]\nid = "volume-dependencies"\n[\s\S]*?(?=\[\[)/,
-            /\[\[environment\.generated\.decisions\.entries\]\]\nid = "mount-dependencies"\n[\s\S]*?(?=\[\[)/,
-        ].reduce((text, block) => {
-            const next = text.replace(block, '')
-            expect(next).not.toBe(text)
-            return next
-        }, baseline)
-        expect((await loadCockpitConfig(fixture(baseline))).kind).toBe('complete')
-        expect(await loadCockpitConfig(fixture(unmounted))).toMatchObject({ kind: 'refusal', result: null, diagnostics: [{
-            severity: 'error', code: 'GENERATED_DEPENDENCY_VOLUME_MISSING',
-            message: 'sibling.0.toolchain is "node" for app, so up installs its dependencies into a dependency volume mounted in the generated service that runs it, but generated service app mounts none ("node" install policies fill "dependencies")',
-            fix: expect.stringContaining('set toolchain = "none" on the sibling'),
-        }] })
-        expect((await loadCockpitConfig(fixture(unmounted.replace('toolchain = "node"\npurpose = "Synthetic application"', 'toolchain = "none"\npurpose = "Synthetic application"'))))
-            .kind).toBe('complete')
-
-        // A sibling row's generated service is checked the same way once it joins the baseline: its
-        // only dependency volume is filled by a node policy, which a python sibling cannot use.
-        const row = readFileSync(resolve('packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')
-        const pythonRow = row.replace('var = "WORKER_DIR"\ntoolchain = "node"', 'var = "WORKER_DIR"\ntoolchain = "python"')
-        expect(pythonRow).not.toBe(row)
-        expect((await loadCockpitConfig(fixture(`${baseline}\n${row}`))).kind).toBe('complete')
-        expect(await loadCockpitConfig(fixture(`${baseline}\n${pythonRow}`))).toMatchObject({ kind: 'refusal', diagnostics: [{
-            code: 'GENERATED_DEPENDENCY_VOLUME_MISSING',
-            message: expect.stringMatching(/^sibling\.1\.toolchain is "python" for worker, .* but generated service worker mounts none \(environment\.install_policies has no "python" row\)$/),
-        }] })
     })
 
     it('names port families whose bases overlap across stacks and the step that separates them', async () => {

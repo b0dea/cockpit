@@ -239,7 +239,8 @@ describe('custom surface output authentication batching', () => {
         expect(batches.map(batch => batch.entries.map(entry => ({
             path: [...entry.segments, entry.name].join('/'), action: entry.action, maxBytes: entry.maxBytes,
         })))).toEqual(Array.from({ length: change ? 2 : 3 }, () => [
-            { path: 'fixtures/personas.json', action: 'read-persona', maxBytes: 16_777_216 },
+            // With no persona source declared, the configuration file is the source that anchors freshness.
+            { path: 'cockpit.toml', action: 'read-persona', maxBytes: 16_777_216 },
             { path: 'adapters/synthetic.mjs', action: 'read-file', maxBytes: 16_777_216 },
         ]))
         expect(changed).toBe(change)

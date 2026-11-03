@@ -3,12 +3,12 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { initCommand } from '../fix-catalogue.js'
-import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT, unboundHostOperation } from '../config/load.js'
+import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { errorCause, snapshotJson, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
-import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
+import { CockpitConfig, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from '../registry-resolve/registry.js'
 import {
@@ -109,7 +109,7 @@ export interface DocumentCommandInput {
 }
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
-    | 'environment.install_policies' | 'environment.test_data' | 'environment.generated' | 'environment.machine'
+    | 'environment.install_policies' | 'environment.test_data' | 'environment.compose_files' | 'environment.machine'
     | 'environment.posture' | 'testing' | 'guards' | 'configuration.defaults'
 export interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
@@ -151,14 +151,6 @@ const SCHEMA_ISSUES_SHOWN = 10
 
 function issueSummary(error: { readonly issues: readonly { path: readonly PropertyKey[]; message: string }[] }): string {
     return schemaIssueSummary(error.issues, SCHEMA_ISSUES_SHOWN)
-}
-
-// cockpit.toml loading refuses the same operation, but only after init has written the file, where
-// the recorded answers can no longer be reset; the answer is refused here, before anything is written.
-function hostOperationRefusal(operation: NonNullable<ReturnType<typeof unboundHostOperation>>, field: string): RefusedDocumentOutcome {
-    return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-        `${operation.path} runs "${operation.executable}" on the host, but cockpit runs host operations only with the Node executable that runs cockpit, so this configuration could never be planned`,
-        field, 'in the answer, make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool')
 }
 
 function refusal(code: string, message: string, target?: string, fix?: string): RefusedDocumentOutcome {
@@ -778,7 +770,7 @@ const QUESTION_WHY = {
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
     policies: 'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
-    generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer environment.compose_files instead: compose_files = ["compose.yml"] under [environment] in an answers file, or { "compose_files": ["compose.yml"] } typed at this question',
+    composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements a person states: cockpit never proposes them, because no product file records them and this machine\'s capacity is not what the product needs',
     posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
     testing: 'declare the product\'s test commands as [testing] stages and gates: a targeted gate agents run while iterating and a full gate they run before handing back shared changes; init proposes them from test entry points it finds on disk. Answer "none" when the product has no tests yet: no work can then be graded PASS, and doctor warns until gates are declared',
@@ -817,7 +809,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
         ...(surfacesOnly ? [] : [
             { field: 'environment.install_policies' as const, why: QUESTION_WHY.policies },
             { field: 'environment.test_data' as const, why: QUESTION_WHY.testData },
-            { field: 'environment.generated' as const, why: QUESTION_WHY.generated },
+            { field: 'environment.compose_files' as const, why: QUESTION_WHY.composeFiles },
             { field: 'environment.machine' as const, why: QUESTION_WHY.machine },
             { field: 'environment.posture' as const, why: QUESTION_WHY.posture },
             { field: 'testing' as const, why: QUESTION_WHY.testing },
@@ -826,12 +818,6 @@ export function plannedGreenfieldQuestions(input: Readonly<{
         { field: 'guards' as const, why: QUESTION_WHY.guards },
         { field: 'configuration.defaults' as const, why: QUESTION_WHY.defaults },
     ])
-}
-
-/** Compose-first answer: the repository already has Compose files, so no generated environment is rendered. */
-function composeFilesAnswer(value: unknown): unknown {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-    return Object.keys(value).join(',') === 'compose_files' ? (value as { compose_files: unknown }).compose_files : undefined
 }
 
 function configurationQuestion(
@@ -1038,9 +1024,6 @@ async function completeConfigurationDocument(
             return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 'the operator-confirmed sibling declarations are invalid or change detected registry facts', question.field)
         }
-        const hostOperation = parsed.data.reduce<ReturnType<typeof unboundHostOperation>>((found, row, index) =>
-            found ?? unboundHostOperation(row.derives?.generated, ['sibling', String(index), 'derives', 'generated']), undefined)
-        if (hostOperation) return hostOperationRefusal(hostOperation, question.field)
         siblingRows = parsed.data
         record('sibling', read.provenance)
         answerIndex += 1
@@ -1168,52 +1151,22 @@ async function completeConfigurationDocument(
             answerIndex += 1
         }
 
-        const generatedQuestion = configurationQuestion(context, 'environment.generated', QUESTION_WHY.generated)
-        const generatedRead = readConfigurationAnswer(configuration.answers, answerIndex, generatedQuestion)
-        if (generatedRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-            attributions, gaps: [] }, destination, generatedQuestion)
-        if (generatedRead.kind === 'refusal') return generatedRead.outcome
-        const composeFirst = composeFilesAnswer(generatedRead.value)
-        if (composeFirst) {
-            const parsedCompose = Array.isArray(composeFirst) && composeFirst.length > 0
-                ? CockpitConfig.shape.environment.safeParse({ ...defaults.environment,
-                    install_policies: parsedPolicies.data, compose_files: composeFirst }) : undefined
-            if (!parsedCompose?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-                `the operator-confirmed Compose files do not match the schema: ${parsedCompose
-                    ? issueSummary(parsedCompose.error) : 'compose_files must list at least one path'}`,
-                generatedQuestion.field)
-            environment = parsedCompose.data
-            const defaultIndex = attributions.findIndex(row => row.target === 'environment.compose_files')
-            if (defaultIndex >= 0) attributions.splice(defaultIndex, 1)
-        } else {
-            const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
-            if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-                `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
-                generatedQuestion.field)
-            const hostOperation = unboundHostOperation(parsedGenerated.data, ['environment', 'generated'])
-            if (hostOperation) return hostOperationRefusal(hostOperation, generatedQuestion.field)
-            let runnableWitnesses = 0
-            for (const disposition of estateRunnable) {
-                const services = parsedGenerated.data.services.filter(service => service.sibling === disposition.slug)
-                const resolution = runnableResolutions.get(disposition.slug)
-                const runnable = disposition.disposition === 'confirmed' || resolution?.runnable === true
-                const witnessMatches = resolution?.runnable === true
-                    ? services.filter(service => service.id === resolution.service
-                        && JSON.stringify(service.command) === JSON.stringify(resolution.command)).length
-                    : 0
-                if (runnable ? services.length === 0 || resolution?.runnable === true && witnessMatches !== 1 : services.length !== 0) {
-                    return refusal('DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH',
-                        'the generated environment does not match the operator-confirmed runnable dispositions', generatedQuestion.field)
-                }
-                if (runnable) runnableWitnesses += 1
-            }
-            if (estateRunnable.length > 0 && runnableWitnesses === 0) {
-                return refusal('DOCUMENT_NO_RUNNABLE_PRODUCT',
-                    'the observed and operator-confirmed estate contains no runnable product', generatedQuestion.field)
-            }
-            environment = { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data }
-        }
-        record(composeFirst ? 'environment.compose_files' : 'environment.generated', generatedRead.provenance)
+        const composeQuestion = configurationQuestion(context, 'environment.compose_files', QUESTION_WHY.composeFiles)
+        const composeRead = readConfigurationAnswer(configuration.answers, answerIndex, composeQuestion)
+        if (composeRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, composeQuestion)
+        if (composeRead.kind === 'refusal') return composeRead.outcome
+        const parsedCompose = Array.isArray(composeRead.value) && composeRead.value.length > 0
+            ? CockpitConfig.shape.environment.safeParse({ ...defaults.environment,
+                install_policies: parsedPolicies.data, compose_files: composeRead.value }) : undefined
+        if (!parsedCompose?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed Compose files do not match the schema: ${parsedCompose
+                ? issueSummary(parsedCompose.error) : 'compose_files must list at least one path'}`,
+            composeQuestion.field)
+        environment = parsedCompose.data
+        const defaultIndex = attributions.findIndex(row => row.target === 'environment.compose_files')
+        if (defaultIndex >= 0) attributions.splice(defaultIndex, 1)
+        record('environment.compose_files', composeRead.provenance)
         answerIndex += 1
 
         // Every runtime command refuses a declared runtime with no floor, so a configuration that
@@ -1328,9 +1281,9 @@ async function completeConfigurationDocument(
         ...(noGuardHosts ? [`guards: ${noGuardHostsDecision(guardRead.provenance)}; list those hosts under [guards] once one exists`] : []),
         ...(testingNone ? [`testing: no test gate is declared because ${STATED_BY[testingNone]} the product has no tests to run yet; declare [testing] once it does`] : []),
         ...(testData ? [testData.seeded_data
-            ? candidate.data.environment.generated?.data?.modes.some(mode => mode.mode === 'seeded')
-                ? 'seeded data: declared by the product-owned seeded mode in environment.generated.data'
-                : 'seeded data: required but unresolved; declare product-owned seed operations before claiming a seeded local setup'
+            ? candidate.data.environment.seed
+                ? 'seeded data: declared by environment.seed'
+                : 'seeded data: required but unresolved; declare environment.seed with the volumes it fills in environment.resettable_volumes before claiming a seeded local setup'
             : `seeded data: not declared because ${STATED_BY[testData.provenance]} this local setup does not need it`,
         testData.signed_in_users
             ? candidate.data.browser?.authentication.states.length
@@ -1348,7 +1301,7 @@ async function completeConfigurationDocument(
         fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists' })
     if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
-        fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml>' })
+        fix: 'once a product runs, declare environment.compose_files and run npx --no cockpit sync --config <your cockpit.toml>' })
     return { kind: 'complete', artifact, destination, diagnostics,
         result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed: Object.freeze(unconfirmed) }) },
         status: 0, question: null }

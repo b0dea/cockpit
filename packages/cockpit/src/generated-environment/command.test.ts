@@ -20,7 +20,7 @@ describe('public generated repair', () => {
         const { root, configPath } = await consumer(`public-repair-${changed}`)
         const current = await prepareGeneratedEnvironmentCurrentness({ configPath })
         if (!current.repairAuthority) throw new Error('changed-after-preparation authority was not issued')
-        const path = changed === 'source' ? configPath : join(root, 'compose.generated.yml')
+        const path = changed === 'source' ? configPath : join(root, 'AGENTS.md')
         const bytes = changed === 'source' ? `${await readFile(configPath, 'utf8')}\n# changed after preparation\n` : 'foreign target\n'
         await writeFile(path, bytes)
         const result = await applyGeneratedEnvironmentRepair(current.repairAuthority)
@@ -28,7 +28,6 @@ describe('public generated repair', () => {
         expect(result.diagnostics[0]!.code).toBe('GENERATED_SOURCE_CHANGED')
         expect(await readFile(path, 'utf8')).toBe(bytes)
         await expect(lstat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-        await expect(lstat(join(root, 'fixtures/personas.generated.ts'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 })
 
@@ -60,7 +59,7 @@ describe('generated sibling-root authority', () => {
             kind: 'refusal',
             diagnostics: [expect.objectContaining({ code: diagnosticCode })],
         })
-        await expect(lstat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(lstat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('refuses an absolute sibling directory even when the declared root contains it', async () => {
@@ -75,25 +74,6 @@ describe('generated sibling-root authority', () => {
             kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'CONFIG_SCHEMA_INVALID' })],
         })
     }, 120_000)
-
-    it('refuses a vendor template outside the publication root instead of writing a local lookalike', async () => {
-        const { root, configPath } = await consumer('external-vendor-template')
-        const siblings = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-vendor-siblings-')))
-        roots.push(siblings)
-        await mkdir(join(siblings, 'app'))
-        await writeFile(configPath, (await readFile(configPath, 'utf8')).replace(
-            'siblings_root = "."', `siblings_root = ${JSON.stringify(siblings)}`,
-        ))
-
-        const result = await syncGeneratedEnvironment({ configPath })
-
-        expect(result).toMatchObject({ kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'GENERATED_TEMPLATE_INVALID' })] })
-        for (const path of ['app/.env.example', 'compose.generated.yml', '.cockpit/generated-environment-ownership.json']) {
-            await expect(lstat(join(root, path))).rejects.toMatchObject({ code: 'ENOENT' })
-        }
-        await expect(lstat(join(siblings, 'app/.env.example'))).rejects.toMatchObject({ code: 'ENOENT' })
-    })
 })
 
 
@@ -140,29 +120,6 @@ describe('selected bootstrap target', () => {
 
 
 describe('generated environment command', () => {
-    it.each([
-        ['compose.generated.yml', 'duplicate'],
-        ['fixtures/personas.json', 'source-overlap'],
-    ])('refuses the owned destination %s before publication', async (destination, name) => {
-        const { root, configPath } = await consumer(name)
-        const declaration = await readFile(configPath, 'utf8')
-        await writeFile(configPath, declaration.replace(
-            'path = "fixtures/personas.generated.ts"',
-            `path = ${JSON.stringify(destination)}`,
-        ))
-
-        const refused = await syncGeneratedEnvironment({ configPath })
-        expect(refused).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'GENERATED_PATH_DUPLICATE' })],
-        })
-        if (destination === 'compose.generated.yml') {
-            await expect(stat(join(root, destination))).rejects.toMatchObject({ code: 'ENOENT' })
-        } else {
-            expect(await readFile(join(root, destination), 'utf8')).toBe('[{"id":"first"}]\n')
-        }
-    })
-
     it('does not accept a caller-selected freshness clock', async () => {
         const { root, configPath } = await consumer('clock')
         const refused = await syncGeneratedEnvironment({ configPath, now: '2026-01-01' } as never)
@@ -171,7 +128,7 @@ describe('generated environment command', () => {
             kind: 'refusal',
             diagnostics: [expect.objectContaining({ code: 'GENERATED_INPUT_INVALID' })],
         })
-        await expect(stat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(stat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('refuses a source change immediately before publication', async () => {
@@ -186,22 +143,6 @@ describe('generated environment command', () => {
         }
         const result = await syncGeneratedEnvironment({ configPath }, adapters)
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED' })] })
-        await expect(stat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
-
-        const persona = await consumer('persona-source-change')
-        const personaResult = await syncGeneratedEnvironment(
-            { configPath: persona.configPath },
-            {
-                observeSource: async (path) => {
-                    await writeFile(join(persona.root, 'fixtures/personas.json'), '[{"id":"changed-before-commit"}]\n')
-                    return observeConfigSource(path)
-                },
-            },
-        )
-        expect(personaResult).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED', target: 'fixtures/personas.json' })],
-        })
-        await expect(stat(join(persona.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(stat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 })

@@ -36,15 +36,8 @@ export const mechanism = {
         'InstallPolicy',
         'GuardCommandArgv',
         'GUARD_COMMAND_WORD_PATTERN',
-        'ContainerPath',
         'EnvironmentName',
         'Provenance',
-        'GeneratedService',
-        'GeneratedEnvironment',
-        'DECISIONS_PATH',
-        'decisionSubjects',
-        'DataMode',
-        'VendorPosture',
         'Environment',
         'SiblingVariable',
         'deriveSiblingVariable',
@@ -72,7 +65,6 @@ export const mechanism = {
         'CockpitConfig',
         'STRUCTURED_INPUT_ENTRY_LIMIT',
         'OPERATOR_GATE_RISK_PATTERN',
-        'LOCAL_ENDPOINT_URL_PATTERN',
         'requiresOperatorGate',
         'configurationDefaults',
         'mounted',
@@ -235,14 +227,8 @@ const PostureRequirement = z.object({
     message: 'posture requirement must tag addressing or authentication',
 })
 
-const DeclarationId = z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(128)
 const DeclarationReason = z.string().min(1).max(4096).regex(/\S/)
-const BoundedArgv = z.array(z.string().min(1).max(8192).regex(/^[^\x00]+$/)).min(1).max(256)
-export const ContainerPath = z.string().max(4096).regex(/^\/(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*[\\\x00-\x1f\x7f])[^:]+$/)
 export const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
-export const LOCAL_ENDPOINT_URL_PATTERN = String.raw`^https?://[a-z0-9][a-z0-9-]*(?::(?:0|[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]))?(?:/[^\s?#]*)?$`
-const LOCAL_ENDPOINT_URL_RE = new RegExp(LOCAL_ENDPOINT_URL_PATTERN)
-const LocalEndpointUrl = z.string().max(4096).regex(LOCAL_ENDPOINT_URL_RE)
 // Where a declared value came from. A date records when its source was looked at, so it is
 // required wherever the source lies outside this configuration. The one exception is a value
 // declared by the configuration file itself, which the loader checks by path because the
@@ -259,295 +245,6 @@ export const Provenance = z.object({
     path: ['observed_on'], message: 'measured and inferred provenance require observed_on',
 })
 
-const OverlayOperation = z.object({
-    location: z.enum(['host', 'in-stack']).describe('Where the command runs: on the host or inside a stack service.'),
-    service: DeclarationId.optional().describe('Stack service the command runs in; required when location is in-stack and not allowed otherwise.'),
-    cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).describe('Working directory for the command, relative to the sibling, or . for its root.'),
-    argv: BoundedArgv.describe('Command to run, as an argument list.'),
-    timeout_seconds: z.number().int().min(1).max(3600).describe('Seconds the command may run before it is stopped.'),
-    // Absent means the nearest enclosing declaration's provenance applies.
-    provenance: Provenance.optional().describe('Where this command came from; omit to use the enclosing declaration\'s provenance.'),
-}).strict().refine((value) => value.location === 'in-stack' ? value.service !== undefined : value.service === undefined, {
-    path: ['service'], message: 'only in-stack operations require a service',
-})
-
-const GeneratedHostAlias = z.object({
-    hostname: z.string().regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*$/).describe('Host name the service resolves to the given address.'),
-    address: z.union([z.ipv4(), z.ipv6()]).describe('IPv4 or IPv6 address the host name resolves to.'),
-}).strict()
-
-const HealthMeasurement = z.object({ duration_seconds: z.number().positive().max(3600).describe('Measured seconds the service took to become healthy.'), provenance: Provenance.describe('Where the measurement came from.') }).strict()
-
-export const GeneratedService = z.object({
-    id: DeclarationId.describe('Identifier of the generated service.'),
-    sibling: DeclarationId.describe('Sibling checkout the service is built from or mounts.'),
-    role: z.enum(['service', 'one-shot']).default('service').describe('Whether the service stays running or runs once and exits.'),
-    profiles: z.array(DeclarationId).max(64).default([]).describe('Compose profiles the service belongs to; it starts only when one is active.'),
-    resources: z.object({
-        memory_mb: z.number().int().min(6).max(Math.floor(Number.MAX_SAFE_INTEGER / 1_048_576)).describe('Memory limit in megabytes.'),
-        // Bound the default 100 ms CPU quota within its signed 64-bit calculation.
-        cpus: z.number().min(0.01).max(Number(((1n << 63n) - 1n) / 100_000_000_000_000n)).describe('CPU limit as a number of CPUs, fractions allowed.'),
-        provenance: Provenance.describe('Where the ceilings came from.'),
-    }).strict().optional().describe('Memory and CPU ceilings for the service.'),
-    command: BoundedArgv.describe('Command the service runs, as an argument list.'),
-    // Exactly one of `image` and `build` (checked with the environment). The manifest probe
-    // stays required on an image: it is what verifies the declared architectures exist.
-    image: z.object({
-        reference: z.string().max(4096).regex(/^[^\s@]+@sha256:[a-f0-9]{64}$/).describe('Image reference pinned by sha256 digest.'),
-        reason: DeclarationReason.describe('Why this image is used.'),
-        architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2).describe('CPU architectures the image must support.'),
-        manifest_probe: OverlayOperation.describe('Command that checks the image manifest lists the declared architectures.'),
-        registry_auth_probe: OverlayOperation.optional().describe('Command that checks the registry sign-in the image needs.'),
-        provenance: Provenance.optional().describe('Where the image choice came from; omit to use the service\'s provenance.'),
-    }).strict().optional().describe('Pinned prebuilt image to run; declare exactly one of image and build.'),
-    // Built from the service's sibling checkout. Both paths are confined: `context` below the
-    // sibling, `dockerfile` below the context, so a build can never reach outside the checkout.
-    build: z.object({
-        context: z.union([z.literal('.'), SafeRelativePath.max(4096)]).describe('Build context directory, relative to the sibling.'),
-        dockerfile: SafeRelativePath.max(4096).optional().describe('Dockerfile path, relative to the build context.'),
-    }).strict().optional().describe('Build the image from the sibling checkout; declare exactly one of image and build.'),
-    ports: z.array(z.object({ name: DeclarationId.describe('Name of the published port.'), host_variable: EnvironmentName.describe('Environment variable that carries the leased host port.'), internal: z.number().int().min(1).max(65535).describe('Port the service listens on inside the container.'), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).default('127.0.0.1').describe('Host address the port is published on; defaults to loopback.') }).strict()).max(256).default([]).describe('Ports the service publishes on the host.'),
-    host_aliases: z.array(GeneratedHostAlias).max(64).refine((aliases) => !hasDuplicate(aliases.map(({ hostname }) => hostname)), {
-        message: 'generated service host aliases must name unique hostnames',
-    }).optional().describe('Extra host names the service resolves to fixed addresses.'),
-    // Host inputs belong to the service sibling; named volumes retain their declared identities.
-    mounts: z.array(z.object({ kind: z.enum(['bind', 'volume', 'environment-file']).describe('Whether the source is a bind-mounted path, a named volume or an environment file.'), source: z.union([z.literal('.'), SafeRelativePath.max(4096)]).describe('Path in the sibling, or the declared volume id when kind is volume.'), target: ContainerPath.describe('Absolute path inside the container.'), source_type: z.enum(['file', 'directory']).optional().describe('Whether a bind source is a file or a directory; required for bind mounts.') }).strict().refine((mount) => mount.kind === 'volume' ? mount.source_type === undefined && mount.source !== '.' : mount.kind === 'environment-file' ? mount.source_type === 'file' : mount.source_type !== undefined, { path: ['source_type'], message: 'bind sources require their expected type and volume sources use declared identities' })).max(256).default([]).describe('Files, directories and volumes mounted into the service.'),
-    dependencies: z.array(z.object({ service: DeclarationId.describe('Service this one waits for.'), condition: z.enum(['service_started', 'service_healthy', 'service_completed_successfully']).describe('State the other service must reach: started, healthy or completed successfully.'), reason: DeclarationReason.describe('Why the service needs this dependency.') }).strict()).max(256).default([]).describe('Other services that must reach a state before this one starts.'),
-    health: z.object({
-        // Without a tool probe a failing property probe cannot say whether the product or the
-        // probe's own tool is missing; failure text names that gap instead of guessing.
-        property: DeclarationReason.describe('What the probe proves about the product.'), probe: OverlayOperation.describe('Command that checks the property; it runs in the service\'s own image.'), tool_probe: OverlayOperation.optional().describe('Command that checks the probe\'s own tool exists, so a failure names the missing tool.'),
-        interval_seconds: z.number().int().min(1).max(3600).describe('Seconds between probe runs.'),
-        timeout_seconds: z.number().int().min(1).max(3600).describe('Seconds one probe run may take.'),
-        retries: z.number().int().min(1).max(100).describe('Failed probe runs tolerated before the service is unhealthy.'),
-        start_period_seconds: z.number().int().min(1).max(3600).describe('Seconds after start during which failures are not counted; at least the measured start time.'),
-        measurement: HealthMeasurement.optional().describe('Measured start time the start period is checked against.'),
-    }).strict().refine((health) => health.measurement === undefined || health.start_period_seconds >= health.measurement.duration_seconds, {
-        path: ['start_period_seconds'], message: 'start period is shorter than its measurement',
-    }).describe('How cockpit decides the service is healthy.'),
-    // Pin files are read from this service sibling, including services without bind mounts.
-    toolchain_pins: z.array(z.object({ path: SafeRelativePath.describe('Pin file in the sibling that names the toolchain version.'), pinned: z.string().min(1).max(256).describe('Version the pin file declares.'), observed: z.string().min(1).max(256).describe('Version actually observed for the pin.'), provenance: Provenance.describe('Where the observed version came from.') }).strict()).max(32).default([]).describe('Toolchain version pins read from files in the sibling.'),
-    // Absent means the value is declared by the configuration file itself.
-    provenance: Provenance.optional().describe('Where the service declaration came from; omit when this file declares it.'),
-}).strict()
-
-export const DataMode = z.enum(['empty', 'seeded', 'restored'])
-export const VendorPosture = z.enum(['bypassed', 'stubbed', 'substituted', 'vendor-sandbox', 'record-replay', 'absent-and-gated'])
-
-const DataOperation = z.object({
-    id: DeclarationId.describe('Identifier of the step, referenced by other steps\' after list.'),
-    kind: z.enum(['schema', 'sweep', 'fixtures', 'restore', 'rewrite']).describe('What the step does to the product data.'),
-    operation: OverlayOperation.describe('Command the step runs.'),
-    prerequisites: z.array(OverlayOperation).max(64).describe('Commands that must succeed before the step runs.'),
-    after: z.array(DeclarationId).max(256).describe('Earlier steps in the same mode that must finish first.'),
-    fresh_volume_only: z.boolean().describe('Run the step only when the data volume is new.'),
-    // Absent means the enclosing data mode's provenance applies.
-    provenance: Provenance.optional().describe('Where the step came from; omit to use the data mode\'s provenance.'),
-}).strict()
-
-const VendorDeclaration = z.object({
-    id: DeclarationId.describe('Identifier of the third-party vendor.'), posture: VendorPosture.describe('How the stack handles this vendor locally: bypassed, stubbed, substituted, vendor sandbox, record-replay or absent and gated.'), reason: DeclarationReason.describe('Why this posture was chosen.'), provenance: Provenance.describe('Where the posture came from.'),
-    endpoints: z.array(z.object({
-        variable: EnvironmentName.describe('Environment variable that carries the vendor endpoint.'), sink: LocalEndpointUrl.describe('Local URL the endpoint is redirected to.'), runtime_service: DeclarationId.describe('Stack service that serves the sink.'),
-        supplier: z.object({ sibling: DeclarationId.describe('Sibling that owns the template.'), template: SafeRelativePath.describe('Template file, relative to the sibling, that supplies the variable.') }).strict().describe('Sibling environment template that supplies the variable.'),
-    }).strict()).min(1).max(256).describe('Vendor endpoints the product reads from the environment and the local sink each is pointed at.'),
-    nonempty_variables: z.array(EnvironmentName).min(1).max(256).optional().describe('Environment variables that must hold a value for the product to start.'),
-    egress_guard: z.object({
-        flag: EnvironmentName.describe('Environment variable that turns the guard on.'),
-        enabled_value: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).describe('Value the flag must hold for the guard to be on.'),
-        local_service: DeclarationId.describe('Local service that stands in for the vendor.'),
-    }).strict().optional().describe('Flag that makes the product refuse real vendor traffic.'),
-    loader_probe: OverlayOperation.describe('Command that checks the product loads the vendor configuration.'), route_probe: OverlayOperation.describe('Command that checks vendor calls reach the local sink.'), egress_probe: OverlayOperation.describe('Command that checks no vendor call leaves the machine.'),
-    placeholder: z.string().max(256).regex(/^cockpit:absent:[a-z0-9-]+$/).describe('Value written in place of the vendor credential, of the form cockpit:absent:<name>.'),
-    shadow_files: z.array(z.object({ sibling: DeclarationId.describe('Sibling that owns the file.'), instance: SafeRelativePath.describe('Instance file, relative to the sibling.'), probe: OverlayOperation.describe('Command that checks the file does not shadow the declared configuration.') }).strict()).max(64).optional().describe('Instance files that must not override the vendor configuration.'),
-    expiry: z.object({ expires_on: z.string().date().describe('Date the sandbox stops being valid.'), reason: DeclarationReason.describe('Why the sandbox expires on that date.'), probe: OverlayOperation.describe('Command that checks whether the sandbox is still valid.') }).strict().optional().describe('Expiry of the vendor sandbox; required for the vendor-sandbox posture.'),
-    callback_reachability: z.object({ reachable: z.boolean().describe('True when the vendor can reach the local stack.'), alternative: DeclarationReason.describe('How callbacks are exercised when the vendor cannot reach the stack.'), reason: DeclarationReason.describe('Why the vendor can or cannot reach the stack.') }).strict().describe('Whether the vendor can call back into the local stack.'),
-    // Steps run in the fixed order enable, timestamp, sign, dispatch, then the tamper probe.
-    callback: z.object({
-        enable: OverlayOperation.describe('Command that turns callbacks on.'),
-        timestamp_source: OverlayOperation.describe('Command that supplies the timestamp the signature covers.'),
-        fresh_window_seconds: z.number().int().min(1).max(3600).describe('Seconds a signed callback stays acceptable.'),
-        // The digest is checked before each step that reads the fixture, so its raw bytes cannot drift.
-        fixture: z.object({ path: SafeRelativePath.describe('Payload file, relative to the sibling.'), sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 digest of the payload, checked before each use.') }).strict().describe('Callback payload file and its digest.'),
-        sign: OverlayOperation.describe('Command that signs the payload.'), dispatch: OverlayOperation.describe('Command that delivers the signed payload to the product.'),
-        tamper_probe: OverlayOperation.describe('Command that checks the product rejects a tampered payload.'),
-    }).strict().optional().describe('Signed callback rehearsal: enable, timestamp, sign, dispatch, then a tamper check.'),
-    tls: z.object({ generate_at_start: OverlayOperation.describe('Command that creates the certificate when the stack starts.'), append_trust_probe: OverlayOperation.describe('Command that checks the product trusts the generated certificate.'), hostname_probe: OverlayOperation.describe('Command that checks the certificate matches the vendor host name.') }).strict().optional().describe('Local certificate setup for the vendor host name.'),
-    stub: z.object({ rejection_probe: OverlayOperation.describe('Command that checks the stub rejects an invalid request.'), outage_probe: OverlayOperation.describe('Command that checks the product copes with the stub being down.') }).strict().optional().describe('Probes for a stubbed vendor; required for the stubbed posture.'),
-}).strict()
-
-const GeneratedVolumes = z.array(z.object({
-    id: DeclarationId.describe('Identifier of the named volume.'), purpose: z.enum(['dependencies', 'product-data']).describe('Whether the volume holds installed dependencies or product data.'),
-    install_policy: ResettableVolumeId.optional().describe('Install policy volume that fills it; required for dependency volumes.'), provenance: Provenance.describe('Where the volume declaration came from.'),
-}).strict()).max(256)
-
-export const DECISIONS_PATH = 'docs/cockpit/environment-decisions.md'
-const DECISION_SUBJECTS = ['service', 'volume', 'data-default', 'data-mode', 'restore', 'mount', 'port', 'vendor'] as const
-const DecisionEntries = z.array(z.object({
-    id: DeclarationId.describe('Identifier of the decision record.'), subject: z.enum(DECISION_SUBJECTS).describe('Kind of structure the decision is about.'),
-    subject_id: z.string().min(1).max(4096).describe('Identity of the structure the decision is about.'),
-    decided_on: z.string().date().describe('Date the decision was made.'), decision: DeclarationReason.describe('What was decided.'), rejected: z.array(DeclarationReason).min(1).max(64).describe('Alternatives that were considered and rejected.'),
-    reason: DeclarationReason.describe('Why this was decided.'), provenance: Provenance.describe('Where the decision came from.'),
-}).strict()).max(512)
-
-export const GeneratedEnvironment = z.object({
-    compose_file: SafeRelativePath.max(4096).describe('Path, relative to the cockpit, where the generated Compose file is written.'),
-    services: z.array(GeneratedService).min(1).max(256).describe('Services of the generated stack.'),
-    volumes: GeneratedVolumes.default([]).describe('Named volumes of the generated stack.'),
-    // Absent means the stack has no product data step: `up` and `reset` skip it.
-    data: z.object({
-        volume: DeclarationId.describe('Product-data volume the data step fills.'),
-        default_mode: DataMode.describe('Data mode used when none is chosen.'),
-        modes: z.array(z.object({ mode: DataMode.describe('Data mode: empty, seeded or restored.'), operations: z.array(DataOperation).min(1).max(256).describe('Ordered steps that create the data for this mode.'), probes: z.array(OverlayOperation).min(1).max(64).describe('Commands that check the data is in the expected state.'), provenance: Provenance.describe('Where the mode came from.') }).strict()).min(1).max(3).describe('Data modes the stack supports, each with its steps.'),
-        // Fixture determinism (stable keys, seeds) belongs to the product's writer: a seed it reads
-        // goes in the fixture operation's argv, which reaches the product and its digest.
-        fixtures: z.object({
-            persona_source: SafeRelativePath.describe('File, relative to the cockpit, that describes the fixture personas.'),
-            persona_outputs: z.array(z.object({ path: SafeRelativePath.describe('Output file path, relative to the cockpit.'), format: z.enum(['json', 'typescript']).describe('Output format, json or typescript.'), reason: DeclarationReason.describe('Why this output is generated.') }).strict()).max(64).describe('Files generated from the personas for tests and tools.'),
-            volume_tag: DeclarationId.describe('Tag recorded with the fixture data on the volume.'), pagination_warning: DeclarationReason.describe('Warning shown with the fixtures about data beyond one page.'), provenance: Provenance.describe('Where the fixture setup came from.'),
-            volume_operations: z.array(OverlayOperation).min(1).max(256).describe('Commands that write the fixtures to the volume.'), volume_probes: z.array(OverlayOperation).min(1).max(64).describe('Commands that check the fixtures are on the volume.'),
-        }).strict().optional().describe('Fixture generation; required by a seeded mode.'),
-        restore: z.object({
-            rewrites: z.array(z.object({ category: DeclarationId.describe('Kind of sensitive data the rewrite covers.'), operation: OverlayOperation.describe('Command that performs the rewrite.'), reason: DeclarationReason.describe('Why the data needs rewriting.') }).strict()).max(256).describe('Commands that rewrite restored data so it is safe locally.'),
-            untouched: z.array(DeclarationReason).min(1).max(256).describe('Restored data deliberately left as it is, with the reason for each.'), provenance: Provenance.describe('Where the restore handling came from.'),
-        }).strict().optional().describe('Restore handling; required by, and only for, a restored mode.'),
-    }).strict().optional().describe('Product data step for the stack; omit when there is none and up and reset skip it.'),
-    vendors: z.array(VendorDeclaration).max(256).default([]).describe('Third-party vendors and how the stack handles each locally.'),
-    // A structural subject without an entry is rendered as undecided rather than refused, so a
-    // small stack does not have to invent a decision record to load.
-    decisions: z.object({
-        entries: DecisionEntries.default([]).describe('Decision records; a structure without one is shown as undecided.'),
-    }).strict().prefault({}).describe('Recorded design decisions about the stack.'),
-}).strict().superRefine((declaration, ctx) => {
-    const unique = (values: readonly string[], path: (string | number)[]) => {
-        if (hasDuplicate(values)) ctx.addIssue({ code: 'custom', path, message: 'declaration contains duplicate identities' })
-    }
-    const serviceIds = new Set(declaration.services.map((service) => service.id))
-    const volumeIds = new Set(declaration.volumes.map((volume) => volume.id))
-    unique([...declaration.services.map((service) => service.id)], ['services'])
-    unique([...declaration.volumes.map((volume) => volume.id)], ['volumes'])
-    unique(declaration.vendors.map((vendor) => vendor.id), ['vendors'])
-    unique(declaration.decisions.entries.map((entry) => entry.id), ['decisions', 'entries'])
-    unique(declaration.decisions.entries.map((entry) => `${entry.subject}:${entry.subject_id}`), ['decisions', 'entries'])
-    unique(declaration.services.flatMap((service) => service.ports.map((port) => port.host_variable)), ['services', 'ports'])
-    unique(declaration.vendors.flatMap((vendor) => [
-        ...vendor.endpoints.map((endpoint) => endpoint.variable),
-        ...(vendor.nonempty_variables ?? []),
-        ...(vendor.egress_guard ? [vendor.egress_guard.flag] : []),
-    ]), ['vendors'])
-    const checkOperation = (operation: z.infer<typeof OverlayOperation>, path: (string | number)[]) => {
-        if (operation.service !== undefined && !serviceIds.has(operation.service)) ctx.addIssue({ code: 'custom', path, message: 'operation references an undeclared service' })
-    }
-    for (const [index, service] of declaration.services.entries()) {
-        const path = ['services', index]
-        unique(service.profiles, [...path, 'profiles'])
-        if ((service.image === undefined) === (service.build === undefined)) ctx.addIssue({ code: 'custom', path: [...path, 'image'], message: 'a generated service declares exactly one of image or build' })
-        if (service.image) unique(service.image.architectures, [...path, 'image', 'architectures'])
-        unique(service.ports.map((port) => port.name), [...path, 'ports'])
-        unique(service.mounts.map((mount) => mount.target), [...path, 'mounts'])
-        unique(service.dependencies.map((dependency) => dependency.service), [...path, 'dependencies'])
-        for (const dependency of service.dependencies) {
-            if (!serviceIds.has(dependency.service) || dependency.service === service.id) ctx.addIssue({ code: 'custom', path: [...path, 'dependencies'], message: 'dependency must name another declared service' })
-        }
-        for (const mount of service.mounts) {
-            if (mount.kind === 'volume' && !volumeIds.has(mount.source)) ctx.addIssue({ code: 'custom', path: [...path, 'mounts'], message: 'mount references an undeclared volume' })
-        }
-        for (const probe of [service.health.probe, ...(service.health.tool_probe ? [service.health.tool_probe] : [])]) {
-            if (probe.location !== 'in-stack' || probe.service !== service.id) ctx.addIssue({ code: 'custom', path: [...path, 'health'], message: 'health probes must run in the image they measure' })
-        }
-        for (const [name, operation] of Object.entries({ manifest_probe: service.image?.manifest_probe, registry_auth_probe: service.image?.registry_auth_probe, health_probe: service.health.probe, health_tool_probe: service.health.tool_probe })) {
-            if (operation) checkOperation(operation, [...path, name])
-        }
-    }
-    const dependencyGraph = new Map(declaration.services.map((service) => [service.id, service.dependencies.map((dependency) => dependency.service)]))
-    const pending = new Set(dependencyGraph.keys())
-    while (pending.size > 0) {
-        const ready = [...pending].filter((id) => dependencyGraph.get(id)!.every((dependency) => !pending.has(dependency)))
-        if (ready.length === 0) {
-            ctx.addIssue({ code: 'custom', path: ['services'], message: 'service dependencies contain a cycle' })
-            break
-        }
-        ready.forEach((id) => pending.delete(id))
-    }
-    for (const [index, volume] of declaration.volumes.entries()) {
-        if ((volume.purpose === 'dependencies') !== (volume.install_policy !== undefined)) ctx.addIssue({ code: 'custom', path: ['volumes', index, 'install_policy'], message: 'only dependency volumes require an install policy' })
-        if (volume.purpose === 'dependencies') {
-            if (volume.install_policy !== volume.id) ctx.addIssue({ code: 'custom', path: ['volumes', index, 'install_policy'], message: 'dependency volume and install policy identities must match' })
-            const mounts = declaration.services.flatMap((service) => service.mounts).filter((mount) => mount.kind === 'volume' && mount.source === volume.id)
-            if (mounts.length === 0 || mounts.some((mount) => mount.target !== mounts[0]!.target)) ctx.addIssue({ code: 'custom', path: ['volumes', index], message: 'dependency volume requires service mounts that share one target' })
-        }
-    }
-    const data = declaration.data
-    if (data) {
-        unique(data.modes.map((mode) => mode.mode), ['data', 'modes'])
-        if (!declaration.volumes.some((volume) => volume.id === data.volume && volume.purpose === 'product-data')) ctx.addIssue({ code: 'custom', path: ['data', 'volume'], message: 'data requires a declared product-data volume' })
-        if (!data.modes.some(({ mode }) => mode === data.default_mode)) ctx.addIssue({ code: 'custom', path: ['data', 'default_mode'], message: 'the default data mode must be one of the declared modes' })
-        if (data.modes.some(({ mode }) => mode === 'seeded') && !data.fixtures) ctx.addIssue({ code: 'custom', path: ['data', 'fixtures'], message: 'a seeded data mode requires its fixtures declaration' })
-        // Restore rewrites run only in the restored mode; without it they would parse and do nothing.
-        if (data.modes.some(({ mode }) => mode === 'restored') !== (data.restore !== undefined)) ctx.addIssue({ code: 'custom', path: ['data', 'restore'], message: 'a restore declaration is required by, and only by, a restored data mode' })
-        if (data.fixtures) unique(data.fixtures.persona_outputs.map((output) => output.path), ['data', 'fixtures', 'persona_outputs'])
-    }
-    for (const [index, mode] of (data?.modes ?? []).entries()) {
-        const ids = new Set(mode.operations.map((step) => step.id))
-        unique(mode.operations.map((step) => step.id), ['data', 'modes', index, 'operations'])
-        const completed = new Set<string>()
-        for (const [stepIndex, step] of mode.operations.entries()) {
-            const path = ['data', 'modes', index, 'operations', stepIndex]
-            unique(step.after, [...path, 'after'])
-            if (step.after.some((id) => !ids.has(id) || !completed.has(id))) ctx.addIssue({ code: 'custom', path: [...path, 'after'], message: 'ordering must reference earlier declared operations' })
-            checkOperation(step.operation, [...path, 'operation'])
-            step.prerequisites.forEach((operation, i) => checkOperation(operation, [...path, 'prerequisites', i]))
-            completed.add(step.id)
-        }
-        const kinds = new Set(mode.operations.map((operation) => operation.kind))
-        if (!kinds.has('schema') || (mode.mode === 'empty' && [...kinds].some((kind) => kind !== 'schema')) || (mode.mode === 'seeded' && (!kinds.has('sweep') || !kinds.has('fixtures') || kinds.has('restore'))) || (mode.mode === 'restored' && !kinds.has('restore'))) ctx.addIssue({ code: 'custom', path: ['data', 'modes', index, 'operations'], message: 'data mode lacks its declared schema, seed or restore operations' })
-        mode.probes.forEach((operation, i) => checkOperation(operation, ['data', 'modes', index, 'probes', i]))
-    }
-    data?.restore?.rewrites.forEach((rewrite, i) => checkOperation(rewrite.operation, ['data', 'restore', 'rewrites', i]))
-    data?.fixtures?.volume_operations.forEach((operation, i) => checkOperation(operation, ['data', 'fixtures', 'volume_operations', i]))
-    data?.fixtures?.volume_probes.forEach((operation, i) => checkOperation(operation, ['data', 'fixtures', 'volume_probes', i]))
-    for (const [index, vendor] of declaration.vendors.entries()) {
-        const path = ['vendors', index]
-        unique(vendor.endpoints.map((endpoint) => endpoint.variable), [...path, 'endpoints'])
-        if (vendor.egress_guard && !serviceIds.has(vendor.egress_guard.local_service)) ctx.addIssue({ code: 'custom', path: [...path, 'egress_guard', 'local_service'], message: 'egress guard references an undeclared service' })
-        if (vendor.posture === 'vendor-sandbox' && vendor.expiry === undefined) ctx.addIssue({ code: 'custom', path: [...path, 'expiry'], message: 'vendor-sandbox requires an expiry clock' })
-        if (vendor.posture === 'stubbed' && vendor.stub === undefined) ctx.addIssue({ code: 'custom', path: [...path, 'stub'], message: 'stubbed posture requires rejection and outage probes' })
-        for (const endpoint of vendor.endpoints) {
-            if (!URL.canParse(endpoint.sink)) continue
-            const url = new URL(endpoint.sink)
-            if (!serviceIds.has(endpoint.runtime_service) || !['http:', 'https:'].includes(url.protocol) || url.hostname !== endpoint.runtime_service || url.username || url.password || url.search || url.hash) ctx.addIssue({ code: 'custom', path: [...path, 'endpoints'], message: 'endpoint must name its declared local sink without credentials, query or fragments' })
-        }
-        for (const [name, operation] of Object.entries({ loader_probe: vendor.loader_probe, route_probe: vendor.route_probe, egress_probe: vendor.egress_probe, expiry_probe: vendor.expiry?.probe, rejection_probe: vendor.stub?.rejection_probe, outage_probe: vendor.stub?.outage_probe, enable: vendor.callback?.enable, timestamp_source: vendor.callback?.timestamp_source, sign: vendor.callback?.sign, dispatch: vendor.callback?.dispatch, tamper_probe: vendor.callback?.tamper_probe, generate_at_start: vendor.tls?.generate_at_start, append_trust_probe: vendor.tls?.append_trust_probe, hostname_probe: vendor.tls?.hostname_probe })) {
-            if (operation) checkOperation(operation, [...path, name])
-        }
-        vendor.shadow_files?.forEach((file, i) => checkOperation(file.probe, [...path, 'shadow_files', i]))
-    }
-    const subjects = new Set(decisionSubjects(declaration).map(({ subject, subjectId }) => `${subject}:${subjectId}`))
-    for (const [index, entry] of declaration.decisions.entries.entries()) {
-        if (!subjects.has(`${entry.subject}:${entry.subject_id}`)) ctx.addIssue({ code: 'custom', path: ['decisions', 'entries', index, 'subject_id'], message: 'decision references an undeclared subject' })
-    }
-})
-
-export type DecisionSubject = Readonly<{ subject: typeof DECISION_SUBJECTS[number]; subjectId: string; service?: string }>
-
-/** Every structural choice the rendered stack makes, in decision-log order; each may or may not have an entry. */
-export function decisionSubjects(declaration: Pick<GeneratedEnvironment, 'services' | 'volumes' | 'data' | 'vendors'>): readonly DecisionSubject[] {
-    const subjects: DecisionSubject[] = [
-        ...declaration.services.map((service) => ({ subject: 'service' as const, subjectId: service.id, service: service.id })),
-        ...declaration.volumes.map((volume) => ({ subject: 'volume' as const, subjectId: volume.id })),
-        ...(declaration.data ? [{ subject: 'data-default' as const, subjectId: declaration.data.default_mode }] : []),
-        ...(declaration.data?.modes ?? []).map((mode) => ({ subject: 'data-mode' as const, subjectId: mode.mode })),
-        ...(declaration.data?.restore ? [{ subject: 'restore' as const, subjectId: 'policy' }] : []),
-        ...declaration.services.flatMap((service) => service.mounts.map((mount) => ({ subject: 'mount' as const, subjectId: `${service.id}:${mount.kind}:${mount.source}:${mount.target}`, service: service.id }))),
-        ...declaration.services.flatMap((service) => service.ports.map((port) => ({ subject: 'port' as const, subjectId: `${service.id}:${port.name}`, service: service.id }))),
-        ...declaration.vendors.map((vendor) => ({ subject: 'vendor' as const, subjectId: vendor.id })),
-    ]
-    return subjects.sort((left, right) => `${left.subject}:${left.subjectId}`.localeCompare(`${right.subject}:${right.subjectId}`))
-}
-
-export type GeneratedEnvironment = z.infer<typeof GeneratedEnvironment>
-export type DataMode = z.infer<typeof DataMode>
-export type VendorPosture = z.infer<typeof VendorPosture>
 
 export const Environment = z
     .object({
@@ -557,10 +254,15 @@ export const Environment = z
         machine: MachineFloor.optional().describe('Least the container runtime must offer before the stack starts.'),
         resettable_volumes: z.array(ResettableVolumeId).default([]).describe('Compose volumes that reset may delete and recreate, named by their Compose key.'),
         generated_host_paths: z.array(GeneratedHostPath).default([]).describe('Host paths cockpit generates and owns, relative to the cockpit.'),
-        compose_files: z.array(LocalComposePath).default([]).describe('Existing Compose files, relative to the cockpit, that make up the stack; use this or generated.'),
+        compose_files: z.array(LocalComposePath).default([]).describe('Compose files, relative to the cockpit, that make up the stack; cockpit runs them as written.'),
         entrypoint_derivatives: z.array(EntrypointDerivative).default([]).describe('Addresses derived from leased ports, such as application origins and callback URLs.'),
         install_policies: z.array(InstallPolicy).default([]).describe('How dependencies are installed for each toolchain.'),
-        generated: GeneratedEnvironment.optional().describe('Stack that cockpit generates instead of using existing Compose files; use this or compose_files.'),
+        // Product data lives in the resettable volumes, so the seed reruns exactly when one of them is
+        // new: after `reset`, a `docker volume rm`, or the first start.
+        seed: z.object({
+            argv: CommandArgv.max(256).describe('Command, as an argument list, that fills the resettable volumes; it runs on the host in the cockpit directory with the leased ports in its environment.'),
+            timeout_seconds: z.number().int().min(1).max(3600).describe('Seconds the seed may run before it is stopped.'),
+        }).strict().optional().describe('Command up runs once the stack is healthy, whenever a resettable volume was created since the last successful seed.'),
     })
     .strict()
     .superRefine((environment, ctx) => {
@@ -579,6 +281,12 @@ export const Environment = z
             }
         }
 
+        // A seed reruns only when a resettable volume is new, so without one it would run once and
+        // never again while reading as a control.
+        if (environment.seed && environment.resettable_volumes.length === 0) {
+            ctx.addIssue({ code: 'custom', path: ['seed'], message: 'seed requires resettable_volumes: it reruns whenever one of those volumes is new' })
+        }
+
         const selectors = environment.install_policies.map((row) => `${row.toolchain}\0${row.lockfile}`)
         if (hasDuplicate(selectors)) {
             ctx.addIssue({
@@ -589,38 +297,6 @@ export const Environment = z
         }
     })
 
-const SiblingGeneratedDerivation = z.object({
-    service: GeneratedService.omit({ id: true, sibling: true, mounts: true, profiles: true }).describe('Generated service that runs this sibling\'s checkout.'),
-    // The checkout is the sibling directory itself, bind-mounted as a directory at this target.
-    checkout_mount: z.object({
-        target: ContainerPath.describe('Absolute path inside the container where the checkout is mounted.'),
-    }).strict().describe('Mount of the sibling checkout into the service.'),
-    additional_mounts: GeneratedService.shape.mounts.optional().default([]).describe('Extra mounts for the service beyond the checkout.'),
-    port_defaults: z.record(EnvironmentName, z.number().int().min(1).max(65535)).refine(
-        (ports) => Object.keys(ports).length <= STRUCTURED_INPUT_ENTRY_LIMIT,
-        `port defaults must not exceed ${STRUCTURED_INPUT_ENTRY_LIMIT} entries`,
-    ).describe('Default host port for each of the service\'s host variables.'),
-    entrypoints: z.array(EntrypointDerivative).max(256).describe('Addresses derived from this service\'s ports.'),
-    volumes: GeneratedVolumes.optional().describe('Named volumes this row adds to the stack.'),
-    install_policies: z.array(InstallPolicy).max(256).optional().describe('Install policies this row adds to the stack.'),
-    decisions: DecisionEntries.min(1).describe('Decision records for the structure this row adds.'),
-    provenance: Provenance.describe('Where this row\'s declaration came from.'),
-}).strict().superRefine((generated, ctx) => {
-    const hostVariables = generated.service.ports.map((port) => port.host_variable)
-    const defaults = Object.keys(generated.port_defaults)
-    if (hasDuplicate(hostVariables) || hostVariables.length !== defaults.length
-        || hostVariables.some((name) => !defaults.includes(name))) {
-        ctx.addIssue({ code: 'custom', path: ['port_defaults'], message: 'row port defaults must exactly match service host variables' })
-    }
-    if (hasDuplicate(generated.entrypoints.map((entrypoint) => entrypoint.name))) {
-        ctx.addIssue({ code: 'custom', path: ['entrypoints'], message: 'row entrypoints contain a duplicate identity' })
-    }
-    for (const [index, entrypoint] of generated.entrypoints.entries()) {
-        if (!defaults.includes(entrypoint.port)) {
-            ctx.addIssue({ code: 'custom', path: ['entrypoints', index, 'port'], message: 'row entrypoint references a port outside its row' })
-        }
-    }
-})
 
 const McpSourceReference = z.object({
     // A JSON file with a top-level `mcpServers` object, the shape agent tools read from `.mcp.json`.
@@ -629,12 +305,8 @@ const McpSourceReference = z.object({
 }).strict()
 
 const SiblingDerives = z.object({
-    generated: SiblingGeneratedDerivation.optional().describe('Generated-stack rows this sibling contributes.'),
-    mcp_sources: z.array(McpSourceReference).max(256).default([]).describe('MCP server declaration files this sibling publishes.'),
+    mcp_sources: z.array(McpSourceReference).min(1).max(256).describe('MCP server declaration files this sibling publishes.'),
 }).strict().superRefine((derives, ctx) => {
-    if (!derives.generated && derives.mcp_sources.length === 0) {
-        ctx.addIssue({ code: 'custom', message: 'derives must declare generated data or MCP sources' })
-    }
     if (hasDuplicate(derives.mcp_sources.map((source) => source.path))) {
         ctx.addIssue({ code: 'custom', path: ['mcp_sources'], message: 'MCP source references contain a duplicate path' })
     }
@@ -734,27 +406,6 @@ export const Sibling = z
         (s) => !s.environment_files || !hasDuplicate(s.environment_files.map((file) => file.instance)),
         { message: 'environment_files contains a duplicate instance path', path: ['environment_files'] },
     )
-    .superRefine((sibling, ctx) => {
-        const generated = sibling.derives?.generated
-        if (!generated) return
-        if (sibling.mount === 'none' || sibling.mount === 'host') {
-            ctx.addIssue({ code: 'custom', path: ['derives', 'generated'], message: 'generated rows require an always or profile mount' })
-        }
-        const owned = new Map<string, Set<string>>([
-            ['service', new Set([sibling.slug])],
-            ['volume', new Set((generated.volumes ?? []).map((volume) => volume.id))],
-            ['mount', new Set([
-                `${sibling.slug}:bind:.:${generated.checkout_mount.target}`,
-                ...generated.additional_mounts.map((mount) => `${sibling.slug}:${mount.kind}:${mount.source}:${mount.target}`),
-            ])],
-            ['port', new Set(generated.service.ports.map((port) => `${sibling.slug}:${port.name}`))],
-        ])
-        for (const [index, decision] of generated.decisions.entries()) {
-            if (!owned.get(decision.subject)?.has(decision.subject_id)) {
-                ctx.addIssue({ code: 'custom', path: ['derives', 'generated', 'decisions', index, 'subject_id'], message: 'row decision references structure outside its row' })
-            }
-        }
-    })
 
 // Only host-published ports and browser-facing URLs carry the offset. Container-internal
 // DNS and ports never do — that invariant is what lets several stacks run side by side on
@@ -948,9 +599,7 @@ export const Browser = z.object({
         (rows) => !hasDuplicate(rows.map((row) => row.target)),
         'browser harness targets must be unique',
     ).describe('Agent tools, with versions, that are wired to the browser.'),
-    images: z.object({ runner: BrowserImage.extend({ architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2).refine((values) => !hasDuplicate(values), 'browser image architectures must be unique').optional().describe('CPU architectures the runner image must support.') }).describe('Image that runs the browser.'), mcp: BrowserImage.describe('Image that serves the browser MCP server.') }).strict().describe('Pinned container images for the browser.'),
-    runner_health_measurement: HealthMeasurement.optional().describe('Measured time for the browser runner to become healthy.'),
-    resources: GeneratedService.shape.resources.describe('Memory and CPU ceilings for the browser runner.'),
+    images: z.object({ runner: BrowserImage.describe('Image that runs the browser.'), mcp: BrowserImage.describe('Image that serves the browser MCP server.') }).strict().describe('Pinned container images for the browser.'),
     project: z.object({
         manifest: GeneratedHostPath.optional().describe('package.json for the project; omit to use the one beside the lockfile.'),
         manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('SHA-256 of the manifest; required when manifest is set.'),
@@ -983,7 +632,7 @@ export const Browser = z.object({
     // request_preapproval, which lets browser tools run without prompts, is never granted on a
     // posture nobody wrote down.
     data: z.object({
-        mode: DataMode.describe('Data mode the stack runs in while the browser is used.'),
+        mode: z.enum(['empty', 'seeded', 'restored']).describe('What the data is: empty, seeded by the product, or restored from real data.'),
         isolated: z.boolean().describe('True when the data is separate from anyone else\'s.'),
         reaches_production: z.boolean().describe('True when browser actions can affect production.'),
     }).strict().describe('Statement about the data the browser touches; cockpit cannot observe it.'),
@@ -991,9 +640,6 @@ export const Browser = z.object({
     headed: z.boolean().default(false).describe('Show the browser window instead of running it headless.'),
     artifacts: BrowserArtifactRoots.describe('Generated host paths for browser output.'),
 }).strict().superRefine((browser, ctx) => {
-    if (browser.resources && !browser.endpoint) {
-        ctx.addIssue({ code: 'custom', path: ['resources'], message: 'browser resource ceilings require a generated runner endpoint' })
-    }
     try {
         parseBrowserNetworkExposure(browser.network_exposure, browser.network_exposure_reason)
     } catch (error) {
@@ -1280,7 +926,7 @@ export function configurationDefaults() {
  * stated but were guessed is the failure cockpit exists to prevent.
  */
 export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
-    'environment.test_data', 'environment.generated', 'environment.compose_files', 'environment.machine', 'environment.posture',
+    'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
     'testing', 'guards'] as const
 
 export const CockpitConfig = z
@@ -1324,9 +970,6 @@ export const CockpitConfig = z
         const leasedPorts = new Set(Object.keys(cfg.ports.bases))
 
         if (cfg.browser) {
-            if (cfg.browser.resources && !cfg.environment.generated) {
-                ctx.addIssue({ code: 'custom', path: ['browser', 'resources'], message: 'browser resource ceilings require environment.generated' })
-            }
             // A browser wired to a tool sync does not render would be a declaration that does nothing.
             for (const [index, row] of cfg.browser.harnesses.entries()) if (!cfg.surfaces.tools.includes(row.target)) {
                 ctx.addIssue({ code: 'custom', path: ['browser', 'harnesses', index, 'target'],
@@ -1372,95 +1015,17 @@ export const CockpitConfig = z
             }
         }
 
-        const generatedRows = cfg.sibling.flatMap((sibling, index) => sibling.derives?.generated
-            ? [{ sibling, index, generated: sibling.derives.generated }]
-            : [])
-        if (generatedRows.length > 0 && !cfg.environment.generated) {
-            ctx.addIssue({
-                code: 'custom',
-                path: ['environment', 'generated'],
-                message: 'row-generated data requires a global generated environment baseline',
-                params: { cockpitCode: 'REGISTRY_GENERATED_BASELINE_MISSING' },
-            })
-        }
-        const globalGenerated = cfg.environment.generated
-        const uniqueAcrossRows = (values: readonly { value: string; path: (string | number)[] }[], message: string) => {
-            const seenValues = new Set<string>()
-            for (const item of values) {
-                if (seenValues.has(item.value)) ctx.addIssue({ code: 'custom', path: item.path, message })
-                seenValues.add(item.value)
-            }
-        }
-        uniqueAcrossRows([
-            ...Object.keys(cfg.ports.bases).map((value) => ({ value, path: ['ports', 'bases', value] })),
-            ...generatedRows.flatMap(({ index, generated }) => Object.keys(generated.port_defaults).map((value) => ({ value, path: ['sibling', index, 'derives', 'generated', 'port_defaults', value] }))),
-        ], 'row and global port defaults must not overlap')
-        uniqueAcrossRows([
-            ...(globalGenerated?.services ?? []).map((service) => ({ value: service.id, path: ['environment', 'generated', 'services'] })),
-            ...generatedRows.map(({ sibling, index }) => ({ value: sibling.slug, path: ['sibling', index, 'derives', 'generated', 'service'] })),
-        ], 'generated service identities must be unique across global and row declarations')
-        uniqueAcrossRows([
-            ...(globalGenerated?.volumes ?? []).map((volume) => ({ value: volume.id, path: ['environment', 'generated', 'volumes'] })),
-            ...generatedRows.flatMap(({ index, generated }) => (generated.volumes ?? []).map((volume) => ({ value: volume.id, path: ['sibling', index, 'derives', 'generated', 'volumes'] }))),
-        ], 'generated volume identities must be unique across global and row declarations')
         // Reset matches each entry against a Compose volume key, so a name no volume declares
-        // would reset nothing while reading as a control. A compose-first stack's keys live in its
-        // Compose files and are checked where `sync`, `check` and `up` read them.
-        if (globalGenerated !== undefined || cfg.environment.compose_files.length === 0) {
-            const declared = [
-                ...(globalGenerated?.volumes ?? []).map(({ id }) => id),
-                ...generatedRows.flatMap(({ generated }) => (generated.volumes ?? []).map(({ id }) => id)),
-            ]
+        // would reset nothing while reading as a control. A stack's keys live in its Compose files
+        // and are checked where `sync`, `check` and `up` read them.
+        if (cfg.environment.compose_files.length === 0) {
             cfg.environment.resettable_volumes.forEach((name, index) => {
-                if (declared.includes(name)) return
                 ctx.addIssue({
                     code: 'custom', path: ['environment', 'resettable_volumes', index],
-                    message: globalGenerated === undefined
-                        ? `resettable volume ${JSON.stringify(name)} names no volume: the environment declares neither generated volumes nor compose_files`
-                        : `resettable volume ${JSON.stringify(name)} is not a generated volume id${declared.length === 0 ? '' : ` (declared: ${declared.join(', ')})`}`,
+                    message: `resettable volume ${JSON.stringify(name)} names no volume: the environment declares no compose_files`,
                 })
             })
         }
-        uniqueAcrossRows([
-            ...(globalGenerated?.decisions.entries ?? []).map((entry) => ({ value: entry.id, path: ['environment', 'generated', 'decisions', 'entries'] })),
-            ...generatedRows.flatMap(({ index, generated }) => generated.decisions.map((entry) => ({ value: entry.id, path: ['sibling', index, 'derives', 'generated', 'decisions'] }))),
-        ], 'generated decision identities must be unique across global and row declarations')
-        uniqueAcrossRows([
-            ...cfg.environment.entrypoint_derivatives.map((entrypoint) => ({ value: entrypoint.name, path: ['environment', 'entrypoint_derivatives'] })),
-            ...generatedRows.flatMap(({ index, generated }) => generated.entrypoints.map((entrypoint) => ({ value: entrypoint.name, path: ['sibling', index, 'derives', 'generated', 'entrypoints'] }))),
-        ], 'entrypoint identities must be unique across global and row declarations')
-        const policies = [
-            ...cfg.environment.install_policies.map((policy) => ({ policy, path: ['environment', 'install_policies'] as (string | number)[] })),
-            ...generatedRows.flatMap(({ index, generated }) => (generated.install_policies ?? []).map((policy) => ({ policy, path: ['sibling', index, 'derives', 'generated', 'install_policies'] as (string | number)[] }))),
-        ]
-        uniqueAcrossRows(policies.map(({ policy, path }) => ({ value: policy.volume, path })), 'install policy volumes must be unique across global and row declarations')
-        uniqueAcrossRows(policies.map(({ policy, path }) => ({ value: `${policy.toolchain}\0${policy.lockfile}`, path })), 'install policy selectors must be unique across global and row declarations')
-
-        if (cfg.environment.generated) {
-            const generated = cfg.environment.generated
-            const siblings = new Set(cfg.sibling.map((sibling) => sibling.slug))
-            const policies = new Set(cfg.environment.install_policies.map((policy) => policy.volume))
-            for (const [index, service] of generated.services.entries()) {
-                if (!siblings.has(service.sibling)) ctx.addIssue({ code: 'custom', path: ['environment', 'generated', 'services', index, 'sibling'], message: 'generated service references an undeclared sibling' })
-                for (const [portIndex, port] of service.ports.entries()) {
-                    if (!leasedPorts.has(port.host_variable)) ctx.addIssue({ code: 'custom', path: ['environment', 'generated', 'services', index, 'ports', portIndex, 'host_variable'], message: 'generated host port references an undeclared lease' })
-                }
-            }
-            for (const [index, volume] of generated.volumes.entries()) {
-                if (volume.install_policy !== undefined && !policies.has(volume.install_policy)) ctx.addIssue({ code: 'custom', path: ['environment', 'generated', 'volumes', index, 'install_policy'], message: 'dependency volume references an undeclared install policy' })
-            }
-            for (const [index, vendor] of generated.vendors.entries()) {
-                for (const [endpointIndex, endpoint] of vendor.endpoints.entries()) {
-                    const sibling = cfg.sibling.find((sibling) => sibling.slug === endpoint.supplier.sibling)
-                    if (!sibling?.environment_files?.some((declared) => declared.template === endpoint.supplier.template)) ctx.addIssue({ code: 'custom', path: ['environment', 'generated', 'vendors', index, 'endpoints', endpointIndex, 'supplier'], message: 'endpoint supplier references an undeclared sibling environment template' })
-                }
-                for (const [fileIndex, file] of (vendor.shadow_files ?? []).entries()) {
-                    const sibling = cfg.sibling.find((sibling) => sibling.slug === file.sibling)
-                    if (!sibling?.environment_files?.some((declared) => declared.instance === file.instance)) ctx.addIssue({ code: 'custom', path: ['environment', 'generated', 'vendors', index, 'shadow_files', fileIndex], message: 'shadow references an undeclared sibling environment instance' })
-                }
-            }
-        }
-
         // Deliberately NOT checked here: that a `profile:<name>` lane names a profile in
         // `profiles.default`. A profile lane is opt-in by definition — it exists precisely to
         // stay off until EXTRA_PROFILES turns it on — so absence from the default set is the
@@ -1483,7 +1048,6 @@ export type InstallPolicy = z.infer<typeof InstallPolicy>
 export type Browser = z.infer<typeof Browser>
 export type Testing = z.infer<typeof Testing>
 export type Provenance = z.infer<typeof Provenance>
-export type GeneratedService = z.infer<typeof GeneratedService>
 export type SurfaceSource = z.infer<typeof SurfaceSource>
 export type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
 export type SurfaceDeclaration = z.infer<typeof SurfaceDeclaration>
@@ -1506,10 +1070,10 @@ const SIBLING_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set(['purpose', 'gui
 
 // What the host checks or reports around the containers: the machine floor and cold-start budget
 // `up` and preflight hold the host to, the posture preflight reads, the volumes `reset` may delete,
-// and the URLs derived from leased ports. Hashing them made raising cold_start_seconds strand a
+// the host command that seeds them, and the URLs derived from leased ports. Hashing them made raising cold_start_seconds strand a
 // healthy stack behind a demand to run `down`.
 const ENVIRONMENT_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set([
-    'machine', 'addressing', 'authentication', 'posture_requirements', 'resettable_volumes', 'entrypoint_derivatives',
+    'machine', 'addressing', 'authentication', 'posture_requirements', 'resettable_volumes', 'entrypoint_derivatives', 'seed',
 ])
 
 // What a declaration says to its reader: why it is so, where it came from, what a probe proves, how
@@ -1525,26 +1089,6 @@ function canonicalJson(value: unknown): string {
         : item)
 }
 
-function sortedBy<T>(rows: readonly T[], key: (row: T) => string): T[] {
-    return [...rows].sort((left, right) => key(left) < key(right) ? -1 : key(left) > key(right) ? 1 : 0)
-}
-
-// Decision records describe the stack, and the renderer sorts these tables by identity, so neither
-// the records nor the order of the tables in cockpit.toml reaches a container.
-function generatedRuntime({ decisions: _decisions, ...generated }: GeneratedEnvironment) {
-    return {
-        ...generated,
-        services: sortedBy(generated.services, ({ id }) => id).map((service) => ({
-            ...service,
-            ports: sortedBy(service.ports, ({ name }) => name),
-            mounts: sortedBy(service.mounts, ({ kind, source, target }) => `${kind}:${source}:${target}`),
-            dependencies: sortedBy(service.dependencies, ({ service: dependency }) => dependency),
-        })),
-        volumes: sortedBy(generated.volumes, ({ id }) => id),
-        vendors: sortedBy(generated.vendors, ({ id }) => id),
-    }
-}
-
 /**
  * The SHA-256 that identifies a running stack: ownership labels, the generation, saved progress and
  * data history are keyed by it rather than by the bytes of cockpit.toml. Keying them by the file
@@ -1552,28 +1096,24 @@ function generatedRuntime({ decisions: _decisions, ...generated }: GeneratedEnvi
  * until it was torn down.
  *
  * It covers everything except what is known not to reach a container: comments and formatting,
- * guards, MCP, work orders, surfaces, testing, the guide settings, generated decision records, the
- * descriptive sibling fields, the host-only environment fields, siblings with mount "none" that no
- * generated service names, descriptive prose and provenance anywhere, and the order of the generated
- * tables the renderer sorts. A new field is therefore counted
+ * guards, MCP, work orders, surfaces, testing, the guide settings, the descriptive sibling fields,
+ * the host-only environment fields, siblings with mount "none", and descriptive prose and provenance
+ * anywhere. A new field is therefore counted
  * as runtime until someone decides otherwise: the failure is a needless down, never a stack running
  * an older declaration than the one on disk. The contents of `environment.compose_files` are
  * outside it: only their paths are declared here, and `up` hands the files to Compose as they are.
  */
 export function runtimeDeclarationSha256(cfg: CockpitConfig): string {
-    const generated = cfg.environment.generated
-    const servedSiblings = new Set(generated?.services.map(({ sibling }) => sibling) ?? [])
     const sibling = cfg.sibling
-        .filter((row) => row.mount !== 'none' || servedSiblings.has(row.slug) || row.derives !== undefined || row.toolchain !== 'none')
+        .filter((row) => row.mount !== 'none' || row.derives !== undefined || row.toolchain !== 'none')
         .map((row) => Object.fromEntries(Object.entries(row).filter(([field]) => !SIBLING_NON_RUNTIME_FIELDS.has(field))))
         .sort((left, right) => String(left.slug) < String(right.slug) ? -1 : 1)
-    const { generated: _generated, ...declared } = cfg.environment
-    const environment = Object.fromEntries(Object.entries(declared).filter(([field]) => !ENVIRONMENT_NON_RUNTIME_FIELDS.has(field)))
+    const environment = Object.fromEntries(Object.entries(cfg.environment).filter(([field]) => !ENVIRONMENT_NON_RUNTIME_FIELDS.has(field)))
     return createHash('sha256').update(canonicalJson({
         cockpit: { name: cfg.cockpit.name, siblings_root: cfg.cockpit.siblings_root },
         sibling,
         ports: cfg.ports,
         browser: cfg.browser ?? null,
-        environment: { ...environment, generated: generated ? generatedRuntime(generated) : null },
+        environment,
     })).digest('hex')
 }

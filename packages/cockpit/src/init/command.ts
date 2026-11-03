@@ -63,7 +63,7 @@ export type InitApplicationHandler = (input: InitApplicationInput) => Promise<In
 const MAX_INTERVIEW_ANSWERS = 64
 
 const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
-    'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.compose_files',
+    'environment.install_policies', 'environment.test_data', 'environment.compose_files',
     'environment.machine', 'environment.posture', 'testing', 'guards'] as const
 
 /**
@@ -126,8 +126,7 @@ function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: 
 /** Who chose the answer to one question, as the answers file records it. */
 function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenance>): AnswerProvenance {
     if (field === 'configuration.defaults') return 'operator-confirmed'
-    const mark = marks.get(field) ?? (field === 'environment.generated' ? marks.get('environment.compose_files') : undefined)
-    return mark ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
+    return marks.get(field) ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
 }
 
 function refusal(code: string, message: string): InitApplicationOutcome {
@@ -140,11 +139,7 @@ function noteInterview(asked: Set<string>, outcome: InitApplicationOutcome): voi
     const interview = outcome.result?.interview
     if (!interview) return
     if (interview.cockpitRoot !== undefined) asked.add('cockpit.root')
-    for (const field of [...interview.answered, ...interview.outstanding.map(row => row.field)]) {
-        asked.add(field)
-        // Compose-first answers the generated-environment question under its own field name.
-        if (field === 'environment.generated') asked.add('environment.compose_files')
-    }
+    for (const field of [...interview.answered, ...interview.outstanding.map(row => row.field)]) asked.add(field)
 }
 
 type UnattendedAnswer = { kind: 'answer'; bytes: string } | { kind: 'missing' } | { kind: 'refusal'; outcome: InitApplicationOutcome }
@@ -161,12 +156,7 @@ function unattendedAnswer(
             '--accept-defaults does not equal the digest of the surfaced defaults; rerun without it to read the current digest') }
         return { kind: 'answer', bytes: JSON.stringify({ confirmed: true, sha256: unattended.defaultsSha256 }) }
     }
-    // Compose-first replaces the generated environment, so one question accepts either spelling.
-    const composeFirst = field === 'environment.generated' ? supplied.get('environment.compose_files') : undefined
-    const generated = supplied.get(field)
-    if (composeFirst !== undefined && generated !== undefined) return { kind: 'refusal', outcome: refusal('INIT_ANSWER_AMBIGUOUS',
-        'the answers file gives both environment.generated and environment.compose_files; compose-first replaces the generated environment') }
-    const value = composeFirst !== undefined ? { compose_files: composeFirst } : generated
+    const value = supplied.get(field)
     if (value === undefined) return { kind: 'missing' }
     try { return { kind: 'answer', bytes: JSON.stringify(value) } }
     catch (error) {

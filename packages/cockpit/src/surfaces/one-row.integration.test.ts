@@ -90,25 +90,6 @@ describe('one-row generated surface integration', () => {
         const registry = deriveRegistry(declaration)
         expect(registry.kind).toBe('complete')
         if (registry.kind !== 'complete') throw new Error(registry.message)
-        const worker = registry.result.config.environment.generated?.services.find(service => service.id === 'worker')
-        expect(worker).toMatchObject({
-            sibling: 'worker',
-            profiles: ['worker'],
-            ports: [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3200 }],
-            mounts: [
-                { kind: 'bind', source: '.', target: '/workspace/worker', source_type: 'directory' },
-                { kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' },
-                { kind: 'environment-file', source: '.env.local', target: '/workspace/.env', source_type: 'file' },
-            ],
-        })
-        expect(registry.result.config.ports.bases.WORKER_HOST_PORT).toBe(4250)
-        expect(registry.result.config.environment.entrypoint_derivatives).toContainEqual({
-            name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/worker',
-        })
-        expect(registry.result.config.environment.install_policies).toContainEqual({
-            toolchain: 'node', volume: 'worker-dependencies', lockfile: 'worker/package-lock.json',
-            install: ['npm', 'ci'], load_probe: ['node', 'probe.mjs', 'load'],
-        })
         expect(registry.result.mcpSources).toHaveLength(1)
         expect(registry.result.secretPaths).toContainEqual({
             slug: 'worker', siblingDir: 'worker', path: '.env.local', kind: 'instance',
@@ -196,17 +177,9 @@ describe('one-row generated surface integration', () => {
             '.grok/config.toml',
             '.mcp.json',
             'AGENTS.md',
-            'compose.generated.yml',
-            'docs/cockpit/environment-decisions.md',
             'opencode.jsonc',
         ])
 
-        expect(addedSync.result.application).toMatchObject({ profiles: expect.arrayContaining(['worker']) })
-        expect(addedSync.result.application.mounts).toEqual(expect.arrayContaining([
-            'worker:bind:.:/workspace/worker',
-            'worker:volume:worker-dependencies:/workspace/node_modules',
-            'worker:environment-file:.env.local:/workspace/.env',
-        ]))
         expect(after['AGENTS.md']).toContain('## Instructions for sibling `worker` (its AGENTS.md)')
         expect(after['AGENTS.md']).toContain('Synthetic worker guide.')
         expect(before['AGENTS.md']).not.toContain('Synthetic worker guide.')

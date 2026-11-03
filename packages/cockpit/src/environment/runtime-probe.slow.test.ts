@@ -219,7 +219,7 @@ describe('installed container-runtime capability promotion', () => {
         type ActiveCoordination = Extract<InventoryRead, { readonly kind: 'complete' }>['value'][number]['record']
         const activeCoordination = {
             holders: [{ holderId, checkoutId, claimedAt: '2026-09-07T12:00:00.000Z' }],
-            lease: activeLease, lastReleasedHolder: null, drain: null, restore: null,
+            lease: activeLease, lastReleasedHolder: null, drain: null,
         } satisfies ActiveCoordination
         const inventories: Record<'complete' | 'changed' | 'refusal', InventoryRead> = {
             complete: { kind: 'complete', value: [] },
@@ -231,13 +231,13 @@ describe('installed container-runtime capability promotion', () => {
         type CompleteCoordination = Extract<CoordinationRead, { readonly kind: 'complete' }>['value']
         const emptyRecord = { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
             subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z',
-            value: { holders: [], lease: null, lastReleasedHolder: null, drain: null, restore: null } } satisfies CompleteCoordination
+            value: { holders: [], lease: null, lastReleasedHolder: null, drain: null } } satisfies CompleteCoordination
         const states: Record<'missing' | 'empty' | 'released' | 'active' | 'malformed' | 'indeterminate' | 'refusal', CoordinationRead> = {
             missing: { kind: 'missing', path: 'synthetic' },
             empty: { kind: 'complete', value: emptyRecord },
             released: { kind: 'complete', value: { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
                 subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z',
-                value: { holders: [], lease: { ...activeLease, released: true }, lastReleasedHolder: null, drain: null, restore: null } } },
+                value: { holders: [], lease: { ...activeLease, released: true }, lastReleasedHolder: null, drain: null } } },
             active: { kind: 'complete', value: { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
                 subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z',
                 value: activeCoordination } },

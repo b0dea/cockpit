@@ -294,7 +294,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'sync',
         stage: 'generate-and-verify',
-        summary: 'Write the generated stack and agent files from cockpit.toml',
+        summary: 'Write the Compose ownership override and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
         // Adoption rewrites cockpit.toml and moves a team's harness settings, so it stays a person's. A

@@ -13,14 +13,10 @@ import {
 import { createHash } from 'node:crypto'
 import { isProxy } from 'node:util/types'
 import { observationDeclarations as claimDeclarations } from './claims.js'
-import { observationDeclarations as generatedDeclarations, registryAuthenticationObservationDeclarations } from './generated-stack.js'
 import { surfaceObservationDeclarations } from './generated-application.js'
-import { observationDeclarations as dataDeclarations } from './data-plane.js'
 import { observationDeclarations as envSchemaDeclarations } from './env-schema-observation.js'
-import { observationDeclarations as externalDeclarations } from './external-dependencies.js'
 import { observationDeclarations as gitDeclarations } from './git-observation.js'
 import { observationDeclarations as hostDeclarations } from './host-observation.js'
-import { observationDeclarations as installDeclarations } from './installs.js'
 import { observationDeclarations as lifecycleStageDeclarations } from './lifecycle-stage.js'
 import { observationDeclarations as runtimeDeclarations, runtimeHealthObservationDeclarations } from './runtime.js'
 import { observationDeclarations as stateDeclarations } from './state.js'
@@ -151,19 +147,14 @@ function declarationSnapshot(value: unknown): ObservationDeclaration | undefined
 
 export const allObservationDeclarations: readonly ObservationDeclaration[] = Object.freeze([
     ...claimDeclarations,
-    ...generatedDeclarations,
-    ...dataDeclarations,
     ...envSchemaDeclarations,
-    ...externalDeclarations,
     ...gitDeclarations,
     ...hostDeclarations,
-    ...installDeclarations,
     ...lifecycleStageDeclarations,
     ...runtimeDeclarations,
     ...stateDeclarations,
     ...templateDeclarations,
     ...surfaceObservationDeclarations,
-    ...registryAuthenticationObservationDeclarations,
     ...runtimeHealthObservationDeclarations,
 ])
 
@@ -229,7 +220,6 @@ const issuedPreflights = new WeakSet<object>()
 // before bring-up behind an "unavailable" verdict.
 const RUNNING_STACK_ROWS = Object.freeze([
     'running-checkout', 'runtime-availability', 'mount-posture', 'runtime-mount-materialization', 'runtime-port-family',
-    'generated-environment', 'registry-authentication', 'data-mode', 'external-dependencies', 'dependency-install',
 ])
 // Rows and posture checks that describe a runtime; a cockpit that declares none has nothing for them to measure.
 const RUNTIME_ROWS = Object.freeze(['runtime-measurement', POSTURE_REQUIREMENT_OWNER])

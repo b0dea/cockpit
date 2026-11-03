@@ -542,10 +542,10 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const context = loadedContext.result
         preClaims = await readActiveStackInventory(context.namespace)
         preLease = await readState(context.namespace.paths.coordination(context.stackId))
-        // The candidate carries the same ownership set generated stacks carry. Reclaim admits a
-        // resource as current only with stack, config and owner labels, and reset admits a
+        // The candidate carries the same ownership set the Compose override gives a stack. Reclaim
+        // admits a resource as current only with stack, config and owner labels, and reset admits a
         // data-bearing volume only with a generation; without them the probe measured a reset
-        // refusal that no generated stack produces.
+        // refusal that no real stack produces.
         const labels = {
             'dev.b0dea.cockpit.stack-id': context.stackId,
             'dev.b0dea.cockpit.config-sha256': context.runtimeSha256,

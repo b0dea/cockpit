@@ -164,7 +164,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         const asleep = await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
             format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
             subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
-            value: { holders: [], lastReleasedHolder: holder, drain: null, restore: null,
+            value: { holders: [], lastReleasedHolder: holder, drain: null,
                 lease: { offset: 0, ports: { APP_PORT: 61230 }, released: true, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
         }))
         expect(asleep.kind).toBe('complete')

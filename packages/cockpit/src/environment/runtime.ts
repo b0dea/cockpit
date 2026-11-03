@@ -2,11 +2,6 @@ import { createHash, randomBytes } from 'node:crypto'
 import { platform } from 'node:os'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
-import {
-    authenticateGeneratedComposeArtifact,
-    projectGeneratedComposeRuntimeIdentity,
-    type GeneratedComposeArtifactAuthority,
-} from './generated-render.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { MAX_COLD_START_SECONDS } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
@@ -23,9 +18,7 @@ import {
     snapshotExecutionPlan,
     snapshotExecutionStep,
     snapshotJson,
-    type EnvironmentCode,
     type EnvironmentCommandOutcome,
-    type EnvironmentDiagnostic,
     type EnvironmentObservation,
     type ExecutionPlan,
     type ExecutionStep,
@@ -58,7 +51,6 @@ import {
     type PortListenerBinding,
 } from './ports.js'
 import { cockpitCommand } from '../fix-catalogue.js'
-import { redactSensitiveMessage } from './sensitive.js'
 import type { StateNamespace } from './state.js'
 import type { LocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
@@ -67,7 +59,7 @@ import { composeProcessEnvironment } from './compose-environment.js'
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'observeRuntimeExecution', 'isRuntimeObservation', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'isVersionFloor', 'versionAtLeast', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'createRuntimeServicePlan', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'observeRuntimeExecution', 'isRuntimeObservation', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'isVersionFloor', 'versionAtLeast', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -95,7 +87,7 @@ interface RuntimeObservationContract {
     readonly projectName: string
     readonly activeProfiles: readonly string[]
     readonly configSha256: string
-    readonly generatedPortNames: readonly string[]
+    readonly interpolatedNames: readonly string[]
     readonly portLeaseProjection?: PortLeaseProjection
 }
 const issuedRuntimePlans = new WeakMap<object, RuntimeObservationContract>()
@@ -237,9 +229,8 @@ export interface ComposeArtifact {
 export type SiblingDirectoryVariables = Readonly<Record<string, string>>
 
 export type RuntimeAdapterAuthority =
-    | Readonly<{ generatedComposeAuthority: GeneratedComposeArtifactAuthority; portLeaseProjection?: PortLeaseProjection }>
-    /** A compose-first stack's own files, which interpolate the lease, the sibling directories and their own defaults. */
-    | Readonly<{ ownComposeFiles: true; cockpitId: CockpitId; stackId: StackId; portLeaseProjection?: PortLeaseProjection; siblingDirectories?: SiblingDirectoryVariables }>
+    /** A stack's own Compose files, which interpolate the lease, the sibling directories and their own defaults. */
+    Readonly<{ ownComposeFiles: true; cockpitId: CockpitId; stackId: StackId; portLeaseProjection?: PortLeaseProjection; siblingDirectories?: SiblingDirectoryVariables }>
 
 const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]*\}\}/
 
@@ -1028,22 +1019,18 @@ export function createRuntimeAdapter(
     let input = runtimeAdapterInput(snapshotJson(rawInput))
     if (input === undefined) return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime input must be bounded readable JSON data', 'runtime-input')
     const capturedAuthority = authority === undefined ? undefined
-        : captureOwnValues(authority, ['generatedComposeAuthority'])
-            ?? captureOwnValues(authority, ['generatedComposeAuthority', 'portLeaseProjection'])
-            ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId'])
+        : captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId'])
             ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'portLeaseProjection'])
             ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'siblingDirectories'])
             ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'portLeaseProjection', 'siblingDirectories'])
     const ownComposeFiles = capturedAuthority?.ownComposeFiles === true
-    const generatedComposeAuthority = capturedAuthority?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined
     const suppliedPortProjection = capturedAuthority?.portLeaseProjection as PortLeaseProjection | undefined
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
-    // A compose-first stack has no cockpit-rendered artifact to authenticate, only its port lease.
-    if ((authority !== undefined && (!capturedAuthority || generatedComposeAuthority === undefined && !ownComposeFiles))
+    if ((authority !== undefined && (!capturedAuthority || !ownComposeFiles))
         || (suppliedPortProjection !== undefined && portProjection === undefined)) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime artifact authority is malformed', 'runtime-input')
     }
-    let generatedPortNames: readonly string[] = Object.freeze([])
+    let interpolatedNames: readonly string[] = Object.freeze([])
     if (portProjection !== undefined) {
         const originalEnv = input.env
         const entries = Object.entries(portProjection.lease.ports).sort(([left], [right]) => left.localeCompare(right))
@@ -1053,9 +1040,9 @@ export function createRuntimeAdapter(
             || entries.length === 0 || entries.some(([name]) => !/^[A-Z][A-Z0-9_]*$/.test(name)
                 || HOST_PROCESS_CONTROL_ENV.test(name) || Object.hasOwn(originalEnv, name))
             || JSON.stringify(projectedPorts) !== JSON.stringify(requestedPorts)) {
-            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime port authority does not match the generated stack', input.projectName)
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime port authority does not match the stack', input.projectName)
         }
-        generatedPortNames = Object.freeze(entries.map(([name]) => name))
+        interpolatedNames = Object.freeze(entries.map(([name]) => name))
         input = Object.freeze({
             ...input,
             env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries.map(([name, port]) => [name, String(port)])) }),
@@ -1073,19 +1060,17 @@ export function createRuntimeAdapter(
             || typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime sibling directory authority is malformed', input.projectName)
         }
-        generatedPortNames = Object.freeze([...generatedPortNames, ...entries.map(([name]) => name)])
+        interpolatedNames = Object.freeze([...interpolatedNames, ...entries.map(([name]) => name)])
         input = Object.freeze({ ...input, env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries) as Record<string, string> }) })
     }
-    if (generatedComposeAuthority !== undefined || ownComposeFiles) {
-        const generatedIdentity = generatedComposeAuthority
-            ? projectGeneratedComposeRuntimeIdentity(generatedComposeAuthority) : undefined
-        const runtimeStackId = generatedIdentity?.stackId ?? capturedAuthority?.stackId
-        const runtimeCockpitId = generatedIdentity?.cockpitId ?? capturedAuthority?.cockpitId
+    if (ownComposeFiles) {
+        const runtimeStackId = capturedAuthority?.stackId
+        const runtimeCockpitId = capturedAuthority?.cockpitId
         if (typeof runtimeStackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(runtimeStackId)
             || typeof runtimeCockpitId !== 'string' || !/^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/.test(runtimeCockpitId)) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime identity labels are unavailable', input.projectName)
         }
-        generatedPortNames = Object.freeze([...generatedPortNames, 'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
+        interpolatedNames = Object.freeze([...interpolatedNames, 'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
         input = Object.freeze({ ...input, env: Object.freeze({ ...input.env,
             COCKPIT_OWNER_ID: runtimeCockpitId, COCKPIT_STACK_ID: runtimeStackId }) })
     }
@@ -1142,16 +1127,8 @@ export function createRuntimeAdapter(
     }
     const files: string[] = []
     for (const source of input.composeFiles) {
-        const generatedSource = generatedComposeAuthority !== undefined
-            && authenticateGeneratedComposeArtifact(generatedComposeAuthority, {
-                reference: source.reference,
-                source: source.source,
-                sha256: source.sha256,
-                sourceSha256: input.labels.configSha256 ?? '',
-            })
-        // Only the cockpit's own Compose files, declared as such by readiness, interpolate; a
-        // generated file's tokens are admitted only through its authority.
-        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource && !(ownComposeFiles && composeTokensResolved(source.source, generatedPortNames)))
+        // Only the cockpit's own Compose files, declared as such by readiness, interpolate.
+        if ((UNRESOLVED_TOKEN.test(source.source) && !(ownComposeFiles && composeTokensResolved(source.source, interpolatedNames)))
             || source.source.includes('\0')) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose artifact contains unresolved or unsafe data', source.reference)
         }
@@ -1172,8 +1149,8 @@ export function createRuntimeAdapter(
         files.push(local)
     }
 
-    // A rendered file names its host paths absolutely and runs from the cockpit root; a cockpit's
-    // own files resolve their relative paths as Compose does for the first file it is given.
+    // A cockpit's own files resolve their relative paths as Compose does for the first file it is
+    // given; without that authority the plan runs from the given directory.
     const projectDirectory = ownComposeFiles ? composeProjectDirectory(input.cwd, files) : input.cwd
     const compensation = input.operation === 'up'
         ? [composeStep(input, files, projectDirectory, 'down', [])]
@@ -1195,7 +1172,7 @@ export function createRuntimeAdapter(
             projectName: input.projectName,
             activeProfiles: Object.freeze([...(input.activeProfiles ?? [])]),
             configSha256: input.labels.configSha256 ?? '',
-            generatedPortNames,
+            interpolatedNames,
             ...(portProjection === undefined ? {} : { portLeaseProjection: portProjection }),
         }))
     }
@@ -1218,9 +1195,6 @@ export interface RuntimeTopologyService {
     readonly dependsOn: readonly string[]
     readonly bindMountSources: readonly string[]
     readonly namedVolumeMounts?: readonly Readonly<{ readonly source: string; readonly name: string; readonly target: string }>[]
-    readonly image?: string | null
-    readonly generation?: string | null
-    readonly sourceSha256?: string | null
     readonly healthcheck: boolean
 }
 
@@ -1334,26 +1308,26 @@ function canonicalWindow(value: RuntimeObservationWindow): RuntimeObservationWin
 
 function runtimeCommandEnvironment(
     env: Readonly<Record<string, string>>,
-    generatedPortNames: readonly string[],
+    interpolatedNames: readonly string[],
 ): Readonly<Record<string, string>> {
-    const allowed = new Set([...DOCKER_CLIENT_ENVIRONMENT, ...generatedPortNames])
+    const allowed = new Set([...DOCKER_CLIENT_ENVIRONMENT, ...interpolatedNames])
     return Object.freeze(Object.fromEntries(Object.entries(env).filter(([name]) => allowed.has(name))))
 }
 
 function runtimeComposeEnvironment(
     env: Readonly<Record<string, string>>,
-    generatedPortNames: readonly string[],
+    interpolatedNames: readonly string[],
 ): Readonly<Record<string, string>> {
-    return composeProcessEnvironment(runtimeCommandEnvironment(env, generatedPortNames))
+    return composeProcessEnvironment(runtimeCommandEnvironment(env, interpolatedNames))
 }
 
-function derivedComposeStep(base: ExecutionStep, id: string, operation: string, operationArgs: readonly string[], stdoutLimitBytes: number, issuanceId: string, timeoutLimitMs = MAX_OBSERVATION_WINDOW_MS, spawnNotAfter?: string, generatedPortNames: readonly string[] = []): ExecutionStep | undefined {
+function derivedComposeStep(base: ExecutionStep, id: string, operation: string, operationArgs: readonly string[], stdoutLimitBytes: number, issuanceId: string, timeoutLimitMs = MAX_OBSERVATION_WINDOW_MS, spawnNotAfter?: string, interpolatedNames: readonly string[] = []): ExecutionStep | undefined {
     const configIndex = base.argv.lastIndexOf('config')
     const suffix = base.argv.slice(configIndex)
     if (configIndex < 1 || !(suffix.length === 2 && suffix[1] === '--quiet')
         && !(suffix.length === 4 && suffix[1] === '--format' && suffix[2] === 'json'
             && suffix[3] === '--no-env-resolution')) return undefined
-    const env = runtimeComposeEnvironment(base.env, generatedPortNames)
+    const env = runtimeComposeEnvironment(base.env, interpolatedNames)
     const step: ExecutionStep = Object.freeze({
         ...base,
         id,
@@ -1403,7 +1377,7 @@ export function createRuntimeTopologyPlan(input: {
             issuanceId,
             MAX_OBSERVATION_WINDOW_MS,
             undefined,
-            runtime.generatedPortNames,
+            runtime.interpolatedNames,
         )
         if (!step) return unavailableTopology()
         const plan = Object.freeze({ kind: 'planned' as const, step })
@@ -1517,7 +1491,6 @@ function composePublishedPorts(value: unknown): readonly RuntimePublishedPort[] 
         `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`)))
 }
 
-const PINNED_IMAGE = /^[^\s@]+@sha256:[a-f0-9]{64}$/
 const RUNTIME_VOLUME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const CONTAINER_PATH = /^\/(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*[\\\x00-\x1f\x7f])\S+$/
 
@@ -1572,19 +1545,6 @@ function composeLabels(value: unknown): Readonly<Record<string, unknown>> | null
     return Object.keys(labels).length === entries.length ? labels : null
 }
 
-// Compose projects a generated build as an absolute local context with a Dockerfile name, and the
-// ownership labels its image carries.
-function generatedBuild(value: unknown): boolean {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-    const { context, dockerfile, labels, ...rest } = value as Record<string, unknown>
-    const imageLabels = composeLabels(labels)
-    return Object.keys(rest).length === 0 && typeof context === 'string' && isAbsolute(context)
-        && (labels === undefined || imageLabels !== null && typeof imageLabels === 'object'
-            && Object.values(imageLabels).every((label) => typeof label === 'string'))
-        && normalize(context) === context && localBuildContext(context)
-        && typeof dockerfile === 'string' && dockerfile.length > 0 && !dockerfile.includes('\0')
-}
-
 function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, activeProfiles: readonly string[]): {
     readonly services: readonly RuntimeTopologyService[]
     readonly order: readonly string[]
@@ -1635,17 +1595,6 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
                 || labels === null || typeof labels !== 'object' || Array.isArray(labels)
                 || (labels as Record<string, unknown>)['dev.b0dea.cockpit.stack-id'] !== stackId
                 || (labels as Record<string, unknown>)['dev.b0dea.cockpit.config-sha256'] !== configSha256) return undefined
-            const generated = (labels as Record<string, unknown>)['dev.b0.cockpit.generated']
-            const generation = (labels as Record<string, unknown>)['dev.b0.cockpit.generation']
-            const sourceSha256 = (labels as Record<string, unknown>)['dev.b0.cockpit.source-sha256']
-            const image = service.image
-            // A generated service runs a digest-pinned image or one Compose builds from a local
-            // context; a built service has no pinned identity, so it carries no image here.
-            const built = image === undefined && generatedBuild(service.build)
-            if (generated !== undefined && generated !== '1'
-                || generated === '1' && (typeof generation !== 'string' || !SHA256.test(generation)
-                    || sourceSha256 !== configSha256
-                    || !built && (typeof image !== 'string' || !PINNED_IMAGE.test(image)))) return undefined
             edgeCount += dependsOn.length + mounts.length + namedMounts.length + publishedPorts.length
             if (edgeCount > MAX_TOPOLOGY_EDGES) return undefined
             byId.set(id, Object.freeze({
@@ -1653,9 +1602,6 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
                 dependsOn,
                 bindMountSources: mounts,
                 namedVolumeMounts: namedMounts,
-                image: generated === '1' && !built ? image as string : null,
-                generation: generated === '1' ? generation as string : null,
-                sourceSha256: generated === '1' ? sourceSha256 as string : null,
                 healthcheck,
             }))
             runtimeHealth.set(id, Object.freeze({ bindMounts: exactBindMounts, publishedPorts }))
@@ -1805,7 +1751,7 @@ export function projectRuntimeExecutionEnvironment(
     const now = Date.now()
     return contract && Date.parse(contract.observationWindow.startedAt) <= now
         && now <= Date.parse(contract.observationWindow.expiresAt)
-        ? runtimeCommandEnvironment(contract.runtime.env, contract.runtime.generatedPortNames)
+        ? runtimeCommandEnvironment(contract.runtime.env, contract.runtime.interpolatedNames)
         : undefined
 }
 
@@ -1905,9 +1851,7 @@ function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ inde
 export type RuntimeServicePlan =
     | { readonly kind: 'planned'; readonly service: string; readonly start: ExecutionStep; readonly status: ExecutionStep; readonly identity: ExecutionStep
         /** Stops, without removing, the service this plan started when it did not become healthy. */
-        readonly stop: ExecutionStep
-        /** Present for a built generated service: run before start and admitted by admitBuiltImageLauncher. */
-        readonly build?: ExecutionStep; readonly launcher?: ExecutionStep }
+        readonly stop: ExecutionStep }
     | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
 
 export type RuntimeServiceHealthPlan =
@@ -2024,7 +1968,7 @@ function runtimeServiceLookupSteps(
         issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
         undefined,
-        topologyContract.runtime.generatedPortNames,
+        topologyContract.runtime.interpolatedNames,
     )
     const identity = derivedComposeStep(
         topologyContract.step,
@@ -2035,7 +1979,7 @@ function runtimeServiceLookupSteps(
         issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
         undefined,
-        topologyContract.runtime.generatedPortNames,
+        topologyContract.runtime.interpolatedNames,
     )
     return status && identity ? Object.freeze({ status, identity }) : undefined
 }
@@ -2062,7 +2006,7 @@ function runtimeServiceInitialSteps(
         issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
         undefined,
-        topologyContract.runtime.generatedPortNames,
+        topologyContract.runtime.interpolatedNames,
     )
     // A service that failed its start under a restart policy restarts forever until `down`. The
     // failed `up` stops it and keeps the container, so its logs stay readable and the next `up`
@@ -2076,7 +2020,7 @@ function runtimeServiceInitialSteps(
         issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
         undefined,
-        topologyContract.runtime.generatedPortNames,
+        topologyContract.runtime.interpolatedNames,
     )
     const lookup = runtimeServiceLookupSteps(topologyContract, service, issuanceId)
     return start && stop && lookup ? Object.freeze({ start, stop, ...lookup }) : undefined
@@ -2094,92 +2038,13 @@ export function createRuntimeServicePlan(input: { readonly topology: RuntimeTopo
             || Date.now() > Date.parse(topologyContract.observationWindow.expiresAt)) return unavailableRuntimeService(serviceId)
         const issuanceId = randomBytes(32).toString('hex')
         const steps = runtimeServiceInitialSteps(topologyContract, service, issuanceId)
-        const built = typeof service.generation === 'string' && service.image === null
-        const launcher = built ? builtImageLauncherSteps(topologyContract, service, issuanceId) : undefined
-        if (!steps || built && !launcher) return unavailableRuntimeService(serviceId)
-        const plan = Object.freeze({ kind: 'planned' as const, service: serviceId, ...steps, ...launcher })
+        if (!steps) return unavailableRuntimeService(serviceId)
+        const plan = Object.freeze({ kind: 'planned' as const, service: serviceId, ...steps })
         issuedRuntimeServicePlans.set(plan, Object.freeze({ topology, topologyContract, service }))
-        if (launcher) issuedBuiltImageLauncherPlans.set(plan, Object.freeze({ service: serviceId }))
         return plan
     } catch (error) {
         return unavailableRuntimeService('', error)
     }
-}
-
-export type BuiltImageLauncherAdmission =
-    | { readonly kind: 'complete' }
-    | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
-
-const issuedBuiltImageLauncherPlans = new WeakMap<object, { readonly service: string }>()
-
-function executionFailureDetail(stderr: Buffer): string | undefined {
-    let text: string
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(stderr) } catch {
-        // Undecodable stderr has no failure detail to show; the refusal stands without it.
-        return undefined
-    }
-    const line = text.split(/\r?\n|\r/).filter(candidate => candidate.trim() !== '').at(-1)?.trim()
-    if (!line || /[\x00-\x08\x0b-\x1f\x7f]/.test(line)) return undefined
-    const redacted = redactSensitiveMessage(line)
-    if (!redacted || /[\x00-\x08\x0b-\x1f\x7f]/.test(redacted)) return undefined
-    return [...redacted].slice(0, 300).join('')
-}
-
-// A pinned image's `/bin/sh` launcher is checked before start; a built service has no image until
-// Compose builds it, so its first start used to fail opaquely inside `up --wait` when the image
-// shipped no shell. A built generated service's plan therefore builds first and checks its image
-// with the same entrypoint the generated wrapper runs, before the service starts.
-function builtImageLauncherSteps(
-    topologyContract: TopologyEvidenceContract,
-    service: RuntimeTopologyService,
-    issuanceId: string,
-): Readonly<{ build: ExecutionStep; launcher: ExecutionStep }> | undefined {
-    const names = topologyContract.runtime.generatedPortNames
-    // The build is the expensive part of a built service's first start, so it gets the start's
-    // cold-start bound rather than the ordinary command budget.
-    const build = derivedComposeStep(
-        { ...topologyContract.step, timeoutMs: Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis) },
-        `runtime:docker-compose:build:${service.id}`, 'build', ['--progress', 'quiet', 'build', service.id],
-        OUTPUT_LIMIT_BYTES, issuanceId, MAX_OBSERVATION_WINDOW_MS, undefined, names,
-    )
-    const launcher = derivedComposeStep(
-        topologyContract.step,
-        `runtime:docker-compose:launcher:${service.id}`, 'run',
-        ['--progress', 'quiet', 'run', '--rm', '--no-deps', '--entrypoint', '/bin/sh', service.id, '-eu', '-c', ':'],
-        OUTPUT_LIMIT_BYTES, issuanceId, 30_000, undefined, names,
-    )
-    return build && launcher ? Object.freeze({ build, launcher }) : undefined
-}
-
-export function admitBuiltImageLauncher(input: {
-    readonly plan: RuntimeServicePlan
-    readonly buildOutcome: ExecuteProbeOutcome
-    readonly launcherOutcome?: ExecuteProbeOutcome
-}): BuiltImageLauncherAdmission {
-    const plan = input?.plan
-    const contract = plan && typeof plan === 'object' ? issuedBuiltImageLauncherPlans.get(plan) : undefined
-    const refuse = (code: EnvironmentCode, message: string) => Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([Object.freeze({
-        severity: 'error' as const, code, message, target: contract?.service ?? 'built-image-launcher',
-    })]) })
-    if (!contract || plan.kind !== 'planned' || !plan.build || !plan.launcher) {
-        return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image launcher evidence is unavailable')
-    }
-    issuedBuiltImageLauncherPlans.delete(plan)
-    const build = authenticatedExecutionOutcome(input.buildOutcome, plan.build)
-    if (!build) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image build evidence is unauthenticated')
-    if (build.kind !== 'complete') {
-        const detail = executionFailureDetail(build.stderr)
-        return refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-            `the image for built service ${contract.service} did not build (${build.code})${detail ? ` (${detail})` : ''}`
-            + `; the service cannot start until its image builds; ${detail ? 'fix the reported build error' : 'inspect the build output'}, then rerun npx --no cockpit up --config <your cockpit.toml>`)
-    }
-    const launcher = input.launcherOutcome === undefined ? undefined : authenticatedExecutionOutcome(input.launcherOutcome, plan.launcher)
-    if (!launcher) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image launcher evidence is unauthenticated')
-    if (launcher.kind === 'complete') return Object.freeze({ kind: 'complete' })
-    const detail = executionFailureDetail(launcher.stderr)
-    return refuse(ENVIRONMENT_CODES.RUNTIME_LAUNCHER_UNAVAILABLE,
-        `the built image for service ${contract.service} cannot run /bin/sh, which the generated entrypoint needs`
-        + `${detail ? ` (${detail})` : ''}; build it from a base image that ships /bin/sh`)
 }
 
 export function createRuntimeServiceRevalidationPlan(input: {
@@ -2393,7 +2258,7 @@ function runtimeServiceInspectStep(
         argv: Object.freeze([executable.canonicalPath, 'container', 'inspect', '--format', CONTAINER_INSPECT_FORMAT, containerId]) as readonly [string, ...string[]],
         argv0: executable.invocationPath,
         cwd: topologyContract.runtime.cwd,
-        env: runtimeCommandEnvironment(topologyContract.runtime.env, topologyContract.runtime.generatedPortNames),
+        env: runtimeCommandEnvironment(topologyContract.runtime.env, topologyContract.runtime.interpolatedNames),
         timeoutMs,
         stdoutLimitBytes: OUTPUT_LIMIT_BYTES,
         stderrLimitBytes: OUTPUT_LIMIT_BYTES,
@@ -2472,9 +2337,6 @@ export function projectRuntimeLifecycle(topology: RuntimeTopologyEvidence): Runt
                     dependsOn: [...service.dependsOn],
                     bindMountSources: [...service.bindMountSources],
                     namedVolumeMounts: service.namedVolumeMounts?.map((mount) => ({ ...mount })) ?? [],
-                    image: service.image ?? null,
-                    generation: service.generation ?? null,
-                    sourceSha256: service.sourceSha256 ?? null,
                     healthcheck: service.healthcheck,
                 })),
             },
@@ -3039,111 +2901,6 @@ export function observeRuntimeServiceColdStart(input: {
     }
 }
 
-declare const dependencyRuntimeProjectionBrand: unique symbol
-export interface DependencyRuntimeProjection {
-    readonly [dependencyRuntimeProjectionBrand]: true
-}
-
-export interface DependencyRuntimeEnvelope {
-    readonly stackId: StackId
-    readonly configSha256: string
-    readonly batchId: string
-    readonly projectName: string
-    readonly service: string
-    readonly containerId: string
-    readonly image: string
-    readonly generation: string
-    readonly sourceSha256: string
-    readonly mount: Readonly<{ readonly source: string; readonly name: string; readonly target: string }>
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly timeoutMs: number
-    readonly stdoutLimitBytes: number
-    readonly stderrLimitBytes: number
-    readonly paths: ExecutionStep['paths']
-    readonly consumedFiles: ExecutionStep['consumedFiles']
-    readonly filesystemChecks: ExecutionStep['filesystemChecks']
-    readonly observationWindow: RuntimeObservationWindow
-}
-
-const issuedDependencyRuntimeProjections = new WeakMap<object, DependencyRuntimeEnvelope>()
-const consumedDependencyRuntimeProjections = new WeakSet<object>()
-
-export function projectDependencyRuntime(input: {
-    readonly topology: RuntimeTopologyEvidence
-    readonly evidence: RuntimeServiceEvidence
-    readonly service: string
-    readonly volume: string
-}): DependencyRuntimeProjection | undefined {
-    try {
-        const captured = captureOwnValues(input, ['topology', 'evidence', 'service', 'volume'])
-        const topology = captured?.topology as RuntimeTopologyEvidence | undefined
-        const evidence = captured?.evidence as RuntimeServiceEvidence | undefined
-        const serviceId = captured?.service
-        const volume = captured?.volume
-        const topologyContract = topology && typeof topology === 'object' ? issuedTopologyEvidence.get(topology) : undefined
-        const evidenceContract = evidence && typeof evidence === 'object' ? issuedRuntimeServiceEvidence.get(evidence) : undefined
-        const service = typeof serviceId === 'string' ? topologyContract?.services.get(serviceId) : undefined
-        const mount = typeof volume === 'string' ? service?.namedVolumeMounts?.find((candidate) => candidate.source === volume) : undefined
-        const now = Date.now()
-        if (!topology || !evidence || !topologyContract || !evidenceContract || evidenceContract.topology !== topology
-            || evidenceContract.service.id !== serviceId || !service || !mount
-            || typeof service.image !== 'string' || typeof service.generation !== 'string' || typeof service.sourceSha256 !== 'string'
-            || evidence.service !== serviceId || evidence.containerId !== evidenceContract.containerId
-            || evidence.stackId !== topologyContract.stackId || evidence.configSha256 !== topologyContract.configSha256
-            || evidence.batchId !== topologyContract.batchId || evidence.projectName !== topologyContract.runtime.projectName
-            || evidence.executableSha256 !== topologyContract.runtime.runtimeExecutable.sha256
-            || evidence.state !== 'running' || evidence.health !== (service.healthcheck ? 'healthy' : null)
-            || now < Date.parse(topologyContract.observationWindow.startedAt)
-            || now > Date.parse(topologyContract.observationWindow.expiresAt)) return undefined
-        const base = topologyContract.step
-        const envelope = Object.freeze({
-            stackId: topologyContract.stackId,
-            configSha256: topologyContract.configSha256,
-            batchId: topologyContract.batchId,
-            projectName: topologyContract.runtime.projectName,
-            service: service.id,
-            containerId: evidence.containerId,
-            image: service.image,
-            generation: service.generation,
-            sourceSha256: service.sourceSha256,
-            mount: Object.freeze({ ...mount }),
-            executable: Object.freeze({ ...topologyContract.runtime.runtimeExecutable }),
-            cwd: topologyContract.runtime.cwd,
-            env: runtimeCommandEnvironment(topologyContract.runtime.env, topologyContract.runtime.generatedPortNames),
-            timeoutMs: Math.min(base.timeoutMs, Math.max(1, Date.parse(topologyContract.observationWindow.expiresAt) - now)),
-            stdoutLimitBytes: base.stdoutLimitBytes,
-            stderrLimitBytes: base.stderrLimitBytes,
-            paths: base.paths,
-            consumedFiles: base.consumedFiles,
-            filesystemChecks: base.filesystemChecks,
-            observationWindow: topologyContract.observationWindow,
-        })
-        const projection = Object.freeze({}) as DependencyRuntimeProjection
-        issuedDependencyRuntimeProjections.set(projection, envelope)
-        return projection
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-export function consumeDependencyRuntimeProjection(projection: DependencyRuntimeProjection): DependencyRuntimeEnvelope | undefined {
-    try {
-        if (projection === null || typeof projection !== 'object' || consumedDependencyRuntimeProjections.has(projection)) return undefined
-        const envelope = issuedDependencyRuntimeProjections.get(projection)
-        const now = Date.now()
-        if (!envelope || now < Date.parse(envelope.observationWindow.startedAt)
-            || now > Date.parse(envelope.observationWindow.expiresAt)) return undefined
-        consumedDependencyRuntimeProjections.add(projection)
-        return envelope
-    } catch {
-        // A throwing accessor or proxy trap makes the projection unusable, which the caller refuses.
-        return undefined
-    }
-}
-
 export interface RuntimeServiceFailureLogContext {
     readonly stage: 'start' | 'status' | 'identity' | 'inspect'
     readonly stackId: StackId
@@ -3208,7 +2965,7 @@ function runtimeServiceFailureContext(
         observationWindow: topology.observationWindow,
         executable: Object.freeze({ ...topology.runtime.runtimeExecutable }),
         cwd: topology.runtime.cwd,
-        env: runtimeComposeEnvironment(topology.runtime.env, topology.runtime.generatedPortNames),
+        env: runtimeComposeEnvironment(topology.runtime.env, topology.runtime.interpolatedNames),
         composeArgvPrefix: Object.freeze(step.argv.slice(1, configIndex)),
         paths: step.paths,
         consumedFiles: step.consumedFiles,
@@ -3561,7 +3318,7 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
             || now > Date.parse(contract.topologyContract.observationWindow.expiresAt)) return undefined
         const env = runtimeCommandEnvironment(
             contract.topologyContract.runtime.env,
-            contract.topologyContract.runtime.generatedPortNames,
+            contract.topologyContract.runtime.interpolatedNames,
         )
         const context = Object.freeze({
             observation: value,
@@ -3647,7 +3404,7 @@ export function createRuntimeStopPlan(input: {
             reservation.generation,
             remainingMs,
             attempt.validThrough,
-            topologyContract.runtime.generatedPortNames,
+            topologyContract.runtime.interpolatedNames,
         )
         if (!step) return unavailableRuntimeStop()
         const execution = openRuntimeDrainExecution({ authority: attemptAuthority!, candidate: candidate! })
@@ -3688,7 +3445,7 @@ export function createRuntimeStopObservationPlan(input: {
             contract.reservation.generation,
             MAX_OBSERVATION_WINDOW_MS,
             undefined,
-            contract.topology.runtime.generatedPortNames,
+            contract.topology.runtime.interpolatedNames,
         )
         if (!step) return unavailableRuntimeStop()
         const observation = Object.freeze({ kind: 'planned' as const, step })

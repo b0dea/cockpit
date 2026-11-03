@@ -181,8 +181,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(actual.engines.node).toBe(JSON.parse(read('package.json')).engines.node)
         const root = join(packScratch, 'producer-consumer')
         mkdirSync(join(root, 'app'), { recursive: true })
-        mkdirSync(join(root, 'fixtures'))
-        writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
         const configPath = join(root, 'cockpit.toml')
         writeFileSync(configPath, read('fixtures/registries/generated-environment.toml').replace(
             'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
@@ -314,7 +312,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'libexec/fenced-group-runner.cjs',
                 'libexec/fenced-supervisor.cjs',
                 'libexec/generated-filesystem.cjs',
-                'libexec/host-input-probe.cjs',
                 'libexec/install-filesystem.cjs',
                 'libexec/rulesync-generator.cjs',
                 'libexec/rulesync-generator.NOTICE.md',
@@ -345,7 +342,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             'libexec/fenced-group-runner.cjs',
             'libexec/fenced-supervisor.cjs',
             'libexec/generated-filesystem.cjs',
-            'libexec/host-input-probe.cjs',
             'libexec/install-filesystem.cjs',
             'libexec/rulesync-generator.cjs',
             'libexec/rulesync-generator.NOTICE.md',
@@ -435,7 +431,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
 
         const help = execFileSync(process.execPath, [launcher, '--help'], options)
         expect(help).toContain('registry-resolve')
-        expect(help).toContain('sync              Write the generated stack and agent files from cockpit.toml')
+        expect(help).toContain('sync              Write the Compose ownership override and agent files from cockpit.toml')
         expect(help).toContain('check             Report generated files that no longer match cockpit.toml')
         expect(help).toContain('selftest')
         const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
@@ -810,7 +806,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
             // The interview now continues past the local test-data decision, so the fifth question is
             // reached; declining it leaves the target unwritten and the answers resumable. A
             // surfaces-only interview has no environment questions and reaches the defaults instead.
-            if (question.field === 'environment.generated' || question.field === 'configuration.defaults') return undefined
+            if (question.field === 'environment.compose_files' || question.field === 'configuration.defaults') return undefined
             throw new Error(`unexpected installed init question: ${question.field}`)
         },
     }, {}, { env })
@@ -849,7 +845,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
         expect(status, stderr).toBe(2)
         expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
         expect(questions.map(question => question.field)).toEqual([
-            'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.generated',
+            'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.compose_files',
         ])
         const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
             cwd: root, env, encoding: 'utf8',
@@ -857,7 +853,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
         expect(resumed.status, resumed.stderr).toBe(0)
         expect(JSON.parse(resumed.stdout).result).toMatchObject({
             estate: { classification },
-            question: { field: 'environment.generated' },
+            question: { field: 'environment.compose_files' },
         })
     }
 }, 480_000)
@@ -927,7 +923,7 @@ it('lists every outstanding headless init question with the values it inferred',
     const listed = JSON.parse(first.stdout).result
     expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
         'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
-        'environment.generated', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults',
+        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'configuration.defaults',
     ])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),

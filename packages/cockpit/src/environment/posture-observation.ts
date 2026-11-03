@@ -171,19 +171,9 @@ async function issueObservationPostures(
         throw new RefusalError('resolved posture refresh window expired')
     }
     const postures = new Set<string>(['environment'])
-    if (loaded.result.config.sibling.some(({ toolchain }) => toolchain !== 'none')) postures.add('dependencies')
     if (loaded.result.config.environment.machine) postures.add('machine-floor')
-    const generated = loaded.result.config.environment.generated
-    if (generated || loaded.result.config.environment.compose_files.length > 0) postures.add('running-stack')
-    const activeProfiles = generated?.services.flatMap(({ profiles }) => profiles) ?? []
-    if (loaded.result.config.sibling.some(({ mount }) => mount === 'always'
-        || mount.startsWith('profile:') && activeProfiles.includes(mount.slice(8)))) postures.add('directory-grants')
-    if (generated?.services.some(({ image }) => image?.registry_auth_probe !== undefined)) postures.add('registry-authentication')
-    if (generated) {
-        postures.add('generated-environment')
-        if (generated.data) postures.add('data-plane')
-        if (generated.vendors.length > 0) postures.add('external-dependencies')
-    }
+    if (loaded.result.config.environment.compose_files.length > 0) postures.add('running-stack')
+    if (loaded.result.config.sibling.some(({ mount }) => mount === 'always')) postures.add('directory-grants')
     for (const sibling of loaded.result.config.sibling) {
         if (sibling.mount === 'none') continue
         if (sibling.mount === 'host') postures.add('host')

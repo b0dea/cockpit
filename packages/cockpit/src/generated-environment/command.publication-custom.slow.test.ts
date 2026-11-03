@@ -385,7 +385,9 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
 
         it('reconciles generated whole files and copied sibling guides and removes exact stale ownership', async () => {
             const module = 'adapters/synthetic.mjs'
-            const first = await surfaceConsumer('surface-reconcile', { rules: true, custom: customHarness(module) })
+            // A person approves stale deletions here, so a plain sync refuses one and check names the approving command.
+            const first = await surfaceConsumer('surface-reconcile', { rules: true,
+                custom: `\n[autonomy]\nstale_delete = "person"\n${customHarness(module)}` })
             await writeCustomModule(first.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nfirst\n' }])
 
             const synced = await syncGeneratedEnvironment({ configPath: first.configPath })
@@ -601,9 +603,6 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = estate
             declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
-            declaration.environment.generated!.vendors = []
-            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
-                .filter(entry => entry.subject !== 'vendor')
             await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
             await writeFile(join(siblingRoot, 'sentinel.txt'), 'outside bytes\n')
             const initial = await syncGeneratedEnvironment({ configPath: fixture.configPath })
@@ -612,7 +611,10 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const authored = await bytes(fixture.root, initial.result.paths)
             const ledgerPath = join(fixture.root, '.cockpit/generated-environment-ownership.json')
             const ledger = await readFile(ledgerPath, 'utf8')
-            await writeFile(join(fixture.root, 'fixtures/personas.json'), '[{"id":"second"}]\n')
+            // A new guarded host changes the generated guards, so sync has a publication to prepare.
+            const guarded = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            guarded.guards.vendor_endpoint_hosts = [...guarded.guards.vendor_endpoint_hosts, 'second.vendor.example.test']
+            await writeFile(fixture.configPath, stringifyToml(guarded))
             const guidePath = join(siblingRoot, 'AGENTS.md')
             const heldGuidePath = join(siblingRoot, 'AGENTS-held.md')
             let replaced = false
@@ -667,16 +669,16 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = declaredRoot
             declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(declaredRoot, appRoot)
-            declaration.environment.generated!.vendors = []
-            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
-                .filter(entry => entry.subject !== 'vendor')
             await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
 
             const initial = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(initial, JSON.stringify(initial.diagnostics)).toMatchObject({ kind: 'complete' })
             if (initial.kind !== 'complete') return
             const authored = await bytes(fixture.root, initial.result.paths)
-            await writeFile(join(fixture.root, 'fixtures/personas.json'), '[{"id":"second"}]\n')
+            // A new guarded host changes the generated guards, so sync has a publication to prepare.
+            const guarded = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            guarded.guards.vendor_endpoint_hosts = [...guarded.guards.vendor_endpoint_hosts, 'second.vendor.example.test']
+            await writeFile(fixture.configPath, stringifyToml(guarded))
             const escapedRoot = join(outsideRoot, 'escaped')
             let replaced = false
             let publishAttempts = 0

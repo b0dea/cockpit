@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process'
 import { cockpitCommand } from '../fix-catalogue.js'
-import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -9,7 +8,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
-import { beginOperatorReset, decodeLifecycleRecord, runDoctor, runDown, runReset, runSession, runSleep, runUp } from './application.js'
+import { beginOperatorReset, decodeLifecycleRecord, runDoctor, runDown, runReset, runSession, runSleep, runUp, type LifecycleRunContext } from './application.js'
 import { RefusalError, type ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
@@ -18,15 +17,12 @@ import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage
 import { createHealthCommandAdapters } from './health-composition.js'
 import { readState } from './state.js'
 import { decodeCoordinationRecord, inspectDestructiveDrainRecovery, readActiveStackInventory } from './claims.js'
-import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
-import { observeDependencyLoad } from './installs.js'
-import { checkGeneratedEnvironment, generatedApplicationProjection, syncGeneratedEnvironment } from './generated-application.js'
+import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-application.js'
 import { checkoutId, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
     observeDockerRuntime,
-    projectDependencyRuntime,
     resolveRuntimeServiceOrder,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
@@ -89,7 +85,7 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
+const { fixture, stackFixture, configureStackDocker, runStackScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
 // Each case drives the real lifecycle owners through dozens of child processes (fenced execution,
 // publication helpers, Git and runtime probes), so its wall time scales with machine load rather
@@ -511,7 +507,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     })
 
     it('retains a fresh holder when runtime dispatch succeeds before its adapter rejects', async () => {
-        const candidate = await generatedFixture()
+        const candidate = await stackFixture()
         const failure = new Error('synthetic post-dispatch failure')
         let startDispatched = false
         const execute = async (step: ExecutionStep) => {
@@ -525,7 +521,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const adapters = createLifecycleCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
-            sessionId: 'generated-production',
+            sessionId: 'stack-production',
             timeoutMs: 5_000,
         }, execute)
         const loaded = await adapters.load({ configPath: candidate.configPath })
@@ -538,9 +534,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             observedAt: new Date().toISOString(),
         })
         expect(started.kind, JSON.stringify(started)).not.toBe('refusal')
-        const generation = createHash('sha256')
-            .update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
-        await configureGeneratedDocker(candidate, loaded.result, generation)
+        await configureStackDocker(candidate, loaded.result)
         listenerProbeControl.enabled = true
 
         await expect(runUp({ configPath: candidate.configPath }, adapters)).rejects.toBe(failure)
@@ -554,7 +548,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const recoveryAdapters = createLifecycleCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
-            sessionId: 'generated-production',
+            sessionId: 'stack-production',
             timeoutMs: 5_000,
         }, executeProbe)
         const recovered = await runUp({ configPath: candidate.configPath }, recoveryAdapters)
@@ -727,13 +721,24 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(result.diagnostics[0]?.message).not.toContain('unavailable by default')
     })
 
-    it.each(['container', 'no-resources'] as const)('retires completed down before starting a synchronized generated identity: %s', async resources => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+    const recordedInputs = async (context: LifecycleRunContext) => {
+        const saved = await readState(context.namespace.paths.lifecycle(context.stackId))
+        if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
+        return decodeLifecycleRecord(saved.value, context)?.value.runtimeInputs
+    }
+    // An edit Compose itself reads changes the stack's runtime inputs without touching cockpit.toml.
+    const editCompose = async (checkout: string) => {
+        const path = join(checkout, 'compose.yml')
+        await writeFile(path, (await readFile(path, 'utf8')).replace('    volumes:', '    environment: ["MODE=reviewed"]\n    volumes:'))
+    }
+
+    it.each(['container', 'no-resources'] as const)('retires completed down before starting a changed stack: %s', async resources => {
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000,
+            sessionId: 'stack-production', timeoutMs: 5_000,
         }
         if (resources === 'no-resources') await writeFile(join(first.candidate.root, 'runtime-removed'), '')
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({
@@ -744,36 +749,31 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const retired = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (retired.kind !== 'complete') throw new Error(JSON.stringify(retired))
         expect(decodeLifecycleRecord(retired.value, first.context)?.value).toMatchObject({ teardownComplete: true, completedServices: [] })
-        expect(retired.value.value).not.toHaveProperty('generatedReplay')
-        expect(retired.value.value).not.toHaveProperty('generatedProgress')
-        const source = await readFile(input.configPath, 'utf8')
-        await writeFile(input.configPath, source.replace(
-            'reason = "Pinned synthetic runtime"', 'reason = "Pinned synthetic runtime after configuration review"'))
-        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        await editCompose(first.candidate.checkout)
         const steps: ExecutionStep[] = []
         const adapters = createLifecycleCommandAdapters(input, async step => { steps.push(step); return executeProbe(step) })
         const loaded = await adapters.load({ configPath: input.configPath })
         if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
-        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
-        expect(generation).not.toBe(first.generation)
-        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        await configureStackDocker(first.candidate, loaded.result)
 
         const result = await runUp({ configPath: input.configPath }, adapters)
 
-        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', status: 0 })
         expect(steps.some(({ id }) => id === 'runtime:docker-compose:start:app')).toBe(true)
         const saved = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
-        expect(decodeLifecycleRecord(saved.value, first.context)?.value.generatedReplay?.generation).toBe(generation)
+        const inputs = decodeLifecycleRecord(saved.value, first.context)?.value.runtimeInputs
+        expect(inputs?.['compose.yml']).toMatch(/^[a-f0-9]{64}$/)
+        expect(inputs?.['compose.yml']).not.toBe(first.inputs?.['compose.yml'])
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
     })
 
     it('keeps the final down claim when lifecycle retirement fails and resumes after the path is repaired', async () => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = { configPath: first.candidate.configPath, dockerContext: 'default',
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000 }
+            sessionId: 'stack-production', timeoutMs: 5_000 }
         const path = first.context.namespace.paths.lifecycle(first.context.stackId).path
         const backup = `${path}.before-retirement`
         let denied = false
@@ -799,7 +799,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         await rename(backup, path)
         const retained = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (retained.kind !== 'complete') throw new Error(JSON.stringify(retained))
-        expect(decodeLifecycleRecord(retained.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(decodeLifecycleRecord(retained.value, first.context)?.value.runtimeInputs).toEqual(first.inputs)
         expect(retained.value.value).not.toHaveProperty('teardownComplete')
         const inventory = await readActiveStackInventory(first.context.namespace)
         expect(inventory, JSON.stringify(inventory)).toMatchObject({ kind: 'complete', value: [{ stackId: first.context.stackId }] })
@@ -838,7 +838,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     })
 
     it('keeps interrupted reset previews read-only and reconciles an absent target only after approval', async () => {
-        const candidate = await generatedFixture({ toolchain: 'none' })
+        const candidate = await stackFixture()
         await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8'))
             .replace('[environment]\n', '[environment]\ngenerated_host_paths = ["reset-cache"]\n'))
         const target = join(candidate.checkout, 'reset-cache')
@@ -846,15 +846,17 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         await writeFile(join(target, 'generated.txt'), 'synthetic generated cache\n')
         const input = { configPath: candidate.configPath, dockerContext: 'default',
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000 }
+            sessionId: 'stack-production', timeoutMs: 5_000 }
         const { dockerContext: _dockerContext, ...lifecycleInput } = input
         const lifecycle = createLifecycleCommandAdapters(lifecycleInput, executeProbe)
         const loaded = await lifecycle.load({ configPath: input.configPath })
         if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
-        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
-        await configureGeneratedDocker(candidate, loaded.result, generation, {})
+        await configureStackDocker(candidate, loaded.result, ['reset-cache'])
         listenerProbeControl.enabled = true
-        expect(await runUp({ configPath: input.configPath }, lifecycle)).toMatchObject({ kind: 'complete', status: 0 })
+        const upped = await runUp({ configPath: input.configPath }, lifecycle)
+        expect(upped, JSON.stringify(upped)).toMatchObject({ kind: 'complete', status: 0 })
+        const startedInputs = await recordedInputs(loaded.result)
+        expect(startedInputs).toBeDefined()
         let interrupted = false
         const adapters = createDestructiveCommandAdapters(input, async step => {
             const outcome = await executeProbe(step)
@@ -890,25 +892,25 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const saved = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
         if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
-        expect(decodeLifecycleRecord(saved.value, loaded.result)?.value.generatedReplay?.generation).toBe(generation)
+        expect(decodeLifecycleRecord(saved.value, loaded.result)?.value.runtimeInputs).toEqual(startedInputs)
     })
 
-    it('preserves the generated replay after sleep and resumes the same identity without a teardown fact', async () => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+    it('preserves the recorded runtime inputs after sleep and resumes the same stack without a teardown fact', async () => {
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const slept = await runSleep({ configPath: first.candidate.configPath }, first.adapters)
         expect(slept, JSON.stringify(slept)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'stopped' } })
         const stopped = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (stopped.kind !== 'complete') throw new Error(JSON.stringify(stopped))
-        expect(decodeLifecycleRecord(stopped.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(decodeLifecycleRecord(stopped.value, first.context)?.value.runtimeInputs).toEqual(first.inputs)
         expect(stopped.value.value).not.toHaveProperty('teardownComplete')
 
         const resumed = await runUp({ configPath: first.candidate.configPath }, first.adapters)
 
-        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0 })
         const saved = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
-        expect(decodeLifecycleRecord(saved.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(decodeLifecycleRecord(saved.value, first.context)?.value.runtimeInputs).toEqual(first.inputs)
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
     })
 
@@ -917,18 +919,18 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             const index = argv.indexOf('--project-name')
             return index === -1 ? [] : [argv[index + 1]!]
         }))]
-        const first = await runGeneratedScenario({ toolchain: 'none' })
-        const second = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
+        const second = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         expect(second.result, JSON.stringify(second.result)).toMatchObject({ kind: 'complete', status: 0 })
         const [firstProject, ...otherFirst] = projectOf(first.steps)
         const [secondProject, ...otherSecond] = projectOf(second.steps)
         expect([otherFirst, otherSecond]).toEqual([[], []])
-        expect(firstProject).toMatch(/^generated-environment-[a-f0-9]{12}$/)
-        expect(secondProject).toMatch(/^generated-environment-[a-f0-9]{12}$/)
+        expect(firstProject).toMatch(/^stack-environment-[a-f0-9]{12}$/)
+        expect(secondProject).toMatch(/^stack-environment-[a-f0-9]{12}$/)
         expect(firstProject).not.toBe(secondProject)
-        // The committed Compose file stays portable between checkouts, so it names no project.
-        const compose = await readFile(join(first.candidate.checkout, 'generated/compose.yml'), 'utf8')
+        // The committed ownership override stays portable between checkouts, so it names no project.
+        const compose = await readFile(join(first.candidate.checkout, 'compose.cockpit.yml'), 'utf8')
         expect(compose).not.toMatch(/^name:/m)
 
         const configPath = first.candidate.configPath
@@ -936,50 +938,41 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const steps: ExecutionStep[] = []
         const resumed = await runUp({ configPath }, createLifecycleCommandAdapters({ configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000 }, async (step) => { steps.push(step); return executeProbe(step) }))
+            sessionId: 'stack-production', timeoutMs: 5_000 }, async (step) => { steps.push(step); return executeProbe(step) }))
         expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0 })
         expect(projectOf(steps)).toEqual([firstProject])
     })
 
     it.each([
         ['a sibling purpose', (text: string) => text.replace('purpose = "Synthetic application"', 'purpose = "Synthetic application, described again"')],
-        ['the guards', (text: string) => text.replace('[guards]\n', '[guards]\nprotected_branches = [ "main", "release" ]\n')],
-        ['a health property, reasons and provenance', (text: string) => text
-            .replace('property = "Application route returns its expected document"', 'property = "The application route answers"')
-            .replace('reason = "Pinned synthetic runtime"', 'reason = "Pinned runtime the product ships on"')
-            .replaceAll('reason = "Synthetic declaration"', 'reason = "Synthetic declaration, reworded"')],
-        ['the order of the mount tables', (text: string) => {
-            const data = '[[environment.generated.services.mounts]]\nkind = "volume"\nsource = "product-data"\ntarget = "/workspace/data"\n'
-            const source = '[[environment.generated.services.mounts]]\nkind = "bind"\nsource = "."\ntarget = "/workspace/source"\nsource_type = "directory"\n'
-            return text.replace(data, '\0').replace(source, data).replace('\0', source)
-        }],
+        ['the guards', (text: string) => `${text}\n[guards]\nprotected_branches = [ "main", "release" ]\n`],
+        ['the machine floor', (text: string) => text.replace('cold_start_seconds = 30', 'cold_start_seconds = 45')],
     ])('keeps the running stack when only %s changes', async (_label, edit) => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000,
+            sessionId: 'stack-production', timeoutMs: 5_000,
         }
         const previous = await readFile(input.configPath, 'utf8')
         const edited = edit(previous)
         expect(edited).not.toBe(previous)
         await writeFile(input.configPath, edited)
-        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
 
         // The fake daemon still reports the containers the first `up` started, with their labels.
         const resumed = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
 
-        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0 })
         const saved = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
-        expect(decodeLifecycleRecord(saved.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(decodeLifecycleRecord(saved.value, first.context)?.value.runtimeInputs).toEqual(first.inputs)
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
     })
 
     it('accepts a sibling the stack does not use while a stack is recorded, and refuses one it would mount until down', async () => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
         const configPath = first.candidate.configPath
@@ -995,81 +988,88 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(refused.diagnostics[0]!.message).toContain(`fix: run \`${cockpitCommand('down', { config: first.context.source.path })}\`, then rerun this command`)
         expect(await readFile(configPath, 'utf8')).toBe(before)
         const down = await runDown({ configPath }, createDestructiveCommandAdapters({ configPath, env, dockerContext: 'default',
-            sessionId: 'generated-production', timeoutMs: 5_000 }, executeProbe))
+            sessionId: 'stack-production', timeoutMs: 5_000 }, executeProbe))
         expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
         expect(await add('tools', 'always')).toMatchObject({ status: 0, result: { action: 'added' } })
     })
 
+    it('refuses an up below the declared machine floor before starting any service', async () => {
+        // The scripted runtime reports 2048 MB of memory and 2 CPUs.
+        const { result, steps } = await runStackScenario({ memoryMb: 4096 })
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MACHINE_MEMORY_BELOW_FLOOR',
+            message: 'the container runtime has 2048 MB of memory, below the 4096 MB that environment.machine.runtime_memory_mb declares',
+            fix: expect.stringContaining('lower the declared environment.machine floor') }] })
+        expect(steps.map(({ argv }) => argv.join(' ')).filter((line) => / up /.test(line))).toEqual([])
+    })
+
     it('refuses an up after a runtime change with one recovery that removes the old stack and starts the new one', async () => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000,
+            sessionId: 'stack-production', timeoutMs: 5_000,
         }
-        const previous = await readFile(input.configPath, 'utf8')
-        const intended = previous.replace('retries = 4', 'retries = 5')
-        expect(intended).not.toBe(previous)
-        await writeFile(input.configPath, intended)
-        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        await editCompose(first.candidate.checkout)
         const adapters = createLifecycleCommandAdapters(input, executeProbe)
         const loaded = await adapters.load({ configPath: input.configPath })
         if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
         const path = loaded.result.source.path
-        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
-        expect(generation).not.toBe(first.generation)
-        // The fake daemon renders whichever configuration it is told about; the recorded progress
-        // still names the identity the first `up` started.
-        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        // The fake daemon still reports the containers the first `up` started; the recorded
+        // progress names the Compose file they started from.
+        await configureStackDocker(first.candidate, loaded.result)
 
         const refused = await runUp({ configPath: input.configPath }, adapters)
 
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `the recorded stack runs an earlier version of the services, ports, mounts or images: cockpit.toml changed since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
+            message: `the recorded stack runs an earlier version of the services, ports, mounts or images: compose.yml changed since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
         }] })
-        // A Compose file an earlier cockpit rendered is not handed to Compose; down names the sync
-        // that brings it current and the down to run after it, and stops nothing until then.
-        const composePath = join(first.candidate.checkout, 'generated/compose.yml')
-        const rendered = await readFile(composePath, 'utf8')
-        await writeFile(composePath, `${rendered}# rendered by an earlier cockpit\n`)
+        // An ownership override that no longer matches a fresh render is not handed to Compose;
+        // down names the sync that brings it current, and stops nothing until then.
+        const overridePath = join(first.candidate.checkout, 'compose.cockpit.yml')
+        const rendered = await readFile(overridePath, 'utf8')
+        await writeFile(overridePath, `${rendered}# edited by hand\n`)
         const stale = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(stale).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'GENERATED_ENVIRONMENT_UNAVAILABLE',
-            message: expect.stringContaining('down and reset hand Compose only a Compose file rendered from the current cockpit.toml, so nothing was stopped or removed'),
-            fix: `run ${cockpitCommand('sync', { config: path })}, then ${cockpitCommand('down', { config: path })} (or the reset you ran)`,
+            message: `compose.cockpit.yml is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
         }] })
-        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
-        expect(await readFile(composePath, 'utf8')).toBe(rendered)
+        vi.stubEnv('HOME', first.candidate.home)
+        const synced = await syncGeneratedEnvironment({ configPath: input.configPath })
+        expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(await readFile(overridePath, 'utf8')).toBe(rendered)
         // Follow the recovery exactly as printed: it must remove the old stack and start the new one.
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
-        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        await configureStackDocker(first.candidate, loaded.result)
         const resumed = createLifecycleCommandAdapters(input, executeProbe)
         const restarted = await runUp({ configPath: input.configPath }, resumed)
-        expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0 })
     })
 
     it('refuses a rename while a stack is recorded under the old name until down runs under it, then syncs the rename', async () => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000,
+            sessionId: 'stack-production', timeoutMs: 5_000,
         }
         const path = first.context.source.path
+        // sync reads the state root from the process environment, as the CLI does.
+        vi.stubEnv('HOME', first.candidate.home)
+        const recorded = await syncGeneratedEnvironment({ configPath: input.configPath })
+        expect(recorded, JSON.stringify(recorded.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
         const ledgerPath = join(first.candidate.checkout, '.cockpit/generated-environment-ownership.json')
         const ledger = await readFile(ledgerPath, 'utf8')
         const original = await readFile(input.configPath, 'utf8')
-        const renamed = original.replace('name = "generated-environment"', 'name = "renamed-environment"')
+        const renamed = original.replace('name = "stack-environment"', 'name = "renamed-environment"')
         expect(renamed).not.toBe(original)
         await writeFile(input.configPath, renamed)
-        const refusal = { code: 'STACK_RECORDED_UNDER_EARLIER_NAME', message: `cockpit.name was changed from "generated-environment" while a stack started under that name is still recorded; the stack keeps the earlier name, so only down run under that name removes its containers — fix: set name = "generated-environment" in ${path} again, run \`${cockpitCommand('down', { config: path })}\`, then rename the cockpit and run \`${cockpitCommand('sync', { config: path })}\`` }
+        const refusal = { code: 'STACK_RECORDED_UNDER_EARLIER_NAME', message: `cockpit.name was changed from "stack-environment" while a stack started under that name is still recorded; the stack keeps the earlier name, so only down run under that name removes its containers — fix: set name = "stack-environment" in ${path} again, run \`${cockpitCommand('down', { config: path })}\`, then rename the cockpit and run \`${cockpitCommand('sync', { config: path })}\`` }
         const down = () => runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
-        // sync reads the state root from the process environment, as the CLI does.
-        vi.stubEnv('HOME', first.candidate.home)
 
         expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [refusal] })
         expect(await readFile(ledgerPath, 'utf8')).toBe(ledger)
@@ -1089,24 +1089,22 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
     })
 
     it.each([['up', false], ['asleep', true]])('refuses an up after a port base change while the stack is %s with the same down-then-up recovery, and the new port is leased', async (_state, sleepFirst) => {
-        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
         const input = {
             configPath: first.candidate.configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production', timeoutMs: 5_000,
+            sessionId: 'stack-production', timeoutMs: 5_000,
         }
         const previous = await readFile(input.configPath, 'utf8')
         const intended = previous.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4200')
         expect(intended).not.toBe(previous)
         await writeFile(input.configPath, intended)
-        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
         const adapters = createLifecycleCommandAdapters(input, executeProbe)
         const loaded = await adapters.load({ configPath: input.configPath })
         if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
         const path = loaded.result.source.path
-        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
-        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        await configureStackDocker(first.candidate, loaded.result)
 
         if (sleepFirst) {
             // The running stack holds its lease on the old port family; sleep releases it by stack,
@@ -1126,9 +1124,9 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         // not by the edited declaration.
         const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
-        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        await configureStackDocker(first.candidate, loaded.result)
         const restarted = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
-        expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0 })
         const coordination = await readState(first.context.namespace.paths.coordination(first.context.stackId))
         if (coordination.kind !== 'complete') throw new Error(JSON.stringify(coordination))
         expect(decodeCoordinationRecord(coordination.value, first.context.stackId)?.lease).toMatchObject({ released: false, ports: { APP_HOST_PORT: 4200 } })

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { createConnection } from 'node:net'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -11,31 +11,8 @@ import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../envi
 import type { CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
-    checkGeneratedEnvironment,
-    generatedApplicationProjection,
-    observeGeneratedApplication,
-    projectGeneratedApplicationNodeExecutable,
-    projectGeneratedApplicationRuntimeAuthority,
-    projectGeneratedApplicationMountSources,
-    resolveGeneratedApplicationOperation,
-    syncGeneratedEnvironment,
-    type GeneratedApplicationProjection,
-} from './generated-application.js'
-import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
-import {
-    dataModeOutcomeSavedAt,
-    executeDataMode,
-    observeDataMode,
-    planDataMode,
-    projectDataModeObservationSteps,
-    readDataModeOutcome,
-    type DataModeExecutionResult,
-} from './data-plane.js'
-import {
-    decodeLifecycleRecord,
     issueLifecycleRunContext,
     noticeLifecycleRun,
-    withLifecycleConfiguration,
     type LifecycleRunContext,
     type ReadinessRefusal,
     type RuntimeReadinessPurpose,
@@ -54,17 +31,10 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
+import { readSeededAt, recordSeeded, seedDue } from './seed.js'
 import { observeHostCapacity } from './host-observation.js'
-import type { GeneratedObservationRuntime } from './generated-stack.js'
-import {
-    observeExternalDependencies,
-    observeExternalDependency,
-    planExternalDependency,
-    verifyExternalDependency,
-} from './external-dependencies.js'
-import { checkoutId, composeProjectName, holderId, stackId } from './identity.js'
-import { observeDependencyInstall, planInstall, resolveInstallExecutables } from './installs.js'
+import { composeProjectName, holderId, stackId } from './identity.js'
 import {
     projectLifecycleStage,
     resolveLifecycleStage,
@@ -87,15 +57,12 @@ import {
     observeDockerRuntime,
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
-    projectRuntimeExecutionEnvironment,
-    projectDependencyRuntime,
     runtimeMeasurementProbeObservation,
     type ComposeArtifact,
     type RuntimeMeasurementProbeAuthority,
     type MachineFloorAuthority,
     type RuntimeLifecycleProjection,
     type RuntimeMountMismatch,
-    type RuntimeServiceEvidence,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
 import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
@@ -104,8 +71,7 @@ import {
     observeSetupCheckout,
     withSetupCheckoutProjection,
 } from './setup-observation.js'
-import { readState, selectStateRoot } from './state.js'
-import { externalDependencyTemplateFragments, inspectEnvironmentKeys } from './templates.js'
+import { selectStateRoot } from './state.js'
 
 export const mechanism = {
     id: 'lifecycle-adapter-composition',
@@ -115,10 +81,6 @@ export const mechanism = {
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
-
-function environmentCode(code: string): code is EnvironmentDiagnostic['code'] {
-    return (Object.values(ENVIRONMENT_CODES) as readonly string[]).includes(code)
-}
 
 function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string, fix?: string): readonly EnvironmentDiagnostic[] {
     return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target, ...(fix === undefined ? {} : { fix }) })])
@@ -186,44 +148,12 @@ export interface LifecycleCommandCompositionInput {
     readonly holderProcess?: HolderProcess
 }
 
-export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness'> & {
-    prepareGeneratedEnvironment(context: LifecycleRunContext, ports: PortLeaseProjection): Promise<GeneratedApplicationProjection | undefined>
-    completeGeneratedEnvironment(
-        context: LifecycleRunContext,
-        runtime: LifecycleRuntimeReadiness,
-        services: readonly RuntimeServiceEvidence[],
-        projection: GeneratedApplicationProjection,
-    ): Promise<EnvironmentCommandOutcome<import('./contract.js').EnvironmentObservation>>
-    completeGeneratedDependencies(
-        context: LifecycleRunContext,
-        runtime: LifecycleRuntimeReadiness,
-        services: readonly RuntimeServiceEvidence[],
-        projection: GeneratedApplicationProjection,
-    ): Promise<GeneratedCommandOutcome<readonly import('./contract.js').EnvironmentObservation[]>>
-    completeGeneratedVendors(
-        context: LifecycleRunContext,
-        runtime: LifecycleRuntimeReadiness,
-        services: readonly RuntimeServiceEvidence[],
-        projection: GeneratedApplicationProjection,
-    ): Promise<GeneratedCommandOutcome<import('./contract.js').EnvironmentObservation>>
-    completeGeneratedData(
-        context: LifecycleRunContext,
-        runtime: LifecycleRuntimeReadiness,
-        services: readonly RuntimeServiceEvidence[],
-        projection: GeneratedApplicationProjection,
-    ): Promise<EnvironmentCommandOutcome<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>>
+export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness' | 'seed'> & {
+    seed: NonNullable<UpCommandAdapters['seed']>
     withMachineFloorReadiness<T>(
         context: LifecycleRunContext,
         use: (observations: readonly import('./contract.js').EnvironmentObservation[]) => Promise<T>,
         refuse?: ReadinessRefusal<T>,
-    ): Promise<T | undefined>
-    withGeneratedRuntime<T>(
-        context: LifecycleRunContext,
-        readiness: LifecycleRuntimeReadiness,
-        use: (value: Readonly<{
-            application: GeneratedApplicationProjection
-            runtime: GeneratedObservationRuntime
-        }>) => Promise<T>,
     ): Promise<T | undefined>
     withRuntimeReadiness<T>(
         context: LifecycleRunContext,
@@ -232,10 +162,6 @@ export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepC
         refuse?: ReadinessRefusal<T>,
         purpose?: RuntimeReadinessPurpose,
     ): Promise<T | undefined>
-}
-
-type GeneratedCommandOutcome<T> = EnvironmentCommandOutcome<T> & {
-    readonly progressEvidence?: readonly unknown[]
 }
 
 interface LifecycleRuntimeReadiness {
@@ -251,8 +177,6 @@ interface CompositionBinding {
     readonly checkoutRoot: string
     readonly siblingsRoot: string
     readonly machineFloorAuthority?: MachineFloorAuthority
-    readonly generatedApplication?: GeneratedApplicationProjection
-    readonly generatedRuntime?: GeneratedObservationRuntime
 }
 
 function refusal(target: string, message = 'lifecycle composition authority is unavailable',
@@ -267,26 +191,6 @@ function refusal(target: string, message = 'lifecycle composition authority is u
             message,
             target,
         })]),
-    })
-}
-
-function leafRefusal<T>(
-    target: string,
-    message: string,
-    code: import('./contract.js').EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-    progressEvidence?: readonly unknown[],
-): GeneratedCommandOutcome<T> {
-    return Object.freeze({
-        kind: 'refusal' as const,
-        status: 2 as const,
-        result: null,
-        diagnostics: Object.freeze([Object.freeze({
-            severity: 'error' as const,
-            code,
-            message,
-            target,
-        })]),
-        ...(progressEvidence ? { progressEvidence: Object.freeze([...progressEvidence]) } : {}),
     })
 }
 
@@ -332,6 +236,23 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
+}
+
+// Literals, so the diagnostic inventory captures each fix beside its code.
+function seedFailed(context: LifecycleRunContext, message: string) {
+    return Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([Object.freeze({
+        severity: 'error' as const, code: 'DATA_SEED_FAILED' as const satisfies typeof ENVIRONMENT_CODES.DATA_SEED_FAILED,
+        message, target: 'environment.seed',
+        fix: `correct environment.seed in ${basename(context.source.path)} or the seed it runs, then rerun npx --no cockpit up --config <your cockpit.toml>`,
+    })]) })
+}
+
+function seedUnavailable(context: LifecycleRunContext, message: string) {
+    return Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([Object.freeze({
+        severity: 'error' as const, code: 'DATA_SEED_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.DATA_SEED_UNAVAILABLE,
+        message: `cockpit could not tell whether the seed is due: ${message}`, target: context.stackId,
+        fix: 'make sure the Docker daemon this stack runs on answers docker volume ls, then rerun npx --no cockpit up --config <your cockpit.toml>',
+    })]) })
 }
 
 function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
@@ -380,27 +301,6 @@ async function composeArtifacts(root: string, references: readonly string[]): Pr
         artifacts.push(artifact)
     }
     return Object.freeze(artifacts)
-}
-
-function generatedProjectionMatches(
-    generated: NonNullable<CompositionBinding['config']['environment']['generated']>,
-    browser: CompositionBinding['config']['browser'],
-    projection: GeneratedApplicationProjection,
-): boolean {
-    const profiles = [...new Set(generated.services.flatMap((service) => service.profiles))].sort()
-    const declaredMounts = generated.services.flatMap((service) => service.mounts
-        .map((mount) => `${service.id}:${mount.kind}:${mount.source}:${mount.target}`)).sort()
-    const manifest = browser?.project.manifest ?? (browser ? join(dirname(browser.project.lockfile), 'package.json') : undefined)
-    const runnerMounts = browser?.endpoint && manifest ? [
-        'cockpit-browser-runner:environment-file:.cockpit/browser/runner.sh:/cockpit/browser-runner.sh',
-        `cockpit-browser-runner:environment-file:${manifest}:/cockpit/project/package.json`,
-        `cockpit-browser-runner:environment-file:${browser.project.lockfile}:/cockpit/project/package-lock.json`,
-        `cockpit-browser-runner:bind:${browser.artifacts.runner}:/cockpit/artifacts`,
-    ] : []
-    const mounts = [...declaredMounts, ...runnerMounts].sort()
-    return JSON.stringify(projection.profiles) === JSON.stringify(profiles)
-        && JSON.stringify(projection.mounts) === JSON.stringify(mounts)
-        && projection.inspection.files.filter(({ path }) => path === generated.compose_file).length === 1
 }
 
 async function occupiedPort(port: number, timeoutMs: number): Promise<boolean | undefined> {
@@ -558,374 +458,74 @@ export function createLifecycleCommandAdapters(
         return Object.freeze({ ...issued, diagnostics: loaded.diagnostics })
     }
 
-    const projectGeneratedApplication = async (
-        context: LifecycleRunContext,
-        action: 'sync' | 'check',
-        ports?: PortLeaseProjection,
-        onCheckRefusal?: (diagnostics: readonly Readonly<{ code: string; message: string; target?: string; fix?: string }>[]) => void,
-    ): Promise<GeneratedApplicationProjection | undefined> => {
-        const binding = bindings.get(context)
-        const generated = binding?.config.environment.generated
-        if (!input || !binding || !generated) return undefined
-        const outcome = action === 'sync'
-            ? await syncGeneratedEnvironment({ configPath: input.configPath }, { execute }, ports)
-            : await checkGeneratedEnvironment({ configPath: input.configPath }, ports)
-        if (outcome.kind !== 'complete') {
-            if (action === 'sync') throw new RefusalError(outcome.diagnostics
-                .map(({ code, message, target }) => `${code}: ${message}${target ? ` (${target})` : ''}`).join('; '))
-            onCheckRefusal?.(outcome.diagnostics)
-            return undefined
-        }
-        const projection = generatedApplicationProjection(outcome.result.application)
-        if (!projection || projection.sourceSha256 !== context.source.sha256 || projection.runtimeSha256 !== context.runtimeSha256
-            || !generatedProjectionMatches(generated, binding.config.browser, projection)) return undefined
-        bindings.set(context, Object.freeze({ ...binding, generatedApplication: projection }))
-        return projection
-    }
+    const hostStep = (id: string, executable: ResolvedExecutable, args: readonly string[], cwd: string,
+        env: Readonly<Record<string, string>>, timeoutMs: number, stackId: string) => snapshotExecutionPlan({ steps: [Object.freeze({
+        id, argv: Object.freeze([executable.canonicalPath, ...args]) as unknown as readonly [string, ...string[]],
+        argv0: executable.invocationPath, cwd, env, timeoutMs,
+        stdoutLimitBytes: 1_048_576, stderrLimitBytes: 65_536, outputOverflow: 'retain-tail' as const,
+        paths: Object.freeze([]), ports: Object.freeze([]), labels: Object.freeze({ stackId }), expected: Object.freeze([]),
+        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode })]),
+        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
+    })] })?.steps[0]
 
-    const prepareGeneratedEnvironment: LifecycleCommandAdapterComposition['prepareGeneratedEnvironment'] = async (context, ports) => {
-        return projectGeneratedApplication(context, 'sync', ports)
-    }
-
-    const completeGeneratedDependencies: LifecycleCommandAdapterComposition['completeGeneratedDependencies'] = async (
-        context,
-        runtime,
-        services,
-        projection,
-    ) => {
-        const binding = bindings.get(context)
-        const generated = binding?.config.environment.generated
-        const dependencies = binding?.config.sibling.filter(({ toolchain }) => toolchain !== 'none') ?? []
-        const observations: import('./contract.js').EnvironmentObservation[] = []
-        const reject = (target: string, message: string, code?: import('./contract.js').EnvironmentDiagnostic['code']) =>
-            leafRefusal<readonly import('./contract.js').EnvironmentObservation[]>(
-                target, message, code, observations)
-        if (!input || !binding || !generated || binding.generatedApplication !== projection
-            || generatedApplicationProjection(projection) !== projection) {
-            return reject('generated-dependencies', 'generated dependency authority is unavailable')
-        }
-        const node = projectGeneratedApplicationNodeExecutable(projection)
-        if (!node) return reject('generated-dependencies', 'generated dependency executable authority is unavailable')
-        const executables = await resolveInstallExecutables(node)
-        if (executables.kind !== 'complete') {
-            return reject(executables.target, executables.message, executables.code)
-        }
-        for (const sibling of dependencies) {
-            const serviceMatches = generated.services.filter(({ sibling: owner }) => owner === sibling.slug)
-            if (serviceMatches.length !== 1) {
-                return reject(sibling.slug, 'generated dependency service identity is ambiguous')
-            }
-            const service = serviceMatches[0]!
-            const mountedPolicies = service.mounts.flatMap((mount) => {
-                if (mount.kind !== 'volume') return []
-                const volume = generated.volumes.find(({ id }) => id === mount.source)
-                if (!volume || volume.purpose !== 'dependencies' || !volume.install_policy) return []
-                const policy = binding.config.environment.install_policies.find((candidate) =>
-                    candidate.volume === volume.install_policy && candidate.toolchain === sibling.toolchain)
-                return policy ? [{ policy, volume: volume.id }] : []
-            })
-            if (mountedPolicies.length !== 1) {
-                return reject(sibling.slug, 'generated dependency install policy is ambiguous')
-            }
-            const evidence = services.filter(({ service: id }) => id === service.id)
-            if (evidence.length !== 1) {
-                return reject(service.id, 'generated dependency service evidence is unavailable')
-            }
-            const selected = mountedPolicies[0]!
-            if (selected.policy.install.length === 0 || selected.policy.load_probe.length === 0) {
-                return reject(sibling.slug, 'generated dependency install policy commands are empty')
-            }
-            const policy = Object.freeze({
-                volume: selected.policy.volume,
-                lockfile: selected.policy.lockfile,
-                install: Object.freeze([...selected.policy.install]) as readonly [string, ...string[]],
-                load_probe: Object.freeze([...selected.policy.load_probe]) as readonly [string, ...string[]],
-            })
-            const dependencyRuntime = projectDependencyRuntime({
-                topology: runtime.topology,
-                evidence: evidence[0]!,
-                service: service.id,
-                volume: selected.volume,
-            })
-            if (!dependencyRuntime) return reject(service.id, 'generated dependency runtime authority is unavailable')
-            const runtimePlan = createDependencyRuntimePlan({ runtime: dependencyRuntime })
-            if (runtimePlan.kind !== 'planned') return reject(service.id, runtimePlan.reason)
-            const inspectOutcome = await execute(runtimePlan.inspect)
-            const architectureOutcome = await execute(runtimePlan.architecture)
-            const abiOutcome = await execute(runtimePlan.abi)
-            const admitted = admitDependencyRuntime({ plan: runtimePlan, inspectOutcome, architectureOutcome, abiOutcome })
-            if (admitted.kind !== 'complete') return reject(service.id, admitted.reason)
-            const checkoutRoot = resolve(binding.siblingsRoot, sibling.dir)
-            if (!confined(binding.siblingsRoot, checkoutRoot)) {
-                return reject(sibling.slug, 'generated dependency checkout escaped the sibling root')
-            }
-            const planned = await planInstall({
-                checkoutId: checkoutId({ checkoutPath: checkoutRoot }),
-                holderId: context.holderId,
-                pid: process.pid,
-                checkoutRoot,
-                lockfilePath: resolve(checkoutRoot, selected.policy.lockfile),
-                state: context.namespace,
-                runtime: admitted.binding,
-                policy,
-                executables: executables.executables,
-                execution: {
-                    env: Object.freeze({}),
-                    installTimeoutMs: input.timeoutMs,
-                    probeTimeoutMs: input.timeoutMs,
-                    helperTimeoutMs: input.timeoutMs,
-                    stdoutLimitBytes: 65_536,
-                    stderrLimitBytes: 65_536,
-                },
-            }, { execute })
-            if (planned.kind !== 'complete') return reject(planned.target, planned.message, planned.code)
-            const observation = await observeDependencyInstall({
-                planned,
-                options: { execute },
-                stackId: context.stackId,
-                observedAt: new Date().toISOString(),
-            })
-            observations.push(observation)
-            if (observation.observed.state !== 'available') {
-                return reject(observation.source, observation.observed.reason, observation.code)
-            }
-        }
-        return Object.freeze({
-            kind: 'complete' as const,
-            status: 0 as const,
-            diagnostics: Object.freeze([]),
-            result: Object.freeze(observations),
-            progressEvidence: Object.freeze([...observations]),
-        })
-    }
-
-    const completeGeneratedEnvironment: LifecycleCommandAdapterComposition['completeGeneratedEnvironment'] = async (
-        context,
-        runtime,
-        _services,
-        projection,
-    ) => {
-        const binding = bindings.get(context)
-        if (!binding?.generatedRuntime || binding.generatedApplication !== projection
-            || generatedApplicationProjection(projection) !== projection) {
-            return leafRefusal<import('./contract.js').EnvironmentObservation>(
-                'generated-environment', 'generated environment authority is unavailable')
-        }
-        const observation = await observeGeneratedApplication(
-            projection,
-            { topology: runtime.topology, runtime: binding.generatedRuntime },
-            execute,
-        )
-        return observation
-            ? Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result: observation })
-            : leafRefusal<import('./contract.js').EnvironmentObservation>(
-                'generated-environment', 'generated environment observations are incomplete')
-    }
-
-    const completeGeneratedVendors: LifecycleCommandAdapterComposition['completeGeneratedVendors'] = async (
-        context,
-        runtime,
-        services,
-        projection,
-    ) => {
-        const binding = bindings.get(context)
-        const generated = binding?.config.environment.generated
-        const observed: import('./external-dependencies.js').ExternalDependencyObservation[] = []
-        const reject = (target: string, message: string, code?: import('./contract.js').EnvironmentDiagnostic['code']) =>
-            leafRefusal<import('./contract.js').EnvironmentObservation>(
-                target, message, code, observed)
-        if (!binding?.generatedRuntime || !generated || generated.vendors.length === 0
-            || binding.generatedApplication !== projection || generatedApplicationProjection(projection) !== projection) {
-            return reject('generated-vendors', 'generated vendor authority is unavailable')
-        }
-        const prepared = []
-        for (const vendor of generated.vendors) {
-            let generatedRuntime = binding.generatedRuntime
-            if (vendor.egress_guard) {
-                const evidence = services.filter(({ service }) => service === vendor.egress_guard!.local_service)
-                if (evidence.length !== 1) {
-                    return reject(vendor.id, 'generated vendor service evidence is unavailable')
-                }
-                generatedRuntime = Object.freeze({
-                    ...generatedRuntime,
-                    serviceAuthority: Object.freeze({ topology: runtime.topology, evidence: evidence[0]! }),
-                })
-            }
-            const authority = projectGeneratedApplicationRuntimeAuthority(projection, {
-                topology: runtime.topology,
-                runtime: generatedRuntime,
-            })
-            if (!authority) return reject(vendor.id, 'generated vendor runtime authority is unavailable')
-            const fragments = externalDependencyTemplateFragments(vendor)
-            if (fragments.kind !== 'complete') return reject(vendor.id, fragments.reason)
-            const presentShadowFiles = []
-            for (const shadow of vendor.shadow_files ?? []) {
-                const sibling = binding.config.sibling.find(({ slug }) => slug === shadow.sibling)
-                const declaration = sibling?.environment_files?.find(({ instance }) => instance === shadow.instance)
-                if (!sibling || !declaration) continue
-                const siblingRoot = resolve(binding.siblingsRoot, sibling.dir)
-                if (!confined(binding.siblingsRoot, siblingRoot)) continue
-                const inspection = await inspectEnvironmentKeys({
-                    siblingRoot,
-                    templatePath: resolve(siblingRoot, declaration.template),
-                    instancePath: resolve(siblingRoot, declaration.instance),
-                })
-                if (inspection.kind === 'fresh' || inspection.kind === 'stale') {
-                    presentShadowFiles.push(Object.freeze({ sibling: shadow.sibling, instance: shadow.instance }))
-                }
-            }
-            const plan = planExternalDependency({
-                authority,
-                purpose: 'startup',
-                declaration: vendor,
-                fragments,
-                runtime: generatedRuntime,
-                observedAt: new Date().toISOString(),
-                presentShadowFiles: Object.freeze(presentShadowFiles),
-            })
-            if (plan.kind !== 'complete') return reject(vendor.id, plan.message)
-            prepared.push(Object.freeze({ vendor, authority, plan }))
-        }
-        for (const { vendor, authority, plan } of prepared) {
-            const evidence = await verifyExternalDependency(plan, { execute })
-            const observation = observeExternalDependency({ evidence, authority })
-            if (!observation) return reject(vendor.id, 'generated vendor observation is unavailable')
-            observed.push(observation)
-            if (observation.state !== 'available') {
-                return reject(vendor.id, observation.reason, ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE)
-            }
-        }
-        const aggregateAuthority = projectGeneratedApplicationRuntimeAuthority(projection, {
-            topology: runtime.topology,
-            runtime: binding.generatedRuntime,
-        })
-        const aggregate = aggregateAuthority
-            ? observeExternalDependencies({
-                authority: aggregateAuthority,
-                observations: Object.freeze(observed),
-                purpose: 'startup',
-            })
-            : undefined
-        return aggregate
-            ? Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result: aggregate,
-                progressEvidence: Object.freeze([...observed]) })
-            : reject('generated-vendors', 'generated vendor observations are incomplete')
-    }
-
-    // A product-data volume removed after its data was applied (by `reset`, `docker volume prune` or
-    // a runtime reset) comes back empty at the next start, while the saved outcome still says the
-    // data was applied; `up` then only reran the read-only probes and refused on every retry. Docker
-    // records when each volume was created, so a volume created after the outcome was saved holds
-    // none of that data and the mode is applied again. Both instants come from clocks the runtime
-    // keeps in step with the host; a start always creates the volume before its data is applied.
-    const dataVolumesCreatedSince = async (context: LifecycleRunContext, cwd: string, ids: readonly string[], savedAt: string): Promise<boolean | undefined> => {
-        if (ids.length === 0 || !input) return false
+    // When each resettable volume of this stack was created, by its Compose key; a volume no service
+    // has created yet has no entry. Undefined when Docker could not say.
+    const resettableVolumesCreatedAt = async (context: LifecycleRunContext, binding: CompositionBinding): Promise<readonly number[] | undefined> => {
+        if (!input) return undefined
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return undefined
-        const binding = bindings.get(context)
-        if (!binding) return undefined
+        const env = runtimeEnvironment(input.env)
         const project = composeProjectName({ cockpitName: binding.config.cockpit.name, stackId: context.stackId })
-        const step = snapshotExecutionPlan({ steps: [Object.freeze({
-            id: 'data:volume-created', argv: Object.freeze([docker.value.canonicalPath, 'volume', 'inspect', '--format', '{{json .CreatedAt}}',
-                ...ids.map((id) => `${project}_${id}`)] as const),
-            argv0: docker.value.invocationPath, cwd, env: runtimeEnvironment(input.env), timeoutMs: input.timeoutMs,
-            stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536, paths: Object.freeze([]), ports: Object.freeze([]),
-            labels: Object.freeze({ stackId: context.stackId }), expected: Object.freeze([]),
-            consumedFiles: Object.freeze([Object.freeze({ path: docker.value.canonicalPath, sha256: docker.value.sha256, maxBytes: 536_870_912,
-                argvIndexes: Object.freeze([0]), executable: true, executionMode: docker.value.executionMode })]),
-            filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-        })] })?.steps[0]
-        if (!step) return undefined
-        const outcome = authenticatedExecutionOutcome(await execute(step), step)
-        if (!outcome || outcome.kind !== 'complete' || outcome.execution.exitCode !== 0) return undefined
-        // `{{json .CreatedAt}}` prints one quoted instant per volume; anything else refuses below.
-        const created = Buffer.from(outcome.stdout).toString('utf8').trim().split('\n')
+        const listing = hostStep('seed:volume-list', docker.value, ['volume', 'ls', '--filter', `label=com.docker.compose.project=${project}`,
+            '--format', '{{.Name}}\t{{.Label "com.docker.compose.volume"}}'], binding.checkoutRoot, env, input.timeoutMs, context.stackId)
+        const listed = listing && authenticatedExecutionOutcome(await execute(listing), listing)
+        if (!listed || listed.kind !== 'complete' || listed.execution.exitCode !== 0) return undefined
+        const keys = new Set(binding.config.environment.resettable_volumes)
+        const names = Buffer.from(listed.stdout).toString('utf8').split('\n').filter(Boolean)
+            .map((line) => line.split('\t')).filter(([, key]) => key !== undefined && keys.has(key)).map(([name]) => name!)
+        if (names.length === 0) return Object.freeze([])
+        const inspection = hostStep('seed:volume-created', docker.value, ['volume', 'inspect', '--format', '{{json .CreatedAt}}', ...names],
+            binding.checkoutRoot, env, input.timeoutMs, context.stackId)
+        const inspected = inspection && authenticatedExecutionOutcome(await execute(inspection), inspection)
+        if (!inspected || inspected.kind !== 'complete' || inspected.execution.exitCode !== 0) return undefined
+        // `{{json .CreatedAt}}` prints one quoted instant per volume; anything else is unreadable.
+        const created = Buffer.from(inspected.stdout).toString('utf8').trim().split('\n')
             .map((line) => /^"[^"\\]+"$/.test(line) ? Date.parse(line.slice(1, -1)) : Number.NaN)
-        if (created.length !== ids.length || created.some((instant) => !Number.isFinite(instant))) return undefined
-        // Docker records CreatedAt in whole seconds, so a volume created in the second the outcome
-        // was saved is ambiguous. It is read as the volume the data went into: a start creates the
-        // volume and applies the data moments later, often within that second, and reading it as
-        // recreated would apply the data again on every later `up`; recreating it within a second of
-        // the save would need a reset and a new start in that second.
-        const savedSecond = Math.floor(Date.parse(savedAt) / 1000)
-        return created.some((instant) => Math.floor(instant / 1000) > savedSecond)
+        return created.length === names.length && created.every(Number.isFinite) ? Object.freeze(created) : undefined
     }
 
-    const completeGeneratedData: LifecycleCommandAdapterComposition['completeGeneratedData'] = async (
-        context,
-        runtime,
-        _services,
-        projection,
-    ) => {
+    const seed: LifecycleCommandAdapterComposition['seed'] = async (context, up) => {
         const binding = bindings.get(context)
-        const generated = binding?.config.environment.generated
-        const data = generated?.data
-        if (!binding?.generatedRuntime || !generated || !data || binding.generatedApplication !== projection
-            || generatedApplicationProjection(projection) !== projection) {
-            return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-                'generated-data', 'generated data authority is unavailable')
-        }
-        const durable = await readDataModeOutcome({
-            namespace: context.namespace,
-            stackId: context.stackId,
-            configSha256: context.runtimeSha256,
-            generation: projection.generation,
-            mode: data.default_mode,
+        const declared = binding?.config.environment.seed
+        if (!input || !binding) return seedUnavailable(context, 'the lifecycle binding is unavailable')
+        if (!declared) return Object.freeze({ kind: 'none' as const })
+        const [seededAt, created] = await Promise.all([readSeededAt(context.namespace, context.stackId),
+            resettableVolumesCreatedAt(context, binding)])
+        if (seededAt === undefined) return seedUnavailable(context, 'the record of the last seed is unreadable')
+        if (created === undefined) return seedUnavailable(context, 'Docker did not report when the resettable volumes were created')
+        if (!seedDue(seededAt, created)) return Object.freeze({ kind: 'current' as const })
+        const env = Object.freeze({
+            ...Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+            ...Object.fromEntries(Object.entries(up.ports).map(([name, port]) => [name, String(port)])),
+            ...Object.fromEntries(up.entrypoints.map(({ name, value }) => [`COCKPIT_ENTRYPOINT_${name.toUpperCase().replaceAll('-', '_')}`, value])),
         })
-        const runtimeAuthority = projectGeneratedApplicationRuntimeAuthority(projection, {
-            topology: runtime.topology, runtime: binding.generatedRuntime,
-        })
-        if (!runtimeAuthority) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-            'generated-data', `generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${cockpitCommand('up', { config: context.source.path })}`)
-        const planned = await withLifecycleConfiguration(context, async (configuration) => planDataMode({
-            environment: generated,
-            mode: data.default_mode,
-            checkoutRoot: binding.checkoutRoot,
-            includeFixtureVolume: false,
-            namespace: context.namespace,
-            stackId: context.stackId,
-            holderId: context.holderId,
-            configuration,
-            generation: projection.generation,
-            observedAt: new Date().toISOString(),
-            runtimeAuthority,
-            resolve: (operation, stepContext) => {
-                const resolved = resolveGeneratedApplicationOperation(
-                    projection,
-                    { topology: runtime.topology, runtime: binding.generatedRuntime! },
-                    operation,
-                    stepContext,
-                )
-                if (!resolved) throw new RefusalError('generated data operation authority is unavailable')
-                return resolved
-            },
-        }))
-        if (!planned || planned.kind !== 'preview') {
-            const diagnostic = planned?.diagnostics[0]
-            return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-                diagnostic?.target ?? 'generated-data', diagnostic?.message ?? 'generated data plan is unavailable')
+        const executable = await resolveExecutable(declared.argv[0]!, env)
+        if (executable.state !== 'available') return seedFailed(context, `environment.seed names ${declared.argv[0]}, which could not be run: ${executable.reason}`)
+        const step = hostStep('seed:run', executable.value, declared.argv.slice(1), binding.checkoutRoot, env,
+            declared.timeout_seconds * 1_000, context.stackId)
+        if (!step) return seedFailed(context, 'the seed command could not be planned within the execution bounds')
+        const ran = authenticatedExecutionOutcome(await execute(step), step)
+        if (!ran || ran.kind !== 'complete' || ran.execution.exitCode !== 0) {
+            const status = !ran ? 'did not run' : ran.execution.signal ? `was stopped by ${ran.execution.signal}`
+                : ran.kind === 'refusal' && ran.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED ? `did not complete (${ran.code})`
+                    : `exited with status ${ran.execution.exitCode}`
+            return seedFailed(context, `the seed command ${status}; its data may be partly applied, and it runs again on the next up`)
         }
-        const savedAt = durable ? dataModeOutcomeSavedAt(durable) : undefined
-        const recreated = savedAt === undefined ? false : await dataVolumesCreatedSince(context, binding.checkoutRoot,
-            generated.volumes.filter(({ purpose }) => purpose === 'product-data').map(({ id }) => id), savedAt)
-        if (recreated === undefined) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-            'generated-data', 'the creation times of the product-data volumes could not be read, so cockpit cannot tell whether their data survived')
-        if (durable && !recreated) {
-            const steps = projectDataModeObservationSteps({ plan: planned.plan, projection: durable })
-            if (!steps) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-                'generated-data', 'generated data readback authority is unavailable')
-            const outcomes = await Promise.all(steps.map((step) => execute(step)))
-            const observation = observeDataMode({ plan: planned.plan, projection: durable, outcomes: Object.freeze(outcomes) })
-            return observation
-                ? Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result: observation })
-                : leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-                    'generated-data', 'generated data readback is unavailable')
-        }
-        const result = await executeDataMode(planned.plan, execute)
-        if (result.kind === 'refusal') {
-            return Object.freeze({ kind: 'refusal' as const, status: 2 as const, diagnostics: result.diagnostics, result: null })
-        }
-        return Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result })
+        const recorded = await recordSeeded({ namespace: context.namespace, stackId: context.stackId,
+            holderId: context.holderId, seededAt: new Date().toISOString() })
+        return recorded ? Object.freeze({ kind: 'ran' as const })
+            : seedUnavailable(context, 'the seed ran, and its success could not be recorded, so the next up runs it again')
     }
 
     const withRuntimeReadiness: LifecycleCommandAdapterComposition['withRuntimeReadiness'] = (context, use, ports, refuse, purpose) =>
@@ -941,47 +541,8 @@ export function createLifecycleCommandAdapters(
         purpose: RuntimeReadinessPurpose | undefined,
         resolvedMounts?: readonly string[],
     ): Promise<T | undefined> => {
-        let binding = bindings.get(context)
+        const binding = bindings.get(context)
         if (!input || !binding) return undefined
-        const generated = binding.config.environment.generated
-        let checkRefusal: Readonly<{ code: string; message: string; target?: string; fix?: string }> | undefined
-        const generatedApplication = generated
-            ? binding.generatedApplication ?? await projectGeneratedApplication(context, 'check', ports, diagnostics => { checkRefusal = diagnostics[0] })
-            : undefined
-        // Name why the generated files do not match cockpit.toml (an edit not yet synced, a hand
-        // edit, files an earlier cockpit rendered) instead of letting health report only that its
-        // evidence went missing.
-        if (generated && !generatedApplication) return checkRefusal ? refuse?.(Object.freeze([Object.freeze({
-            ...environmentCode(checkRefusal.code)
-                ? { code: checkRefusal.code, message: checkRefusal.message, ...(checkRefusal.fix ? { fix: checkRefusal.fix } : {}) }
-                // Teardown hands Compose the generated file, and cockpit hands Compose only bytes it
-                // rendered from the current cockpit.toml: a stale file could name containers, volumes
-                // or networks the declaration cannot account for. The plain sync fix left the person
-                // to guess that down still had to be run afterwards.
-                : purpose === 'teardown' ? {
-                    code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                    message: `the generated files do not match cockpit.toml (${checkRefusal.code}: ${checkRefusal.message}), and down and reset hand Compose only a Compose file rendered from the current cockpit.toml, so nothing was stopped or removed`,
-                    fix: `run ${cockpitCommand('sync', { config: context.source.path })}, then ${cockpitCommand('down', { config: context.source.path })} (or the reset you ran)`,
-                } : {
-                    code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                    message: `the generated files do not match cockpit.toml, so the running stack cannot be checked: ${checkRefusal.code}: ${checkRefusal.message}`,
-                    ...(checkRefusal.fix ? { fix: checkRefusal.fix } : {}),
-                },
-            severity: 'error' as const, target: checkRefusal.target ?? input.configPath,
-        })])) : undefined
-        if (generated && !ports) return undefined
-        if (generated && generatedApplication) {
-            const stored = await readState(context.namespace.paths.lifecycle(context.stackId))
-            if (stored.kind === 'complete') {
-                const decoded = decodeLifecycleRecord(stored.value, context)
-                // Runtime readiness authenticates the current runtime. The lifecycle application
-                // owns comparison with persisted progress and can name a generated-identity change;
-                // hiding it here turns an actionable mismatch into a generic missing-authority error.
-                if (!decoded) return undefined
-            } else if (stored.kind !== 'missing') return undefined
-        }
-        binding = bindings.get(context)
-        if (!binding) return undefined
         const currentBinding = binding
         // The machine floor bounds cold start and host capacity; without it there is nothing to hold
         // the runtime to, so say which table is missing instead of a generic evidence refusal.
@@ -1019,53 +580,34 @@ export function createLifecycleCommandAdapters(
         const measurementObservation = measured.kind === 'admitted'
             ? observeRuntimeMeasurement(measured, context.stackId) : undefined
         let artifacts: readonly ComposeArtifact[] | undefined
-        // A generated Compose file is rendered from cockpit.toml, so only a compose-first stack adds its own files.
         let inputs: Readonly<Record<string, string>> = Object.freeze({ [basename(context.source.path)]: context.runtimeSha256 })
-        let activeProfiles = input.activeProfiles ?? []
+        const activeProfiles = input.activeProfiles ?? []
         let expectedMountSources: readonly string[]
-        if (generated && generatedApplication) {
-            if (input.activeProfiles !== undefined
-                && JSON.stringify(input.activeProfiles) !== JSON.stringify(generatedApplication.profiles)) return undefined
-            const ownedCompose = generatedApplication.inspection.files.find(({ path }) => path === generated.compose_file)
-            const artifact = ownedCompose
-                ? await composeArtifact(currentBinding.checkoutRoot, generated.compose_file, ownedCompose.sha256)
-                : undefined
-            if (!artifact) return undefined
-            artifacts = Object.freeze([artifact])
-            activeProfiles = generatedApplication.profiles
-            const sources = await projectGeneratedApplicationMountSources(generatedApplication)
-            if (!sources) return undefined
-            if ('kind' in sources) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `generated host input must be an ordinary ${sources.expectedType} without symbolic-link components; missing, unreadable or wrong-type inputs cannot be handed to Docker; restore or create the declared input, then rerun ${cockpitCommand('up')}`,
-                sources.path))
-            expectedMountSources = sources
-        } else {
-            const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
-            if (!declared) return undefined
-            // The cockpit's own Compose files carry no ownership labels; the override `sync`
-            // publishes adds them, and it is admitted only while it equals a fresh render.
-            const ownership = renderComposeOwnership({
-                sources: declared.map(({ reference, source }) => ({ reference, source })),
-                stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
-                resettableVolumes: currentBinding.config.environment.resettable_volumes,
-            })
-            if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
-            const override = await composeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
-                createHash('sha256').update(ownership.bytes).digest('hex'))
-            if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
-                COMPOSE_OWNERSHIP_FILE))
-            artifacts = Object.freeze([...declared, override])
-            inputs = Object.freeze({ ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])) })
-            expectedMountSources = Object.freeze([...new Set([
-                ...currentBinding.config.sibling
-                    .filter((sibling) => sibling.mount === 'always')
-                    .map((sibling) => resolve(currentBinding.siblingsRoot, sibling.dir)),
-                ...currentBinding.config.environment.generated_host_paths
-                    .map((path) => resolve(currentBinding.checkoutRoot, path)),
-            ])].sort())
-        }
+        const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
+        if (!declared) return undefined
+        // The cockpit's own Compose files carry no ownership labels; the override `sync`
+        // publishes adds them, and it is admitted only while it equals a fresh render.
+        const ownership = renderComposeOwnership({
+            sources: declared.map(({ reference, source }) => ({ reference, source })),
+            stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
+            resettableVolumes: currentBinding.config.environment.resettable_volumes,
+        })
+        if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+            `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
+        const override = await composeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
+            createHash('sha256').update(ownership.bytes).digest('hex'))
+        if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+            `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
+            COMPOSE_OWNERSHIP_FILE))
+        artifacts = Object.freeze([...declared, override])
+        inputs = Object.freeze({ ...inputs, ...Object.fromEntries(declared.map(({ reference, sha256 }) => [reference, sha256])) })
+        expectedMountSources = Object.freeze([...new Set([
+            ...currentBinding.config.sibling
+                .filter((sibling) => sibling.mount === 'always')
+                .map((sibling) => resolve(currentBinding.siblingsRoot, sibling.dir)),
+            ...currentBinding.config.environment.generated_host_paths
+                .map((path) => resolve(currentBinding.checkoutRoot, path)),
+        ])].sort())
         if (!artifacts || artifacts.length === 0) return undefined
         if (resolvedMounts) expectedMountSources = resolvedMounts
         const siblingDirectories = Object.freeze(Object.fromEntries(currentBinding.config.sibling
@@ -1087,16 +629,11 @@ export function createLifecycleCommandAdapters(
             coldStartLimitMillis: machine.cold_start_seconds * 1_000,
             expectedMountSources,
             activeProfiles,
-        }, generatedApplication?.generatedComposeAuthority && ports ? {
-            generatedComposeAuthority: generatedApplication.generatedComposeAuthority,
-            portLeaseProjection: ports,
-        // A compose-first stack reads its host ports from the [ports.bases] variables and its
-        // sibling checkouts from the [[sibling]] var variables, so both reach Compose as those
-        // variables instead of the `${VAR:-default}` fallback. A generated file writes each sibling
-        // path literally and its runtime authority admits only leased ports, so it gets neither
-        // the sibling variables nor a use for them.
-        } : !generated ? { ownComposeFiles: true as const, cockpitId: context.cockpitId, stackId: context.stackId,
-            ...(ports ? { portLeaseProjection: ports } : {}), siblingDirectories } : undefined)
+        // The stack reads its host ports from the [ports.bases] variables and its sibling checkouts
+        // from the [[sibling]] var variables, so both reach Compose as those variables instead of the
+        // `${VAR:-default}` fallback.
+        }, { ownComposeFiles: true as const, cockpitId: context.cockpitId, stackId: context.stackId,
+            ...(ports ? { portLeaseProjection: ports } : {}), siblingDirectories })
         if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
         const topologyPlan = createRuntimeTopologyPlan({
@@ -1126,21 +663,6 @@ export function createLifecycleCommandAdapters(
                 topology.topology.services.flatMap(({ bindMountSources }) => bindMountSources), expectedMountSources)
             if (redirected.length > 0) return refuse?.(redirectedMountDiagnostics(redirected, currentBinding.config, currentBinding.siblingsRoot))
         }
-        if (generatedApplication) {
-            const step = runtime.plan.steps[0]
-            const publicEnv = projectRuntimeExecutionEnvironment(topology.topology)
-            if (!step || !publicEnv) return undefined
-            const generatedRuntime: GeneratedObservationRuntime = Object.freeze({
-                root: currentBinding.checkoutRoot,
-                executable: docker.value,
-                composeFiles: Object.freeze(artifacts.map(({ canonicalPath: path, sha256 }) => Object.freeze({ path, sha256 }))),
-                projectName: composeProjectName({ cockpitName: currentBinding.config.cockpit.name, stackId: context.stackId }),
-                publicEnv,
-                stdoutLimitBytes: step.stdoutLimitBytes,
-                stderrLimitBytes: step.stderrLimitBytes,
-            })
-            bindings.set(context, Object.freeze({ ...currentBinding, generatedRuntime }))
-        }
         const disk = await resolveDiskCapacityExecutable()
         if (disk.state !== 'available') return undefined
         const floorPlan = createMachineFloorPlan({
@@ -1168,24 +690,6 @@ export function createLifecycleCommandAdapters(
         })
         issuedRuntimeReadiness.add(readiness)
         return use(readiness)
-    }
-
-    const withGeneratedRuntime: LifecycleCommandAdapterComposition['withGeneratedRuntime'] = async (
-        context,
-        readiness,
-        use,
-    ) => {
-        const binding = bindings.get(context)
-        const application = binding?.generatedApplication
-        const runtime = binding?.generatedRuntime
-        if (!binding?.config.environment.generated || !application || !runtime
-            || generatedApplicationProjection(application) !== application
-            || !issuedRuntimeReadiness.has(readiness)
-            || !projectGeneratedApplicationRuntimeAuthority(application, {
-                topology: readiness.topology,
-                runtime,
-            })) return undefined
-        return use(Object.freeze({ application, runtime }))
     }
 
     const withMachineFloorReadiness: LifecycleCommandAdapterComposition['withMachineFloorReadiness'] = async (context, use, refuse) => {
@@ -1239,7 +743,6 @@ export function createLifecycleCommandAdapters(
             now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
         })
         if (reaped.kind === 'refusal') return refuse?.(reaped.diagnostics)
-        if (reaped.interruptedRestore) noticeLifecycleRun(context, reaped.interruptedRestore)
         const now = new Date().toISOString()
         const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
         const acquired = await acquirePortProjection({
@@ -1288,5 +791,5 @@ export function createLifecycleCommandAdapters(
         }
     }
 
-    return Object.freeze({ load, execute, prepareGeneratedEnvironment, completeGeneratedEnvironment, completeGeneratedDependencies, completeGeneratedData, completeGeneratedVendors, withRuntimeReadiness, withGeneratedRuntime, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts })
+    return Object.freeze({ load, execute, seed, withRuntimeReadiness, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts })
 }

@@ -15,13 +15,12 @@ import {
 } from '../environment/contract.js'
 import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
 import { CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
-import { deriveRegistry } from '../registry-derivation.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'configuration-loading',
     module: 'packages/cockpit/src/config/load.ts',
-    exports: ['loadCockpitConfig', 'loadAutonomyPolicy', 'evaluatorTools', 'unboundHostOperation', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
+    exports: ['loadCockpitConfig', 'loadAutonomyPolicy', 'evaluatorTools', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
 } as const
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
@@ -117,22 +116,13 @@ const issuedWorkEnvironmentConfigProjections = new WeakMap<object, ConsumedWorkE
 function projectBrowserConfig(declaredBrowser: NonNullable<CockpitConfig['browser']>) {
     return Object.freeze({
         engine: declaredBrowser.engine,
-        ...(declaredBrowser.resources === undefined ? {} : { resources: Object.freeze({
-            memory_mb: declaredBrowser.resources.memory_mb, cpus: declaredBrowser.resources.cpus,
-            provenance: Object.freeze({ ...declaredBrowser.resources.provenance }),
-        }) }),
         networkExposure: declaredBrowser.network_exposure,
         ...(declaredBrowser.network_exposure_reason === undefined ? {} : { networkExposureReason: declaredBrowser.network_exposure_reason }),
         harnesses: Object.freeze(declaredBrowser.harnesses.map((row) => Object.freeze({ ...row }))),
         images: Object.freeze({
-            runner: Object.freeze({ reference: declaredBrowser.images.runner.reference, driverVersion: declaredBrowser.images.runner.driver_version,
-                ...(declaredBrowser.images.runner.architectures === undefined ? {} : { architectures: Object.freeze([...declaredBrowser.images.runner.architectures]) }) }),
+            runner: Object.freeze({ reference: declaredBrowser.images.runner.reference, driverVersion: declaredBrowser.images.runner.driver_version }),
             mcp: Object.freeze({ reference: declaredBrowser.images.mcp.reference, driverVersion: declaredBrowser.images.mcp.driver_version }),
         }),
-        ...(declaredBrowser.runner_health_measurement === undefined ? {} : { runnerHealthMeasurement: Object.freeze({
-            duration_seconds: declaredBrowser.runner_health_measurement.duration_seconds,
-            provenance: Object.freeze({ ...declaredBrowser.runner_health_measurement.provenance }),
-        }) }),
         project: Object.freeze({ lockfile: declaredBrowser.project.lockfile, sha256: declaredBrowser.project.sha256, driverVersion: declaredBrowser.project.driver_version,
             ...(declaredBrowser.project.manifest === undefined ? {} : { manifest: declaredBrowser.project.manifest, manifestSha256: declaredBrowser.project.manifest_sha256! }) }),
         ...(declaredBrowser.endpoint === undefined ? {} : { endpoint: declaredBrowser.endpoint }),
@@ -354,46 +344,6 @@ function undatedForeignProvenance(value: unknown, configName: string, path: read
     return undefined
 }
 
-// A host operation runs only with the Node that runs cockpit: that is the one host executable
-// whose identity cockpit binds into a generated runtime. Any other name could never be planned,
-// and `up` used to report only that the generated observations were incomplete.
-export function unboundHostOperation(value: unknown, path: readonly string[]): Readonly<{ path: string; executable: string }> | undefined {
-    if (value === null || typeof value !== 'object') return undefined
-    const { location, argv } = value as { location?: unknown; argv?: unknown }
-    if (location === 'host' && Array.isArray(argv) && argv[0] !== 'node') return { path: path.join('.'), executable: String(argv[0]) }
-    for (const [key, item] of Object.entries(value)) {
-        const nested = unboundHostOperation(item, [...path, key])
-        if (nested !== undefined) return nested
-    }
-    return undefined
-}
-
-// up installs a toolchain sibling's dependencies into the one dependency volume mounted in the
-// generated service that runs it, through the install policy that volume names, and refuses any
-// other shape. That shape passed check and doctor, so up refused it only after starting containers.
-function unplannedDependencyInstall(config: CockpitConfig): string | undefined {
-    const generated = config.environment.generated
-    if (!generated) return undefined
-    for (const [index, sibling] of config.sibling.entries()) {
-        if (sibling.toolchain === 'none') continue
-        const declared = `sibling.${index}.toolchain is "${sibling.toolchain}" for ${sibling.slug}, so up installs its dependencies into a dependency volume mounted in the generated service that runs it`
-        const services = generated.services.filter(({ sibling: owner }) => owner === sibling.slug)
-        if (services.length !== 1) {
-            return `${declared}, but ${services.length === 0 ? 'no generated service runs' : `${services.length} generated services run`} ${sibling.slug}`
-        }
-        const service = services[0]!
-        const policies = config.environment.install_policies.filter(({ toolchain }) => toolchain === sibling.toolchain).map(({ volume }) => volume)
-        const mounted = service.mounts.filter((mount) => mount.kind === 'volume' && generated.volumes.some((volume) => volume.id === mount.source
-            && volume.purpose === 'dependencies' && volume.install_policy !== undefined && policies.includes(volume.install_policy)))
-        if (mounted.length !== 1) {
-            const filled = policies.length === 0 ? `environment.install_policies has no "${sibling.toolchain}" row`
-                : `"${sibling.toolchain}" install policies fill ${policies.map((volume) => `"${volume}"`).join(', ')}`
-            return `${declared}, but generated service ${service.id} mounts ${mounted.length === 0 ? 'none' : mounted.length} (${filled})`
-        }
-    }
-    return undefined
-}
-
 function refusal(code: RefusalCode, message: string, target: string, fix?: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
     const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target, ...(fix ? { fix } : {}) }
     return { kind: 'refusal', status: 2, diagnostics: [diagnostic], result: null }
@@ -492,34 +442,6 @@ export async function loadCockpitConfig(
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
             `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source`, path,
             'add observed_on with the date the source was read, or name this configuration file as the source, then retry')
-    }
-
-    // A sibling row's generated service joins environment.generated when the registry is derived, so
-    // its operations are planned the same way and are checked here too.
-    const hostOperation = unboundHostOperation(validated.data.environment.generated, ['environment', 'generated'])
-        ?? validated.data.sibling.reduce<ReturnType<typeof unboundHostOperation>>((found, sibling, index) =>
-            found ?? unboundHostOperation(sibling.derives?.generated, ['sibling', String(index), 'derives', 'generated']), undefined)
-    if (hostOperation !== undefined) {
-        return { kind: 'refusal', status: 2, result: null, diagnostics: [{
-            severity: 'error',
-            code: 'GENERATED_HOST_EXECUTABLE_UNSUPPORTED' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_HOST_EXECUTABLE_UNSUPPORTED,
-            message: `${hostOperation.path} runs "${hostOperation.executable}" on the host, but cockpit runs host operations only with the Node executable that runs cockpit, so this operation could never be planned`,
-            target: path,
-            fix: 'make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool',
-        }] }
-    }
-
-    // A sibling row's generated service joins environment.generated only in the derived registry.
-    const derived = deriveRegistry(validated.data)
-    const dependencyInstall = derived.kind === 'complete' ? unplannedDependencyInstall(derived.result.config as CockpitConfig) : undefined
-    if (dependencyInstall !== undefined) {
-        return { kind: 'refusal', status: 2, result: null, diagnostics: [{
-            severity: 'error',
-            code: 'GENERATED_DEPENDENCY_VOLUME_MISSING' as const satisfies typeof ENVIRONMENT_CODES.GENERATED_DEPENDENCY_VOLUME_MISSING,
-            message: dependencyInstall,
-            target: path,
-            fix: 'set toolchain = "none" on the sibling if its image already holds its dependencies; otherwise give the sibling exactly one generated service and mount one dependency volume in it: a [[environment.generated.volumes]] row whose id and install_policy are the volume of an install policy for the sibling\'s toolchain, with purpose = "dependencies", and a mounts row in that service with kind = "volume", that source, and the target where the toolchain reads its dependencies; then run npx --no cockpit sync --config <your cockpit.toml>',
-        }] }
     }
 
     const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))

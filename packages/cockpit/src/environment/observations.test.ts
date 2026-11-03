@@ -156,13 +156,10 @@ describe('observation contract and applicability', () => {
     it('derives leaf applicability only from the current declared configuration', async () => {
         const plain = await context()
         expect(plain.authorities[0]!.postures).toEqual(['directory-grants', 'environment', 'mounted'])
-        const generatedSource = (await readFile(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8'))
-            .replace('name = "generated-environment"', 'name = "fixture"')
-        const declared = await context(stackId, 'always', generatedSource)
-        expect(declared.authorities[0]!.postures).toEqual([
-            'data-plane', 'dependencies', 'directory-grants', 'environment', 'external-dependencies', 'generated-environment', 'mounted',
-            'registry-authentication', 'running-stack',
-        ])
+        const composeSource = `${(await readFile(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8'))
+            .replace('name = "generated-environment"', 'name = "fixture"')}\n[environment]\ncompose_files = ["compose.yml"]\n`
+        const declared = await context(stackId, 'always', composeSource)
+        expect(declared.authorities[0]!.postures).toEqual(['directory-grants', 'environment', 'mounted', 'running-stack'])
     })
 
     it('does not issue posture authority from caller-authored mount and revision facts', async () => {
@@ -547,10 +544,10 @@ describe('observation contract and applicability', () => {
         await recordLifecycleSeeded({ namespace: state, stackId, holderId: firstHolder, observedAt: now })
         const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
         if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        const generatedSource = (await readFile(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8'))
-            .replace('name = "generated-environment"', 'name = "fixture"')
-        const posture = await context(stackId, 'always', generatedSource)
-        expect(posture.authorities[0]!.postures).toContain('dependencies')
+        const composeSource = `${(await readFile(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8'))
+            .replace('name = "generated-environment"', 'name = "fixture"')}\n[environment]\ncompose_files = ["compose.yml"]\n`
+        const posture = await context(stackId, 'always', composeSource)
+        expect(posture.authorities[0]!.postures).toContain('running-stack')
         const checks = aggregateObservations([[stage.observation]], {
             authorities: posture.authorities,
             stages: [stage.authority],
@@ -559,7 +556,6 @@ describe('observation contract and applicability', () => {
         for (const code of [
             ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY,
             ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
-            ENVIRONMENT_CODES.INSTALL_STATE_UNHEALTHY,
             ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH,
         ]) expect(checks.find((check) => check.code === code)?.verdict).toBe('unavailable')
     })
@@ -784,9 +780,9 @@ describe('observation contract and applicability', () => {
         expect(validateObservationDeclarations(allObservationDeclarations)).toMatchObject({ kind: 'valid' })
         expect(new Set(allObservationDeclarations.map(({ id }) => id)).size).toBe(allObservationDeclarations.length)
         expect(allObservationDeclarations).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'generated-environment', code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE }),
-            expect.objectContaining({ id: 'data-mode', code: ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE }),
-            expect.objectContaining({ id: 'external-dependencies', code: ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE }),
+            expect.objectContaining({ id: 'harness-surfaces', code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE }),
+            expect.objectContaining({ id: 'runtime-mount-materialization', code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE }),
+            expect.objectContaining({ id: 'machine-memory', code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR }),
         ]))
     })
 
@@ -801,7 +797,7 @@ describe('observation contract and applicability', () => {
     it('requires real surface owners and rejects a fabricated passing surface row', async () => {
         const codes = [ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
             ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE,
-            ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE, ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE]
+            ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE]
         for (const code of codes) {
             const declaration = allObservationDeclarations.find(row => row.code === code)
             expect(declaration, code).toBeDefined()
@@ -811,7 +807,6 @@ describe('observation contract and applicability', () => {
         expect(result.verdict).toBe('unavailable')
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE)?.verdict).toBe('unavailable')
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE)?.verdict).toBe('unavailable')
-        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE)?.verdict).toBe('not-applicable')
     })
 
     it('projects doctor from the same verdict and only adds evidence', async () => {
@@ -1084,7 +1079,7 @@ describe('deterministic preflight and doctor', () => {
         const result = aggregateObservations([], await context())
         expect(result.checks.map(({ code }) => code)).toEqual(expect.arrayContaining([
             ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE,
-            ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE, ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE,
+            ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE,
         ]))
         expect(result.verdict).toBe('unavailable')
     })

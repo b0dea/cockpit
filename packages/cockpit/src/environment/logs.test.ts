@@ -6,8 +6,6 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { runLogs } from './application.js'
 import { stackId, cockpitId, checkoutId } from './identity.js'
-import { loadCockpitConfig } from '../config/load.js'
-import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
 import { authenticateStabilityCapture, captureRuntimeEvidence, createStabilityCapturePlan, type CapturedRuntimeEvidence } from './evidence.js'
 import { admitFailureLogs, collectLogs, failureLogExcerpt, planFailureLogs, planLogs, type FailureLogRecord, type LogRequest } from './logs.js'
 import {
@@ -256,30 +254,6 @@ async function evidence(batchId: string, process: string): Promise<CapturedRunti
 }
 
 describe('runtime logs', () => {
-    it('admits generated Compose sources only with their exact artifact authority', async () => {
-        const loaded = await loadCockpitConfig('fixtures/registries/generated-environment.toml')
-        if (loaded.kind !== 'complete' || !loaded.result.config.environment.generated) throw new Error('generated fixture is unavailable')
-        const declaration = loaded.result.config.environment.generated
-        const rendered = renderGeneratedEnvironment({ declaration, sourceSha256: loaded.result.source.sha256,
-            generation: sha('generated log generation'), stackId: stack,
-            cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: '/tmp/main' }),
-            portDefaults: loaded.result.config.ports.bases, siblingDirectories: { app: 'app' } })
-        if (rendered.kind !== 'complete') throw new Error(rendered.reason)
-        const authority = projectGeneratedComposeArtifactAuthority(rendered)
-        if (!authority) throw new Error('generated artifact authority is unavailable')
-        const path = join(runtimeDirectory, declaration.compose_file)
-        writeFileSync(path, rendered.compose)
-        const request = { ...input, configSha256: loaded.result.source.sha256,
-            composeFiles: [{ reference: declaration.compose_file, canonicalPath: path,
-                source: rendered.compose, sha256: sha(rendered.compose) }] }
-        expect(planLogs(request)).toMatchObject({ kind: 'unavailable' })
-        expect(planLogs(request, { ...authority })).toMatchObject({ kind: 'unavailable' })
-        expect(planLogs(request, authority)).toMatchObject({ kind: 'planned', step: {
-            argv: expect.arrayContaining(['container', 'logs', input.containerId]), env: input.env,
-        } })
-        expect(planLogs({ ...request, configSha256: sha('changed log configuration') }, authority)).toMatchObject({ kind: 'unavailable' })
-    })
-
     it('constructs an immutable bounded runtime-native step for the authenticated container', () => {
         const result = planLogs(input)
         expect(result.kind).toBe('planned')

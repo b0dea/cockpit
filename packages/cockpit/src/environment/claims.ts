@@ -26,7 +26,6 @@ import {
 } from './contract.js'
 import { authenticatedExecutionOutcome, consumeFencedExecutionTermination, type ExecuteProbeOutcome, type FencedExecutionTermination } from '../environment-exec/execute.js'
 import { resolveExecutablePath, type ResolvedExecutable } from './executable.js'
-import { observeConfigSource } from '../config/load.js'
 import {
     abortStateTransaction,
     authenticateStateNamespace,
@@ -54,7 +53,7 @@ export const mechanism = {
         'releaseClaim', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
         'observeProcessStart', 'processHost', 'isProcessStart', 'isProcessGone', 'releaseDeadSessionHolders', 'liveHolderMessage',
-        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'isRestoreActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
+        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive',
     ],
 } as const
 
@@ -258,25 +257,11 @@ const DrainReservationSchema = z.object({
     }
 })
 
-const RestoreReservationSchema = z.object({
-    reservationId: z.string().regex(sha256Identity),
-    stackId: z.string().regex(stackIdentity),
-    holderId: z.string().regex(holderIdentity),
-    requesterId: z.string().regex(holderIdentity),
-    configPath: z.string().min(1).max(4096).refine(isAbsolute),
-    configSha256: z.string().regex(sha256Identity),
-    stepSha256: z.string().regex(sha256Identity),
-    reservedAt: z.string().refine(isCanonicalTimestamp),
-    pid: z.number().int().min(1).max(2_147_483_647),
-    processStart: z.string().refine(isProcessStart).optional(),
-}).strict().refine((value) => value.holderId === value.requesterId)
-
 const CoordinationValueSchema = z.object({
     holders: z.array(ClaimHolderSchema).max(STRUCTURED_INPUT_ENTRY_LIMIT),
     lease: PortLeaseRecordSchema.nullable(),
     lastReleasedHolder: z.string().regex(holderIdentity).nullable().optional().default(null),
     drain: DrainReservationSchema.nullable().optional().default(null),
-    restore: RestoreReservationSchema.nullable().optional().default(null),
 }).strict().superRefine((value, context) => {
     const holderIds = value.holders.map(({ holderId }) => holderId)
     if (
@@ -292,14 +277,6 @@ const CoordinationValueSchema = z.object({
             || value.holders[0]?.holderId !== value.drain.holderId
             || !holderIds.includes(value.drain.holderId)
             || !holderIds.includes(value.drain.requesterId)
-        )
-        || value.restore !== null && (
-            value.drain !== null
-            || value.holders.length !== 1
-            || value.lease === null
-            || value.lease.released
-            || value.restore.holderId !== value.restore.requesterId
-            || value.holders[0]?.holderId !== value.restore.holderId
         )
     ) {
         context.addIssue({ code: 'custom', message: 'coordination invariants are inconsistent' })
@@ -332,47 +309,6 @@ export interface CoordinationRecord {
     readonly lease: PortLeaseRecord | null
     readonly lastReleasedHolder: HolderId | null
     readonly drain?: DrainReservation | null
-    readonly restore?: RestoreReservation | null
-}
-
-declare const restoreExecutionAuthorityBrand: unique symbol
-export interface RestoreExecutionAuthority {
-    readonly [restoreExecutionAuthorityBrand]: true
-}
-
-interface RestoreExecutionContract {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly requesterId: HolderId
-    readonly configPath: string
-    readonly configSha256: string
-    readonly stepSha256: string
-    readonly revision: number
-    readonly reservationId: string
-}
-
-const restoreExecutionAuthorities = new WeakMap<object, RestoreExecutionContract>()
-const restoreExecutionLeases = new WeakMap<object, RestoreExecutionContract>()
-
-interface RestoreReservation {
-    readonly reservationId: string
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly requesterId: HolderId
-    readonly configPath: string
-    readonly configSha256: string
-    readonly stepSha256: string
-    readonly reservedAt: string
-    // The process running the restore, recorded like a session's hold so that a restore whose
-    // process died before settling can be proven abandoned and released.
-    readonly pid: number
-    readonly processStart?: string
-}
-
-declare const restoreExecutionLeaseBrand: unique symbol
-export interface RestoreExecutionLease {
-    readonly [restoreExecutionLeaseBrand]: true
 }
 
 export type DrainPurpose = 'sleep' | 'down' | 'reset'
@@ -772,8 +708,6 @@ export type ReleaseDeadSessionHoldersResult =
     | {
           readonly kind: 'complete'
           readonly released: readonly ClaimHolder[]
-          // A warning, present when a restore whose process is gone was released first.
-          readonly interruptedRestore?: EnvironmentDiagnostic
       }
     | ClaimMutationRefusal
 
@@ -786,10 +720,6 @@ const MAX_CONCURRENT_HOLDER_PROBES = 4
  * `down`, `reset` and `sleep` refuse forever while naming a session nobody could end. When every
  * holder is dead, the requesting holder takes the stack over in the same transaction: the stack is
  * still running, and a lease no holder retains reads as a stopped stack whose ports are free.
- *
- * A restore reservation is released first, the same way: a restore that died before settling
- * (SIGKILL, out of memory, a closed terminal) otherwise blocked every later up, sleep, down and
- * reset, and only editing the state by hand recovered.
  */
 export async function releaseDeadSessionHolders(input: {
     readonly namespace: StateNamespace
@@ -801,40 +731,9 @@ export async function releaseDeadSessionHolders(input: {
     const stored = await readState(input.namespace.paths.coordination(input.stackId))
     if (stored.kind === 'missing') return { kind: 'complete', released: [] }
     if (stored.kind !== 'complete') return stateRefusal(stored)
-    let value = decodeCoordinationRecord(stored.value, input.stackId)
+    const value = decodeCoordinationRecord(stored.value, input.stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
     if (isDrainActive(value)) return { kind: 'complete', released: [] }
-    let interruptedRestore: EnvironmentDiagnostic | undefined
-    if (value.restore) {
-        const restore = value.restore
-        // A running restore, or one whose process cannot be proven gone, keeps the stack; the
-        // refusal that follows names it.
-        if (!isProcessGone(restore.processStart, await input.observe(restore.pid))) return { kind: 'complete', released: [] }
-        let latest: CoordinationRecord | undefined
-        const result = await transactClaim<ReleaseDeadSessionHoldersResult>(input.namespace, input.stackId, input.successor.holderId, (current) => {
-            latest = decodeCoordinationRecord(current, input.stackId)
-            if (!latest) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
-            // Only the reservation still recorded exactly as it was observed is released; a restore
-            // that started since is a running one.
-            if (latest.restore?.reservationId !== restore.reservationId || latest.restore.pid !== restore.pid
-                || latest.restore.processStart !== restore.processStart) return abortStateTransaction({ kind: 'complete', released: [] })
-            latest = { ...latest, restore: null }
-            return coordinationStateRecord(input.namespace, input.stackId, current, input.now, latest)
-        })
-        if ('diagnostics' in result || 'released' in result) return result
-        if (result.kind !== 'complete') return result.kind === 'missing'
-            ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
-        value = latest!
-        interruptedRestore = Object.freeze({
-            severity: 'warning' as const,
-            // Code and fix are literals, so the diagnostic inventory captures the fix beside the code.
-            code: 'RESTORE_INTERRUPTED' satisfies typeof ENVIRONMENT_CODES.RESTORE_INTERRUPTED,
-            message: `a restore of this stack's data by process ${restore.pid}, reserved at ${restore.reservedAt}, ended before it finished; cockpit released its reservation, and the stack's data may be partially restored`,
-            target: input.stackId,
-            fix: 'run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again',
-        })
-    }
-    const restoreOutcome = interruptedRestore ? { interruptedRestore } : {}
     const candidates = value.holders.filter((holder) => holder.holderId !== input.successor.holderId && holder.pid !== undefined)
     // Indexed slots keep the verdicts in holder order whatever order the probes finish in.
     const observed: ProcessStartObservation[] = new Array(candidates.length)
@@ -846,20 +745,20 @@ export async function releaseDeadSessionHolders(input: {
         }
     }))
     const dead = candidates.filter((holder, index) => isProcessGone(holder.processStart, observed[index]!))
-    if (dead.length === 0) return { kind: 'complete', released: [], ...restoreOutcome }
+    if (dead.length === 0) return { kind: 'complete', released: [] }
     let committed: readonly ClaimHolder[] = []
     const result = await transactClaim<ReleaseDeadSessionHoldersResult>(input.namespace, input.stackId, input.successor.holderId, (current) => {
         const latest = decodeCoordinationRecord(current, input.stackId)
         if (!latest) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
-        if (isDrainActive(latest) || isRestoreActive(latest) || latest.lease === null || latest.lease.released) {
-            return abortStateTransaction({ kind: 'complete', released: [], ...restoreOutcome })
+        if (isDrainActive(latest) || latest.lease === null || latest.lease.released) {
+            return abortStateTransaction({ kind: 'complete', released: [] })
         }
         // Only a holder still recorded exactly as it was observed is released; one that changed
         // since is someone else's to judge.
         const released = dead.filter((holder) => latest.holders.some((candidate) => candidate.holderId === holder.holderId
             && candidate.claimedAt === holder.claimedAt && candidate.pid === holder.pid
             && candidate.processStart === holder.processStart))
-        if (released.length === 0) return abortStateTransaction({ kind: 'complete', released: [], ...restoreOutcome })
+        if (released.length === 0) return abortStateTransaction({ kind: 'complete', released: [] })
         committed = released
         const remaining = latest.holders.filter((holder) => !released.some(({ holderId }) => holderId === holder.holderId))
         const reduced: CoordinationRecord = { ...latest, holders: remaining, lastReleasedHolder: released.at(-1)!.holderId }
@@ -870,7 +769,7 @@ export async function releaseDeadSessionHolders(input: {
     if ('diagnostics' in result || 'released' in result) return result
     if (result.kind !== 'complete') return result.kind === 'missing'
         ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
-    return { kind: 'complete', released: Object.freeze(committed), ...restoreOutcome }
+    return { kind: 'complete', released: Object.freeze(committed) }
 }
 
 export type ActiveStackInventoryResult =
@@ -1087,7 +986,7 @@ export function decodeCoordinationRecord(record: StateRecord | null, stackId: St
     if (record === null) return { holders: [], lease: null, lastReleasedHolder: null, drain: null }
     if (record.kind !== 'coordination' || record.subjectId !== stackId) return undefined
     const parsed = CoordinationValueSchema.safeParse(record.value)
-    if (!parsed.success || parsed.data.restore !== null && parsed.data.restore.stackId !== stackId) return undefined
+    if (!parsed.success) return undefined
     if (parsed.data.drain !== null && parsed.data.drain.stackId !== stackId) return undefined
     if (parsed.data.drain !== null) {
         const boundaryRevision = parsed.data.drain.attempt?.status === 'failed'
@@ -1122,12 +1021,6 @@ export function decodeCoordinationRecord(record: StateRecord | null, stackId: St
             holderId: parsed.data.drain.holderId as HolderId,
             requesterId: parsed.data.drain.requesterId as HolderId,
         }),
-        restore: parsed.data.restore === null ? null : Object.freeze({
-            ...parsed.data.restore,
-            stackId: parsed.data.restore.stackId as StackId,
-            holderId: parsed.data.restore.holderId as HolderId,
-            requesterId: parsed.data.restore.requesterId as HolderId,
-        }),
     }
 }
 
@@ -1156,7 +1049,7 @@ export function removeExactCoordinationHolder(
 ): CoordinationRecord | undefined {
     try {
         if (!holderIdentity.test(holderId) || value.lease === null || value.lease.released
-            || value.drain != null || value.restore != null) return undefined
+            || value.drain != null) return undefined
         const holders = value.holders.filter((holder) => holder.holderId !== holderId)
         if (holders.length !== value.holders.length - 1) return undefined
         return {
@@ -1208,7 +1101,6 @@ export function coordinationStateRecord(
                     targetIds: [...value.drain.attempt.targetIds],
                 },
             },
-            restore: value.restore == null ? null : { ...value.restore },
         },
     }
 }
@@ -1463,10 +1355,6 @@ export function isDrainActive(value: CoordinationRecord): boolean {
     return value.drain != null
 }
 
-export function isRestoreActive(value: CoordinationRecord): boolean {
-    return value.restore != null
-}
-
 export type DrainReservationResult =
     | { readonly kind: 'complete'; readonly reservation: DrainReservation; readonly authority: DrainReservationAuthority }
     | ClaimMutationRefusal
@@ -1505,8 +1393,6 @@ export async function reserveDrain(input: {
         if (!value || current === null || current.revision !== request.expectedCoordinationRevision) {
             return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'drain reservation requires the exact current coordination revision', request.stackId))
         }
-        if (value.restore) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `the drain waits while process ${value.restore.pid} restores the stack's data`, request.stackId,
-            'wait for the cockpit command restoring this stack to finish, or stop it with kill <pid> for the process the message names; then rerun this command, which releases a restore whose process has ended'))
         if (value.drain !== null) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'the stack already has an exclusive mutation', request.stackId))
         if (request.holderId !== request.requesterId
             || value.holders.length !== 1
@@ -2776,228 +2662,6 @@ function stateRefusal(result: Exclude<StateResult<StateRecord>, { kind: 'complet
     )
 }
 
-type RestoreExecutionAuthorityResult =
-    | { readonly kind: 'complete'; readonly authority: RestoreExecutionAuthority }
-    | ClaimMutationRefusal
-
-function restoreAuthorityRefusal(message: string, target: string): ClaimMutationRefusal {
-    return refuse(
-        ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        message,
-        target,
-        'retry only after this stack has one current holder and no drain is active',
-    )
-}
-
-function restoreAuthorityInput(input: unknown, extraKeys: readonly string[] = []): Omit<RestoreExecutionContract, 'revision' | 'reservationId'> | undefined {
-    try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const expected = ['namespace', 'stackId', 'holderId', 'requesterId', 'configPath', 'configSha256', 'stepSha256', ...extraKeys]
-        if (Reflect.ownKeys(descriptors).length !== expected.length
-            || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
-        const namespace = authenticateStateNamespace(descriptors.namespace!.value)
-        const stackId = descriptors.stackId!.value as StackId
-        const holderId = descriptors.holderId!.value as HolderId
-        const requesterId = descriptors.requesterId!.value as HolderId
-        const configPath = descriptors.configPath!.value as string
-        const configSha256 = descriptors.configSha256!.value as string
-        const stepSha256 = descriptors.stepSha256!.value as string
-        if (!namespace || !validIdentity(stackId, stackIdentity) || !validIdentity(holderId, holderIdentity)
-            || requesterId !== holderId || typeof configPath !== 'string' || !isAbsolute(configPath)
-            || !validIdentity(configSha256, sha256Identity) || !validIdentity(stepSha256, sha256Identity)) return undefined
-        return Object.freeze({ namespace, stackId, holderId, requesterId, configPath, configSha256, stepSha256 })
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-function isSoleRestoreHolder(record: CoordinationRecord, holderId: HolderId): boolean {
-    return record.holders.length === 1 && record.holders[0]?.holderId === holderId
-        && record.lease !== null && !record.lease.released && record.drain == null
-}
-
-export async function issueRestoreExecutionAuthority(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly requesterId: HolderId
-    readonly configPath: string
-    readonly configSha256: string
-    readonly stepSha256: string
-    /** Reads this process's start identity; production binds `observeProcessStart` with `processHost`. */
-    readonly observe: (pid: number) => Promise<ProcessStartObservation>
-}): Promise<RestoreExecutionAuthorityResult> {
-    const request = restoreAuthorityInput(input, ['observe'])
-    let observe: unknown
-    try { observe = Object.getOwnPropertyDescriptor(input, 'observe')?.value } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        observe = undefined
-    }
-    if (!request || typeof observe !== 'function') return restoreAuthorityRefusal('restore authority input is malformed', 'restore authority input')
-    const source = await observeConfigSource(request.configPath)
-    if (source.state !== 'available' || source.sha256 !== request.configSha256) {
-        return restoreAuthorityRefusal('restore configuration is no longer current', request.configPath)
-    }
-    // The restore runs in this process, so its death is what leaves the reservation behind. A start
-    // that cannot be read leaves a pid-only record, released only once that pid is gone.
-    let own: ProcessStartObservation | undefined
-    try { own = await (observe as (pid: number) => Promise<ProcessStartObservation>)(process.pid) } catch {
-        // An observer that throws read no start, which leaves the pid-only record described above.
-        own = undefined
-    }
-    const restoringProcess = own?.state === 'present' && isProcessStart(own.start)
-        ? { pid: process.pid, processStart: own.start } : { pid: process.pid }
-    const reservationId = randomBytes(32).toString('hex')
-    const reservedAt = new Date().toISOString()
-    const result = await transactClaim<ClaimMutationRefusal>(
-        request.namespace, request.stackId, request.requesterId,
-        (current) => {
-            const coordination = decodeCoordinationRecord(current, request.stackId)
-            if (!coordination || !isSoleRestoreHolder(coordination, request.holderId) || coordination.restore !== null) {
-                return abortStateTransaction(restoreAuthorityRefusal('restore requires the exact sole current holder', request.stackId))
-            }
-            return coordinationStateRecord(request.namespace, request.stackId, current, reservedAt, {
-                ...coordination,
-                restore: Object.freeze({
-                    reservationId, stackId: request.stackId, holderId: request.holderId,
-                    requesterId: request.requesterId, configPath: request.configPath,
-                    configSha256: request.configSha256, stepSha256: request.stepSha256, reservedAt,
-                    ...restoringProcess,
-                }),
-            })
-        },
-    )
-    if ('diagnostics' in result) return result
-    if (result.kind !== 'complete') return result.kind === 'missing'
-        ? restoreAuthorityRefusal('restore requires a current coordination record', result.path)
-        : stateRefusal(result)
-    const coordination = decodeCoordinationRecord(result.value, request.stackId)
-    if (!coordination?.restore || coordination.restore.reservationId !== reservationId) {
-        return restoreAuthorityRefusal('restore reservation publication is malformed', request.stackId)
-    }
-    const authority = Object.freeze({}) as RestoreExecutionAuthority
-    restoreExecutionAuthorities.set(authority, Object.freeze({ ...request, revision: result.value.revision, reservationId }))
-    return Object.freeze({ kind: 'complete', authority })
-}
-
-export async function consumeRestoreExecutionAuthority(input: {
-    readonly namespace: StateNamespace
-    readonly authority: RestoreExecutionAuthority
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly requesterId: HolderId
-    readonly configPath: string
-    readonly configSha256: string
-    readonly stepSha256: string
-}): Promise<{ readonly kind: 'complete'; readonly lease: RestoreExecutionLease } | ClaimMutationRefusal> {
-    let authority: RestoreExecutionAuthority | undefined
-    let request: Omit<RestoreExecutionContract, 'revision' | 'reservationId'> | undefined
-    try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid input')
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const expected = ['namespace', 'authority', 'stackId', 'holderId', 'requesterId', 'configPath', 'configSha256', 'stepSha256']
-        if (Reflect.ownKeys(descriptors).length !== expected.length
-            || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) throw new RefusalError('invalid input')
-        authority = descriptors.authority!.value as RestoreExecutionAuthority
-        request = restoreAuthorityInput({
-            namespace: descriptors.namespace!.value,
-            stackId: descriptors.stackId!.value,
-            holderId: descriptors.holderId!.value,
-            requesterId: descriptors.requesterId!.value,
-            configPath: descriptors.configPath!.value,
-            configSha256: descriptors.configSha256!.value,
-            stepSha256: descriptors.stepSha256!.value,
-        })
-    } catch (error) {
-        // The exact owner must retry with the original token; malformed envelopes cannot authorize releasing its reservation.
-        return restoreAuthorityRefusal(`restore authority consumption input is malformed: ${errorCause(error)}`, 'restore authority input')
-    }
-    const contract = authority && restoreExecutionAuthorities.get(authority)
-    if (!contract) return restoreAuthorityRefusal('restore authority is absent or already consumed', 'restore authority')
-    restoreExecutionAuthorities.delete(authority!)
-    const refuseAndRelease = async (refusal: ClaimMutationRefusal): Promise<ClaimMutationRefusal> => {
-        const released = await releaseRestoreReservation(contract)
-        return released.kind === 'complete' ? refusal : released
-    }
-    if (!request) return refuseAndRelease(restoreAuthorityRefusal('restore authority consumption input is malformed', 'restore authority input'))
-    const requestAddress = request.namespace.paths.coordination(request.stackId)
-    const contractAddress = contract.namespace.paths.coordination(contract.stackId)
-    if (requestAddress.path !== contractAddress.path || requestAddress.cockpitId !== contractAddress.cockpitId
-        || request.stackId !== contract.stackId || request.holderId !== contract.holderId
-        || request.requesterId !== contract.requesterId || request.configPath !== contract.configPath
-        || request.configSha256 !== contract.configSha256 || request.stepSha256 !== contract.stepSha256) {
-        return refuseAndRelease(restoreAuthorityRefusal('restore authority does not match the requested execution step', requestAddress.path))
-    }
-    const current = await readState(requestAddress)
-    if (current.kind !== 'complete') {
-        return refuseAndRelease(current.kind === 'missing'
-            ? restoreAuthorityRefusal('restore coordination disappeared before execution', current.path)
-            : stateRefusal(current))
-    }
-    const source = await observeConfigSource(request.configPath)
-    const coordination = decodeCoordinationRecord(current.value, request.stackId)
-    if (source.state !== 'available' || source.sha256 !== contract.configSha256
-        || current.value.revision !== contract.revision || !coordination || !isSoleRestoreHolder(coordination, request.holderId)
-        || coordination.restore?.reservationId !== contract.reservationId) {
-        return refuseAndRelease(restoreAuthorityRefusal('restore coordination changed before execution', current.value.subjectId))
-    }
-    const lease = Object.freeze({}) as RestoreExecutionLease
-    restoreExecutionLeases.set(lease, contract)
-    return Object.freeze({ kind: 'complete', lease })
-}
-
-async function releaseRestoreReservation(
-    contract: RestoreExecutionContract,
-): Promise<{ readonly kind: 'complete' } | ClaimMutationRefusal> {
-    const result = await transactClaim<ClaimMutationRefusal>(
-        contract.namespace, contract.stackId, contract.requesterId,
-        (current) => {
-            const coordination = decodeCoordinationRecord(current, contract.stackId)
-            if (!coordination?.restore || coordination.restore.reservationId !== contract.reservationId
-                || !isSoleRestoreHolder(coordination, contract.holderId)) {
-                return abortStateTransaction(restoreAuthorityRefusal('restore reservation changed before release', contract.stackId))
-            }
-            return coordinationStateRecord(contract.namespace, contract.stackId, current, new Date().toISOString(), {
-                ...coordination, restore: null,
-            })
-        },
-    )
-    if ('diagnostics' in result) return result
-    if (result.kind !== 'complete') return result.kind === 'missing'
-        ? restoreAuthorityRefusal('restore reservation disappeared before release', result.path)
-        : stateRefusal(result)
-    return Object.freeze({ kind: 'complete' })
-}
-
-export async function settleRestoreExecutionAuthority(input: {
-    readonly namespace: StateNamespace
-    readonly lease: RestoreExecutionLease
-}): Promise<{ readonly kind: 'complete' } | ClaimMutationRefusal> {
-    let namespace: StateNamespace | undefined
-    let lease: RestoreExecutionLease | undefined
-    try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new RefusalError('invalid')
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = Reflect.ownKeys(descriptors)
-        if (keys.length !== 2 || !Object.hasOwn(descriptors, 'namespace') || !Object.hasOwn(descriptors, 'lease')
-            || !('value' in descriptors.namespace!) || !('value' in descriptors.lease!)) throw new RefusalError('invalid')
-        namespace = authenticateStateNamespace(descriptors.namespace.value)
-        lease = descriptors.lease.value as RestoreExecutionLease
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        namespace = undefined
-        lease = undefined
-    }
-    const contract = lease && typeof lease === 'object' ? restoreExecutionLeases.get(lease) : undefined
-    if (!namespace || !lease || !contract) return restoreAuthorityRefusal('restore execution lease is absent or already settled', 'restore execution lease')
-    if (namespace !== contract.namespace) return restoreAuthorityRefusal('restore execution lease namespace changed', contract.stackId)
-    const released = await releaseRestoreReservation(contract)
-    if (released.kind === 'complete') restoreExecutionLeases.delete(lease)
-    return released
-}
-
 async function transactClaim<T>(
     namespace: StateNamespace,
     stackId: StackId,
@@ -3073,8 +2737,6 @@ export async function releaseClaim(input: {
         (current) => {
             const value = decodeCoordinationRecord(current, request.stackId)
             if (!value) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', request.stackId))
-            if (value.restore) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `claim release waits while process ${value.restore.pid} restores the stack's data`, request.stackId,
-                'wait for the cockpit command restoring this stack to finish, or stop it with kill <pid> for the process the message names; then rerun this command, which releases a restore whose process has ended'))
             if (isDrainActive(value)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'claim release is blocked while the stack has an exclusive mutation', request.stackId))
             const holders = value.holders.filter((holder) => holder.holderId !== request.holderId)
             if (holders.length === value.holders.length) {
@@ -3102,7 +2764,6 @@ export async function releaseClaim(input: {
                 lease: value.lease,
                 lastReleasedHolder: request.holderId,
                 drain: value.drain,
-                restore: value.restore,
             })
         },
     )

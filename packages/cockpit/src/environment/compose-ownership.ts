@@ -111,8 +111,8 @@ export function renderComposeOwnership(input: Readonly<{
         services: Object.fromEntries([...services].sort().map((id) => [id, built.has(id) ? { labels, build: { labels } } : { labels }])),
         // The default network carries the same set, so `down` can remove the network it created.
         networks: { default: { labels } },
-        // Reset admits a data-bearing volume only with exact ownership and a generation, as a
-        // generated stack's volumes carry; unlabelled, a declared resettable volume was unreachable.
+        // Reset admits a data-bearing volume only with exact ownership and a generation;
+        // unlabelled, a declared resettable volume was unreachable.
         ...(volumeLabels.length === 0 ? {} : { volumes: Object.fromEntries(volumeLabels) }),
     }, { aliasDuplicateObjects: false })
     return Object.freeze({

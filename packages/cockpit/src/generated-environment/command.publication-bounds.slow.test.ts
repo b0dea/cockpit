@@ -29,7 +29,6 @@ describe('public surface publication transaction', () => {
             expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })] })
             expect(preparations).toBe(0)
             expect(await readFile(join(fixture.root, 'unmanaged.txt'), 'utf8')).toBe('keep\n')
-            await expect(lstat(join(fixture.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
             await expect(lstat(join(fixture.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
         })
 
@@ -57,7 +56,8 @@ describe('public surface publication transaction', () => {
             const ledgerPath = join(fixture.root, '.cockpit/generated-environment-ownership.json')
             const ledger = await readFile(ledgerPath)
             const before = await bytes(fixture.root, initial.result.paths)
-            await writeFile(join(fixture.root, 'fixtures/personas.json'), '[{"id":"second"}]\n')
+            await writeFile(fixture.configPath, (await readFile(fixture.configPath, 'utf8'))
+                .replace('purpose = "Synthetic application"', 'purpose = "Second synthetic application"'))
             const realNow = Date.now
             let advanced: number | undefined
             const clock = vi.spyOn(Date, 'now').mockImplementation(() => advanced ?? realNow())
@@ -131,7 +131,6 @@ describe('public surface publication transaction', () => {
                 expect(result).toMatchObject({ kind: 'refusal' })
                 expect(preparations).toBe(0)
                 expect(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')).toBe(existing)
-                await expect(lstat(join(fixture.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
                 await expect(lstat(join(fixture.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
             }
         })
@@ -219,7 +218,7 @@ describe('public surface publication transaction', () => {
             expect(outcomes.map(({ kind }) => kind)).toEqual(['refusal', 'refusal', 'complete', 'refusal'])
             expect(replaced).toBe(true)
             for (const control of [missing, inert, raced]) {
-                await expect(lstat(join(control.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+                await expect(lstat(join(control.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
             }
             await expect(lstat(join(unavailable.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
         })
@@ -231,18 +230,22 @@ describe('public surface publication transaction', () => {
                 path: `custom/rules-${String(index).padStart(3, '0')}.md`, bytes: `custom rule ${index}\n`,
             })))
             expect(await syncGeneratedEnvironment({ configPath: bounded.configPath })).toMatchObject({ kind: 'refusal' })
-            await expect(lstat(join(bounded.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
             await expect(lstat(join(bounded.root, 'custom/rules-000.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await expect(lstat(join(bounded.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
         })
 
         it('compensates both estates on source change', async () => {
             const module = 'adapters/synthetic.mjs'
-            const compensated = await surfaceConsumer('cross-estate-compensation', { rules: true, custom: customHarness(module) })
+            // The Compose override is the generated estate; the custom harness output is the surface estate.
+            const compensated = await surfaceConsumer('cross-estate-compensation', { rules: true,
+                custom: `${customHarness(module)}\n[environment]\ncompose_files = ["compose.yml"]\n` })
+            const compose = join(compensated.root, 'compose.yml')
+            await writeFile(compose, `services:\n  app:\n    image: node@sha256:${'8'.repeat(64)}\n    volumes: ["./app:/app"]\n`)
             await writeCustomModule(compensated.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nfirst\n' }])
             expect(await syncGeneratedEnvironment({ configPath: compensated.configPath })).toMatchObject({ kind: 'complete' })
-            const observed = await bytes(compensated.root, ['compose.generated.yml', 'fixtures/personas.generated.ts', 'custom/rules.md'])
+            const observed = await bytes(compensated.root, ['compose.cockpit.yml', 'custom/rules.md'])
             const ledger = await readFile(join(compensated.root, '.cockpit/generated-environment-ownership.json'), 'utf8')
-            await writeFile(join(compensated.root, 'fixtures/personas.json'), '[{"id":"second"}]\n')
+            await writeFile(compose, `${await readFile(compose, 'utf8')}  worker:\n    image: node@sha256:${'9'.repeat(64)}\n`)
             await writeCustomModule(compensated.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nsecond\n' }])
             let sourceChanged = false
             const refused = await syncGeneratedEnvironment({ configPath: compensated.configPath }, {

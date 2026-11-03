@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CheckoutId, type StackId } from './contract.js'
@@ -9,8 +9,6 @@ import { resolveGitExecutable } from './executable.js'
 import { resolvedExecutable } from './executable.js'
 import { observationSatisfiesExpectation } from './observations.js'
 import { loadCockpitConfig } from '../config/load.js'
-import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
-import { syncGeneratedEnvironment } from './generated-application.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { createHash } from 'node:crypto'
 import { cockpitId, checkoutId as deriveCheckoutId, stackId as deriveStackId } from './identity.js'
@@ -206,19 +204,61 @@ describe('Git adjacency evidence', () => {
         })
     })
 
+    // A compose-first topology for `cwd`, labelled for `stack` and the given runtime digest, as up admits it.
+    async function composeTopology(root: string, cwd: string, stack: StackId, configSha256: string, ttlMs = 60_000) {
+        const labels = { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 }
+        const probe = join(root, 'docker')
+        const body = `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ services: { api: { labels, healthcheck: { test: ['CMD', 'true'] } } } }))})\n`
+        await writeFile(probe, body); await chmod(probe, 0o755)
+        const executable = resolvedExecutable({ canonicalPath: probe, invocationPath: probe,
+            sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'verified-path' })!
+        const composePath = join(cwd, 'compose.yml')
+        const source = 'services: {}\n'
+        await writeFile(composePath, source)
+        const batchId = 'a'.repeat(64)
+        const runtime = createRuntimeAdapter({
+            runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
+            composeVersion: '2.39.2', executable, operation: 'validate', cwd,
+            composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source, sha256: createHash('sha256').update(source).digest('hex') }],
+            projectName: 'synthetic', env: {}, ports: [], labels: { stackId: stack, configSha256, batchId },
+            timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 30_000, expectedMountSources: [],
+        })
+        if (runtime.kind !== 'preview') throw new Error(JSON.stringify(runtime.diagnostics))
+        const plan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId,
+            observationWindow: { startedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + ttlMs).toISOString() } })
+        if (plan.kind !== 'planned') throw new Error(plan.reason)
+        const topology = admitRuntimeTopology({ plan, outcome: await executeProbe(plan.step) })
+        if (topology.kind !== 'complete') throw new Error(topology.reason)
+        return topology.topology
+    }
+
+    async function gitCheckout(root: string) {
+        execFileSync('git', ['init', '-b', 'main'], { cwd: root })
+        execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: root })
+    }
+
+    const RUNNING_CONFIG = '[cockpit]\nname = "synthetic"\n[[sibling]]\nslug = "api"\ndir = "."\nvar = "API_DIR"\nmount = "none"\nacquire = "none"\npurpose = "Synthetic service"\n[ports.bases]\nAPP_HOST_PORT = 4100\n[environment]\ncompose_files = ["compose.yml"]\n'
+
     it('authenticates running topology against the current checkout and its runtime declarations', async () => {
-        const support = createGeneratedCommandFixture()
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-running-checkout-')))
         try {
-            const candidate = await support.consumer('running-checkout')
-            execFileSync('git', ['init', '-b', 'main'], { cwd: candidate.root })
-            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: candidate.root })
-            const published = await syncGeneratedEnvironment({ configPath: candidate.configPath })
-            if (published.kind !== 'complete') throw new Error(JSON.stringify(published.diagnostics))
-            const runtime = await support.generatedRuntime(candidate.root, published.result.application)
+            const candidate = join(root, 'candidate')
+            const foreign = join(root, 'foreign')
+            for (const path of [candidate, foreign]) {
+                await mkdir(path)
+                await gitCheckout(path)
+                await writeFile(join(path, 'cockpit.toml'), RUNNING_CONFIG)
+            }
+            const configPath = join(candidate, 'cockpit.toml')
+            const loadedCandidate = await loadCockpitConfig(configPath)
+            if (loadedCandidate.kind !== 'complete') throw new Error('fixture configuration unavailable')
+            const stack = deriveStackId({ cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: candidate }),
+                checkoutId: deriveCheckoutId({ checkoutPath: candidate }), variant: { kind: 'shared' } })
+            const running = await composeTopology(root, candidate, stack, loadedCandidate.result.runtimeSha256)
             const executable = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
             if (executable.state !== 'available') throw new Error('fixture Git executable unavailable')
-            const observe = async (topology = runtime.topology, configPath = candidate.configPath, copiedCheckout = false) => {
-                const loaded = await loadCockpitConfig(configPath)
+            const observe = async (topology = running, path = configPath, copiedCheckout = false) => {
+                const loaded = await loadCockpitConfig(path)
                 if (loaded.kind !== 'complete') throw new Error('fixture configuration unavailable')
                 const observedAt = new Date().toISOString()
                 const checkout = await observeSetupCheckout({ source: loaded.result.source,
@@ -231,79 +271,49 @@ describe('Git adjacency evidence', () => {
             expect(current).toMatchObject({ kind: 'complete' })
             if (current?.kind !== 'complete') throw new Error('running checkout observation unavailable')
             expect(observationSatisfiesExpectation(current.observation)).toBe(true)
-            expect(await observe({ ...runtime.topology })).toMatchObject({ kind: 'unavailable' })
-            expect(await observe(runtime.topology, candidate.configPath, true)).toMatchObject({ kind: 'unavailable' })
-            const foreign = await support.consumer('foreign-running-checkout')
-            execFileSync('git', ['init', '-b', 'main'], { cwd: foreign.root })
-            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: foreign.root })
-            const foreignResult = await observe(runtime.topology, foreign.configPath)
+            expect(await observe({ ...running })).toMatchObject({ kind: 'unavailable' })
+            expect(await observe(running, configPath, true)).toMatchObject({ kind: 'unavailable' })
+            const foreignResult = await observe(running, join(foreign, 'cockpit.toml'))
             expect(foreignResult).toMatchObject({ kind: 'complete' })
             if (foreignResult?.kind !== 'complete') throw new Error('foreign checkout comparison unavailable')
             expect(observationSatisfiesExpectation(foreignResult.observation)).toBe(false)
-            const declared = await readFile(candidate.configPath, 'utf8')
-            await writeFile(candidate.configPath, `${declared}\n# reworded comment\n`)
+            await writeFile(configPath, `${RUNNING_CONFIG}\n# reworded comment\n`)
             const commented = await observe()
             if (commented?.kind !== 'complete') throw new Error('commented configuration comparison unavailable')
             expect(observationSatisfiesExpectation(commented.observation)).toBe(true)
-            await writeFile(candidate.configPath, declared.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4200'))
+            await writeFile(configPath, RUNNING_CONFIG.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4200'))
             const changed = await observe()
             expect(changed).toMatchObject({ kind: 'complete' })
             if (changed?.kind !== 'complete') throw new Error('changed configuration comparison unavailable')
             expect(observationSatisfiesExpectation(changed.observation)).toBe(false)
-            const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(runtime.topology.observationWindow.expiresAt) + 1)
+            const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(running.observationWindow.expiresAt) + 1)
             try { expect(await observe()).toMatchObject({ kind: 'unavailable' }) }
             finally { clock.mockRestore() }
-        } finally { await support.cleanup() }
+        } finally { await rm(root, { recursive: true, force: true }) }
     })
-
 
     it('accepts a nested configuration cwd and refuses a different authenticated runtime cwd', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-nested-runtime-checkout-')))
         try {
             const nested = join(root, 'cockpit')
             await mkdir(nested)
-            execFileSync('git', ['init', '-b', 'main'], { cwd: root })
-            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: root })
+            await gitCheckout(root)
             const configPath = join(nested, 'cockpit.toml')
             await writeFile(configPath, '[cockpit]\nname = "synthetic"\n[[sibling]]\nslug = "api"\ndir = "."\nvar = "API_DIR"\nmount = "none"\nacquire = "none"\npurpose = "Synthetic service"\n[ports]\nbases = {}\n')
             const loaded = await loadCockpitConfig(configPath)
             if (loaded.kind !== 'complete') throw new Error('nested fixture config unavailable')
             const currentStack = deriveStackId({ cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: root }),
                 checkoutId: deriveCheckoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
-            const sourceSha256 = loaded.result.runtimeSha256
-            const labels = { 'dev.b0dea.cockpit.stack-id': currentStack, 'dev.b0dea.cockpit.config-sha256': sourceSha256 }
-            const probe = join(root, 'docker')
-            const body = `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ services: { api: { labels, healthcheck: { test: ['CMD', 'true'] } } } }))})\n`
-            await writeFile(probe, body); await chmod(probe, 0o755)
-            const executable = resolvedExecutable({ canonicalPath: probe, invocationPath: probe,
-                sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'verified-path' })!
             const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
             if (git.state !== 'available') throw new Error('nested fixture Git unavailable')
             for (const cwd of [nested, root]) {
-                const composePath = join(cwd, 'compose.yml')
-                const source = 'services: {}\n'
-                await writeFile(composePath, source)
-                const batchId = 'a'.repeat(64)
-                const runtime = createRuntimeAdapter({
-                    runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
-                    composeVersion: '2.39.2', executable, operation: 'validate', cwd,
-                    composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source, sha256: createHash('sha256').update(source).digest('hex') }],
-                    projectName: 'synthetic', env: {}, ports: [], labels: { stackId: currentStack, configSha256: sourceSha256, batchId },
-                    timeoutMs: 5_000, stackId: currentStack, coldStartLimitMillis: 30_000, expectedMountSources: [],
-                })
-                if (runtime.kind !== 'preview') throw new Error(JSON.stringify(runtime.diagnostics))
-                const plan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: currentStack,
-                    configSha256: sourceSha256, batchId,
-                    observationWindow: { startedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() } })
-                if (plan.kind !== 'planned') throw new Error(plan.reason)
-                const topology = admitRuntimeTopology({ plan, outcome: await executeProbe(plan.step) })
-                if (topology.kind !== 'complete') throw new Error(topology.reason)
+                const topology = await composeTopology(root, cwd, currentStack, loaded.result.runtimeSha256)
                 const observedAt = new Date().toISOString()
                 const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: 'synthetic',
                     observedAt, env: {}, gitExecutable: git.value })
                 const result = await withSetupCheckoutProjection(checkout, { source: loaded.result.source,
                     cockpitName: 'synthetic', evaluatedAt: Date.parse(observedAt) },
-                projection => observeRunningCheckout(topology.topology, projection, loaded.result.runtimeSha256, new Date().toISOString()))
+                projection => observeRunningCheckout(topology, projection, loaded.result.runtimeSha256, new Date().toISOString()))
                 expect(result).toMatchObject({ kind: 'complete' })
                 if (result?.kind !== 'complete') throw new Error('nested running checkout comparison unavailable')
                 expect(observationSatisfiesExpectation(result.observation), JSON.stringify(result)).toBe(cwd === nested)

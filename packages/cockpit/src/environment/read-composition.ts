@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { isDeepStrictEqual } from 'node:util'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
@@ -13,7 +12,6 @@ import {
     type ReadinessRefusal,
 } from './application.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
 import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
@@ -84,7 +82,6 @@ interface LifecycleRecordValue extends LifecycleProgress {
 }
 
 interface StableReadContext {
-    readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
     readonly ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>
     readonly configuration: ConsumedLoadedConfig
     readonly namespace: StateNamespace
@@ -270,8 +267,7 @@ export function createReadCommandAdapters(
             throw new RefusalError('configuration authority does not match')
         }
         const checkoutRoot = dirname(configuration.source.path)
-        const generated = configuration.config.environment.generated
-        const references = generated ? [generated.compose_file] : configuration.config.environment.compose_files
+        const references = configuration.config.environment.compose_files
         const composeFiles = await composeArtifacts(checkoutRoot, references)
         if (!composeFiles) throw new RefusalError('compose artifacts are unavailable')
         const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
@@ -282,10 +278,6 @@ export function createReadCommandAdapters(
         if (!ports) throw new RefusalError('retained port projection is unavailable')
         const readiness = await lifecycle.withRuntimeReadiness(context, async (value) => value, ports, refuse)
         if (!readiness) throw new RefusalError('authenticated runtime topology is unavailable')
-        const generatedApplication = generated ? await lifecycle.withGeneratedRuntime(context, readiness,
-            async ({ application }) => application) : undefined
-        const generatedComposeAuthority = generatedApplication?.generatedComposeAuthority
-        if (generated && !generatedComposeAuthority) throw new RefusalError('generated runtime authority is unavailable')
         if (readiness.topology.cwd !== checkoutRoot
             || readiness.topology.stackId !== context.stackId
             || readiness.topology.configSha256 !== context.runtimeSha256) {
@@ -296,10 +288,6 @@ export function createReadCommandAdapters(
         const lifecycleValue = decodeLifecycleRecord(lifecycleRead.value, context)?.value
         if (!lifecycleValue || lifecycleValue.completedServices.length === 0) throw new RefusalError('lifecycle state is malformed')
         if (lifecycleValue.holderId !== context.holderId) throw new RefusalError('lifecycle holder authority changed')
-        if (generatedApplication && !isDeepStrictEqual(lifecycleValue.generatedReplay, {
-            runtimeSha256: generatedApplication.runtimeSha256, generation: generatedApplication.generation,
-            profiles: generatedApplication.profiles, mounts: generatedApplication.mounts,
-        })) throw new RefusalError('generated lifecycle replay authority changed')
         const env = runtimeEnvironment(input.env)
         const executable = await resolveDockerExecutable(input.env)
         if (executable.state !== 'available') {
@@ -312,7 +300,7 @@ export function createReadCommandAdapters(
         if (!confirmedComposeFiles || JSON.stringify(confirmedComposeFiles) !== JSON.stringify(composeFiles)) {
             throw new RefusalError('compose artifacts changed during runtime observation')
         }
-        const ownComposeAuthority = generated ? undefined : Object.freeze({
+        const ownComposeAuthority = Object.freeze({
             ownComposeFiles: true as const,
             cockpitId: context.cockpitId,
             stackId: context.stackId,
@@ -323,8 +311,7 @@ export function createReadCommandAdapters(
             ]))),
         })
         return Object.freeze({
-            ...(generatedComposeAuthority ? { generatedComposeAuthority } : {}),
-            ...(ownComposeAuthority ? { ownComposeAuthority } : {}),
+            ownComposeAuthority,
             configuration,
             namespace: context.namespace,
             cockpitId: context.cockpitId,
@@ -355,8 +342,7 @@ export function createReadCommandAdapters(
             throw new RefusalError('lifecycle state changed during log observation')
         }
         return Object.freeze({
-            ...(context.generatedComposeAuthority ? { generatedComposeAuthority: context.generatedComposeAuthority } : {}),
-            ...(context.ownComposeAuthority ? { ownComposeAuthority: context.ownComposeAuthority } : {}),
+            ownComposeAuthority: context.ownComposeAuthority,
             request: Object.freeze({
                 runtime: 'docker-compose' as const,
                 executable: context.executable.value,

@@ -2359,129 +2359,6 @@ const GENERATED_RENDER_AUTHENTICATOR = 'authenticateGeneratedRender'
 const GENERATED_COMPOSE_AUTHENTICATOR = 'authenticateGeneratedComposeArtifact'
 const GENERATED_COMPOSE_RUNTIME_IDENTITY = 'projectGeneratedComposeRuntimeIdentity'
 
-function generatedComposeAuthorityViolations(sources: Sources): string[] {
-    const code = 'ARCH048_GENERATED_COMPOSE_AUTHORITY'
-    const violations = new Set<string>()
-    if (!sources.has(GENERATED_COMPOSE_AUTHORITY_MODULE)) violations.add(code)
-    const program = sourceProgram(sources)
-    const checker = program.getTypeChecker()
-    const stack = 'packages/cockpit/src/environment/generated-stack.ts'
-    const tests = [
-        'packages/cockpit/src/environment/generated-render.test.ts',
-        'packages/cockpit/src/environment/generated-compose-authority.test.ts',
-    ]
-    const allowed = new Map([
-        [GENERATED_COMPOSE_PROJECTION, new Set([stack, ...tests])],
-        [GENERATED_RENDER_AUTHENTICATOR, new Set([stack, ...tests])],
-        [GENERATED_COMPOSE_AUTHENTICATOR, new Set([
-            'packages/cockpit/src/environment/runtime.ts',
-            'packages/cockpit/src/environment/runtime.test.ts',
-            ...tests,
-        ])],
-        [GENERATED_COMPOSE_RUNTIME_IDENTITY, new Set([
-            'packages/cockpit/src/environment/runtime.ts',
-            'packages/cockpit/src/environment/runtime.test.ts',
-            ...tests,
-        ])],
-    ])
-    const types = new Set([
-        GENERATED_COMPOSE_AUTHORITY_TYPE, 'GeneratedEnvironmentInput', 'GeneratedEnvironmentResult',
-        'GeneratedObservationPlan', 'GeneratedOwnedFile', 'GeneratedRenderEnvelope',
-    ])
-    const declarationCounts = new Map<string, number>([
-        [GENERATED_COMPOSE_AUTHORITY_TYPE, 0],
-        ...[...allowed.keys()].map((name): [string, number] => [name, 0]),
-    ])
-
-    for (const [path, source] of sources) {
-        const sourceFile = program.getSourceFile(resolve(ROOT, path))!
-        const bindings = new Map<ts.Symbol, string>()
-        let staticAccesses = 0
-        for (const statement of sourceFile.statements) {
-            const declarationName = ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
-                || ts.isClassDeclaration(statement) || ts.isFunctionDeclaration(statement)
-                || ts.isEnumDeclaration(statement)
-                ? statement.name?.text
-                : ts.isVariableStatement(statement)
-                    ? statement.declarationList.declarations.length === 1
-                        && ts.isIdentifier(statement.declarationList.declarations[0]!.name)
-                        ? statement.declarationList.declarations[0]!.name.text : undefined
-                    : undefined
-            if (declarationName === 'issueGeneratedComposeArtifactAuthority') violations.add(code)
-            if (declarationName !== undefined && declarationCounts.has(declarationName)) {
-                declarationCounts.set(declarationName, declarationCounts.get(declarationName)! + 1)
-                const expectedDeclaration = declarationName === GENERATED_COMPOSE_AUTHORITY_TYPE
-                    ? ts.isInterfaceDeclaration(statement) : ts.isFunctionDeclaration(statement)
-                if (path !== GENERATED_COMPOSE_AUTHORITY_MODULE || !expectedDeclaration
-                    || !hasModifier(statement, ts.SyntaxKind.ExportKeyword)) violations.add(code)
-            }
-
-            if (!(ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
-                || !statement.moduleSpecifier || !ts.isStringLiteralLike(statement.moduleSpecifier)
-                || canonicalModulePath(resolveImport(path, statement.moduleSpecifier.text, sources) ?? '') !== GENERATED_COMPOSE_AUTHORITY_MODULE) continue
-            staticAccesses += 1
-            if (ts.isExportDeclaration(statement)) {
-                if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) {
-                    violations.add(code)
-                    continue
-                }
-                for (const element of statement.exportClause.elements) {
-                    const name = element.propertyName?.text ?? element.name.text
-                    const typeOnly = statement.isTypeOnly || element.isTypeOnly
-                    if (element.name.text !== name || (typeOnly
-                        ? !types.has(name) || path !== stack
-                        : path !== stack || ![GENERATED_COMPOSE_PROJECTION, 'renderGeneratedEnvironment'].includes(name))) violations.add(code)
-                }
-                continue
-            }
-            const clause = statement.importClause
-            if (!clause?.namedBindings || !ts.isNamedImports(clause.namedBindings) || clause.name) {
-                violations.add(code)
-                continue
-            }
-            for (const element of clause.namedBindings.elements) {
-                const imported = element.propertyName?.text ?? element.name.text
-                if (element.name.text !== imported) {
-                    violations.add(code)
-                    continue
-                }
-                const typeOnly = clause.isTypeOnly || element.isTypeOnly
-                if (types.has(imported)) {
-                    if (!typeOnly) violations.add(code)
-                    continue
-                }
-                if (imported === 'renderGeneratedEnvironment') {
-                    if (typeOnly) violations.add(code)
-                    continue
-                }
-                if (typeOnly || !allowed.get(imported)?.has(path)) violations.add(code)
-                const symbol = checker.getSymbolAtLocation(element.name)
-                if (symbol) bindings.set(symbol, imported)
-            }
-        }
-        const accesses = importSpecifiers(source)
-            .filter((specifier) => canonicalModulePath(resolveImport(path, specifier, sources) ?? '') === GENERATED_COMPOSE_AUTHORITY_MODULE)
-            .length
-        if (accesses !== staticAccesses) violations.add(code)
-
-        const auditBinding = (node: ts.Node): void => {
-            if (ts.isIdentifier(node) && !ts.isImportSpecifier(node.parent)) {
-                const symbol = ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
-                    ? checker.getShorthandAssignmentValueSymbol(node.parent)
-                    : checker.getSymbolAtLocation(node)
-                if (symbol && bindings.has(symbol)
-                    && (!ts.isCallExpression(node.parent) || node.parent.expression !== node || Boolean(node.parent.questionDotToken))) {
-                    violations.add(code)
-                }
-            }
-            ts.forEachChild(node, auditBinding)
-        }
-        auditBinding(sourceFile)
-    }
-    if ([...declarationCounts.values()].some((count) => count !== 1)) violations.add(code)
-    return [...violations]
-}
-
 const APPLICATION_MODULE = 'packages/cockpit/src/environment/application.ts'
 const RUNTIME_MODULE = 'packages/cockpit/src/environment/runtime.ts'
 const PORTS_MODULE = 'packages/cockpit/src/environment/ports.ts'
@@ -3802,58 +3679,12 @@ describe('product architecture contract', () => {
         expect(command).toContain("from '../environment/generated-application.js'")
         expect(command).not.toMatch(/\b(?:executeProbe|compensate|renderGeneratedEnvironment|projectPersonaOutputs)\b/)
         const application = sources.get('packages/cockpit/src/environment/generated-application.ts')
-        expect(application).toContain("from './generated-stack.js'")
-        expect(application).toContain("from './data-plane.js'")
+        expect(application).toContain("from './compose-ownership.js'")
         expect(application).not.toContain("from './templates.js'")
 
         const declarations = mechanismDeclarations(sources)
-        expect(declarations.filter(({ id }) => id === 'generated-environment'))
-            .toEqual([expect.objectContaining({ module: 'packages/cockpit/src/environment/generated-stack.ts' })])
         expect(declarations.filter(({ id }) => id === 'environment-template-seeding'))
             .toEqual([expect.objectContaining({ module: 'packages/cockpit/src/environment/templates.ts' })])
-    })
-
-    it('confines generated Compose artifact issuance and authentication to exact owners', () => {
-        expect(generatedComposeAuthorityViolations(cockpitSources())).toEqual([])
-
-        const authority = `
-            export interface GeneratedComposeArtifactAuthority { readonly kind: 'generated-compose-artifact-authority' }
-            export function authenticateGeneratedRender() {}
-            export function projectGeneratedComposeArtifactAuthority() {}
-            export function authenticateGeneratedComposeArtifact() {}
-            export function projectGeneratedComposeRuntimeIdentity() {}
-            export function renderGeneratedEnvironment() {}
-        `
-        const allowed = new Map([
-            ['packages/cockpit/src/environment/generated-render.ts', authority],
-            ['packages/cockpit/src/environment/generated-stack.ts', "import { authenticateGeneratedRender, projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment, type GeneratedEnvironmentResult } from './generated-render.js'; authenticateGeneratedRender(); projectGeneratedComposeArtifactAuthority(); export { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-render.js'; export type { GeneratedComposeArtifactAuthority, GeneratedEnvironmentResult } from './generated-render.js'"],
-            ['packages/cockpit/src/environment/runtime.ts', "import { authenticateGeneratedComposeArtifact, projectGeneratedComposeRuntimeIdentity, type GeneratedComposeArtifactAuthority } from './generated-render.js'; authenticateGeneratedComposeArtifact(); projectGeneratedComposeRuntimeIdentity()"],
-            ['packages/cockpit/src/environment/generated-compose-authority.test.ts', "import { projectGeneratedComposeArtifactAuthority, authenticateGeneratedComposeArtifact, projectGeneratedComposeRuntimeIdentity } from './generated-render.js'; projectGeneratedComposeArtifactAuthority(); authenticateGeneratedComposeArtifact(); projectGeneratedComposeRuntimeIdentity()"],
-        ])
-        expect(generatedComposeAuthorityViolations(allowed)).toEqual([])
-
-        for (const [path, source] of [
-            ['packages/cockpit/src/environment/rogue.ts', "import { projectGeneratedComposeArtifactAuthority } from './generated-render.js'; projectGeneratedComposeArtifactAuthority()"],
-            ['packages/cockpit/src/environment/rogue.test.ts', "import { authenticateGeneratedComposeArtifact } from './generated-render.js'; authenticateGeneratedComposeArtifact()"],
-            ['packages/cockpit/src/environment/rogue.test.ts', "import { projectGeneratedComposeRuntimeIdentity } from './generated-render.js'; projectGeneratedComposeRuntimeIdentity()"],
-            ['packages/cockpit/src/environment/rogue.ts', "import { authenticateGeneratedRender } from './generated-render.js'; authenticateGeneratedRender()"],
-            ['packages/cockpit/src/environment/generated-stack.ts', "export { authenticateGeneratedRender } from './generated-render.js'"],
-            ['packages/cockpit/src/environment/rogue.ts', "export { projectGeneratedComposeArtifactAuthority } from './generated-render.js'"],
-            ['packages/cockpit/src/environment/runtime.ts', "import * as authority from './generated-render.js'; authority.authenticateGeneratedComposeArtifact()"],
-            ['packages/cockpit/src/environment/runtime.ts', "void import('./generated-render.js')"],
-            ['packages/cockpit/src/environment/runtime.ts', "const guard = require('./generated-render.js')"],
-            ['packages/cockpit/src/environment/generated-stack.ts', "import { projectGeneratedComposeArtifactAuthority } from './generated-render.js'; const issue = projectGeneratedComposeArtifactAuthority"],
-            ['packages/cockpit/src/environment/generated-stack.ts', "import { projectGeneratedComposeArtifactAuthority as issue } from './generated-render.js'; issue()"],
-            ['packages/cockpit/src/environment/rogue.ts', 'export function issueGeneratedComposeArtifactAuthority() {}'],
-        ] as const) {
-            const planted = new Map(allowed)
-            planted.set(path, source)
-            expect(generatedComposeAuthorityViolations(planted)).toContain('ARCH048_GENERATED_COMPOSE_AUTHORITY')
-        }
-
-        const duplicate = new Map(allowed)
-        duplicate.set('packages/cockpit/src/environment/rogue.ts', 'export interface GeneratedComposeArtifactAuthority {}')
-        expect(generatedComposeAuthorityViolations(duplicate)).toContain('ARCH048_GENERATED_COMPOSE_AUTHORITY')
     })
 
     it('keeps environment command ownership in the application instead of pass-through modules', () => {
@@ -4290,15 +4121,6 @@ describe('product architecture contract', () => {
         ])
 
         expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it('confines generated host input authority issuance to the prepared application owner', () => {
-        const users = [...productionSources()]
-            .filter(([path, source]) => path !== 'packages/cockpit/src/environment/generated-stack.ts'
-                && /\bprojectGeneratedRuntimeAuthority\b/.test(source))
-            .map(([path]) => path)
-            .sort()
-        expect(users).toEqual(['packages/cockpit/src/environment/generated-application.ts'])
     })
 
     it('keeps controlled runtime measurement authority confined to the probe and lifecycle consumer', () => {
@@ -5836,7 +5658,6 @@ const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[]
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment/claims.ts#prepareDrainOutcomePublication', PARSE_REFUSED_NEXT],
     ['packages/cockpit/src/environment/executable.ts#digestRegularFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment/installs.ts#stableFileSnapshot', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/lifecycle-composition.ts#composeArtifact', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/posture-observation.ts#currentConfigurationRevision', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/read-composition.ts#composeArtifact', CLOSE_AFTER_DECISION],

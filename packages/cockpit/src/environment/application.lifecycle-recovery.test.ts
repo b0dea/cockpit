@@ -1,16 +1,11 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { parse, stringify } from 'smol-toml'
+import { join } from 'node:path'
+import { stringify } from 'smol-toml'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
-import * as generatedCurrentnessOwner from './generated-application.js'
-import { executeProbe } from '../environment-exec/execute.js'
 import type { StackId } from './contract.js'
-import { createMachineFloorPlan, collectMachineFloorEvidence, issueMachineFloorAuthority } from './runtime.js'
-import { observeHostCapacity } from './host-observation.js'
-import { projectMachineFloorConfig } from '../config/load.js'
 const executionFence = (id: string) => {
     const attemptId = createHash('sha256').update(`${process.pid}:${id}`).digest('hex')
     const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
@@ -91,13 +86,8 @@ import {
     runUp,
     type LifecycleRunContext,
 } from './application.js'
-import {
-    observeSetupCheckout,
-    withSetupCheckoutProjection,
-} from './setup-observation.js'
 import { readState, transactState } from './state.js'
 import { recordLifecycleStarted } from './lifecycle-stage.js'
-import { CockpitConfig } from '../schema.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
 const RUNTIME_INPUTS = Object.freeze({ 'cockpit.toml': 'd'.repeat(64) })
@@ -185,7 +175,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -240,7 +230,7 @@ describe('lifecycle application contracts', () => {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             withRuntimeReadiness: async (_context, use) => {
                 readinessCounts.runtime += 1
-                return use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never)
+                return use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never)
             },
             withLifecycleStage: async (_context, use) => {
                 readinessCounts.stage += 1
@@ -309,7 +299,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),
@@ -351,7 +341,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),
@@ -430,7 +420,7 @@ describe('lifecycle application contracts', () => {
 
         await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'db' }, { id: 'api' }] }, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'db' }, { id: 'api' }] }, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: async (step) => {
@@ -483,7 +473,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {},
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {}, hostObservations: [],
                 inputs: { 'cockpit.toml': 'd'.repeat(64), 'compose.yml': 'f'.repeat(64) } } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
@@ -581,7 +571,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => { readinessCounts.runtime += 1; return use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never) },
+            withRuntimeReadiness: async (_context, use) => { readinessCounts.runtime += 1; return use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never) },
             withLifecycleStage: async (_context, use) => { readinessCounts.stage += 1; return use({} as never) },
             withAcquiredPorts: async (_context, use) => { readinessCounts.ports += 1; return use({
                 retainOnFailure: vi.fn(),
@@ -614,102 +604,6 @@ describe('lifecycle application contracts', () => {
         ])
     })
 
-    it.each([1, 2])('admits same-basis generated progress with one machine, stage, port and runtime readiness round for a %i MB floor', async (memoryFloor) => {
-        const source = CockpitConfig.parse(parse(readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')))
-        source.cockpit.siblings_root = '.'
-        source.environment.machine = { runtime_memory_mb: memoryFloor, runtime_cpus: 1, free_disk_mb: 1, cold_start_seconds: 30 }
-        const { configPath, context } = await lifecycleContextFixture(stringify(source))
-        const root = dirname(configPath)
-        mkdirSync(join(root, 'fixtures'), { recursive: true })
-        mkdirSync(join(root, 'app'), { recursive: true })
-        writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
-        writeFileSync(join(root, 'app/package-lock.json'), '{}')
-        const published = await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })
-        if (published.kind !== 'complete') throw new Error(JSON.stringify(published))
-        const projection = published.result.application
-        const progress = { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64), completedServices: [] }
-        await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
-            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
-            revision: 0, updatedAt: new Date().toISOString(), value: { ...progress, holderId: context.holderId,
-                generatedReplay: { runtimeSha256: projection.runtimeSha256, generation: projection.generation, profiles: [...projection.profiles], mounts: [...projection.mounts] } },
-        }))
-        const executable = (name: string, body: string) => {
-            const path = join(root, name)
-            writeFileSync(path, body, { mode: 0o700 })
-            return { canonicalPath: path, invocationPath: path, sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'verified-path' as const }
-        }
-        const docker = executable('docker', '#!/bin/sh\nprintf "1048576|1\\n"\n')
-        const disk = executable('disk-fixture', '#!/bin/sh\nprintf "2097152\\n"\n')
-        const counts = { machine: 0, stage: 0, ports: 0, runtime: 0 }
-        const topology = { services: [{ id: 'app' }] }
-        const lease = { stackId: context.stackId, offset: 0, ports: { APP_HOST_PORT: 4100 } }
-        stubUpPlanner((input) => {
-            expect(input.progress).toEqual(progress)
-            expect(input.completedServices).toEqual([])
-            return { kind: 'execute', mode: 'resume', plan: { progress, diagnostics: [] } } as never
-        })
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({ topology, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null } as never)
-        applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['app']
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({ kind: 'unavailable' } as never)
-        const unexpectedCompletion = async () => { throw new Error('unavailable service must refuse before generated completion') }
-        const result = await runUp({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            prepareGeneratedEnvironment: async (_context, ports) => {
-                expect(counts.ports).toBe(1)
-                expect(ports.lease).toEqual(lease)
-                return projection
-            },
-            completeGeneratedEnvironment: unexpectedCompletion,
-            completeGeneratedDependencies: unexpectedCompletion,
-            completeGeneratedData: unexpectedCompletion,
-            completeGeneratedVendors: unexpectedCompletion,
-            withMachineFloorReadiness: async (_context, use) => {
-                counts.machine += 1
-                const loaded = await loadCockpitConfig(configPath)
-                if (loaded.kind !== 'complete') throw new Error('machine fixture configuration unavailable')
-                const observedAt = new Date().toISOString()
-                const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: source.cockpit.name,
-                    observedAt, env: {}, gitExecutable })
-                const configuration = projectMachineFloorConfig(loaded.result)
-                if (!configuration) throw new Error('machine fixture configuration was not issued')
-                const binding = await withSetupCheckoutProjection(checkout, { source: loaded.result.source,
-                    cockpitName: source.cockpit.name, evaluatedAt: Date.parse(observedAt) },
-                    (projection) => issueMachineFloorAuthority({ configuration, checkout: projection }))
-                if (!binding) throw new Error('machine fixture authority was not issued')
-                const planned = createMachineFloorPlan({ runtimeExecutable: docker, diskExecutable: disk,
-                    cwd: root, env: {}, timeoutMs: 10_000, authority: binding.authority })
-                if (planned.kind !== 'preview') throw new Error(`machine fixture plan unavailable: ${JSON.stringify(planned)}`)
-                const outcomes = [await executeProbe(planned.plan.steps[0]!), await executeProbe(planned.plan.steps[1]!)] as const
-                const evidence = collectMachineFloorEvidence(planned.plan, outcomes)
-                if (!evidence) throw new Error(`machine fixture evidence was not admitted: ${JSON.stringify(outcomes)}`)
-                return use(observeHostCapacity({ evidence }))
-            },
-            withRuntimeReadiness: async (_context, use) => { counts.runtime += 1; return use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never) },
-            withLifecycleStage: async (_context, use) => { counts.stage += 1; return use({} as never) },
-            withAcquiredPorts: async (_context, use) => {
-                counts.ports += 1
-                return use({ retainOnFailure: vi.fn(), leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId,
-                    recordRevision: 2, lease }, projection: { lease, ownership: { change: 'unchanged', holderId: context.holderId,
-                    recordRevision: 2, holderCount: 1, holderIds: [context.holderId] }, entrypoints: [] } } as never)
-            },
-            execute: async () => { throw new Error('unavailable service plan must not execute') },
-        })
-        if (memoryFloor > 1) {
-            // The runtime reports 1 MiB, so a 2 MB floor stops bring-up before any stage, and says by how much.
-            expect(counts).toEqual({ machine: 1, stage: 0, ports: 1, runtime: 0 })
-            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MACHINE_MEMORY_BELOW_FLOOR',
-                message: 'the container runtime has 1 MB of memory, below the 2 MB that environment.machine.runtime_memory_mb declares',
-                fix: expect.stringContaining('lower the declared environment.machine floor') }] })
-            return
-        }
-        expect(counts).toEqual({ machine: 1, stage: 1, ports: 2, runtime: 1 })
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [
-            { code: 'LIFECYCLE_EVIDENCE_INVALID', target: 'app', message: 'runtime service did not become healthy' },
-            { code: 'LIFECYCLE_EVIDENCE_INVALID', target: 'app', message: 'bounded failure logs are unavailable' },
-        ] })
-    })
-
     it('surfaces a failure log collection failure for a failed runtime service', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
@@ -740,7 +634,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -789,7 +683,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -885,7 +779,7 @@ describe('lifecycle application contracts', () => {
             return { kind: 'complete' as const, change: 'compensated' as const, recordRevision: 3, remainingHolderIds: [] }
         })
         applicationOwners.ports.compensateAcquiredPortHolder = compensate
-        const readiness = async (_context: LifecycleRunContext, use: (value: unknown) => Promise<unknown>) => use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS })
+        const readiness = async (_context: LifecycleRunContext, use: (value: unknown) => Promise<unknown>) => use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS })
         const stage = async (_context: LifecycleRunContext, use: (value: unknown) => Promise<unknown>) => use({})
 
         const first = await runUp({ configPath: firstContext.configPath }, {
@@ -942,7 +836,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             execute,
         })
 
@@ -953,12 +847,10 @@ describe('lifecycle application contracts', () => {
     it('stops the final-holder runtime after its drain attempt is durable', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const events: string[] = []
-        // A generated stack's resume is admitted only against the replay identity it ran with.
-        const generatedReplay = { runtimeSha256: '8'.repeat(64), generation: '9'.repeat(64), profiles: [], mounts: [] }
         await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
             revision: 0, updatedAt: new Date().toISOString(), value: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
-                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], holderId: context.holderId, generatedReplay },
+                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], holderId: context.holderId },
         }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         applicationOwners.ports.observeRetainedPortFamily = async () => ({
@@ -1005,7 +897,6 @@ describe('lifecycle application contracts', () => {
                         workBasisSha256: request.operationBasis,
                         operationGeneration: request.generation,
                         completedServices: [],
-                        generatedReplay,
                     },
                 },
             })
@@ -1019,7 +910,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             execute: async (step) => {
                 events.push(step.id)
                 return {} as never
@@ -1065,7 +956,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             execute: async () => ({}) as never,
         })
 
@@ -1133,7 +1024,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
             execute: async () => ({}) as never,
         })
 

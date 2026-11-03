@@ -461,7 +461,7 @@ describe('CLI help', () => {
             '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
             '  upgrade           Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +
-            '  sync              Write the generated stack and agent files from cockpit.toml\n' +
+            '  sync              Write the Compose ownership override and agent files from cockpit.toml\n' +
             '  check             Report generated files that no longer match cockpit.toml\n' +
             '  selftest          Test whether agent tools enforce the generated controls\n\n' +
             'Run the stack:\n' +
@@ -700,14 +700,14 @@ describe('generated environment process contract', () => {
         const owned = Array.from({ length: 500 }, (_, index) => ({ path: `.claude/skills/s${index}/SKILL.md`, authority: 'generated' }))
         const freshness = {
             local: { kind: 'complete', status: 0, diagnostics: [], result: { paths: owned } },
-            changes: [{ operation: 'write', path: 'compose.generated.yml' }],
+            changes: [{ operation: 'write', path: 'compose.cockpit.yml' }],
             release: { kind: 'known', package: '@b00dea/cockpit', installedVersion: '1.0.0', latestVersion: '1.2.3', currency: 'different-version' },
         }
         expect(await runCli(['doctor', '--config', 'cockpit.toml'], capture.io, {
             doctor: async () => ({ status: 0,
                 diagnostics: [{ severity: 'warning', code: 'GUARD_HOSTS_UNDECLARED', target: 'guards', message: 'synthetic warning' }],
                 result: { verdict: 'pass', checks: [{ verdict: 'pass' }, { verdict: 'pass' }, { verdict: 'not-applicable' }], comparisons: [], surfaceOverrides, freshness,
-                    declarations: [{ subject: 'runtime', state: 'declared' }, { subject: 'data-modes', state: 'not-declared' }] } }),
+                    declarations: [{ subject: 'runtime', state: 'declared' }, { subject: 'reset-volumes', state: 'not-declared' }] } }),
         })).toBe(0)
         const config = resolve('cockpit.toml')
         expect(capture.output().stdout).toBe([
@@ -715,7 +715,7 @@ describe('generated environment process contract', () => {
             'Checks: 2 pass, 1 not applicable.',
             'Generated files: 1 change pending.',
             'Surface overrides: 1 active (review).',
-            'Declared: runtime; not declared: data modes.',
+            'Declared: runtime; not declared: reset volumes.',
             'Release: 1.2.3 is published; 1.0.0 is installed.',
             `Full report: npx --no cockpit doctor --config ${config} --json`,
             `Generated file detail: npx --no cockpit check --config ${config}`,

@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 import { inspect } from 'node:util'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { externalDependencyTemplateFragments, inspectEnvironmentKeys, planEnvironmentSeed, seedEnvironmentInstanceSync } from './templates.js'
+import { inspectEnvironmentKeys, planEnvironmentSeed, seedEnvironmentInstanceSync } from './templates.js'
 
 const scratch: string[] = []
 
@@ -56,54 +56,6 @@ async function beforeDelayedFifoWriter<T>(path: string, operation: () => T): Pro
 
 afterEach(() => {
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
-})
-
-describe('external dependency template fragments', () => {
-    it('pins a stubbed dependency through both suppliers and product loader', () => {
-        const result = externalDependencyTemplateFragments({
-            id: 'mailer',
-            posture: 'stubbed',
-            reason: 'exercise delivery without external egress',
-            endpoints: [{
-                variable: 'MAILER_URL',
-                sink: 'http://mailer-stub:4010/api',
-                runtime_service: 'api',
-                supplier: { sibling: 'web', template: '.env.example' },
-            }],
-            placeholder: 'cockpit:absent:mailer',
-            nonempty_variables: ['MAILER_TOKEN'],
-            shadow_files: [{ sibling: 'web', instance: '.env', probe: { location: 'in-stack', service: 'api', cwd: '.', argv: ['node', 'probe.mjs'], timeout_seconds: 5, provenance: { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'product loader' } } }],
-        })
-
-        expect(result).toEqual({
-            kind: 'complete',
-            dependencyId: 'mailer',
-            runtime: [{ variable: 'MAILER_URL', value: 'http://mailer-stub:4010/api', service: 'api' }],
-            secretsTemplate: [{ variable: 'MAILER_URL', value: 'http://mailer-stub:4010/api', sibling: 'web', template: '.env.example' }],
-            nonempty: [{ variable: 'MAILER_TOKEN', value: 'cockpit:absent:mailer' }],
-            shadowFiles: [{ sibling: 'web', instance: '.env' }],
-            normalizeExportedEmpties: true,
-            placeholder: 'cockpit:absent:mailer',
-        })
-        expect(Object.isFrozen(result)).toBe(true)
-        if (result.kind === 'complete') {
-            expect(result.runtime[0]).not.toBe(result.secretsTemplate[0])
-            expect(Object.isFrozen(result.runtime)).toBe(true)
-            expect(Object.isFrozen(result.secretsTemplate)).toBe(true)
-        }
-    })
-
-    it('refuses missing pins, mismatched suppliers, live endpoints, and duplicate variables', () => {
-        const base = {
-            id: 'mailer', placeholder: 'cockpit:absent:mailer',
-            endpoints: [{ variable: 'MAILER_URL', sink: 'http://mailer-stub:4010', runtime_service: 'api', supplier: { sibling: 'web', template: '.env.example' } }],
-        }
-        expect(externalDependencyTemplateFragments({ ...base, endpoints: [] })).toMatchObject({ kind: 'refusal' })
-        expect(externalDependencyTemplateFragments({ ...base, endpoints: [{ ...base.endpoints[0], sink: 'https://vendor.example.com' }] })).toMatchObject({ kind: 'refusal' })
-        expect(externalDependencyTemplateFragments({ ...base, endpoints: [...base.endpoints, base.endpoints[0]] })).toMatchObject({ kind: 'refusal' })
-        expect(externalDependencyTemplateFragments({ ...base, nonempty_variables: ['MAILER_URL'] })).toMatchObject({ kind: 'refusal' })
-        expect(externalDependencyTemplateFragments({ ...base, endpoints: [{ ...base.endpoints[0], supplier: { sibling: '', template: '.env.example' } }] })).toMatchObject({ kind: 'refusal' })
-    })
 })
 
 describe('environment template keys', () => {

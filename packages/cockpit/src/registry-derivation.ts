@@ -25,11 +25,6 @@ export interface RegistrySecretPath {
     readonly kind: 'instance'
 }
 
-export interface RegistryOrigin {
-    readonly slug: string
-    readonly provenance: Provenance
-}
-
 type DeepReadonly<T> = T extends (...args: never[]) => unknown
     ? T
     : T extends readonly (infer Item)[]
@@ -42,17 +37,13 @@ export interface DerivedRegistry {
     readonly config: DeepReadonly<CockpitConfigValue>
     readonly mcpSources: readonly RegistryMcpSource[]
     readonly secretPaths: readonly RegistrySecretPath[]
-    readonly origins: readonly RegistryOrigin[]
 }
 
 export type RegistryDerivationResult =
     | Readonly<{ kind: 'complete'; result: DerivedRegistry }>
     | Readonly<{
           kind: 'refusal'
-          code:
-              | 'REGISTRY_INPUT_INVALID'
-              | 'REGISTRY_GENERATED_BASELINE_MISSING'
-              | 'REGISTRY_EFFECTIVE_CONFIG_INVALID'
+          code: 'REGISTRY_INPUT_INVALID'
           message: string
       }>
 
@@ -82,64 +73,10 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
     }
     const parsed = CockpitConfig.safeParse(snapshot)
     if (!parsed.success) {
-        const missingBaseline = parsed.error.issues.some((issue) => (
-            issue.code === 'custom' && issue.params?.cockpitCode === 'REGISTRY_GENERATED_BASELINE_MISSING'
-        ))
-        return refusal(
-            missingBaseline ? 'REGISTRY_GENERATED_BASELINE_MISSING' : 'REGISTRY_INPUT_INVALID',
-            missingBaseline
-                ? 'row-generated data requires a global generated environment baseline'
-                : zodMessage('registry derivation input is not a canonical cockpit configuration', parsed.error.issues),
-        )
+        return refusal('REGISTRY_INPUT_INVALID', zodMessage('registry derivation input is not a canonical cockpit configuration', parsed.error.issues))
     }
-
-    const rows = parsed.data.sibling.map((sibling) => ({ sibling, generated: sibling.derives?.generated }))
-    const generatedRows = rows.filter((row): row is typeof row & { generated: NonNullable<typeof row.generated> } => row.generated !== undefined)
-    const services = generatedRows.map(({ sibling, generated }) => ({
-        ...generated.service,
-        id: sibling.slug,
-        sibling: sibling.slug,
-        profiles: sibling.mount === 'always' ? [] : [sibling.mount.slice('profile:'.length)],
-        mounts: [
-            { kind: 'bind' as const, source: '.', target: generated.checkout_mount.target, source_type: 'directory' as const },
-            ...generated.additional_mounts,
-        ],
-    }))
-    const rowVolumes = generatedRows.flatMap(({ generated }) => generated.volumes ?? [])
-    const rowDecisions = generatedRows.flatMap(({ generated }) => generated.decisions)
-    const rowPolicies = generatedRows.flatMap(({ generated }) => generated.install_policies ?? [])
-    const rowEntrypoints = generatedRows.flatMap(({ generated }) => generated.entrypoints)
-    const rowPorts = Object.fromEntries(generatedRows.flatMap(({ generated }) => Object.entries(generated.port_defaults)))
-    const siblings = parsed.data.sibling.map(({ derives: _derives, ...sibling }) => sibling)
-    const baseline = parsed.data.environment.generated
-    const effectiveCandidate = {
-        ...parsed.data,
-        sibling: siblings,
-        ports: { ...parsed.data.ports, bases: { ...parsed.data.ports.bases, ...rowPorts } },
-        environment: {
-            ...parsed.data.environment,
-            entrypoint_derivatives: [...parsed.data.environment.entrypoint_derivatives, ...rowEntrypoints],
-            install_policies: [...parsed.data.environment.install_policies, ...rowPolicies],
-            ...(baseline ? {
-                generated: {
-                    ...baseline,
-                    services: [...baseline.services, ...services],
-                    volumes: [...baseline.volumes, ...rowVolumes],
-                    decisions: {
-                        ...baseline.decisions,
-                        entries: [...baseline.decisions.entries, ...rowDecisions],
-                    },
-                },
-            } : {}),
-        },
-    }
-    const effective = CockpitConfig.safeParse(effectiveCandidate)
-    if (!effective.success) {
-        return refusal(
-            'REGISTRY_EFFECTIVE_CONFIG_INVALID',
-            zodMessage('normalized registry derivation violates the effective cockpit configuration', effective.error.issues),
-        )
-    }
+    // The derives facts leave the configuration as the MCP sources below.
+    const config = { ...parsed.data, sibling: parsed.data.sibling.map(({ derives: _derives, ...sibling }) => sibling) }
 
     const mcpSources = parsed.data.sibling.flatMap((sibling) => (sibling.derives?.mcp_sources ?? []).map((source) => ({
         slug: sibling.slug,
@@ -153,10 +90,8 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
         path: file.instance,
         kind: 'instance' as const,
     })))
-    const origins = generatedRows.map(({ sibling, generated }) => ({ slug: sibling.slug, provenance: generated.provenance }))
-
     return freezeData({
         kind: 'complete' as const,
-        result: { config: effective.data, mcpSources, secretPaths, origins },
+        result: { config, mcpSources, secretPaths },
     })
 }

@@ -79,27 +79,9 @@ function unavailableCapabilities() {
     }))
 }
 
-const generatedRuntimeChecks = [
-    { path: 'environment.generated', rule: 'unique_declaration_identities' },
-    { path: 'environment.generated', rule: 'declared_sibling_service_volume_policy_mount_port_references' },
-    { path: 'environment.generated.services[].ports[].host_variable', rule: 'globally_unique' },
-    { path: 'environment.generated.data.modes[].operations[].after', rule: 'earlier_declared_operations' },
-    { path: 'environment.generated.services[].health', rule: 'start_period_at_least_measured_duration' },
-    { path: 'environment.generated.vendors[].endpoints[]', rule: 'exact_declared_local_sink_and_template_supplier' },
-    { path: 'environment.generated.vendors[].endpoints[].variable', rule: 'globally_unique' },
-    { path: 'environment.generated.vendors[]', rule: 'globally_unique_endpoint_nonempty_and_egress_variables' },
-    { path: 'environment.generated.vendors[].egress_guard.local_service', rule: 'declared_service' },
-    { path: 'environment.generated.services[]', rule: 'acyclic_dependencies_and_same_image_health_probes' },
-    { path: 'environment.generated.data', rule: 'product_data_volume_and_mode_operations' },
-    { path: 'environment.generated.data', rule: 'declared_default_mode_fixtures_for_seeded_and_restore_for_restored' },
-    { path: 'environment.generated.decisions.entries[]', rule: 'declared_subject_with_undecided_subjects_rendered' },
-    { path: 'environment.generated', rule: 'undated_declared_provenance_names_the_configuration_file' },
-]
-
-const rowDerivationRuntimeChecks = [
-    { path: 'sibling[].derives.generated', rule: 'row_owned_relations_and_exact_port_defaults' },
+const derivedRowAndSeedRuntimeChecks = [
     { path: 'sibling[].derives.mcp_sources[].path', rule: 'unique_within_sibling' },
-    { path: 'sibling[].derives', rule: 'global_baseline_and_cross_row_identity_disjointness' },
+    { path: 'environment.seed', rule: 'requires_resettable_volumes' },
 ]
 
 const surfaceRuntimeChecks = [
@@ -639,7 +621,7 @@ describe('the published cockpit schema', () => {
         const schema = object(JSON.parse(renderCockpitSchema()))
         const sibling = object(object(object(schema.properties).sibling).items)
 
-        expect((sibling.allOf as unknown[])[3]).toEqual({
+        expect((sibling.allOf as unknown[])[2]).toEqual({
             anyOf: [
                 {
                     properties: { gate: { enum: ['operator'] } },
@@ -869,19 +851,18 @@ describe('the published cockpit schema', () => {
                 { path: 'browser.images', rule: 'runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor' },
                 { path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' },
                 { path: 'sibling[].environment_files[]', rule: 'template_and_instance_differ' },
-                ...rowDerivationRuntimeChecks,
+                ...derivedRowAndSeedRuntimeChecks,
                 {
                     path: 'ports',
                     rule: 'count_times_base_count_within_shared_input_budget',
                     limit: 4_096,
                 },
                 ...surfaceRuntimeChecks,
-                ...generatedRuntimeChecks,
             ])
             expect(schema['x-cockpit-editor-limitations']).toEqual([
                 { path: 'sibling[].environment_files[].instance', rule: 'unique' },
                 { path: 'sibling[].environment_files[]', rule: 'template_and_instance_differ' },
-                ...rowDerivationRuntimeChecks,
+                ...derivedRowAndSeedRuntimeChecks,
                 { path: 'environment.entrypoint_derivatives[].name', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
                 { path: 'environment.install_policies[].volume', rule: 'unique' },
@@ -892,7 +873,6 @@ describe('the published cockpit schema', () => {
                 { path: 'browser.images', rule: 'runner_driver_equals_project_driver_and_mcp_driver_shares_major_minor' },
                 { path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' },
                 ...surfaceRuntimeChecks,
-                ...generatedRuntimeChecks,
             ])
         },
     )
@@ -932,7 +912,7 @@ describe('the published cockpit schema', () => {
         }
         walk(JSON.parse(renderCockpitSchema()), '#')
 
-        expect(seen.some((path) => path.includes('runner_health_measurement'))).toBe(true)
+        expect(seen.some((path) => path.includes('mcp_sources'))).toBe(true)
         expect(seen.some((path) => path.includes('adopted'))).toBe(true)
         expect(withoutRule).toEqual([])
     })

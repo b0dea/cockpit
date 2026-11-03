@@ -1,5 +1,5 @@
-# A cockpit that runs its own Compose file. There is no [environment.generated]: cockpit
-# publishes the agent surfaces and checks compose.yml, and Compose owns the stack.
+# A cockpit that runs its own Compose file: cockpit publishes the agent surfaces and checks
+# compose.yml, and Compose owns the stack.
 [cockpit]
 name = "duo"
 siblings_root = "."

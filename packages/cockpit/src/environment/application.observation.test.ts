@@ -516,7 +516,7 @@ describe('observation application runners', () => {
         expect(observe).toHaveBeenCalledWith({ configPath: publicInput.configPath, service: publicInput.service })
         expect(applicationOwners.logs.planLogs).toHaveBeenCalledWith(expect.objectContaining({
             service: 'api', since: '5m', tail: 25, follow: true,
-        }), undefined, undefined)
+        }), undefined)
         expect(applicationOwners.logs.collectLogs).toHaveBeenCalledWith(planned, execute, signal, undefined)
         expect(complete).toMatchObject({ kind: 'complete', result: { json: true, records } })
     })
@@ -583,8 +583,7 @@ describe('observation application runners', () => {
         const result = await runPreflight(source.input, { load: source.load, execute } as never)
 
         expect(order).toEqual([
-            'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-            'generated', 'data', 'external', 'envSchema', 'surfaces',
+            'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'surfaces',
             'authenticate',
         ])
         expect(execute).not.toHaveBeenCalled()
@@ -663,8 +662,7 @@ describe('observation application runners', () => {
 })
 
 const healthProducerNames = [
-    'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-    'generated', 'data', 'external', 'envSchema', 'surfaces',
+    'claims', 'git', 'host', 'lifecycle', 'ports', 'runtime', 'state', 'templates', 'envSchema', 'surfaces',
 ] as const
 
 function logRequestBaseFixture() {

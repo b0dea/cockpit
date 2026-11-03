@@ -5,12 +5,10 @@ import { once } from 'node:events'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, normalize } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { parse } from 'smol-toml'
 import { executeProbe } from '../environment-exec/execute.js'
 import { CockpitConfig } from '../schema.js'
-import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { cockpitId, checkoutId, stackId } from './identity.js'
 import { ENVIRONMENT_CODES } from './contract.js'
@@ -31,7 +29,6 @@ import {
     runtimeIdentity,
     createRuntimeServiceHealthPlan,
     createRuntimeServicePlan,
-    admitBuiltImageLauncher,
     createRuntimeServiceRevalidationPlan,
     createRuntimeTopologyPlan,
     createRuntimeStopPlan,
@@ -52,14 +49,10 @@ import {
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
     projectRuntimeExecutionEnvironment,
-    projectDependencyRuntime,
-    consumeDependencyRuntimeProjection,
     consumeRuntimeLifecycleProjection,
     consumeRuntimeServiceFailureForLogs,
     resolveRuntimeServiceOrder,
 } from './runtime.js'
-import { admitDependencyLoad, admitDependencyRuntime, createDependencyExecutionPlan, createDependencyLoadPlan, createDependencyRuntimePlan } from './dependency-runtime.js'
-import { isInstallObservation, observeDependencyLoad, planInstall, verifyInstall } from './installs.js'
 import { reduceDrainOutcome, reserveDrain, reserveDrainAttempt } from './claims.js'
 import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
@@ -394,10 +387,12 @@ describe('runtime plan construction', () => {
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_COMPOSE_REMOTE })])
     })
 
-    it('binds generated Compose execution to the exact leased port family', async () => {
-        const home = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-runtime-generated-ports-')))
+    it('binds Compose execution to the exact leased port family', async () => {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-runtime-leased-ports-')))
         const configPath = join(home, 'cockpit.toml')
-        writeFileSync(configPath, `${readFileSync('fixtures/registries/generated-environment.toml', 'utf8')}\n[environment.machine]\nruntime_memory_mb = 1024\nruntime_cpus = 1\nfree_disk_mb = 1024\ncold_start_seconds = 30\n`)
+        writeFileSync(configPath, `${readFileSync('fixtures/registries/generated-environment.toml', 'utf8')}\n[environment]\ncompose_files = ["compose.yml"]\n\n[environment.machine]\nruntime_memory_mb = 1024\nruntime_cpus = 1\nfree_disk_mb = 1024\ncold_start_seconds = 30\n`)
+        const composeBytes = 'services:\n  app:\n    image: busybox\n    ports: ["127.0.0.1:${APP_HOST_PORT:-4100}:3000"]\n'
+        writeFileSync(join(home, 'compose.yml'), composeBytes)
         mkdirSync(join(home, 'app'), { recursive: true })
         execFileSync('git', ['init', '--quiet', home])
         const loaded = await loadCockpitConfig(configPath)
@@ -405,41 +400,24 @@ describe('runtime plan construction', () => {
         if (loaded.kind !== 'complete') return
         const config = loaded.result.config
         const sourceSha256 = loaded.result.runtimeSha256
-        const generation = sha('generated application')
         const owner = cockpitId({ name: config.cockpit.name, mainCheckoutPath: home })
         const checkout = checkoutId({ checkoutPath: home })
-        const rendered = renderGeneratedEnvironment({
-            declaration: config.environment.generated,
-            sourceSha256,
-            generation,
-            stackId: stackId({ cockpitId: owner, checkoutId: checkout, variant: { kind: 'shared' } }),
-            cockpitId: owner,
-            portDefaults: config.ports.bases,
-            siblingDirectories: { app: 'app' },
-        })
-        expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
-        if (rendered.kind !== 'complete') return
-        const generatedComposeAuthority = projectGeneratedComposeArtifactAuthority(rendered)
-        expect(generatedComposeAuthority).toBeDefined()
-        if (!generatedComposeAuthority) return
-        const compose = rendered.manifest.find(({ path }) => path === config.environment.generated?.compose_file)
-        expect(compose).toBeDefined()
-        if (!compose) return
+        const ownStack = stackId({ cockpitId: owner, checkoutId: checkout, variant: { kind: 'shared' } })
         const generatedInput = {
             ...runtimeInput,
             operation: 'validate' as const,
             cwd: home,
             composeFiles: [{
-                reference: compose.path,
-                canonicalPath: join(home, compose.path),
-                source: compose.bytes,
-                sha256: compose.sha256,
+                reference: 'compose.yml',
+                canonicalPath: join(home, 'compose.yml'),
+                source: composeBytes,
+                sha256: sha(composeBytes),
             }],
             labels: {
                 ...runtimeInput.labels,
                 stackId: stackId({ cockpitId: owner, checkoutId: checkout, variant: { kind: 'shared' } }),
                 configSha256: sourceSha256,
-                batchId: sha('generated runtime batch'),
+                batchId: sha('leased runtime batch'),
             },
             stackId: stackId({ cockpitId: owner, checkoutId: checkout, variant: { kind: 'shared' } }),
             coldStartLimitMillis: 30_000,
@@ -449,7 +427,7 @@ describe('runtime plan construction', () => {
         const namespace = await selectStateRoot({ platform: 'linux', home, cockpitId: owner })
         expect(namespace.kind).toBe('complete')
         if (namespace.kind !== 'complete') return
-        const holder = `holder:${sha('generated runtime holder')}:session` as HolderId
+        const holder = `holder:${sha('leased runtime holder')}:session` as HolderId
         const leaseObservedAt = new Date().toISOString()
         const lease = await leasePortFamilyFixture({
             namespace: namespace.value,
@@ -461,7 +439,7 @@ describe('runtime plan construction', () => {
             listenerTimeoutMs: 100,
             listenerEvidence: Array.from({ length: config.ports.count }, (_, index) => ({
                 ports: [config.ports.bases.APP_HOST_PORT! + index * config.ports.step],
-                observation: { state: 'available', value: [], observedAt: leaseObservedAt, producer: 'generated-runtime-port-listener' },
+                observation: { state: 'available', value: [], observedAt: leaseObservedAt, producer: 'leased-runtime-port-listener' },
             })),
         })
         expect(lease.kind, JSON.stringify(lease)).toBe('complete')
@@ -472,6 +450,7 @@ describe('runtime plan construction', () => {
         const portLeaseProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
         expect(portLeaseProjection).toBeDefined()
         if (!portLeaseProjection) return
+        const ownAuthority = { ownComposeFiles: true as const, cockpitId: owner, stackId: ownStack }
         const hostileHome = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-runtime-hostile-port-env-')))
         const hostileNamespace = await selectStateRoot({ platform: 'linux', home: hostileHome, cockpitId: owner })
         expect(hostileNamespace.kind).toBe('complete')
@@ -504,10 +483,10 @@ describe('runtime plan construction', () => {
         expect(createRuntimeAdapter({
             ...generatedInput,
             ports: Object.values(hostileLease.lease.ports),
-        }, { generatedComposeAuthority, portLeaseProjection: hostileProjection }))
+        }, { ...ownAuthority, portLeaseProjection: hostileProjection }))
             .toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
         const boundInput = { ...generatedInput, ports: Object.values(lease.lease.ports) }
-        const admitted = createRuntimeAdapter(boundInput, { generatedComposeAuthority, portLeaseProjection })
+        const admitted = createRuntimeAdapter(boundInput, { ...ownAuthority, portLeaseProjection })
         expect(admitted.kind).toBe('preview')
         if (admitted.kind === 'preview') {
             expect(admitted.plan.steps[0]?.env).toMatchObject({ APP_HOST_PORT: String(lease.lease.ports.APP_HOST_PORT) })
@@ -554,19 +533,10 @@ describe('runtime plan construction', () => {
                 }
             }
         }
-        expect(createRuntimeAdapter(boundInput, { generatedComposeAuthority, portLeaseProjection: { ...portLeaseProjection } as never }))
+        expect(createRuntimeAdapter(boundInput, { ...ownAuthority, portLeaseProjection: { ...portLeaseProjection } as never }))
             .toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(createRuntimeAdapter({ ...boundInput, ports: [lease.lease.ports.APP_HOST_PORT! + 1] }, { generatedComposeAuthority, portLeaseProjection }))
+        expect(createRuntimeAdapter({ ...boundInput, ports: [lease.lease.ports.APP_HOST_PORT! + 1] }, { ...ownAuthority, portLeaseProjection }))
             .toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(createRuntimeAdapter({
-            ...generatedInput,
-            composeFiles: [artifact(compose.path, `${compose.bytes}\n`)],
-        }, { generatedComposeAuthority })).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(createRuntimeAdapter({
-            ...generatedInput,
-            labels: { ...generatedInput.labels, configSha256: sha('different source') },
-        }, { generatedComposeAuthority })).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
-        expect(createRuntimeAdapter(generatedInput)).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
         rmSync(hostileHome, { recursive: true, force: true })
         rmSync(home, { recursive: true, force: true })
     })
@@ -1266,8 +1236,8 @@ fi
         expect(admitted.kind).toBe('complete')
         if (admitted.kind !== 'complete') return
         expect(admitted.topology.services).toEqual([
-            { id: 'api', dependsOn: ['db'], bindMountSources: ['/workspace/应用'], namedVolumeMounts: [{ source: 'cache', name: 'synthetic_cache', target: '/cache' }], image: null, generation: null, sourceSha256: null, healthcheck: true },
-            { id: 'db', dependsOn: [], bindMountSources: [], namedVolumeMounts: [], image: null, generation: null, sourceSha256: null, healthcheck: false },
+            { id: 'api', dependsOn: ['db'], bindMountSources: ['/workspace/应用'], namedVolumeMounts: [{ source: 'cache', name: 'synthetic_cache', target: '/cache' }], healthcheck: true },
+            { id: 'db', dependsOn: [], bindMountSources: [], namedVolumeMounts: [], healthcheck: false },
         ])
         expect(resolveRuntimeServiceOrder(admitted.topology)).toEqual(['db', 'api'])
         expect(isRuntimeTopologyEvidence(admitted.topology)).toBe(true)
@@ -1291,142 +1261,57 @@ fi
         expect(JSON.stringify(admitted)).not.toContain(canary)
     })
 
-    it('retains exact generated image, generation, and named-volume runtime identity', async () => {
-        const generation = sha('generated environment')
+    it('retains named-volume runtime identity and holds every start to the declared cold start', async () => {
         const image = `synthetic.invalid/runtime@sha256:${sha('runtime image')}`
         const topology = {
             services: {
                 api: {
                     image,
-                    labels: {
-                        'dev.b0dea.cockpit.stack-id': stack,
-                        'dev.b0dea.cockpit.config-sha256': configSha256,
-                        'dev.b0.cockpit.generated': '1',
-                        'dev.b0.cockpit.generation': generation,
-                        'dev.b0.cockpit.source-sha256': configSha256,
-                    },
-                    volumes: [{ type: 'volume', source: 'dependencies', target: '/workspace/node_modules' }],
+                    labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
+                    volumes: [{ type: 'volume', source: 'product-data', target: '/workspace/data' }],
                 },
             },
-            volumes: { dependencies: { name: 'synthetic_dependencies' } },
+            volumes: { 'product-data': { name: 'synthetic_product-data' } },
         }
         const { admitted } = await topologyEvidence(topology)
         expect(admitted.kind).toBe('complete')
         if (admitted.kind !== 'complete') return
         expect(admitted.topology.services).toEqual([{
             id: 'api', dependsOn: [], bindMountSources: [], healthcheck: false,
-            namedVolumeMounts: [{ source: 'dependencies', name: 'synthetic_dependencies', target: '/workspace/node_modules' }],
-            image, generation, sourceSha256: configSha256,
+            namedVolumeMounts: [{ source: 'product-data', name: 'synthetic_product-data', target: '/workspace/data' }],
         }])
+        expect((await topologyEvidence({ ...topology, volumes: { 'product-data': { name: '../escaped' } } })).admitted.kind).toBe('unavailable')
 
-        for (const mutation of [
-            { ...topology, services: { api: { ...topology.services.api, image: 'synthetic:latest' } } },
-            { ...topology, services: { api: { ...topology.services.api, labels: { ...topology.services.api.labels, 'dev.b0.cockpit.generation': 'bad' } } } },
-            { ...topology, volumes: { dependencies: { name: '../escaped' } } },
-        ]) expect((await topologyEvidence(mutation)).admitted.kind).toBe('unavailable')
-
-        // A generated service Compose builds from a local context has no pinned identity, and its first
-        // start includes the build, so the start is held to the declared cold start, not the command budget.
-        // Either start may first stop a container whose configuration changed, so both add its stop grace.
-        const { image: _pinned, ...unpinned } = topology.services.api
-        // Compose prints the ownership labels the generated file gives the built image under build.
-        const built = { ...topology, services: { api: { ...unpinned, build: { context: directory, dockerfile: 'Dockerfile', labels: unpinned.labels } } } }
-        const builtEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
-        if (builtEvidence.kind !== 'complete') throw new Error(builtEvidence.reason)
-        expect(builtEvidence.topology.services[0]).toMatchObject({ id: 'api', image: null, generation })
-        const builtStart = createRuntimeServicePlan({ topology: builtEvidence.topology, service: 'api' })
-        if (builtStart.kind !== 'planned') throw new Error('built service plan unavailable')
-        expect(builtStart.start.timeoutMs).toBe(70_000)
-        // The built image gets the launcher check a pinned image gets before start: it is built
-        // first, then must run the generated entrypoint's /bin/sh, or start is refused by name.
-        const launcherCheck = async (controls: Readonly<Record<string, unknown>>) => {
-            const evidence = (await topologyEvidence(built, [controls], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
-            if (evidence.kind !== 'complete') throw new Error(evidence.reason)
-            const plan = createRuntimeServicePlan({ topology: evidence.topology, service: 'api' })
-            if (plan.kind !== 'planned' || !plan.build || !plan.launcher) throw new Error('built image launcher plan unavailable')
-            expect(plan.build.timeoutMs).toBe(60_000)
-            expect(plan.launcher.argv.slice(-9)).toEqual(['run', '--rm', '--no-deps', '--entrypoint', '/bin/sh', 'api', '-eu', '-c', ':'])
-            const buildOutcome = await executeProbe(plan.build)
-            return admitBuiltImageLauncher(buildOutcome.kind === 'complete'
-                ? { plan, buildOutcome, launcherOutcome: await executeProbe(plan.launcher!) } : { plan, buildOutcome })
-        }
-        expect(await launcherCheck({})).toEqual({ kind: 'complete' })
-        expect(await launcherCheck({ LauncherExitCode: 1, LauncherStderr: 'exec: "/bin/sh": stat /bin/sh: no such file or directory\n' })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'RUNTIME_LAUNCHER_UNAVAILABLE', target: 'api',
-                message: expect.stringContaining('cannot run /bin/sh, which the generated entrypoint needs (exec: "/bin/sh": stat /bin/sh: no such file or directory)') }],
-        })
-        const launcherSensitive = await launcherCheck({ LauncherExitCode: 1, LauncherStderr: 'launcher failed: token=synthetic-launcher-secret\n' })
-        expect(launcherSensitive).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_LAUNCHER_UNAVAILABLE', target: 'api',
-            message: expect.stringContaining('launcher failed: token=[redacted]') }] })
-        expect(JSON.stringify(launcherSensitive)).not.toContain('synthetic-launcher-secret')
-        expect(await launcherCheck({ BuildExitCode: 1, BuildStderr: 'Image app Building\nfailed to read Dockerfile: no such file\n' })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
-                message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED) (failed to read Dockerfile: no such file); the service cannot start until its image builds; fix the reported build error, then rerun npx --no cockpit up') }],
-        })
-        const buildSensitive = await launcherCheck({ BuildExitCode: 1, BuildStderr: 'registry rejected credentials: api_key=synthetic-build-secret\n' })
-        expect(buildSensitive).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
-            message: expect.stringContaining('registry rejected credentials: [redacted]') }] })
-        expect(JSON.stringify(buildSensitive)).not.toContain('synthetic-build-secret')
-        for (const controls of [{ BuildExitCode: 1 }, { BuildExitCode: 1, BuildInvalidUtf8: true }]) {
-            expect(await launcherCheck(controls)).toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
-                    message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED); the service cannot start until its image builds; inspect the build output, then rerun npx --no cockpit up') }],
-            })
-        }
+        // `up --wait` returns only once the service is running and healthy, and a first start may
+        // pull or build its image, so every start is held to the declared cold start plus the stop
+        // grace of a container whose configuration changed. Holding the rest to the command budget
+        // killed a first `up` moments before its container became healthy.
         const pinnedEvidence = (await topologyEvidence(topology, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
         if (pinnedEvidence.kind !== 'complete') throw new Error(pinnedEvidence.reason)
         const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
         if (pinnedStart.kind !== 'planned') throw new Error('pinned service plan unavailable')
-        expect(pinnedStart).not.toHaveProperty('build')
-        // `up --wait` returns only once the service is running and healthy, and a first start of a
-        // pinned image may pull it, so every start is held to the declared cold start. Holding the
-        // rest to the command budget killed a first `up` moments before its container became healthy.
         expect(pinnedStart.start.timeoutMs).toBe(70_000)
+        const built = { services: { api: {
+            build: { context: directory, dockerfile: 'Dockerfile' },
+            labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
+            healthcheck: { test: ['CMD', 'true'], interval: '25s' },
+        } } }
+        const builtEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
+        if (builtEvidence.kind !== 'complete') throw new Error(builtEvidence.reason)
+        const builtStart = createRuntimeServicePlan({ topology: builtEvidence.topology, service: 'api' })
+        if (builtStart.kind !== 'planned') throw new Error('built service plan unavailable')
+        expect(builtStart.start.timeoutMs).toBe(70_000)
         // A declared budget beyond five minutes is honoured, not cut to a fixed window: a service
         // healthy after 330s of a 600s budget was killed at 300s and reported unhealthy.
         const longEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 600_000 })).admitted
         if (longEvidence.kind !== 'complete') throw new Error(longEvidence.reason)
         const longStart = createRuntimeServicePlan({ topology: longEvidence.topology, service: 'api' })
-        if (longStart.kind !== 'planned' || !longStart.build) throw new Error('long cold-start service plan unavailable')
+        if (longStart.kind !== 'planned') throw new Error('long cold-start service plan unavailable')
         expect(longStart.start.timeoutMs).toBe(610_000)
-        expect(longStart.build.timeoutMs).toBe(600_000)
-        const composeFirst ={ services: { api: {
-            build: { context: directory, dockerfile: 'Dockerfile' },
-            labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
-            healthcheck: { test: ['CMD', 'true'], interval: '25s' },
-        } } }
-        const composeFirstEvidence = (await topologyEvidence(composeFirst, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
-        if (composeFirstEvidence.kind !== 'complete') throw new Error(composeFirstEvidence.reason)
-        const composeFirstStart = createRuntimeServicePlan({ topology: composeFirstEvidence.topology, service: 'api' })
-        if (composeFirstStart.kind !== 'planned') throw new Error('compose-first service plan unavailable')
-        expect(composeFirstStart.start.timeoutMs).toBe(70_000)
-        for (const build of [{ context: 'relative', dockerfile: 'Dockerfile' }, { context: directory }, { context: directory, dockerfile: 'Dockerfile', args: {} }]) {
-            expect((await topologyEvidence({ ...topology, services: { api: { ...unpinned, build } } })).admitted.kind).toBe('unavailable')
-        }
     })
 
     it('projects only the exact authenticated runtime environment used for topology admission', async () => {
         const config = CockpitConfig.parse(parse(readFileSync('fixtures/registries/generated-environment.toml', 'utf8')))
-        const generation = sha('generated runtime environment')
-        const rendered = renderGeneratedEnvironment({
-            declaration: config.environment.generated,
-            sourceSha256: configSha256,
-            generation,
-            stackId: stack,
-            cockpitId: runtimeCockpit,
-            portDefaults: config.ports.bases,
-            siblingDirectories: { app: 'app' },
-        })
-        expect(rendered.kind).toBe('complete')
-        if (rendered.kind !== 'complete') return
-        const authority = projectGeneratedComposeArtifactAuthority(rendered)
-        const compose = rendered.manifest.find(({ path }) => path === config.environment.generated?.compose_file)
-        expect(authority).toBeDefined()
-        expect(compose).toBeDefined()
-        if (!authority || !compose) return
-        const composeCanonicalPath = join(directory, compose.path)
-        writeFileSync(composeCanonicalPath, compose.bytes)
-
         const home = mkdtempSync(join(tmpdir(), 'cockpit-runtime-environment-'))
         try {
             const namespace = await selectStateRoot({ platform: 'linux', home, cockpitId: runtimeCockpit })
@@ -1452,37 +1337,7 @@ fi
             const portLeaseProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
             if (!portLeaseProjection) throw new Error('runtime environment port authority unavailable')
             const expectedPort = lease.lease.ports.APP_HOST_PORT!
-            const observed = await topologyEvidence({
-                services: {
-                    app: {
-                        image: config.environment.generated!.services[0]!.image!.reference,
-                        labels: {
-                            'dev.b0dea.cockpit.stack-id': stack,
-                            'dev.b0dea.cockpit.config-sha256': configSha256,
-                            'dev.b0.cockpit.generated': '1',
-                            'dev.b0.cockpit.generation': generation,
-                            'dev.b0.cockpit.source-sha256': configSha256,
-                        },
-                    },
-                },
-            }, [], {
-                composeFiles: [{ reference: compose.path, canonicalPath: composeCanonicalPath, source: compose.bytes, sha256: compose.sha256 }],
-                env: { PATH: process.env.PATH ?? '/usr/bin' },
-                ports: [expectedPort],
-                authority: { generatedComposeAuthority: authority, portLeaseProjection },
-                activeProfiles: ['application'],
-            })
-            if (observed.admitted.kind !== 'complete') throw new Error(observed.admitted.reason)
-            expect(projectRuntimeExecutionEnvironment(observed.admitted.topology)).toEqual({
-                PATH: process.env.PATH ?? '/usr/bin',
-                APP_HOST_PORT: String(expectedPort),
-                COCKPIT_OWNER_ID: runtimeCockpit,
-                COCKPIT_STACK_ID: stack,
-            })
-            expect(projectRuntimeExecutionEnvironment({ ...observed.admitted.topology })).toBeUndefined()
-
-            // A compose-first stack's own file reads the leased variable and its sibling directory
-            // variable, with no generated authority.
+            // A compose-first stack's own file reads the leased variable and its sibling directory variable.
             const ownCompose = 'services:\n  app:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n    labels: ["owner=${COCKPIT_OWNER_ID:?owner required}", "stack=${COCKPIT_STACK_ID:?stack required}"]\n'
             const ownPath = join(directory, 'compose.own.yml')
             writeFileSync(ownPath, ownCompose)
@@ -1518,6 +1373,7 @@ fi
                 PATH: process.env.PATH ?? '/usr/bin', APP_HOST_PORT: String(expectedPort), APP_DIR: '/synthetic/siblings/app',
                 COCKPIT_OWNER_ID: runtimeCockpit, COCKPIT_STACK_ID: stack,
             })
+            expect(projectRuntimeExecutionEnvironment({ ...owned.admitted.topology })).toBeUndefined()
             // A reference with neither a default nor a leased variable would resolve to empty.
             const unset = `${ownCompose}    environment: ["TOKEN=\${UNDECLARED}"]\n`
             writeFileSync(ownPath, unset)
@@ -1534,7 +1390,6 @@ fi
             rmSync(ownPath, { force: true })
         } finally {
             rmSync(home, { recursive: true, force: true })
-            rmSync(composeCanonicalPath, { force: true })
         }
     })
 
@@ -1918,347 +1773,6 @@ fi
             && observation.observed.value > 0).toBe(true)
         expect(observation.observed.state === 'available' && typeof observation.observed.value === 'number'
             && observation.observed.value <= coldStartLimitMillis).toBe(expectedPass)
-    })
-
-    describe('dependency runtime execution authority', () => {
-        const generation = sha('generated environment')
-        const image = `synthetic.invalid/runtime@sha256:${sha('pinned runtime image')}`
-        const imageId = `sha256:${sha('actual runtime image')}`
-        const dependencyInspect = JSON.stringify({
-            ID: containerId,
-            Image: imageId,
-            ConfigImage: image,
-            Labels: {
-                stack,
-                config: configSha256,
-                generation,
-                generatedGeneration: generation,
-                source: configSha256,
-                project: 'synthetic',
-                service: 'api',
-            },
-            Mounts: [{ Type: 'volume', Name: 'synthetic_dependencies', Destination: '/workspace/node_modules' }],
-        })
-        const container = {
-            ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            Labels: `com.docker.compose.project=synthetic,com.docker.compose.service=api,dev.b0dea.cockpit.config-sha256=${configSha256},dev.b0dea.cockpit.stack-id=${stack}`,
-            DependencyInspectOutput: dependencyInspect,
-        }
-        const topology = {
-            services: {
-                api: {
-                    image,
-                    labels: {
-                        'dev.b0dea.cockpit.stack-id': stack,
-                        'dev.b0dea.cockpit.config-sha256': configSha256,
-                        'dev.b0.cockpit.generated': '1',
-                        'dev.b0.cockpit.generation': generation,
-                        'dev.b0.cockpit.source-sha256': configSha256,
-                    },
-                    volumes: [{ type: 'volume', source: 'dependencies', target: '/workspace/node_modules' }],
-                },
-            },
-            volumes: { dependencies: { name: 'synthetic_dependencies' } },
-        }
-        const admitVariantWithWindow = async (
-            output: Record<string, unknown>,
-            controls: Record<string, unknown> = {},
-            admissionClock?: 'before-window' | 'after-window',
-        ) => {
-            const variant = await topologyEvidence(topology, [{ ...container, ...controls, DependencyInspectOutput: JSON.stringify(output) }])
-            if (variant.admitted.kind !== 'complete') throw new Error('variant topology was unavailable')
-            const service = createRuntimeServicePlan({ topology: variant.admitted.topology, service: 'api' })
-            if (service.kind !== 'planned') throw new Error('variant service was unavailable')
-            const startup = await admitCleanStartup(service)
-            const health = createRuntimeServiceHealthPlan({ plan: service, startOutcome: startup.startOutcome, outcome: startup.outcome, identityOutcome: startup.identityOutcome })
-            if (health.kind !== 'planned') throw new Error('variant health was unavailable')
-            const observation = admitRuntimeServiceObservation({ plan: health, outcome: await executeProbe(health.step) })
-            if (observation.kind !== 'complete') throw new Error('variant observation was unavailable')
-            const admittedHealth = admitRuntimeServiceHealth({ observation: observation.observation })
-            if (admittedHealth.kind !== 'complete') throw new Error('variant evidence was unavailable')
-            const projected = projectDependencyRuntime({ topology: variant.admitted.topology, evidence: admittedHealth.evidence, service: 'api', volume: 'dependencies' })
-            if (!projected) throw new Error('variant dependency projection was unavailable')
-            const planned = createDependencyRuntimePlan({ runtime: projected })
-            if (planned.kind !== 'planned') throw new Error('variant dependency plan was unavailable')
-            const outcomes = {
-                inspectOutcome: await executeProbe(planned.inspect),
-                architectureOutcome: await executeProbe(planned.architecture),
-                abiOutcome: await executeProbe(planned.abi),
-            }
-            const admit = () => admitDependencyRuntime({ plan: planned, ...outcomes })
-            let runtime
-            if (admissionClock) {
-                vi.useFakeTimers()
-                try {
-                    const window = variant.admitted.topology.observationWindow
-                    vi.setSystemTime(admissionClock === 'before-window' ? Date.parse(window.startedAt) - 1 : Date.parse(window.expiresAt) + 1)
-                    runtime = admit()
-                } finally { vi.useRealTimers() }
-            } else runtime = admit()
-            return { runtime, startedAt: variant.admitted.topology.observationWindow.startedAt, expiresAt: variant.admitted.topology.observationWindow.expiresAt }
-        }
-        const admitVariant = async (output: Record<string, unknown>) => (await admitVariantWithWindow(output)).runtime
-
-        it('binds dependency execution to the exact generated image, volume, ABI, config, and generation', async () => {
-            const { admitted } = await topologyEvidence(topology, [container])
-            expect(admitted.kind).toBe('complete')
-            if (admitted.kind !== 'complete') return
-            const servicePlan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-            expect(servicePlan.kind).toBe('planned')
-            if (servicePlan.kind !== 'planned') return
-            const startup = await admitCleanStartup(servicePlan)
-            const healthPlan = createRuntimeServiceHealthPlan({ plan: servicePlan, startOutcome: startup.startOutcome, outcome: startup.outcome, identityOutcome: startup.identityOutcome })
-            expect(healthPlan.kind).toBe('planned')
-            if (healthPlan.kind !== 'planned') return
-            const observedService = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-            expect(observedService.kind).toBe('complete')
-            if (observedService.kind !== 'complete') return
-            const admittedService = admitRuntimeServiceHealth({ observation: observedService.observation })
-            expect(admittedService.kind).toBe('complete')
-            if (admittedService.kind !== 'complete') return
-            const serviceEvidence = admittedService.evidence
-            const projection = projectDependencyRuntime({ topology: admitted.topology, evidence: serviceEvidence, service: 'api', volume: 'dependencies' })
-            expect(projection).toBeDefined()
-            expect(projectDependencyRuntime({ topology: admitted.topology, evidence: serviceEvidence, service: 'api', volume: 'missing' })).toBeUndefined()
-            expect(consumeDependencyRuntimeProjection({ ...projection } as never)).toBeUndefined()
-            if (!projection) return
-            const runtimePlan = createDependencyRuntimePlan({ runtime: projection })
-            expect(runtimePlan.kind).toBe('planned')
-            if (runtimePlan.kind !== 'planned') return
-            const runtime = admitDependencyRuntime({
-                plan: runtimePlan,
-                inspectOutcome: await executeProbe(runtimePlan.inspect),
-                architectureOutcome: await executeProbe(runtimePlan.architecture),
-                abiOutcome: await executeProbe(runtimePlan.abi),
-            })
-            expect(runtime).toMatchObject({
-                kind: 'complete',
-                compatibility: { imageId, architecture: 'x86_64', abi: 'glibc:2.39', source: 'dependencies', volume: 'synthetic_dependencies', target: '/workspace/node_modules', configSha256, generation },
-            })
-            if (runtime.kind !== 'complete') return
-            const execution = createDependencyExecutionPlan({
-                binding: runtime.binding,
-                install: ['npm', 'ci'],
-                load: ['node', '--eval', "require('synthetic')"],
-                env: {},
-                installTimeoutMs: 120_000,
-                loadTimeoutMs: 30_000,
-                stdoutLimitBytes: 16_384,
-                stderrLimitBytes: 16_384,
-            })
-            expect(execution).toMatchObject({ kind: 'complete' })
-            if (execution.kind !== 'complete') return
-            expect(execution.install.argv.slice(-7)).toEqual(['container', 'exec', '--workdir', '/workspace/node_modules', containerId, 'npm', 'ci'])
-            expect(execution.load.argv.slice(-8)).toEqual(['container', 'exec', '--workdir', '/workspace/node_modules', containerId, 'node', '--eval', "require('synthetic')"])
-            expect(createDependencyExecutionPlan({
-                binding: runtime.binding, install: ['npm', 'ci'], load: ['node', '--eval', 'true'], env: {}, installTimeoutMs: 1, loadTimeoutMs: 1,
-                stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-            })).toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_UNAVAILABLE' })
-        })
-
-        it('refuses dependency runtime with stale image, generation, or missing volume', async () => {
-            expect(await admitVariant({ ...JSON.parse(dependencyInspect), ConfigImage: `synthetic.invalid/other@sha256:${sha('other')}` }))
-                .toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_STALE' })
-            expect(await admitVariant({ ...JSON.parse(dependencyInspect), Labels: { ...JSON.parse(dependencyInspect).Labels, generation: sha('other generation') } }))
-                .toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_STALE' })
-            expect(await admitVariant({ ...JSON.parse(dependencyInspect), Mounts: [] }))
-                .toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_UNMOUNTED' })
-        })
-
-        it('admits the observed dependency runtime ABI', async () => {
-            const musl = await admitVariantWithWindow(JSON.parse(dependencyInspect), { AbiOutput: 'musl:1.2.5\n' })
-            expect(musl.runtime).toMatchObject({ kind: 'complete', compatibility: { abi: 'musl:1.2.5' } })
-        })
-
-        it('refuses dependency runtime outside its observation window', async () => {
-            expect((await admitVariantWithWindow(JSON.parse(dependencyInspect), {}, 'before-window')).runtime)
-                .toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_UNAVAILABLE' })
-            expect((await admitVariantWithWindow(JSON.parse(dependencyInspect), {}, 'after-window')).runtime)
-                .toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_UNAVAILABLE' })
-        })
-
-        it('keeps dependency environment in container argv and refuses host injection', async () => {
-            const separated = await admitVariant(JSON.parse(dependencyInspect))
-            expect(separated.kind).toBe('complete')
-            if (separated.kind === 'complete') {
-                const planned = createDependencyExecutionPlan({
-                    binding: separated.binding, install: ['npm', 'ci'], load: ['node', '--eval', 'true'],
-                    env: { CI: '1' }, installTimeoutMs: 1_000, loadTimeoutMs: 1_000,
-                    stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-                })
-                expect(planned.kind).toBe('complete')
-                if (planned.kind === 'complete') {
-                    expect(planned.install.argv).toContain('CI=1')
-                    expect(planned.install.env).not.toHaveProperty('CI')
-                }
-            }
-            const hostileEnvironment = await admitVariant(JSON.parse(dependencyInspect))
-            expect(hostileEnvironment.kind).toBe('complete')
-            if (hostileEnvironment.kind === 'complete') {
-                expect(createDependencyExecutionPlan({
-                    binding: hostileEnvironment.binding, install: ['npm', 'ci'], load: ['node', '--eval', 'true'],
-                    env: { LD_PRELOAD: '/tmp/injected.so' }, installTimeoutMs: 1_000, loadTimeoutMs: 1_000,
-                    stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-                })).toMatchObject({ kind: 'refusal', code: 'DEPENDENCY_RUNTIME_UNAVAILABLE' })
-            }
-        })
-
-        it('bounds dependency execution by the authenticated runtime expiry', async () => {
-            const nearExpiry = await admitVariantWithWindow(JSON.parse(dependencyInspect))
-            expect(nearExpiry.runtime.kind).toBe('complete')
-            if (nearExpiry.runtime.kind === 'complete') {
-                vi.useFakeTimers()
-                try {
-                    vi.setSystemTime(Date.parse(nearExpiry.expiresAt) - 10)
-                    const planned = createDependencyExecutionPlan({
-                        binding: nearExpiry.runtime.binding, install: ['npm', 'ci'], load: ['node', '--eval', 'true'],
-                        env: {}, installTimeoutMs: 30_000, loadTimeoutMs: 30_000,
-                        stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-                    })
-                    expect(planned.kind).toBe('complete')
-                    if (planned.kind === 'complete') {
-                        expect(planned.install.spawnNotAfter).toBe(nearExpiry.expiresAt)
-                        expect(planned.load.spawnNotAfter).toBe(nearExpiry.expiresAt)
-                    }
-                } finally { vi.useRealTimers() }
-            }
-        })
-
-        it('refuses dependency load evidence after expiry or clock rollback', async () => {
-            const staleLoad = await admitVariantWithWindow(JSON.parse(dependencyInspect))
-            expect(staleLoad.runtime.kind).toBe('complete')
-            if (staleLoad.runtime.kind === 'complete') {
-                const executionAt = Date.now()
-                expect(executionAt).toBeGreaterThanOrEqual(Date.parse(staleLoad.startedAt))
-                expect(executionAt).toBeLessThanOrEqual(Date.parse(staleLoad.expiresAt))
-                // Only the authority clock is controlled; process deadlines still use real timers.
-                vi.useFakeTimers({ toFake: ['Date'] })
-                vi.setSystemTime(executionAt)
-                try {
-                    const planned = createDependencyLoadPlan({
-                        binding: staleLoad.runtime.binding, load: ['node', '--eval', 'true'], env: {}, timeoutMs: 1_000,
-                        stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-                    })
-                    expect(planned.kind).toBe('planned')
-                    if (planned.kind === 'planned') {
-                        expect(planned.step.timeoutMs).toBe(1_000)
-                        expect(planned.step.spawnNotAfter).toBe(new Date(Math.min(executionAt + 1_000, Date.parse(staleLoad.expiresAt))).toISOString())
-                        const outcome = await executeProbe(planned.step)
-                        expect(outcome.kind, outcome.kind === 'refusal' ? JSON.stringify({ code: outcome.code, execution: outcome.execution, spawnNotAfter: planned.step.spawnNotAfter }) : undefined).toBe('complete')
-                        vi.setSystemTime(Date.parse(staleLoad.expiresAt) + 1)
-                        expect(admitDependencyLoad({ plan: planned, outcome })).toMatchObject({
-                            kind: 'refusal', code: 'DEPENDENCY_RUNTIME_INCOMPATIBLE',
-                        })
-                    }
-                } finally { vi.useRealTimers() }
-            }
-            const rollbackLoad = await admitVariantWithWindow(JSON.parse(dependencyInspect))
-            expect(rollbackLoad.runtime.kind).toBe('complete')
-            if (rollbackLoad.runtime.kind === 'complete') {
-                const executionAt = Date.now()
-                expect(executionAt).toBeGreaterThanOrEqual(Date.parse(rollbackLoad.startedAt))
-                expect(executionAt).toBeLessThanOrEqual(Date.parse(rollbackLoad.expiresAt))
-                vi.useFakeTimers({ toFake: ['Date'] })
-                vi.setSystemTime(executionAt)
-                try {
-                    const planned = createDependencyLoadPlan({
-                        binding: rollbackLoad.runtime.binding, load: ['node', '--eval', 'true'], env: {}, timeoutMs: 1_000,
-                        stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384,
-                    })
-                    expect(planned.kind).toBe('planned')
-                    if (planned.kind === 'planned') {
-                        expect(planned.step.timeoutMs).toBe(1_000)
-                        expect(planned.step.spawnNotAfter).toBe(new Date(Math.min(executionAt + 1_000, Date.parse(rollbackLoad.expiresAt))).toISOString())
-                        const outcome = await executeProbe(planned.step)
-                        expect(outcome.kind, outcome.kind === 'refusal' ? JSON.stringify({ code: outcome.code, execution: outcome.execution, spawnNotAfter: planned.step.spawnNotAfter }) : undefined).toBe('complete')
-                        vi.setSystemTime(Date.parse(rollbackLoad.startedAt) - 1)
-                        expect(admitDependencyLoad({ plan: planned, outcome })).toMatchObject({ kind: 'refusal' })
-                    }
-                } finally { vi.useRealTimers() }
-            }
-        })
-
-        it('projects an authenticated dependency load observation', async () => {
-            const observedLoad = await admitVariantWithWindow(JSON.parse(dependencyInspect))
-            expect(observedLoad.runtime.kind).toBe('complete')
-            if (observedLoad.runtime.kind === 'complete') {
-                const executionAt = Date.now()
-                expect(executionAt).toBeGreaterThanOrEqual(Date.parse(observedLoad.startedAt))
-                expect(executionAt).toBeLessThanOrEqual(Date.parse(observedLoad.expiresAt))
-                // Only the authority clock is controlled; process deadlines still use real timers.
-                vi.useFakeTimers({ toFake: ['Date'] })
-                vi.setSystemTime(executionAt)
-                try {
-                    const observation = await observeDependencyLoad({
-                        binding: observedLoad.runtime.binding,
-                        load: ['node', '--eval', 'true'],
-                        env: {},
-                        timeoutMs: 1_000,
-                        stdoutLimitBytes: 16_384,
-                        stderrLimitBytes: 16_384,
-                    }, { execute: async (step) => {
-                        expect(step.timeoutMs).toBe(1_000)
-                        expect(step.spawnNotAfter).toBe(new Date(Math.min(executionAt + 1_000, Date.parse(observedLoad.expiresAt))).toISOString())
-                        return executeProbe(step)
-                    } })
-                    expect(isInstallObservation(observation)).toBe(true)
-                    expect(observation, JSON.stringify(observation)).toMatchObject({
-                        stackId: stack,
-                        source: '/workspace/node_modules',
-                        observed: { state: 'available', value: true },
-                        applicability: { state: 'required', posture: 'dependencies' },
-                    })
-                } finally { vi.useRealTimers() }
-            }
-        })
-
-        it('refuses install verification after its dependency runtime expires', async () => {
-            const ownerJoin = await admitVariantWithWindow(JSON.parse(dependencyInspect))
-            expect(ownerJoin.runtime.kind).toBe('complete')
-            if (ownerJoin.runtime.kind === 'complete') {
-                const home = mkdtempSync(join(tmpdir(), 'cockpit-dependency-install-'))
-                try {
-                    const checkoutRoot = join(home, 'checkout')
-                    mkdirSync(checkoutRoot)
-                    const lockfilePath = join(checkoutRoot, 'package-lock.json')
-                    writeFileSync(lockfilePath, '{"lockfileVersion":3}\n')
-                    const state = await selectStateRoot({ platform: 'linux', home, cockpitId: runtimeCockpit })
-                    if (state.kind !== 'complete') throw new Error('dependency install state unavailable')
-                    mkdirSync(state.value.root, { recursive: true })
-                    const helperPath = fileURLToPath(new URL('../../libexec/install-filesystem.cjs', import.meta.url))
-                    const planned = await planInstall({
-                        checkoutId: `checkout:${sha('dependency checkout')}` as CheckoutId,
-                        holderId: `holder:${sha('dependency holder')}:session` as HolderId,
-                        pid: process.pid,
-                        checkoutRoot,
-                        lockfilePath,
-                        state: state.value,
-                        runtime: ownerJoin.runtime.binding,
-                        policy: { volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'ci'], load_probe: ['node', '--eval', 'true'] },
-                        execution: { env: {}, installTimeoutMs: 5_000, probeTimeoutMs: 5_000, helperTimeoutMs: 5_000, stdoutLimitBytes: 16_384, stderrLimitBytes: 16_384 },
-                        executables: {
-                            node: { canonicalPath: process.execPath, invocationPath: process.execPath, sha256: sha(readFileSync(process.execPath)), executionMode: 'verified-path' },
-                            helper: { path: helperPath, sha256: sha(readFileSync(helperPath)) },
-                        },
-                        observeHolder: async () => 'unknown',
-                    }, { execute: executeProbe })
-                    expect(planned, JSON.stringify(planned)).toMatchObject({ kind: 'complete', disposition: 'install' })
-                    if (planned.kind === 'complete' && planned.installStep) {
-                        const cached = new Map([
-                            [planned.installStep, await executeProbe(planned.installStep)],
-                            [planned.loadProbeStep, await executeProbe(planned.loadProbeStep)],
-                        ])
-                        vi.useFakeTimers()
-                        try {
-                            vi.setSystemTime(Date.parse(ownerJoin.expiresAt) + 1)
-                            expect(await verifyInstall(planned, {
-                                execute: (step) => cached.has(step) ? Promise.resolve(cached.get(step)!) : executeProbe(step),
-                            })).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED })
-                        } finally { vi.useRealTimers() }
-                    }
-                } finally { rmSync(home, { recursive: true, force: true }) }
-            }
-        })
     })
 
     it('excludes services behind inactive Compose profiles from the lifecycle topology', async () => {
@@ -3227,8 +2741,8 @@ fi
                 topology: {
                     order: ['db', 'api'],
                     services: [
-                        { id: 'api', dependsOn: ['db'], bindMountSources: ['/workspace/应用'], namedVolumeMounts: [], image: null, generation: null, sourceSha256: null, healthcheck: true },
-                        { id: 'db', dependsOn: [], bindMountSources: [], namedVolumeMounts: [], image: null, generation: null, sourceSha256: null, healthcheck: false },
+                        { id: 'api', dependsOn: ['db'], bindMountSources: ['/workspace/应用'], namedVolumeMounts: [], healthcheck: true },
+                        { id: 'db', dependsOn: [], bindMountSources: [], namedVolumeMounts: [], healthcheck: false },
                     ],
                 },
                 runtimeChecks: { coldStartLimitMillis: 60_000, expectedMountSources: ['/workspace/应用'] },

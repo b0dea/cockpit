@@ -6,11 +6,10 @@ import { describe, expect, it } from 'vitest'
 
 // "Configuration that parses and does nothing is a defect": every leaf of the published schema
 // must be read by code that acts on it. The reads are found statically, through the type checker,
-// because every consumer authenticates its input by re-parsing a snapshot (data-plane.ts,
-// generated-render.ts, registry-derivation.ts), so a recording Proxy on the loaded configuration is
-// lost at the first snapshot. A property symbol on a parsed value still resolves to its declaration
-// in schema.ts, which is what ties a read to a schema leaf. A read is not an effect: the mutation
-// table in data-plane.test.ts pins the fields whose only other trace would be a digest.
+// because every consumer authenticates its input by re-parsing a snapshot (registry-derivation.ts,
+// the loader's projections), so a recording Proxy on the loaded configuration is lost at the first
+// snapshot. A property symbol on a parsed value still resolves to its declaration in schema.ts,
+// which is what ties a read to a schema leaf. A read is not an effect.
 
 const SOURCE_ROOT = fileURLToPath(new URL('.', import.meta.url))
 const SCHEMA_JSON = fileURLToPath(new URL('../cockpit.schema.json', import.meta.url))
@@ -21,21 +20,15 @@ const AUTHORING_MODULES = ['schema.ts', 'schema-json.ts', 'init/']
 // This module reassembles the effective configuration from sibling derivations; a spread there
 // moves fields into the configuration every consumer reads, so it is not itself a read.
 const REASSEMBLY_MODULE = 'registry-derivation.ts'
-// A sibling derivation is merged into these effective leaves, so it is judged by them.
-const DERIVED_LEAVES: readonly (readonly [string, string])[] = [
-    ['sibling.[].derives.generated.service.', 'environment.generated.services.[].'],
-    ['sibling.[].derives.generated.checkout_mount.', 'environment.generated.services.[].mounts.[].'],
-    ['sibling.[].derives.generated.additional_mounts.[].', 'environment.generated.services.[].mounts.[].'],
-    ['sibling.[].derives.generated.volumes.[].', 'environment.generated.volumes.[].'],
-    ['sibling.[].derives.generated.install_policies.[].', 'environment.install_policies.[].'],
-    ['sibling.[].derives.generated.decisions.[].', 'environment.generated.decisions.entries.[].'],
-    ['sibling.[].derives.generated.entrypoints.[].', 'environment.entrypoint_derivatives.[].'],
-]
-
 // Leaves no code reads, each a decision with its reason. A stale entry fails the test.
 const UNREAD_BY_DESIGN: Readonly<Record<string, string>> = {
-    'environment.generated.data.restore.rewrites.[].reason': 'a stated reason for the person reviewing cockpit.toml, as provenance reasons are',
-    'environment.generated.vendors.[].expiry.reason': 'a stated reason for the person reviewing cockpit.toml; the expiry probe is the check',
+    // A provenance tells the person reviewing cockpit.toml where a value came from. The schema is
+    // its check: it refuses an inferred provenance until a person sets confirmed = true, and an
+    // adopted file's provenance must be declared.
+    'sibling.[].derives.mcp_sources.[].provenance.kind': 'where the declaration came from, for its reviewer; schema.ts refuses an unconfirmed inferred one',
+    'sibling.[].derives.mcp_sources.[].provenance.confirmed': 'a person\'s confirmation of an inferred source; schema.ts refuses an inferred one without it',
+    'surfaces.adopted.[].provenance.kind': 'where the adopted file came from, for its reviewer; schema.ts accepts only declared',
+    'surfaces.adopted.[].provenance.confirmed': 'a person\'s confirmation of an inferred value; schema.ts refuses an inferred one without it',
     'surfaces.harnesses.[].capabilities.[].reason': 'why a capability is unavailable, recorded for the reader of the support matrix',
     'surfaces.harnesses.[].capabilities.[].control': 'the broken control the measurement ran beside, recorded as evidence',
 }
@@ -205,14 +198,9 @@ function readLeaves(): Readonly<{ leaves: Leaves; read: ReadonlySet<ts.Node> }> 
     return { leaves, read }
 }
 
-function effectiveLeaf(leaf: string): string {
-    const derived = DERIVED_LEAVES.find(([prefix]) => leaf.startsWith(prefix))
-    return derived ? `${derived[1]}${leaf.slice(derived[0].length)}` : leaf
-}
-
 function unreadLeaves(leaves: Leaves, read: ReadonlySet<ts.Node>): string[] {
     const isRead = (leaf: string) => [...leaves.get(leaf) ?? []].some(declaration => read.has(declaration))
-    return [...leaves.keys()].filter(leaf => !isRead(leaf) && !isRead(effectiveLeaf(leaf)))
+    return [...leaves.keys()].filter(leaf => !isRead(leaf))
 }
 
 describe('schema consumers', () => {
@@ -221,7 +209,7 @@ describe('schema consumers', () => {
         // Every published leaf must resolve to a declaration, or a missing read would go unseen.
         expect([...leaves].filter(([, declarations]) => declarations.size === 0).map(([leaf]) => leaf)).toEqual([])
         const unread = unreadLeaves(leaves, read)
-        expect(unread.filter(leaf => !Object.hasOwn(UNREAD_BY_DESIGN, effectiveLeaf(leaf))), 'a leaf nobody reads parses and does nothing').toEqual([])
+        expect(unread.filter(leaf => !Object.hasOwn(UNREAD_BY_DESIGN, leaf)), 'a leaf nobody reads parses and does nothing').toEqual([])
         expect(Object.keys(UNREAD_BY_DESIGN).filter(leaf => !unread.includes(leaf)), 'an allowlisted leaf is now read or gone').toEqual([])
     }, 120_000)
 

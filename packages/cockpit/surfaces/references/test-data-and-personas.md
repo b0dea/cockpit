@@ -5,7 +5,7 @@
 Use this when authentication changes what the product does and an agent needs seeded test users, or
 signed-in browser state for them. It is a product change, so it needs explicit permission to edit
 the product's fixtures and auth setup. The cockpit-setup skill loads it, and so does cockpit-browser
-before signed-in testing. The declaration side (modes, personas, fixture hygiene) is described in
+before signed-in testing. The declaration side (`environment.seed`, personas, fixture hygiene) is described in
 the *Demo data, test users and roles* section of `./node_modules/@b00dea/cockpit/docs/environment.md`;
 this page is the procedure an agent follows against a real product and does not repeat it.
 
@@ -28,9 +28,9 @@ product row, a provider identity reference, a confirmed role, and one permitted 
 **Why.** Stable IDs let a re-seed update rows instead of duplicating them, and the permitted and denied
 pair proves the roles work, not only that sign-in succeeded.
 **How.** Credentials, provider keys and browser state stay outside the fixture. The product's own seeder
-writes product rows; the existing provider adapter writes provider users, organizations and memberships. Bind
-their idempotent commands to the existing seeded operations and probes. When an adapter is genuinely absent,
-add a thin consumer-owned adapter behind the seed command.
+writes product rows; the existing provider adapter writes provider users, organizations and memberships. Run
+their idempotent commands from the product's seed command, the one `environment.seed` names. When an adapter is
+genuinely absent, add a thin consumer-owned adapter behind that seed command.
 
 Before any seed write, assert that its database and service targets are local. Resolve paths into a sibling by
 probing the declared sibling root and then the consumer's documented fallback; never encode one checkout layout

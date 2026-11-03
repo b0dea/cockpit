@@ -57,7 +57,7 @@ describe('nested generated publication', () => {
             '.claude', '.claude/skills/cockpit-setup/references', '.cockpit/guards',
             '.codex', '.codex/agents', '.opencode', '.opencode/plugin',
             '.opencode/skills/cockpit-setup/references',
-            'app', 'docs/cockpit', 'env/.secrets', 'fixtures', '.cockpit',
+            '.cockpit',
         ])
         expect(committedParents).toEqual(parents)
         const publishedPaths = preparedPaths.filter(path => path !== '.cockpit/generated-environment-ownership.json')

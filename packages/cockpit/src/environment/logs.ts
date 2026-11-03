@@ -8,7 +8,6 @@ import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evid
 import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, observedVersionCore, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
 
 export const mechanism = { id: 'runtime-logs', module: 'packages/cockpit/src/environment/logs.ts', exports: ['planLogs', 'collectLogs', 'planFailureLogs', 'admitFailureLogs', 'failureLogExcerpt'] } as const
@@ -114,7 +113,6 @@ function localDockerSelection(name: string, value: string): boolean {
 
 export function planLogs(
     rawInput: LogRequest,
-    generatedComposeAuthority?: GeneratedComposeArtifactAuthority,
     ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>,
 ): LogPlan {
     const input = logRequest(snapshotJson(rawInput))
@@ -131,9 +129,6 @@ export function planLogs(
         || Object.entries(input.env).some(([name, value]) => name.startsWith('COMPOSE_') || name.includes('\0') || value.includes('\0')
             || name.startsWith('DOCKER_') && !localDockerSelection(name, value))) {
         return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request must be resolved and bounded' }
-    }
-    if (generatedComposeAuthority !== undefined && ownComposeAuthority !== undefined) {
-        return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request has conflicting compose authority' }
     }
     let suppliedPortProjection: PortLeaseProjection | undefined
     try {
@@ -156,8 +151,8 @@ export function planLogs(
         runtime: { name: 'docker', version: input.runtimeVersion, executableSha256: input.executable.sha256 },
         composeVersion: input.composeVersion, executable: input.executable, operation: 'validate', cwd: input.cwd,
         composeFiles: input.composeFiles, projectName: input.projectName, env: input.env, ports: projectedPorts,
-        labels: generatedComposeAuthority ? { configSha256: input.configSha256 } : {}, timeoutMs: input.timeoutMs,
-    }, generatedComposeAuthority ? { generatedComposeAuthority } : ownComposeAuthority)
+        labels: {}, timeoutMs: input.timeoutMs,
+    }, ownComposeAuthority)
     if (composeBoundary.kind === 'refusal') return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: composeBoundary.diagnostics[0].message }
     const argv = [input.executable.canonicalPath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', String(input.tail), ...(input.follow ? ['--follow'] : []), input.containerId] as [string, ...string[]]
     const step: ExecutionStep = Object.freeze({

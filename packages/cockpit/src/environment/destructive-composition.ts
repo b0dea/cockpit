@@ -491,12 +491,7 @@ export function createDestructiveCommandAdapters(
                 if (destructive.kind === 'complete') issued.set(destructive.result, context)
                 return destructive
             })()
-            if (!reaped.interruptedRestore) return outcome
-            if (outcome.kind === 'complete') {
-                noticeLifecycleRun(outcome.result, reaped.interruptedRestore)
-                return outcome
-            }
-            return Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, reaped.interruptedRestore]) })
+            return outcome
         },
         async observe(context: DestructiveRunContext): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined> {
             const lifecycleContext = issued.get(context)

@@ -128,7 +128,6 @@ describe('diagnostic inventory', () => {
             ['REGISTRY_ENCODING_INVALID', ['packages/cockpit/src/init/draft.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
             ['REGISTRY_ROW_SKIPPED', ['packages/cockpit/src/init/draft.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
             ['SURFACE_OVERRIDE_INSPECTION_REFUSED', ['packages/cockpit/src/environment/health-composition.ts']],
-            ['REGISTRY_GENERATED_BASELINE_MISSING', ['packages/cockpit/src/registry-derivation.ts']],
             ['COCKPIT_VERSION_MISMATCH', ['packages/cockpit/src/environment/contract.ts', 'packages/cockpit/src/team-metadata.ts']],
         ])
         for (const [code, owners] of expectedOwners) expect([...found.owners.get(code) ?? []].sort(), code).toEqual([...owners].sort())

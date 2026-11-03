@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { deriveInferredFacts } from './derive.js'
-import { GeneratedService, Sibling, Testing } from '../schema.js'
+import { Sibling, Testing } from '../schema.js'
 
 const scratch: string[] = []
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -22,7 +22,7 @@ const api = [{ slug: 'api', path: 'api' }]
 const byTarget = <T extends { target: string }>(facts: readonly T[], target: string) => facts.find(fact => fact.target === target)
 
 describe('inferred interview answers', () => {
-    it('reads the final Dockerfile stage for the run command, exposed ports and health check, naming the file', async () => {
+    it('reads the final Dockerfile stage for the run command and exposed ports, naming the file', async () => {
         const root = estate({ 'api/Dockerfile': [
             'FROM node:22 AS build', 'EXPOSE 9999', 'CMD ["node", "build.mjs"]', 'HEALTHCHECK CMD ["true"]',
             'FROM node:22-slim', 'ENTRYPOINT ["node"]', 'CMD ["server.mjs"]', 'EXPOSE 3000/tcp 8080',
@@ -32,24 +32,12 @@ describe('inferred interview answers', () => {
             provenance: { kind: 'inferred', source: 'api/Dockerfile' } })
         expect(byTarget(facts, 'api.container_ports')).toMatchObject({ value: [3000, 8080],
             provenance: { kind: 'inferred', source: 'api/Dockerfile' } })
-        // Docker runs a shell-form HEALTHCHECK through sh -c and applies its defaults to unset options.
-        const health = byTarget(facts, 'api.health')
-        expect(health).toMatchObject({ fields: ['environment.generated'], value: {
-            probe: { location: 'in-stack', service: 'api', argv: ['sh', '-c', 'wget -qO- http://localhost:3000/healthz || exit 1'], timeout_seconds: 30 },
-            interval_seconds: 10, timeout_seconds: 30, retries: 3, start_period_seconds: 90,
-        }, provenance: { kind: 'inferred', source: 'api/Dockerfile', reason: expect.stringContaining('--timeout, --retries are unset') } })
-        expect(GeneratedService.shape.health.safeParse(health!.value).success).toBe(true)
-
-        const disabled = estate({ 'api/Dockerfile': 'FROM node:22\nHEALTHCHECK CMD ["true"]\nFROM node:22-slim\nCMD ["node"]\nHEALTHCHECK NONE\n' })
-        const none = await deriveInferredFacts({ root: disabled, repositories: api })
-        expect(byTarget(none.facts, 'api.health')).toBeUndefined()
-        expect(none.skipped).toContainEqual({ source: 'api/Dockerfile', reason: expect.stringContaining('HEALTHCHECK NONE') })
     })
 
     it('proposes the package manager\'s run of a start, serve or dev script only when no Dockerfile sets the command', async () => {
         const root = estate({ 'api/package.json': JSON.stringify({ scripts: { dev: 'vite', start: 'node index.js', serve: ' ' } }), 'api/yarn.lock': '' })
         const { facts } = await deriveInferredFacts({ root, repositories: api })
-        expect(byTarget(facts, 'api.command')).toEqual({ fields: ['estate.runnable', 'environment.generated'], target: 'api.command',
+        expect(byTarget(facts, 'api.command')).toEqual({ fields: ['estate.runnable', 'environment.compose_files'], target: 'api.command',
             value: ['yarn', 'run', 'start'], provenance: { kind: 'inferred', source: 'api/package.json',
                 reason: expect.stringMatching(/start script.*yarn\.lock selects yarn; dev is also declared/) } })
         const imaged = estate({ 'api/package.json': JSON.stringify({ scripts: { start: 'node index.js' } }), 'api/Dockerfile': 'FROM node:22\nCMD ["node", "server.mjs"]\n' })
@@ -265,9 +253,9 @@ describe('inferred interview answers', () => {
         ] }, provenance: { kind: 'inferred', source: 'api/package.json', reason: expect.stringMatching(
             /pnpm-lock\.yaml selects pnpm.*targeted gate runs the same command.*test:e2e are not proposed.*requires_stack is false/) } })
         // The same lockfile proposes the node toolchain, naming the install policy row setup then needs.
-        expect(byTarget(facts, 'api.toolchain')).toEqual({ fields: ['sibling', 'environment.install_policies', 'environment.generated'], target: 'api.toolchain',
+        expect(byTarget(facts, 'api.toolchain')).toEqual({ fields: ['sibling', 'environment.install_policies'], target: 'api.toolchain',
             value: 'node', provenance: { kind: 'inferred', source: 'api/pnpm-lock.yaml',
-                reason: expect.stringMatching(/toolchain "node" and lockfile "pnpm-lock\.yaml".*INSTALL_POLICY_MISSING.*purpose = "dependencies".*GENERATED_DEPENDENCY_VOLUME_MISSING/) } })
+                reason: expect.stringMatching(/toolchain "node" and lockfile "pnpm-lock\.yaml".*INSTALL_POLICY_MISSING/) } })
     })
 
     it('proposes the affected run of a build tool as the targeted gate', async () => {

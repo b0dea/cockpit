@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseToml } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
@@ -16,12 +16,12 @@ const developer = { kind: 'human-only', reason: 'developer prerequisite in the s
 const packageInstall = { kind: 'human-only', reason: 'package installation prerequisite' } as const
 const operator = { kind: 'human-only', reason: 'operator input, approval, or estate state required' } as const
 const runtime = { kind: 'human-only', reason: 'runtime or destructive environment operation' } as const
-const executed = { kind: 'executed', reason: 'run by the synthetic example acceptance test' } as const
+const executed = { kind: 'executed', reason: 'run by the example acceptance tests' } as const
 const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof packageInstall | typeof operator | typeof runtime | typeof executed)[]>([
     ['CONTRIBUTING.md', [developer, developer, developer]],
     ['docs/agent-adoption.md', [operator, operator, operator, operator, operator, runtime, operator, operator, operator, operator, runtime, runtime, operator]],
     ['docs/contributing/style.md', [developer]],
-    ['docs/environment.md', [runtime, runtime, runtime]],
+    ['docs/environment.md', [operator, runtime, runtime, runtime]],
     ['docs/getting-started.md', [packageInstall, packageInstall, packageInstall, operator, packageInstall, operator, operator, operator, operator, operator, runtime,
         operator, operator, operator, operator, operator, operator, runtime, runtime, runtime]],
     ['docs/harness-surfaces.md', [operator, operator, operator, operator, operator]],
@@ -29,11 +29,10 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/contributing/releasing.md', [operator, operator, developer, developer]],
     ['docs/troubleshooting.md', [operator, operator]],
     ['docs/contributing/testing.md', [developer, developer]],
-    ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
+    ['docs/tutorial.md', [operator, operator, operator, operator, runtime, operator]],
     ['docs/work-and-browser.md', [operator]],
     ['packages/cockpit/README.md', [packageInstall]],
-    ['examples/synthetic/README.md', [packageInstall, operator, executed, operator, executed]],
-    ['examples/minimal/README.md', [executed, runtime, runtime]],
+    ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],
     ['examples/compose-first/README.md', [executed, runtime]],
     ['examples/extended/README.md', [executed]],
@@ -59,20 +58,16 @@ function publicShellInventory(documents: ReadonlyMap<string, string>) {
     return blocks
 }
 
-describe('the public synthetic cockpit', () => {
+describe('the public example cockpits', () => {
     it('rejects undocumented or machine-local command dependencies', () => {
-        const exampleRoot = join(repositoryRoot, 'examples/synthetic')
+        const exampleRoot = join(repositoryRoot, 'examples/compose-first')
         const readme = readFileSync(join(exampleRoot, 'README.md'), 'utf8')
-        const config = readFileSync(join(exampleRoot, 'cockpit.toml'), 'utf8')
         expect(() => inventory(readme)).not.toThrow()
         expect(() => inventory(`${readme}\n\`\`\`sh unknown\ncockpit doctor --config cockpit.toml\n\`\`\`\n`))
             .toThrow('shell command block is not classified')
         expect(() => inventory(readme.replace('cockpit.toml --json', '$HOME/cockpit.toml --json')))
             .toThrow('machine-local path')
-        expect(config).toContain('source = "cockpit.overlay.toml"')
-        expect(existsSync(join(exampleRoot, 'cockpit.overlay.toml'))).toBe(true)
-        expect(dirname(join(exampleRoot, 'cockpit.toml'))).toBe(exampleRoot)
-        for (const example of ['synthetic', 'minimal', 'docs-only', 'compose-first', 'extended']) {
+        for (const example of ['minimal', 'docs-only', 'compose-first', 'extended']) {
             const commands = inventory(readFileSync(join(repositoryRoot, 'examples', example, 'README.md'), 'utf8'))
             const cockpitExecutables = [...commands.executable, ...commands.humanOnly].flat()
                 .filter(token => token === 'cockpit' || !token.startsWith('@') && token.endsWith('/cockpit'))
@@ -99,15 +94,13 @@ describe('the public synthetic cockpit', () => {
             { path: 'examples/docs-only/README.md', block: 1, ...executed },
             { path: 'examples/extended/README.md', block: 1, ...executed },
             { path: 'examples/minimal/README.md', block: 1, ...executed },
-            { path: 'examples/synthetic/README.md', block: 3, ...executed },
-            { path: 'examples/synthetic/README.md', block: 5, ...executed },
         ])
         expect(classified.filter(row => row.kind === 'human-only').every(row => row.reason.length > 0)).toBe(true)
 
         const planted = new Map(documents)
         planted.set('docs/environment.md', `${planted.get('docs/environment.md')}\n\`\`\`sh\ncockpit unknown-command\n\`\`\`\n`)
         expect(publicShellInventory(planted).filter(row => row.kind === 'unclassified')).toContainEqual({
-            path: 'docs/environment.md', block: 4, kind: 'unclassified', reason: 'shell block and classification table differ',
+            path: 'docs/environment.md', block: 5, kind: 'unclassified', reason: 'shell block and classification table differ',
         })
     })
 })

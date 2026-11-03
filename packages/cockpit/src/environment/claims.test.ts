@@ -19,9 +19,6 @@ import {
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
     inspectFailedReclaimRecovery,
-    issueRestoreExecutionAuthority,
-    consumeRestoreExecutionAuthority,
-    settleRestoreExecutionAuthority,
     consumeFailedReclaimRecovery,
     consumeDrainReservationAuthority,
     coordinationStateRecord,
@@ -51,7 +48,6 @@ import {
     type DrainAttemptResult,
     type ReclaimDrainExecutionAuthority,
     type RuntimeDrainExecutionAuthority,
-    type RestoreExecutionAuthority,
     type SleepDrainRecoveryAuthority,
 } from './claims.js'
 import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
@@ -235,152 +231,6 @@ function joinStack(state: StateNamespace, now: string) {
         listenerEvidence: [{ ports: [3000], observation: { state: 'available', value: [], observedAt: now, producer: 'test-listener-probe' } }],
     })
 }
-
-describe('restore execution authority', () => {
-    const stepSha256 = '3'.repeat(64)
-    // The restoring process's start identity as `observeProcessStart` would read it.
-    const restoringStart = 'lstart:2026-09-07T11:58:00.000Z'
-    const observe = async () => ({ state: 'present' as const, start: restoringStart })
-
-    async function config(state: StateNamespace) {
-        const configPath = join(state.cockpitRoot, 'restore-config.toml')
-        const bytes = Buffer.from('synthetic = true\n')
-        await mkdir(dirname(configPath), { recursive: true })
-        await writeFile(configPath, bytes)
-        return { configPath, configSha256: createHash('sha256').update(bytes).digest('hex') }
-    }
-
-    it('binds one use to the exact current sole holder and execution step', async () => {
-        const state = await namespace()
-        const { configPath, configSha256 } = await config(state)
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
-        if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
-
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: { ...issued.authority } as RestoreExecutionAuthority,
-            stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
-        })).resolves.toMatchObject({ kind: 'refusal' })
-        const consumed = await consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA, configSha256, stepSha256,
-            requesterId: holderA, configPath,
-        })
-        expect(consumed).toMatchObject({ kind: 'complete' })
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
-        })).resolves.toMatchObject({ kind: 'refusal' })
-        if (consumed.kind !== 'complete') throw new Error('expected restore lease')
-        await expect(settleRestoreExecutionAuthority({ namespace: state, lease: consumed.lease })).resolves.toEqual({ kind: 'complete' })
-
-        const mismatched = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
-        if (mismatched.kind !== 'complete') throw new Error('expected restore authority')
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: mismatched.authority, stackId, holderId: holderA,
-            requesterId: holderA, configPath, configSha256: '4'.repeat(64), stepSha256,
-        })).resolves.toMatchObject({ kind: 'refusal' })
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: mismatched.authority, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
-        })).resolves.toMatchObject({ kind: 'refusal' })
-    })
-
-    it('blocks co-tenants while a restore lease is active and releases after settlement', async () => {
-        const state = await namespace()
-        const { configPath, configSha256 } = await config(state)
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
-        if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
-        await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-
-        const consumed = await consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
-        })
-        expect(consumed).toMatchObject({ kind: 'complete' })
-        if (consumed.kind !== 'complete') throw new Error('expected restore lease')
-        const otherState = await namespace()
-        await expect(settleRestoreExecutionAuthority({ namespace: otherState, lease: consumed.lease }))
-            .resolves.toMatchObject({ kind: 'refusal' })
-        await expect(settleRestoreExecutionAuthority({ namespace: state, lease: consumed.lease })).resolves.toEqual({ kind: 'complete' })
-        await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
-        })).resolves.toMatchObject({ kind: 'refusal' })
-    })
-
-    // A restore whose process died before settling (SIGKILL, out of memory, a closed terminal) left
-    // its reservation behind, and every later up, sleep, down and reset refused with no way out.
-    it('releases a restore whose process is gone, and keeps one that is running or unconfirmed', async () => {
-        const state = await namespace()
-        const { configPath, configSha256 } = await config(state)
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
-        if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
-        // The authority is never consumed or settled, as when its process dies mid-restore.
-        const reap = (observed: Awaited<ReturnType<typeof observeProcessStart>>) => releaseDeadSessionHolders({
-            namespace: state, stackId, successor: { holderId: holderA, checkoutId: checkoutA },
-            now: '2026-09-07T12:00:00.000Z', observe: async (pid) => pid === process.pid ? observed : { state: 'unknown', reason: `unexpected process ${pid}` },
-        })
-
-        for (const observed of [{ state: 'present', start: restoringStart }, { state: 'unknown', reason: 'ps is not installed' }] as const) {
-            expect(await reap(observed)).toEqual({ kind: 'complete', released: [] })
-            await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{
-                code: ENVIRONMENT_CODES.CLAIM_CO_TENANT, message: `port leasing waits while process ${process.pid} restores the stack's data`,
-                fix: expect.stringContaining('then rerun this command, which releases a restore whose process has ended'),
-            }] })
-        }
-        expect(await reap({ state: 'absent' })).toEqual({ kind: 'complete', released: [], interruptedRestore: expect.objectContaining({
-            severity: 'warning', code: 'RESTORE_INTERRUPTED', message: expect.stringContaining(`by process ${process.pid}, reserved at `) }) })
-        await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
-    })
-
-    it('keeps a reservation active when a malformed envelope cannot authenticate its authority', async () => {
-        const state = await namespace()
-        const { configPath, configSha256 } = await config(state)
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const issued = await issueRestoreExecutionAuthority({
-            namespace: state, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256, observe,
-        })
-        if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
-
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA,
-            requesterId: holderA, configPath, configSha256, stepSha256, extra: true,
-        } as never)).resolves.toMatchObject({ kind: 'refusal' })
-        await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-
-        const consumed = await consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA,
-            requesterId: holderA, configPath, configSha256, stepSha256,
-        })
-        if (consumed.kind !== 'complete') throw new Error(JSON.stringify(consumed))
-        await expect(settleRestoreExecutionAuthority({ namespace: state, lease: consumed.lease })).resolves.toEqual({ kind: 'complete' })
-        await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
-    })
-
-    it('refuses a copied namespace and configuration drift before execution', async () => {
-        const state = await namespace()
-        const { configPath, configSha256 } = await config(state)
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        await expect(issueRestoreExecutionAuthority({
-            namespace: { ...state } as StateNamespace, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256, observe,
-        })).resolves.toMatchObject({ kind: 'refusal' })
-
-        const issued = await issueRestoreExecutionAuthority({
-            namespace: state, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256, observe,
-        })
-        if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
-        await writeFile(configPath, 'synthetic = false\n')
-        await expect(consumeRestoreExecutionAuthority({
-            namespace: state, authority: issued.authority, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256,
-        })).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }],
-        })
-        await expect(joinStack(state, '2026-09-07T12:00:03.000Z')).resolves.toMatchObject({ kind: 'complete' })
-    })
-})
 
 describe('acquired-holder compensation reduction', () => {
     const activeLease = {

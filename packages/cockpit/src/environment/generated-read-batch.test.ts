@@ -1,27 +1,17 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { appendFile, readFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFile, readFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parse as parseYaml } from 'yaml'
-import { parse as parseToml } from 'smol-toml'
 
 import { loadCockpitConfig } from '../config/load.js'
-import type { HolderId } from './contract.js'
 import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from './executable.js'
-import { observeGeneratedApplication, projectGeneratedApplicationMountSources } from './generated-application.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { nodeAuthority, readAnchoredBatches } from '../generated-environment/transaction.js'
-import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
-import { recordLifecycleStarted } from './lifecycle-stage.js'
-import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
-import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
-import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
-import { selectStateRoot, transactState } from './state.js'
-import { mcpApprovalDigest } from '../surfaces/mcp.js'
+import { cockpitId, publicationCockpitId } from './identity.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 
 const roots: string[] = []
@@ -398,181 +388,6 @@ describe('generated application authenticated read batching', () => {
             code: 'SURFACE_STATE_CONFLICT', target: 'surfaces',
         })] })
     })
-
-    it('publishes the measured browser runner startup grace through canonical synchronization', async () => {
-        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-runner-health-')))
-        roots.push(root)
-        const configPath = join(root, 'cockpit.toml')
-        const lockBytes = JSON.stringify({ lockfileVersion: 3, packages: {
-            '': { dependencies: { '@playwright/test': '1.2.3' } }, 'node_modules/@playwright/test': { version: '1.2.3' },
-        } }) + '\n'
-        const manifestBytes = JSON.stringify({ dependencies: { '@playwright/test': '1.2.3' } })
-        const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex')
-        const runnerImage = `synthetic.invalid/browser-runner@sha256:${'a'.repeat(64)}`
-        const mcpImage = `synthetic.invalid/browser-mcp@sha256:${'b'.repeat(64)}`
-        await mkdir(join(root, 'app'), { recursive: true })
-        await mkdir(join(root, 'fixtures'), { recursive: true })
-        await writeFile(join(root, 'app/package-lock.json'), lockBytes)
-        await writeFile(join(root, 'app/package.json'), manifestBytes)
-        await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
-        await writeFile(join(root, 'browser.mcp.json'), JSON.stringify({ mcpServers: {
-            playwright: { command: 'docker', args: ['run', '--rm', '-i', mcpImage, '--endpoint', 'ws://localhost:3001/'] },
-        } }))
-        const source = (await readFile(fixture, 'utf8'))
-            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
-            .replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4100\nBROWSER_PORT = 3001')
-            .replace('[environment.generated]', `[environment]
-addressing = "hostname"
-authentication = "bypassed"
-posture_requirements = [{ requirement = "synthetic-browser", addressing = "hostname", authentication = "bypassed" }]
-generated_host_paths = [".browser/runner", ".browser/mcp", ".browser/cli", ".browser/auth", ".browser/debugger"]
-
-[environment.generated]`)
-        await writeFile(configPath, `${source}
-[[sibling]]
-slug = "browser-source"
-dir = "."
-mount = "none"
-acquire = "none"
-var = "BROWSER_SOURCE_DIR"
-purpose = "Synthetic browser declaration"
-
-[sibling.derives]
-mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
-
-[mcp.approved]
-playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i', mcpImage, '--endpoint', 'ws://localhost:3001/'], cwd: root, envNames: [] }, root)}"
-
-[browser]
-engine = "firefox"
-harnesses = [{ target = "claudecode", version = "2.1.220" }, { target = "codexcli", version = "0.149.0" }, { target = "opencode", version = "1.18.15" }]
-images = { runner = { architectures = ["arm64"], reference = ${JSON.stringify(runnerImage)}, driver_version = "1.2.3" }, mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
-runner_health_measurement = { duration_seconds = 15, provenance = { source = "synthetic-browser.toml", observed_on = "2026-10-24", kind = "measured", reason = "Synthetic browser readiness measurement" } }
-resources = { memory_mb = 1024, cpus = 0.75, provenance = { source = "synthetic-browser.toml", observed_on = "2026-10-24", kind = "declared", reason = "Synthetic runner ceilings" } }
-project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(digest(manifestBytes))}, lockfile = "app/package-lock.json", sha256 = ${JSON.stringify(digest(lockBytes))}, driver_version = "1.2.3" }
-endpoint = "ws://localhost:3001/"
-max_clients = 4
-proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
-resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
-authentication = { policy = "none", states = [] }
-data = { mode = "empty", isolated = true, reaches_production = false }
-request_preapproval = true
-headed = false
-artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth", debugger = ".browser/debugger" }
-`)
-        const stateHome = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-runner-health-state-')))
-        roots.push(stateHome)
-        const priorHome = process.env.HOME
-        const priorXdgStateHome = process.env.XDG_STATE_HOME
-        process.env.HOME = stateHome
-        process.env.XDG_STATE_HOME = join(stateHome, 'state')
-        try {
-            const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
-            const currentCheckout = checkoutId({ checkoutPath: root })
-            const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
-            if (process.platform !== 'darwin' && process.platform !== 'linux') throw new Error('browser port platform unavailable')
-            const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
-                xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoots: [root], cockpitId: currentCockpit })
-            if (namespace.kind !== 'complete') throw new Error('browser port state unavailable')
-            const owner = `holder:${'c'.repeat(64)}:session` as HolderId
-            const observedAt = new Date().toISOString()
-            const loaded = await loadCockpitConfig(configPath)
-            if (loaded.kind !== 'complete') throw new Error('browser declaration unavailable')
-            const family = loaded.result.config.ports
-            const lease = await leasePortFamilyFixture({ namespace: namespace.value, stackId: currentStack, holderId: owner,
-                checkoutId: currentCheckout, config: family, now: observedAt, listenerTimeoutMs: 1_000,
-                listenerEvidence: Array.from({ length: family.count }, (_, index) => ({
-                    ports: Object.values(family.bases).map(base => base + index * family.step),
-                    observation: { state: 'available' as const, value: index === 0 ? [family.bases.APP_HOST_PORT!] : [], observedAt,
-                        producer: 'browser-runner-health-control' },
-                })) })
-            if (lease.kind !== 'complete') throw new Error('browser port lease unavailable')
-            const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
-            if (entrypoints.kind !== 'complete') throw new Error('browser entrypoint authority unavailable')
-            const ports = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
-            if (!ports) throw new Error('browser port projection unavailable')
-            const started = await recordLifecycleStarted({ namespace: namespace.value, stackId: currentStack, holderId: owner, observedAt })
-            if (started.kind === 'refusal') throw new Error('browser lifecycle history unavailable')
-            const lifecycle = await transactState(namespace.value, namespace.value.paths.lifecycle(currentStack), { ownerId: owner }, () => ({
-                format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: currentCockpit, subjectId: currentStack,
-                revision: 0, updatedAt: observedAt, value: { holderId: owner,
-                    workBasisSha256: 'd'.repeat(64), operationGeneration: 'e'.repeat(64), completedServices: [] },
-            }))
-            if (lifecycle.kind !== 'complete') throw new Error('browser lifecycle authority unavailable')
-            // The runner resolves application names on the host through the client's exposed network,
-            // where only .localhost names reach loopback; any other rule would bind nothing.
-            const declared = await readFile(configPath, 'utf8')
-            await writeFile(configPath, declared.replace('"app.example.localhost"', '"app.example.invalid"'))
-            expect(await syncGeneratedEnvironment({ configPath }, {}, ports)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: 'GENERATED_DECLARATION_INVALID', target: 'browser',
-                message: expect.stringContaining('browser.resolver maps app.example.invalid to 127.0.0.1'),
-                fix: expect.stringContaining('map a .localhost hostname to 127.0.0.1 or ::1'),
-            })] })
-            // An unparseable project file is named with where parsing stopped, never quoted.
-            const unparseable = '{\n  "name": "secret-token"\n  "private": true\n}\n', unparseableLock = '{ "lockfileVersion": secret-token }\n'
-            await writeFile(join(root, 'app/package.json'), unparseable)
-            await writeFile(join(root, 'app/package-lock.json'), unparseableLock)
-            await writeFile(configPath, declared.replace(digest(manifestBytes), digest(unparseable)).replace(digest(lockBytes), digest(unparseableLock)))
-            const unparsed = await syncGeneratedEnvironment({ configPath }, {}, ports)
-            expect(unparsed).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ target: 'browser',
-                message: 'the browser project app/package.json is not valid JSON at line 3, column 3; expected an npm package.json object; '
-                    + 'the browser project app/package-lock.json is not valid JSON; expected an npm package-lock.json object' })] })
-            expect(JSON.stringify(unparsed)).not.toContain('secret-tok')
-            await writeFile(join(root, 'app/package.json'), manifestBytes)
-            await writeFile(join(root, 'app/package-lock.json'), lockBytes)
-            await writeFile(configPath, declared)
-            const result = await syncGeneratedEnvironment({ configPath }, {}, ports)
-            expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
-            if (result.kind !== 'complete') throw new Error('browser surfaces were not published')
-            expect(Object.keys(JSON.parse(await readFile(join(root, '.mcp.json'), 'utf8')).mcpServers)).toEqual(['playwright'])
-            expect(Object.keys(parseToml(await readFile(join(root, '.codex/config.toml'), 'utf8')).mcp_servers as object)).toEqual(['playwright'])
-            const openCode = JSON.parse((await readFile(join(root, 'opencode.jsonc'), 'utf8'))
-                .replace(/\/\* cockpit:owner:cockpit:[a-z0-9-]+:[a-f0-9]{64}:(?:start|end) \*\//g, ''))
-            expect(Object.keys(openCode.mcp)).toEqual(['playwright'])
-            // Tools cockpit.toml does not list get neither the browser nor any other file.
-            await expect(readFile(join(root, '.cursor/mcp.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-            await expect(readFile(join(root, '.grok/config.toml'))).rejects.toMatchObject({ code: 'ENOENT' })
-            expect(result.result.paths.filter(path => path.startsWith('.cursor/') || path.startsWith('.grok/'))).toEqual([])
-            const compose = parseYaml(await readFile(join(root, 'compose.generated.yml'), 'utf8'))
-            expect(compose.services['cockpit-browser-runner'].healthcheck.start_period).toBe('15s')
-            expect(compose.services['cockpit-browser-runner']).toMatchObject({ mem_limit: '1024m', cpus: 0.75 })
-            // Names resolve on the host through the client's exposed network; an alias here would
-            // point the declared name at the container's own loopback.
-            expect(compose.services['cockpit-browser-runner']).not.toHaveProperty('extra_hosts')
-            expect(await readFile(join(root, 'docs/cockpit/environment-decisions.md'), 'utf8')).toContain('- Resource ceilings: cockpit-browser-runner: {"memory_mb":1024,"cpus":0.75,')
-            // Generated observations authenticate no host executable but Node, so a runner observation
-            // that needs one could never be planned and every up would refuse.
-            const harness = await createGeneratedCommandFixture().generatedRuntime(root, result.result.application, undefined, undefined,
-                loaded.result.config.ports.bases)
-            await expect(observeGeneratedApplication(result.result.application, harness, executeProbe))
-                .resolves.toMatchObject({ applicability: { posture: 'generated-environment' } })
-            await writeFile(join(root, 'app/.env'), 'SYNTHETIC_SETTING=1\n')
-            const artifactDirectory = join(root, '.browser/runner')
-            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({
-                kind: 'refusal', path: artifactDirectory, expectedType: 'directory',
-            })
-            await mkdir(artifactDirectory, { recursive: true })
-            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toEqual(expect.arrayContaining([
-                join(root, '.cockpit/browser/runner.sh'), join(root, 'app/package.json'),
-                join(root, 'app/package-lock.json'), artifactDirectory,
-            ]))
-            await rm(artifactDirectory, { recursive: true })
-            await symlink(join(root, 'app'), artifactDirectory)
-            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({
-                kind: 'refusal', path: artifactDirectory, expectedType: 'directory',
-            })
-            await rm(artifactDirectory)
-            await writeFile(artifactDirectory, 'not an artifact directory\n')
-            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({
-                kind: 'refusal', path: artifactDirectory, expectedType: 'directory',
-            })
-        } finally {
-            if (priorHome === undefined) delete process.env.HOME
-            else process.env.HOME = priorHome
-            if (priorXdgStateHome === undefined) delete process.env.XDG_STATE_HOME
-            else process.env.XDG_STATE_HOME = priorXdgStateHome
-        }
-    }, 120_000)
 
     it('refuses an explicit native hook that must move to CI before publication', async () => {
         const { root, configPath, ownership, ownershipPath, bin, calls, head, parent } = await explicitNativeHookFixture()

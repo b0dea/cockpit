@@ -14,7 +14,7 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-// The generated service pins `api` as referenced; `docs` is declared and unreferenced.
+// The cockpit's own compose.yml builds `api`; `docs` is declared and unreferenced.
 const CONFIG = [
     '# Estate layout: keep the comments below, they belong to the maintainers.',
     '[cockpit]', 'name = "synthetic-siblings"', 'siblings_root = "siblings"', '',
@@ -28,13 +28,7 @@ const CONFIG = [
     '[ports.bases]', 'API_HOST_PORT = 4100', '',
     '# Machine floor, measured once.',
     '[environment.machine]', 'runtime_memory_mb = 512', 'runtime_cpus = 1', 'free_disk_mb = 1024', 'cold_start_seconds = 60', '',
-    '[environment.generated]', 'compose_file = "compose.generated.yml"', '',
-    '[[environment.generated.services]]', 'id = "api"', 'sibling = "api"', 'build = { context = "." }',
-    'command = ["node", "server.mjs"]',
-    'ports = [{ name = "http", host_variable = "API_HOST_PORT", internal = 3000 }]', '',
-    '[environment.generated.services.health]', 'property = "GET /health returns 200"',
-    'probe = { location = "in-stack", service = "api", cwd = ".", argv = ["node", "-e", "process.exit(0)"], timeout_seconds = 10 }',
-    'interval_seconds = 5', 'timeout_seconds = 3', 'retries = 4', 'start_period_seconds = 20', '',
+    '[environment]', 'compose_files = ["compose.yml"]', '',
 ].join('\n')
 
 async function estate() {
@@ -42,6 +36,7 @@ async function estate() {
     roots.push(root)
     const configPath = join(root, 'cockpit.toml')
     await writeFile(configPath, CONFIG)
+    await writeFile(join(root, 'compose.yml'), 'services:\n  api:\n    build: ${API_DIR}\n    volumes: ["${API_DIR}:/app"]\n')
     await mkdir(join(root, 'siblings', 'api'), { recursive: true })
     await mkdir(join(root, 'siblings', 'docs'), { recursive: true })
     return { root, configPath, siblings: join(root, 'siblings') }
@@ -167,7 +162,7 @@ describe('sibling add', () => {
         expect(outcome.status).toBe(0)
         expect((await stat(join(siblings, 'billing-api', '.git'))).isDirectory()).toBe(true)
         const row = (await loaded(configPath)).sibling.find((sibling) => sibling.slug === 'billing-api')
-        expect(row).toMatchObject({ dir: 'billing-api', acquire: 'none', mount: 'always', var: 'BILLING_API_DIR', purpose: 'Billing service' })
+        expect(row).toMatchObject({ dir: 'billing-api', acquire: 'none', mount: 'none', var: 'BILLING_API_DIR', purpose: 'Billing service' })
         expect(row?.remote).toBeUndefined()
         const publish = {
             command: `gh repo create <owner>/billing-api --private --source ${JSON.stringify(join(siblings, 'billing-api'))} --remote origin`,
@@ -297,7 +292,7 @@ describe('sibling add', () => {
         expect(outcome.diagnostics).toEqual([])
         expect(await treeDigest(scattered)).toBe(before)
         const row = (await loaded(configPath)).sibling.find((sibling) => sibling.slug === 'widgets')
-        expect(row).toMatchObject({ dir: 'widgets', acquire: 'auto', remote: 'https://git.invalid/team/widgets.git', mount: 'always' })
+        expect(row).toMatchObject({ dir: 'widgets', acquire: 'auto', remote: 'https://git.invalid/team/widgets.git', mount: 'none' })
         await expect(stat(join(siblings, 'widgets'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
@@ -379,17 +374,9 @@ describe('sibling add purpose', () => {
 })
 
 describe('sibling remove', () => {
-    it('refuses while a generated service references the sibling, and removes an unreferenced one leaving the checkout and comments alone', async () => {
+    it('removes an unreferenced sibling, leaving the checkout and comments alone', async () => {
         const { configPath, siblings } = await estate()
         await writeFile(join(siblings, 'docs', 'index.md'), 'checkout content')
-        const before = await readFile(configPath, 'utf8')
-
-        const blocked = await runSiblingRemove({ configPath, env, slug: 'api' })
-
-        expect(blocked.status).toBe(2)
-        expect(blocked.diagnostics[0]?.code).toBe('SIBLING_REFERENCED')
-        expect(blocked.diagnostics[0]?.message).toContain('environment.generated.services[0].sibling')
-        expect(await readFile(configPath, 'utf8')).toBe(before)
 
         const removed = await runSiblingRemove({ configPath, env, slug: 'docs' })
 
@@ -402,8 +389,8 @@ describe('sibling remove', () => {
         expect(after).toContain('# Machine floor, measured once.')
         expect(after).toContain('# Port leases.\n[ports.bases]')
         expect(removed.artifact).toContain(`npx --no cockpit sync --config ${configPath} --dry-run`)
-        // docs derives no generated row, so nothing is flagged.
-        expect(removed.result).toMatchObject({ flaggedForReview: [] })
+        expect(removed.result).toEqual({ action: 'removed', config: configPath, slug: 'docs', dir: 'docs',
+            next: `npx --no cockpit sync --config ${configPath} --dry-run` })
     })
 
     it('refuses while the cockpit\'s own Compose file uses the sibling\'s variable', async () => {
