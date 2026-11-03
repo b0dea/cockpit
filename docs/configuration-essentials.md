@@ -105,7 +105,7 @@ seed = { argv = ["npm", "run", "db:seed"], timeout_seconds = 300 }
 The project build and test commands for one toolchain, selected by the lockfile a sibling
 checkout holds. `setup` needs exactly one matching row for each sibling whose `toolchain` is not
 `none`, and the guard allows the declared `build` and `test` argument vectors in that checkout.
-Full entry: the [`install_policies` shape](configuration-reference.md#install_policies-shape).
+Full entry: the [`install_policies` shape](configuration-reference.md#environmentinstall_policies).
 
 ```toml
 [[environment.install_policies]]
