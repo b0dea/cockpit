@@ -302,11 +302,17 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again |
+| `SETUP_INSTRUCTION_FILES_OFFERED` | review the proposed change with a person, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files |
 | `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers |
 | `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again; [see above](#common-refusal-guidance) |
 | `SETUP_REMOTE_MISMATCH` | [see above](#common-refusal-guidance) |
 | `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `SIBLING_INSTRUCTIONS_AGENTS_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the CLAUDE.md it proposes (one line, @AGENTS.md); once a person approves it, run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files |
+| `SIBLING_INSTRUCTIONS_CLAUDE_ONLY` | run npx --no cockpit setup --config <your cockpit.toml> to see the move it proposes (CLAUDE.md copied byte for byte to AGENTS.md, CLAUDE.md replaced by @AGENTS.md) and, once a person approves it, rerun it with --write-instruction-files; when CLAUDE.md imports other files with @, setup proposes nothing and a person moves the shared instructions into AGENTS.md by hand |
+| `SIBLING_INSTRUCTIONS_MISSING` | a person writes AGENTS.md with what an agent must know to work in the repository, then runs npx --no cockpit setup --config <your cockpit.toml> --write-instruction-files to add the CLAUDE.md that imports it |
+| `SIBLING_INSTRUCTIONS_TOOL_ONLY` | a person moves the instructions every tool needs from those files into AGENTS.md, and keeps only settings specific to one tool where they are |
+| `SIBLING_INSTRUCTIONS_UNLINKED` | a person merges the instructions every tool needs into AGENTS.md, then makes CLAUDE.md a line reading @AGENTS.md followed only by instructions that apply to Claude Code alone |
 | `SKILL_COMMAND_UNDECLARED` | [see above](#sibling-projection-and-skills) |
 | `SKILL_CONTRACT_INVALID` | [see above](#sibling-projection-and-skills) |
 | `SKILL_DECISION_LOGIC_EMBEDDED` | [see above](#sibling-projection-and-skills) |

@@ -62,7 +62,7 @@
           "slug": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9-]*$",
-            "description": "Short name of the sibling; also the prefix of its projected guide files."
+            "description": "Short name of the sibling; also how the root AGENTS.md labels its copied guides."
           },
           "dir": {
             "anyOf": [
@@ -151,7 +151,7 @@
               "CLAUDE.md",
               "AGENTS.md"
             ],
-            "description": "Guide files the sibling publishes, linked into the cockpit as symlinks.",
+            "description": "Guide files the sibling publishes, copied into the cockpit's root AGENTS.md by sync.",
             "type": "array",
             "items": {
               "type": "string",

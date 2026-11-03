@@ -58,6 +58,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--write-instruction-pointers` | boolean | `false` |
+| `--write-instruction-files` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |

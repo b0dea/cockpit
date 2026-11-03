@@ -97,7 +97,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `slug` | Short name of the sibling; also the prefix of its projected guide files. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
+| `slug` | Short name of the sibling; also how the root AGENTS.md labels its copied guides. | string |  | required; pattern `^[a-z0-9][a-z0-9-]*$` |
 | `dir` | Checkout directory under the siblings root, or . for the siblings root itself. | string |  | required; either (exactly `"."`) or (pattern [P1](#patterns)) |
 | `remote` | Git remote to clone from; required when acquire is auto or manual and not allowed when none. | string |  | at least 1 character |
 | `branch` | Branch to check out when cloning. | string |  | at least 1 character |
@@ -107,7 +107,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `toolchain` | Toolchain that installs and tests the sibling; none for a directory of data. | string | `"none"` | one of `"node"`, `"python"`, `"ruby"`, `"go"`, `"rust"`, `"dotnet"`, `"none"` |
 | `gate` | Set to operator for a lane that touches live data or local hardware; it never runs by default and asks first. | string |  | exactly `"operator"` |
 | `host_reason` | Why the sibling cannot join the stack; required when mount is host. | string |  | at least 1 character |
-| `guides` | Guide files the sibling publishes, linked into the cockpit as symlinks. | array of string | `["CLAUDE.md","AGENTS.md"]` | each item: pattern [P1](#patterns) |
+| `guides` | Guide files the sibling publishes, copied into the cockpit's root AGENTS.md by sync. | array of string | `["CLAUDE.md","AGENTS.md"]` | each item: pattern [P1](#patterns) |
 | `instruction_pointer` | Let setup add a pointer to the cockpit guide in this sibling, when the command line also approves it. | boolean | `false` |  |
 | `purpose` | What the sibling is for; printed when its checkout is missing. | string |  | required; at least 1 character |
 | `environment_files` | Template and instance environment file pairs the sibling needs. | array of table: [`[[sibling.environment_files]]`](#siblingenvironment_files) |  |  |
@@ -1003,6 +1003,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `80a38f95c9840801cd4c092983f5678c2330a40ef81d4feefeaf48adb0cd7ca1`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `b63d695e3c1088c7ed5f37df5d0bf071350c49e27863810f38546be465f16b69`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
