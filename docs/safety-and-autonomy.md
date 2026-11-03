@@ -1,7 +1,5 @@
 # Safety and autonomy
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people reviewing the controls cockpit generates and for agents working within
 them. It says what the guard allows, asks about, denies or cannot evaluate, and why. A permission
 always applies to one exact command and declared resources, never a whole command family.

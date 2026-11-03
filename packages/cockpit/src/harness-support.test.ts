@@ -308,7 +308,7 @@ describe('paired harness evidence', () => {
 
     it('rejects paths that are not colocated or distinct', () => {
         expect(validateEvidenceManifest(row({ brokenPath: CANDIDATE }), ROOT)).not.toEqual([])
-        expect(validateEvidenceManifest(row({ brokenPath: 'fixtures/docs/human-valid.md' }), ROOT)).not.toEqual([])
+        expect(validateEvidenceManifest(row({ brokenPath: 'README.md' }), ROOT)).not.toEqual([])
         expect(dirname(CANDIDATE)).toBe(dirname(BROKEN))
     })
 

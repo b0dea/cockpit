@@ -3,8 +3,6 @@
 The smallest generated environment, for seeing a stack come up: one service built from `api/`,
 one port, one health probe.
 
-<!-- cockpit:verified version=0.0.0 -->
-
 [Install cockpit as an exact project-local dependency](../../docs/getting-started.md#install-cockpit),
 then run this example in a `git init` copy. `check` lists the decisions still open:
 

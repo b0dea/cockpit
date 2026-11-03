@@ -1,7 +1,5 @@
 # Concepts
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page defines the words cockpit's commands, configuration and diagnostics use. Each term has
 one meaning across the documentation, and other pages link here instead of redefining it.
 

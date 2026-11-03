@@ -1,7 +1,5 @@
 # Tutorial: the synthetic example end to end
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This walkthrough is for anyone evaluating cockpit before pointing it at a real product. It runs
 cockpit on the synthetic example in this repository: you generate agent surfaces, then watch a
 drift check catch a hand edit. It needs no credentials and no Docker.
@@ -39,7 +37,6 @@ repository. The configuration declares both as siblings.
 ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run
 ```
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ cockpit sync --config cockpit.toml --dry-run
 write "package.json"
@@ -91,7 +88,6 @@ it there; `setup` refuses an untracked template. `setup` then verifies both repo
 creates the ignored **.env** from the template. `check` recomputes every generated file and
 compares it with disk:
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
 WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: ...
@@ -127,7 +123,6 @@ echo "# edited by hand" >> compose.generated.yml
 ./node_modules/.bin/cockpit check --config cockpit.toml
 ```
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
 ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]

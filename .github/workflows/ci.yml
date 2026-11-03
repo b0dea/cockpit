@@ -119,9 +119,6 @@ jobs:
             *) echo "::error::npm resolves to $(command -v npm), not the safe-chain shim"; exit 1 ;;
           esac
           npm ci --ignore-scripts
-      # The reference-documentation tests derive command and diagnostic inventories from the
-      # compiled package, so a docs-only change still needs the build.
-      - run: npm run build
       - name: nothing consumer-identifying reaches the tracked tree
         # Fails closed. vitest exits non-zero when a path matches no test file, so a scan
         # that has been renamed or deleted turns this job red rather than passing over
@@ -129,10 +126,25 @@ jobs:
         # green run from a clone that carries no site-specific list.
         run: npm test -- packages/cockpit/src/tree-hygiene.test.ts
       - run: npm run lint:docs
+      - run: npm run lint:markdown
+      # Tracked pages only: a glob would also walk node_modules, which lychee does not skip.
+      - run: git ls-files '*.md' > "$RUNNER_TEMP/markdown-files"
+      - name: internal links and fragments resolve
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          lycheeVersion: v0.24.2
+          args: --offline --include-fragments --no-progress --files-from ${{ runner.temp }}/markdown-files
+          jobSummary: false
+      # The generated pages are rendered from the source in this checkout; a page that differs
+      # from what the script writes was not regenerated with the change that moved it.
+      - name: generated references match their sources
+        run: |
+          npm run references
+          git diff --exit-code
       # The documentation tests read docs/ directly. On a code change the full matrix runs
       # them again; this keeps them on the docs-only path the matrix is skipped for.
       - name: documentation contracts
-        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.contracts.test.ts packages/cockpit/src/docs-lint.prose.test.ts packages/cockpit/src/docs-lint.reference.test.ts
+        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.test.ts packages/cockpit/src/references.test.ts
 
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }})
@@ -207,7 +219,7 @@ jobs:
       - if: matrix.extras
         run: npm run lint:supply-chain
       - if: matrix.extras
-        run: node scripts/supply-chain-check.mjs --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
+        run: node scripts/supply-chain-check.ts --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
       # Registry signatures and provenance attestations of every installed package: catches a
       # tampered or unsigned tarball that the lockfile integrity hash alone would accept.
       - if: matrix.extras

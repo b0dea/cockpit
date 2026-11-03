@@ -1,7 +1,5 @@
 # Harness surfaces
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people reviewing the agent configuration `cockpit sync` generates, and for
 integrators extending it. It covers what cockpit writes for each supported agent tool (Claude Code,
 Codex CLI, OpenCode, Cursor and Grok Build), how product-specific additions enter, and how far

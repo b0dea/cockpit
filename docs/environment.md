@@ -1,7 +1,5 @@
 # Environment lifecycle
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is the reference for cockpit's environment commands: what each one does, what it
 refuses, and how to recover when it refuses. It is for people running cockpit on a product and for
 agents working inside it. For the order to run the commands in, follow

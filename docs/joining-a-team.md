@@ -1,7 +1,5 @@
 # Joining a team's cockpit
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This guide is for a developer who has cloned a cockpit that a team already committed, with its
 `cockpit.toml` and generated files. You create this machine's local state, then confirm that the
 committed files did not change.

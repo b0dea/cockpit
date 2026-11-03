@@ -9,20 +9,18 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
-import { resolveGitExecutable } from '../environment/executable.js'
 import { bootstrapHolderId } from '../environment/identity.js'
 import { selectBootstrapStateRoot, transactState, type BootstrapStateRecord } from '../environment/state.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import { stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
-import { admitPublicationPlan, authorizePublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
-    revalidateReferenceBootstrap, runPublicationPlan } from './transaction.js'
+import { admitPublicationPlan, authorizePublicationPlan, nodeAuthority, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
+    runPublicationPlan } from './transaction.js'
 
 const roots: string[] = []
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
 const ledgerPath = '.cockpit/generated-environment-ownership.json'
-const referenceLedgerPath = '.cockpit/generated-reference-ownership.json'
 
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
@@ -581,99 +579,6 @@ describe('portable publication names', () => {
     }, 120_000)
 })
 
-async function referencePublication() {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-reference-transaction-')))
-    roots.push(root)
-    const packageBytes = '{"name":"synthetic-reference-root","private":true}\n'
-    const before = '# Troubleshooting\n\nforeign prefix\n<!-- cockpit:diagnostic-index:begin -->\nold\n<!-- cockpit:diagnostic-index:end -->\nforeign suffix\n'
-    const region = 'new diagnostic index\n'
-    const postimage = before.replace('old\n', region)
-    await mkdir(join(root, 'docs'))
-    await writeFile(join(root, 'package.json'), packageBytes)
-    await writeFile(join(root, 'docs/troubleshooting.md'), before)
-    execFileSync('git', ['init', '-q'], { cwd: root })
-    execFileSync('git', ['add', '--', 'package.json', 'docs/troubleshooting.md'], { cwd: root })
-    execFileSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'synthetic fixture'], { cwd: root })
-    const resolved = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
-    if (resolved.state !== 'available') throw new Error('Git unavailable for reference transaction fixture')
-    const captured = await captureReferenceBootstrap(root, resolved.value, { execute: executeProbe })
-    if (captured.kind !== 'complete') throw new Error(JSON.stringify(captured))
-    const files = referenceBootstrapFiles(captured.bootstrap)
-    if (!files?.some(row => row.path === 'docs/troubleshooting.md')) throw new Error('fixed bootstrap did not return troubleshooting')
-    const outputs = [
-        ['docs/cli-reference.md', 'cli\n'],
-        ['docs/configuration-reference.md', 'configuration\n'],
-        ['docs/command-list.md', 'commands\n'],
-        ['docs/capability-matrix.md', 'capabilities\n'],
-        ['skills/adopt-cockpit/SKILL.md', 'skill\n'],
-    ] as const
-    const sourceSha256 = digest(packageBytes)
-    const generation = digest('reference-generation')
-    const encoded = encodeReferenceManifest({ generation, sourceSha256,
-        files: outputs.map(([path, bytes]) => ({ path, sha256: digest(bytes) })), troubleshootingSha256: digest(region) })
-    const status = await lstat(root)
-    const trouble = await lstat(join(root, 'docs/troubleshooting.md'))
-    const node = await nodeAuthority()
-    if (!node) throw new Error('Node authority unavailable')
-    const input = {
-        authority: { root, cockpitId: 'maintainer-references', configPath: join(root, 'package.json') }, generation, sourceSha256,
-        rootIdentity: { dev: status.dev, ino: status.ino }, node, mode: 'reference' as const,
-        ledgerExpected: { kind: 'missing' as const }, nextLedgerBytes: encoded.bytes, referenceBootstrap: captured.bootstrap,
-        references: [
-            ...outputs.map(([path, bytes]) => ({ kind: 'file' as const, path, sha256: digest(bytes) })),
-            { kind: 'markdown-region' as const, path: 'docs/troubleshooting.md' as const,
-                begin: '<!-- cockpit:diagnostic-index:begin -->' as const, end: '<!-- cockpit:diagnostic-index:end -->' as const,
-                preimageSha256: digest(before), regionSha256: digest(region), postimageSha256: digest(postimage) },
-        ],
-        mutations: [
-            ...outputs.map(([path, bytes]) => ({ path, phase: 'desired' as const, operation: 'write-file' as const,
-                bytes, sha256: digest(bytes), expected: { kind: 'missing' as const } })),
-            { path: 'docs/troubleshooting.md', phase: 'desired' as const, operation: 'write-file' as const, bytes: postimage,
-                sha256: digest(postimage), expected: { kind: 'file' as const, sha256: digest(before), identity: { dev: trouble.dev, ino: trouble.ino } } },
-        ],
-    }
-    return { root, input, bootstrap: captured.bootstrap, before, postimage }
-}
-
-async function syntheticBootstrap(variant: 'sha256' | 'unsupported-format' | 'nonblob' | 'oversize' | 'malformed' | 'duplicate' | 'nonzero-stage' | 'unsupported-mode' | 'different-blob' | 'two-rows' | 'leading-nul' | 'interior-nul' | 'trailing-nul' | 'missing-nul' | 'empty-stream') {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-reference-git-boundary-')))
-    roots.push(root)
-    const bytes = Buffer.from('tracked troubleshooting\n')
-    const objectFormat = variant === 'unsupported-format' ? 'md5' : 'sha256'
-    const oid = createHash('sha256').update(Buffer.from(`blob ${bytes.byteLength}\0`)).update(bytes).digest('hex')
-    const head = 'a'.repeat(64)
-    const validRow = `100644 ${oid} 0\tdocs/troubleshooting.md\0`
-    const secondRow = `100644 ${oid} 0\tdocs/cli-reference.md\0`
-    const rows = variant === 'malformed' ? `not-an-index-row\0`
-        : variant === 'duplicate' ? validRow + validRow
-            : variant === 'nonzero-stage' ? `100644 ${oid} 2\tdocs/troubleshooting.md\0`
-                : variant === 'unsupported-mode' ? `120000 ${oid} 0\tdocs/troubleshooting.md\0`
-                    : variant === 'leading-nul' ? '\0' + validRow
-                        : variant === 'interior-nul' ? validRow + '\0' + secondRow
-                            : variant === 'trailing-nul' ? validRow + '\0'
-                                : variant === 'missing-nul' ? validRow.slice(0, -1)
-                                    : variant === 'empty-stream' ? ''
-                                        : variant === 'two-rows' ? validRow + secondRow : validRow
-    const listingPath = join(root, 'committed-tree-rows')
-    await writeFile(listingPath, rows.replace(/(100644|100755) ([a-f0-9]+) 0\t/g, '$1 blob $2\t'))
-    const script = `#!${process.execPath}\n` +
-        `const args=process.argv.slice(2);const out=value=>process.stdout.write(value);` +
-        `if(args[0]==='rev-parse'&&args[1]==='--show-object-format')out(${JSON.stringify(objectFormat + '\n')});` +
-        `else if(args[0]==='rev-parse')out(${JSON.stringify(head + '\n')});` +
-        `else if(args[0]==='ls-tree')out(require('node:fs').readFileSync(${JSON.stringify(listingPath)}));` +
-        `else if(args[0]==='cat-file'){` +
-        (variant === 'nonblob' ? `process.stderr.write('not a blob');process.exitCode=1;`
-            : variant === 'oversize' ? `out(Buffer.alloc(16777217,97));`
-                : `out(Buffer.from(${JSON.stringify(Buffer.from(variant === 'different-blob' ? 'different\n' : bytes).toString('base64'))},'base64'));`) +
-        `}else{process.stderr.write('unexpected argv');process.exitCode=1;}\n`
-    const executable = join(root, 'git')
-    await writeFile(executable, script)
-    await chmod(executable, 0o755)
-    const resolved = await resolveGitExecutable({ PATH: root })
-    if (resolved.state !== 'available') throw new Error(`synthetic Git unavailable: ${resolved.reason}`)
-    return { result: await captureReferenceBootstrap(root, resolved.value, { execute: executeProbe }), bytes, listingPath, validRow, secondRow }
-}
-
 const approve = async (request: { digest: string }) => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest })
 
 describe('generated publication transaction', () => {
@@ -1113,7 +1018,6 @@ describe('generated publication transaction', () => {
             { ...current, nextLedgerBytes: foreign.bytes },
             { ...current, nextLedgerBytes: changedProducer },
             { ...current, nextLedgerBytes: next.bytes.replace('"version":', '"forged":') },
-            { ...current, mode: 'reference' as const, references: [{ kind: 'file' as const, path: 'a-stale.txt', sha256: digest('old') }] },
             { ...current, mutations: [{ ...current.mutations[0]!, phase: 'stale' as const }] },
             { ...current, mutations: [{ ...current.mutations[0]!, operation: 'remove-file' as const }] },
         ]) {
@@ -1180,7 +1084,6 @@ describe('generated publication transaction', () => {
 
     it('freezes one classified plan for dry-run and apply and publishes all writes before exact deletion and ledger last', async () => {
         const { root, input, postimage } = await publication()
-        await writeFile(join(root, referenceLedgerPath), 'reference estate remains foreign\n')
         const plan = await admitPublicationPlan(input, { execute: executeProbe })
         expect(plan, JSON.stringify(plan)).toMatchObject({ kind: 'complete' })
         if (plan.kind !== 'complete') return
@@ -1198,7 +1101,6 @@ describe('generated publication transaction', () => {
         expect(result).toMatchObject({ kind: 'complete', changes: preview.kind === 'complete' ? preview.changes : [] })
         expect(order).toEqual(['write-file:z-shared.md', 'write-file:new.txt', 'remove-file:a-stale.txt', 'write-file:generated-environment-ownership.json'])
         expect(await readFile(join(root, 'z-shared.md'), 'utf8')).toBe(postimage)
-        expect(await readFile(join(root, referenceLedgerPath), 'utf8')).toBe('reference estate remains foreign\n')
         await expect(lstat(join(root, 'a-stale.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
         expect(result.kind === 'complete' && result.committedPaths).toEqual(plan.plan.changes.map(row => row.path))
     })
@@ -1216,190 +1118,6 @@ describe('generated publication transaction', () => {
         expect(await readFile(join(root, 'foreign.txt'), 'utf8')).toBe('foreign')
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(prior.bytes)
     })
-
-    it('bootstraps only the fixed reference estate from opaque immutable Git evidence', async () => {
-        const { root, input, bootstrap, before, postimage } = await referencePublication()
-        await mkdir(join(root, '.cockpit'))
-        await writeFile(join(root, ledgerPath), 'consumer estate remains foreign\n')
-        expect(await revalidateReferenceBootstrap(bootstrap, { execute: executeProbe })).toBe(true)
-        expect((await admitPublicationPlan({ ...input, referenceBootstrap: { ...bootstrap } as never }, { execute: executeProbe })).kind).toBe('refusal')
-        expect((await admitPublicationPlan({ ...input, references: input.references.slice(1) }, { execute: executeProbe })).kind).toBe('refusal')
-        const region = input.references.at(-1)!
-        if (region.kind !== 'markdown-region') throw new Error('missing fixed region declaration')
-        for (const references of [
-            [...input.references.slice(0, -1), { ...region, begin: '<!-- changed -->' }],
-            [...input.references.slice(0, -1), { kind: 'file' as const, path: region.path, sha256: region.regionSha256 }],
-            [...input.references.slice(0, -1), { ...region, path: 'docs/cli-reference.md' }],
-            [...input.references.slice(0, -1), { ...region, preimageSha256: digest('different') }],
-            [...input.references.slice(0, -1), { ...region, regionSha256: digest('different') }],
-            [...input.references.slice(0, -1), { ...region, postimageSha256: digest('different') }],
-        ]) expect((await admitPublicationPlan({ ...input, references }, { execute: executeProbe })).kind).toBe('refusal')
-        const regionMutation = input.mutations.at(-1)!
-        expect((await admitPublicationPlan({ ...input, mutations: [...input.mutations.slice(0, -1), {
-            ...regionMutation, bytes: regionMutation.bytes!.replace('new diagnostic index', 'changed diagnostic index'),
-            sha256: digest(regionMutation.bytes!.replace('new diagnostic index', 'changed diagnostic index')),
-        }] }, { execute: executeProbe })).kind).toBe('refusal')
-        expect((await admitPublicationPlan({ ...input, mode: 'sync' }, { execute: executeProbe })).kind).toBe('refusal')
-        await writeFile(join(root, 'docs/troubleshooting.md'), input.mutations.at(-1)!.bytes!.replace(
-            '<!-- cockpit:diagnostic-index:end -->', '<!-- cockpit:diagnostic-index:begin -->\n<!-- cockpit:diagnostic-index:end -->'))
-        expect((await admitPublicationPlan(input, { execute: executeProbe })).kind).toBe('refusal')
-        await writeFile(join(root, 'docs/troubleshooting.md'), before)
-        await chmod(join(root, 'docs/troubleshooting.md'), 0o755)
-        expect((await admitPublicationPlan(input, { execute: executeProbe })).kind).toBe('refusal')
-        await chmod(join(root, 'docs/troubleshooting.md'), 0o644)
-        const admitted = await admitPublicationPlan(input, { execute: executeProbe })
-        expect(admitted).toMatchObject({ kind: 'complete' })
-        if (admitted.kind !== 'complete') throw new Error('exact reference plan refused')
-        const result = await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true })
-        expect(result).toMatchObject({ kind: 'complete', committedPaths: [
-            'docs/capability-matrix.md', 'docs/cli-reference.md', 'docs/command-list.md', 'docs/configuration-reference.md',
-            'docs/troubleshooting.md', 'skills/adopt-cockpit/SKILL.md', referenceLedgerPath,
-        ] })
-        expect(await readFile(join(root, 'docs/troubleshooting.md'), 'utf8')).toBe(postimage)
-        expect(await readFile(join(root, ledgerPath), 'utf8')).toBe('consumer estate remains foreign\n')
-        expect(JSON.parse(await readFile(join(root, referenceLedgerPath), 'utf8')).entries.at(-1)).toMatchObject({
-            kind: 'markdown-region', path: 'docs/troubleshooting.md', regionId: 'diagnostic-index', sha256: digest('new diagnostic index\n'),
-        })
-    })
-
-    it('refreshes a stale reference ledger only from an entirely committed reference estate', async () => {
-        const { root, input, postimage } = await referencePublication()
-        const first = await admitPublicationPlan(input, { execute: executeProbe })
-        expect(first.kind, JSON.stringify(first)).toBe('complete')
-        if (first.kind !== 'complete') return
-        expect(await runPublicationPlan(first.plan, { execute: executeProbe, revalidate: async () => true }))
-            .toMatchObject({ kind: 'complete' })
-        const cliPath = 'docs/cli-reference.md'
-        const troublePath = 'docs/troubleshooting.md'
-        const rebasedCli = 'committed cli after rebase\n'
-        const rebasedTrouble = postimage.replace('new diagnostic index', 'committed diagnostic index after rebase')
-        await writeFile(join(root, cliPath), rebasedCli)
-        await writeFile(join(root, troublePath), rebasedTrouble)
-        execFileSync('git', ['add', '--', ...input.references.map(({ path }) => path)], { cwd: root })
-        execFileSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'update generated references'], { cwd: root })
-        const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
-        if (git.state !== 'available') throw new Error('Git unavailable for reference refresh')
-        const captured = await captureReferenceBootstrap(root, git.value, { execute: executeProbe })
-        if (captured.kind !== 'complete') throw new Error(JSON.stringify(captured))
-        const ledger = await readFile(join(root, referenceLedgerPath), 'utf8')
-        const ledgerStat = await lstat(join(root, referenceLedgerPath))
-        const cliStat = await lstat(join(root, cliPath))
-        const troubleStat = await lstat(join(root, troublePath))
-        const next = {
-            ...input, referenceBootstrap: captured.bootstrap,
-            ledgerExpected: { kind: 'file' as const, sha256: digest(ledger), identity: { dev: ledgerStat.dev, ino: ledgerStat.ino } },
-            references: input.references.map(row => row.kind === 'markdown-region' ? { ...row, preimageSha256: digest(rebasedTrouble) } : row),
-            mutations: [
-                { ...input.mutations[0]!, expected: { kind: 'file' as const, sha256: digest(rebasedCli), identity: { dev: cliStat.dev, ino: cliStat.ino } } },
-                { ...input.mutations.at(-1)!, expected: { kind: 'file' as const, sha256: digest(rebasedTrouble), identity: { dev: troubleStat.dev, ino: troubleStat.ino } } },
-            ],
-        }
-        const editedPath = join(root, 'docs/command-list.md')
-        const committedBytes = await readFile(editedPath)
-        await writeFile(editedPath, 'uncommitted human edit\n')
-        expect((await admitPublicationPlan(next, { execute: executeProbe })).kind).toBe('refusal')
-        await writeFile(editedPath, committedBytes)
-
-        const stagedCli = 'staged uncommitted cli\n'
-        const stagedTrouble = postimage.replace('new diagnostic index', 'staged uncommitted diagnostic index')
-        await Promise.all([
-            writeFile(join(root, cliPath), stagedCli),
-            writeFile(join(root, troublePath), stagedTrouble),
-        ])
-        execFileSync('git', ['add', '--', ...input.references.map(({ path }) => path)], { cwd: root })
-        const stagedBootstrap = await captureReferenceBootstrap(root, git.value, { execute: executeProbe })
-        if (stagedBootstrap.kind !== 'complete') throw new Error(JSON.stringify(stagedBootstrap))
-        const stagedCliStat = await lstat(join(root, cliPath))
-        const stagedTroubleStat = await lstat(join(root, troublePath))
-        const staged = {
-            ...next,
-            referenceBootstrap: stagedBootstrap.bootstrap,
-            references: input.references.map(row => row.kind === 'markdown-region' ? { ...row, preimageSha256: digest(stagedTrouble) } : row),
-            mutations: [
-                { ...input.mutations[0]!, expected: { kind: 'file' as const, sha256: digest(stagedCli), identity: { dev: stagedCliStat.dev, ino: stagedCliStat.ino } } },
-                { ...input.mutations.at(-1)!, expected: { kind: 'file' as const, sha256: digest(stagedTrouble), identity: { dev: stagedTroubleStat.dev, ino: stagedTroubleStat.ino } } },
-            ],
-        }
-        expect((await admitPublicationPlan(staged, { execute: executeProbe })).kind).toBe('refusal')
-        await Promise.all([
-            writeFile(join(root, cliPath), rebasedCli),
-            writeFile(join(root, troublePath), rebasedTrouble),
-        ])
-        execFileSync('git', ['add', '--', ...input.references.map(({ path }) => path)], { cwd: root })
-
-        const refreshed = await admitPublicationPlan(next, { execute: executeProbe })
-        expect(refreshed.kind, JSON.stringify(refreshed)).toBe('complete')
-        if (refreshed.kind !== 'complete') return
-        expect(await runPublicationPlan(refreshed.plan, { execute: executeProbe, revalidate: async () => true }))
-            .toMatchObject({ kind: 'complete' })
-        expect(await readFile(join(root, cliPath), 'utf8')).toBe('cli\n')
-        expect(await readFile(join(root, troublePath), 'utf8')).toBe(postimage)
-    }, 120_000)
-
-    it('binds bootstrap authority to committed tree rows while retaining immutable blob bytes', async () => {
-        const { root, bootstrap } = await referencePublication()
-        const captured = referenceBootstrapFiles(bootstrap)!
-        await writeFile(join(root, 'docs/cli-reference.md'), 'newly staged\n')
-        execFileSync('git', ['add', '--', 'docs/cli-reference.md'], { cwd: root })
-        expect(await revalidateReferenceBootstrap(bootstrap, { execute: executeProbe })).toBe(true)
-        expect(referenceBootstrapFiles(bootstrap)).toEqual(captured)
-    })
-
-    it('revalidates the captured Git rows inside the transaction even when owner revalidation returns true', async () => {
-        const { root, input, before } = await referencePublication()
-        const admitted = await admitPublicationPlan(input, { execute: executeProbe })
-        expect(admitted.kind).toBe('complete')
-        if (admitted.kind !== 'complete') return
-        await writeFile(join(root, 'docs/cli-reference.md'), 'staged after admission\n')
-        execFileSync('git', ['add', '--', 'docs/cli-reference.md'], { cwd: root })
-        expect((await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true })).kind).toBe('refusal')
-        expect(await readFile(join(root, 'docs/troubleshooting.md'), 'utf8')).toBe(before)
-        await expect(lstat(join(root, referenceLedgerPath))).rejects.toMatchObject({ code: 'ENOENT' })
-        await expect(lstat(join(root, 'docs/configuration-reference.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-    })
-
-    it.each([
-        ['sha256', 'complete'],
-        ['unsupported-format', 'refusal'],
-        ['nonblob', 'refusal'],
-        ['oversize', 'refusal'],
-        ['malformed', 'refusal'],
-        ['duplicate', 'refusal'],
-        ['nonzero-stage', 'refusal'],
-        ['unsupported-mode', 'refusal'],
-        ['different-blob', 'refusal'],
-        ['leading-nul', 'refusal'],
-        ['interior-nul', 'refusal'],
-        ['trailing-nul', 'refusal'],
-        ['missing-nul', 'refusal'],
-        ['empty-stream', 'refusal'],
-    ] as const)('authenticates synthetic Git boundary variant %s', async (variant, expected) => {
-        const { result, bytes } = await syntheticBootstrap(variant)
-        expect(result.kind).toBe(expected)
-        if (result.kind === 'complete') {
-            expect(referenceBootstrapFiles(result.bootstrap)).toEqual([expect.objectContaining({
-                path: 'docs/troubleshooting.md', oid: createHash('sha256').update(Buffer.from(`blob ${bytes.byteLength}\0`)).update(bytes).digest('hex'),
-                bytes,
-            })])
-        }
-    })
-
-    it.each(['leading-nul', 'interior-nul', 'trailing-nul', 'missing-nul', 'empty-stream'] as const)(
-        'refuses synthetic Git boundary revalidation variant %s after valid capture', async variant => {
-            const { result, listingPath, validRow, secondRow } = await syntheticBootstrap(variant === 'interior-nul' ? 'two-rows' : 'sha256')
-            expect(result.kind).toBe('complete')
-            if (result.kind !== 'complete') throw new Error('valid bootstrap refused')
-            const captured = referenceBootstrapFiles(result.bootstrap)
-            const validRows = variant === 'interior-nul' ? validRow + secondRow : validRow
-            expect(await revalidateReferenceBootstrap(result.bootstrap, { execute: executeProbe })).toBe(true)
-            const malformed = variant === 'leading-nul' ? '\0' + validRows
-                : variant === 'interior-nul' ? validRow + '\0' + secondRow
-                    : variant === 'trailing-nul' ? validRows + '\0'
-                        : variant === 'missing-nul' ? validRows.slice(0, -1) : ''
-            await writeFile(listingPath, malformed)
-            expect(await revalidateReferenceBootstrap(result.bootstrap, { execute: executeProbe })).toBe(false)
-            expect(referenceBootstrapFiles(result.bootstrap)).toEqual(captured)
-        })
 
     it('revalidates exact identities after confirmation and leaves targets and ledger intact', async () => {
         const { root, input, prior } = await publication()

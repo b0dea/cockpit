@@ -1,7 +1,5 @@
 # Adopting cockpit incrementally
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This guide is for teams that already run a multi-repository product with their own scripts or a
 shell-registry cockpit, and want to move to cockpit one layer at a time. Keep the old path
 runnable until the cockpit path passes the same checks.
@@ -20,7 +18,6 @@ product with no registry, start from [Getting started](getting-started.md#choose
 Every value the registry did not state is marked with its source and the reason it was inferred
 or defaulted. Output for one of this repository's synthetic registry fixtures:
 
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
 $ cockpit document --registry fixtures/registries/tier-dialect.sh
 #:schema ./node_modules/@b00dea/cockpit/cockpit.schema.json

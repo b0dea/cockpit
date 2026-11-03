@@ -10,9 +10,11 @@
   },
   "scripts": {
     "build": "npm run build --workspace @b00dea/cockpit",
-    "lint:docs": "node scripts/docs-lint.mjs",
-    "lint:supply-chain": "node scripts/supply-chain-check.mjs",
-    "references": "npm run build && node --input-type=module -e \"import { publishRepositoryReferences } from './scripts/diagnostic-inventory.mjs'; const r = await publishRepositoryReferences(process.cwd()); console.log(JSON.stringify(r, null, 2)); process.exitCode = r.ok ? 0 : 1\"",
+    "lint:docs": "tsx scripts/docs-lint.ts",
+    "lint:markdown": "markdownlint-cli2",
+    "lint:links": "git ls-files '*.md' | lychee --offline --include-fragments --no-progress --files-from -",
+    "lint:supply-chain": "node scripts/supply-chain-check.ts",
+    "references": "tsx scripts/references.ts",
     "test": "node scripts/run-tests.mjs",
     "test:changed": "node scripts/run-changed-tests.mjs",
     "typecheck": "node node_modules/typescript/bin/tsc --build --singleThreaded"
@@ -23,6 +25,7 @@
     "@typescript/typescript6": "6.0.2",
     "ajv": "8.20.0",
     "ajv-draft-04": "1.0.0",
+    "markdownlint-cli2": "0.23.3",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.5"

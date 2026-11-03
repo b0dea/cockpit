@@ -1,7 +1,5 @@
 # CLI completion and generated references
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people working on cockpit itself: how a command reports that it finished, and how
 the generated reference pages are kept current with the source.
 
@@ -30,31 +28,15 @@ preview and baseline requires a terminal. The
 [operator application](../../packages/cockpit/src/environment/operator-application.ts) owns these
 boundaries.
 
-## Reference currentness and ownership
+## Generated references
 
-The maintainer [reference operations](../../scripts/diagnostic-inventory.mjs) verify one
-committed HEAD: its implementing source and shipped assets, package and build inputs, and the
-matching built owner bytes. The [reference renderer](../../packages/cockpit/src/references/generate.ts)
-derives the whole-file references and the diagnostic index inside troubleshooting's fixed marker
-region. Capability rows come from the shipped restriction, instruction and skill owners; the
-renderer never upgrades their evidence strength.
+[`scripts/references.ts`](../../scripts/references.ts) renders the CLI reference, the
+configuration reference, the command list, the capability matrix, the installable adopt-cockpit
+skill and the remedies table between troubleshooting's `cockpit:diagnostic-index` markers, all from
+the working tree. `npm run references` writes whatever differs; CI runs it and fails on
+`git diff --exit-code`, so a page that does not match its sources cannot merge.
 
-`npm run lint:docs` compares every generated product read-only after its Markdown checks; a missing
-or stale copy fails. Its explicit-path and `--external-report` modes are scoped checks and do not
-establish that the references are current.
-
-Publication uses the shared
-[transaction owner](../../packages/cockpit/src/generated-environment/transaction.ts), with a
-reference ownership record separate from consumer generated-environment ownership:
-
-- Initial admission captures exact stage-0 Git index rows and verifies immutable blobs by object
-  identifier; working-tree bytes alone cannot establish ownership.
-- Later publication verifies the prior reference record and owned bytes, and refuses changed owned
-  files or an edited owned index.
-- For troubleshooting, the transaction binds the complete preimage, owned region, postimage, and
-  foreign prefix and suffix. It preserves every byte outside the region, revalidates source,
-  build, bootstrap and ownership observations, and does not replace identical output.
-
-A local reference publication establishes neither a public release nor native enforcement. For a
-refusal, look the diagnostic up in the user guide `docs/troubleshooting.md`. Do not edit an
-ownership record, evidence bundle or generated control to hide the refusal.
+The remedies table lists a code only when every place that raises it states the same literal fix,
+or a hand-written troubleshooting section names it. [`scripts/diagnostic-inventory.ts`](../../scripts/diagnostic-inventory.ts)
+reads those codes and fixes from production source. Capability rows come from the shipped
+restriction, instruction and skill owners; the renderer never upgrades their evidence strength.

@@ -20,7 +20,7 @@ updates:
     groups:
       # These versions are pinned by a check, so their update cannot pass CI as Dependabot opens
       # it: rulesync and esbuild produce the committed libexec/rulesync-generator.cjs bundle, the
-      # others carry a binary or are runtime dependencies that scripts/supply-chain-check.mjs
+      # others carry a binary or are runtime dependencies that scripts/supply-chain-check.ts
       # pins. They arrive together in one pull request that auto-merge skips; a maintainer
       # finishes it with "Updating pinned dependencies" in docs/contributing/releasing.md.
       # A dependency joins the first group it matches, so this group must stay first.

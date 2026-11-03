@@ -1,7 +1,5 @@
 # Cockpit documentation
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This index lists every page for people using cockpit on their own products, grouped by what you
 are trying to do. To work on cockpit itself, start with [CONTRIBUTING.md](../CONTRIBUTING.md); the
 contributor pages live separately under docs/contributing/.
@@ -38,8 +36,8 @@ generated diagnostic index.
 - [CLI reference](cli-reference.md)
 - [Configuration reference](configuration-reference.md)
 - [Capability matrix](capability-matrix.md)
-- [Troubleshooting](troubleshooting.md): hand-written remedies followed by the generated
-  diagnostic index.
+- [Troubleshooting](troubleshooting.md): hand-written remedies followed by the generated table
+  of codes with a fixed remedy.
 
 ## Examples
 

@@ -11,9 +11,8 @@ import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../envi
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { errorCause, snapshotGeneratedJson, type ExecutionStep, RefusalError, tryParseJson, hasErrorCode } from '../environment/contract.js'
-import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
+import type { ResolvedExecutable } from '../environment/executable.js'
 import { readState, type BootstrapStateAddress } from '../environment/state.js'
-import { installedPackageMetadata } from '../package-metadata.js'
 import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPaths, removeSharedOwnership, renderSharedPostimage,
     type OwnershipAuthority, type OwnershipManifest, type GeneratedPathFact, type SurfaceDesiredEntry } from '../surfaces/ownership.js'
 import { reservedPathSegment } from '../surfaces/contract.js'
@@ -23,7 +22,7 @@ import type { SurfaceChange } from '../surfaces/sync.js'
 export const mechanism = {
     id: 'generated-publication-transaction',
     module: 'packages/cockpit/src/generated-environment/transaction.ts',
-    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'portablePublicationPaths', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'authorizePublicationPlan', 'runPublicationPlan'],
+    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'portablePublicationPaths', 'admitPublicationPlan', 'authorizePublicationPlan', 'runPublicationPlan'],
 } as const
 
 export interface PublicationAdapters {
@@ -81,19 +80,7 @@ export interface PersonaSourceIdentity {
 
 const SHA256 = /^[a-f0-9]{64}$/
 const OWNERSHIP_PATH = '.cockpit/generated-environment-ownership.json'
-const REFERENCE_OWNERSHIP_PATH = '.cockpit/generated-reference-ownership.json'
 const BOOTSTRAP_CONFIGURATION_PATH = 'cockpit.toml'
-const REFERENCE_FILE_PATHS = Object.freeze([
-    'docs/cli-reference.md',
-    'docs/configuration-reference.md',
-    'docs/command-list.md',
-    'docs/capability-matrix.md',
-    'skills/adopt-cockpit/SKILL.md',
-] as const)
-const TROUBLESHOOTING_PATH = 'docs/troubleshooting.md'
-const REFERENCE_PATHS = Object.freeze([...REFERENCE_FILE_PATHS, TROUBLESHOOTING_PATH] as const)
-const TROUBLESHOOTING_BEGIN = '<!-- cockpit:diagnostic-index:begin -->'
-const TROUBLESHOOTING_END = '<!-- cockpit:diagnostic-index:end -->'
 const MAX_OWNERSHIP_BYTES = 1_048_576
 const MAX_OWNED_FILES = 256
 const MAX_EXECUTABLE_BYTES = 536_870_912
@@ -138,138 +125,6 @@ function refuse(code: string, message: string, target?: string, fix?: string): P
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
         diagnostics: Object.freeze([{ severity: 'error' as const, code, message, target, fix }]),
     })
-}
-
-declare const referenceBootstrapBrand: unique symbol
-export type ReferenceBootstrap = Readonly<{ readonly [referenceBootstrapBrand]: true }>
-
-export interface ReferenceBootstrapFile {
-    readonly path: typeof REFERENCE_PATHS[number]
-    readonly mode: '100644' | '100755'
-    readonly oid: string
-    readonly bytes: Buffer
-    readonly sha256: string
-}
-
-interface ReferenceBootstrapRecord {
-    readonly root: string
-    readonly git: ResolvedExecutable
-    readonly objectFormat: 'sha1' | 'sha256'
-    readonly head: string
-    readonly rows: string
-    readonly files: readonly Readonly<Omit<ReferenceBootstrapFile, 'bytes'> & { bytes: Buffer }>[]
-}
-
-const referenceBootstraps = new WeakMap<object, ReferenceBootstrapRecord>()
-
-function gitStep(root: string, git: ResolvedExecutable, argv: readonly string[], label: string, stdoutLimitBytes: number, deadline?: number): ExecutionStep | undefined {
-    const now = Date.now()
-    const stop = Math.min(deadline ?? now + HELPER_TIMEOUT_MS, now + HELPER_TIMEOUT_MS)
-    if (stop <= now || stdoutLimitBytes < 1 || stdoutLimitBytes > MAX_AUTHENTICATED_READ_BATCH_BYTES) return undefined
-    return Object.freeze({
-        id: `reference-bootstrap-${label}-${randomBytes(8).toString('hex')}`,
-        argv: Object.freeze([git.canonicalPath, ...argv]) as readonly [string, ...string[]],
-        argv0: git.invocationPath,
-        cwd: root,
-        env: Object.freeze({}),
-        timeoutMs: stop - now,
-        spawnNotAfter: new Date(stop).toISOString(),
-        stdoutLimitBytes,
-        stderrLimitBytes: 16_384,
-        paths: Object.freeze([root]),
-        ports: Object.freeze([]),
-        labels: Object.freeze({ action: 'reference-bootstrap', operation: label }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
-            path: git.canonicalPath, sha256: git.sha256, maxBytes: MAX_EXECUTABLE_BYTES,
-            argvIndexes: Object.freeze([0]), executable: true as const, executionMode: git.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([Object.freeze({ path: root, expected: 'directory' as const })]),
-        compensation: Object.freeze([]),
-    })
-}
-
-async function runGit(root: string, git: ResolvedExecutable, argv: readonly string[], label: string, limit: number, adapters: PublicationAdapters, deadline?: number): Promise<Buffer | undefined> {
-    const step = gitStep(root, git, argv, label, limit, deadline)
-    if (!step) return undefined
-    try {
-        const outcome = authenticatedExecutionOutcome(await adapters.execute(step), step)
-        return outcome?.kind === 'complete' && outcome.stderr.byteLength === 0 ? Buffer.from(outcome.stdout) : undefined
-    } catch {
-        // an unavailable authority is refused by the caller.
-        return undefined
-    }
-}
-
-async function referenceGitState(root: string, git: ResolvedExecutable, adapters: PublicationAdapters, deadline?: number): Promise<Readonly<{
-    objectFormat: 'sha1' | 'sha256'; head: string; rows: string; parsed: readonly Readonly<{ mode: '100644' | '100755'; oid: string; path: typeof REFERENCE_PATHS[number] }>[]
-}> | undefined> {
-    if (!isAbsolute(root) || !resolvedGitExecutable(git)) return undefined
-    const formatBytes = await runGit(root, git, ['rev-parse', '--show-object-format'], 'object-format', 32, adapters, deadline)
-    const objectFormat = formatBytes?.toString('utf8').trim()
-    if (objectFormat !== 'sha1' && objectFormat !== 'sha256') return undefined
-    const oidPattern = objectFormat === 'sha1' ? /^[a-f0-9]{40}$/ : /^[a-f0-9]{64}$/
-    const headBytes = await runGit(root, git, ['rev-parse', '--verify', 'HEAD^{commit}'], 'head', 80, adapters, deadline)
-    const head = headBytes?.toString('utf8').trim()
-    if (!head || !oidPattern.test(head)) return undefined
-    const listing = await runGit(root, git, ['ls-tree', '-z', head, '--', ...REFERENCE_PATHS], 'committed-reference-estate', 4096, adapters, deadline)
-    if (!listing) return undefined
-    let text: string
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(listing) } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
-    if (!text.endsWith('\0')) return undefined
-    const records = text.split('\0')
-    records.pop()
-    if (records.some(raw => raw === '')) return undefined
-    const parsed: Array<Readonly<{ mode: '100644' | '100755'; oid: string; path: typeof REFERENCE_PATHS[number] }>> = []
-    const seen = new Set<string>()
-    for (const raw of records) {
-        const match = /^(100644|100755) blob ([a-f0-9]+)\t([^\0\r\n]+)$/.exec(raw)
-        if (!match || !oidPattern.test(match[2]!) || !REFERENCE_PATHS.includes(match[3] as typeof REFERENCE_PATHS[number]) || seen.has(match[3]!)) return undefined
-        seen.add(match[3]!)
-        parsed.push(Object.freeze({ mode: match[1] as '100644' | '100755', oid: match[2]!, path: match[3] as typeof REFERENCE_PATHS[number] }))
-    }
-    if (!seen.has(TROUBLESHOOTING_PATH)) return undefined
-    parsed.sort((left, right) => compareCodeUnits(left.path, right.path))
-    const rows = parsed.map(row => `${row.mode} ${row.oid} 0\t${row.path}\0`).join('')
-    return Object.freeze({ objectFormat, head, rows, parsed: Object.freeze(parsed) })
-}
-
-/** Capture immutable Git objects for the fixed maintainer reference estate. */
-export async function captureReferenceBootstrap(root: string, git: ResolvedExecutable, adapters: PublicationAdapters): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; bootstrap: ReferenceBootstrap }>> {
-    const trustedGit = resolvedGitExecutable(git)
-    const state = trustedGit && await referenceGitState(root, trustedGit, adapters)
-    if (!state) return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference bootstrap could not authenticate the fixed committed Git estate', 'references')
-    const blobs = new Map<string, Buffer>()
-    let aggregateBytes = 0
-    for (const oid of [...new Set(state.parsed.map(row => row.oid))]) {
-        const bytes = await runGit(root, trustedGit, ['cat-file', 'blob', oid], 'blob', MAX_GENERATED_BYTES, adapters)
-        aggregateBytes += bytes?.byteLength ?? MAX_AUTHENTICATED_READ_BATCH_BYTES + 1
-        if (!bytes || bytes.byteLength > MAX_GENERATED_BYTES || aggregateBytes > MAX_AUTHENTICATED_READ_BATCH_BYTES) return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference bootstrap could not read a bounded immutable Git blob set', oid)
-        const header = Buffer.from(`blob ${bytes.byteLength}\0`)
-        const actual = createHash(state.objectFormat).update(header).update(bytes).digest('hex')
-        if (actual !== oid) return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference bootstrap blob did not match its captured object id', oid)
-        blobs.set(oid, bytes)
-    }
-    const rechecked = await referenceGitState(root, trustedGit, adapters)
-    if (!rechecked || rechecked.objectFormat !== state.objectFormat || rechecked.head !== state.head || rechecked.rows !== state.rows) {
-        return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference Git rows changed while immutable blobs were captured', 'references')
-    }
-    const files = Object.freeze(state.parsed.map(row => Object.freeze({ ...row, bytes: Buffer.from(blobs.get(row.oid)!), sha256: sha256(blobs.get(row.oid)!) })))
-    const bootstrap = Object.freeze({}) as ReferenceBootstrap
-    referenceBootstraps.set(bootstrap, Object.freeze({ root, git: trustedGit, objectFormat: state.objectFormat, head: state.head, rows: state.rows, files }))
-    return Object.freeze({ kind: 'complete', bootstrap })
-}
-
-export function referenceBootstrapFiles(bootstrap: ReferenceBootstrap): readonly ReferenceBootstrapFile[] | undefined {
-    const record = bootstrap && referenceBootstraps.get(bootstrap)
-    return record && Object.freeze(record.files.map(row => Object.freeze({ ...row, bytes: Buffer.from(row.bytes) })))
-}
-
-export async function revalidateReferenceBootstrap(bootstrap: ReferenceBootstrap, adapters: PublicationAdapters, deadline?: number): Promise<boolean> {
-    const record = bootstrap && referenceBootstraps.get(bootstrap)
-    if (!record) return false
-    const current = await referenceGitState(record.root, record.git, adapters, deadline)
-    return !!current && current.objectFormat === record.objectFormat && current.head === record.head && current.rows === record.rows
 }
 
 function confined(root: string, path: string): string | undefined {
@@ -1621,89 +1476,6 @@ async function staleRemovalApproved(
     }
 }
 
-export interface ReferenceManifestInput {
-    readonly generation: string
-    readonly sourceSha256: string
-    readonly files: readonly Readonly<{ path: string; sha256: string }>[]
-    readonly troubleshootingSha256: string
-}
-
-type ReferenceManifestEntry = Readonly<{ kind: 'file'; path: typeof REFERENCE_FILE_PATHS[number]; sha256: string }>
-    | Readonly<{ kind: 'markdown-region'; path: typeof TROUBLESHOOTING_PATH; regionId: 'diagnostic-index'; begin: typeof TROUBLESHOOTING_BEGIN; end: typeof TROUBLESHOOTING_END; sha256: string }>
-
-interface ReferenceManifestPayload {
-    readonly format: 'cockpit-generated-references/v1'
-    readonly generation: string
-    readonly source: Readonly<{ path: 'package.json'; sha256: string }>
-    readonly producer: Readonly<{ package: string; version: string; sourceRevision: string }>
-    readonly entries: readonly ReferenceManifestEntry[]
-}
-
-interface ReferenceManifest extends ReferenceManifestPayload { readonly integrity: string }
-
-function ledgerFromAnotherProducer(bytes: string): boolean {
-    const record = ownRecord(tryParseJson(bytes))
-    const producer = record ? ownRecord(record.producer) : undefined
-    return record?.format === 'cockpit-generated-references/v1' && producer !== undefined
-        && (producer.package !== installedPackageMetadata.name || producer.version !== installedPackageMetadata.version
-            || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision)
-}
-
-function parseReferenceManifest(bytes: string): ReferenceManifest | undefined {
-    if (typeof bytes !== 'string' || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return undefined
-    const record = ownRecord(tryParseJson(bytes))
-    if (!record || !exactKeys(record, ['format', 'generation', 'source', 'producer', 'entries', 'integrity'])
-        || record.format !== 'cockpit-generated-references/v1' || typeof record.generation !== 'string' || !SHA256.test(record.generation)
-        || typeof record.integrity !== 'string' || !SHA256.test(record.integrity)) return undefined
-    const source = ownRecord(record.source)
-    const producer = ownRecord(record.producer)
-    if (!source || !exactKeys(source, ['path', 'sha256']) || source.path !== 'package.json' || typeof source.sha256 !== 'string' || !SHA256.test(source.sha256)
-        || !producer || !exactKeys(producer, ['package', 'version', 'sourceRevision'])
-        || producer.package !== installedPackageMetadata.name || producer.version !== installedPackageMetadata.version
-        || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision || !Array.isArray(record.entries)
-        || record.entries.length !== REFERENCE_PATHS.length) return undefined
-    const entries: ReferenceManifestEntry[] = []
-    for (const [index, path] of REFERENCE_PATHS.entries()) {
-        const row = ownRecord(record.entries[index])
-        if (!row || row.path !== path || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
-        if (path === TROUBLESHOOTING_PATH) {
-            if (!exactKeys(row, ['kind', 'path', 'regionId', 'begin', 'end', 'sha256']) || row.kind !== 'markdown-region'
-                || row.regionId !== 'diagnostic-index' || row.begin !== TROUBLESHOOTING_BEGIN || row.end !== TROUBLESHOOTING_END) return undefined
-        } else if (!exactKeys(row, ['kind', 'path', 'sha256']) || row.kind !== 'file') return undefined
-        entries.push(Object.freeze(row as unknown as ReferenceManifestEntry))
-    }
-    const payload = Object.freeze({ format: record.format, generation: record.generation, source: Object.freeze(source),
-        producer: Object.freeze(producer), entries: Object.freeze(entries) }) as ReferenceManifestPayload
-    if (sha256(JSON.stringify(payload)) !== record.integrity) return undefined
-    return Object.freeze({ ...payload, integrity: record.integrity }) as ReferenceManifest
-}
-
-export function encodeReferenceManifest(input: ReferenceManifestInput): Readonly<{ bytes: string; manifest: ReferenceManifest }> {
-    const captured = snapshotGeneratedJson(input) as unknown as ReferenceManifestInput | undefined
-    if (!captured || !exactKeys(captured as unknown as Record<string, unknown>, ['generation', 'sourceSha256', 'files', 'troubleshootingSha256'])
-        || !SHA256.test(captured.generation) || !SHA256.test(captured.sourceSha256) || !SHA256.test(captured.troubleshootingSha256)
-        || !Array.isArray(captured.files) || captured.files.length !== REFERENCE_FILE_PATHS.length
-        || captured.files.some((row, index) => !row || row.path !== REFERENCE_FILE_PATHS[index] || !SHA256.test(row.sha256))) throw new RefusalError('reference manifest input is not exact bounded hashes')
-    const payload: ReferenceManifestPayload = Object.freeze({
-        format: 'cockpit-generated-references/v1', generation: captured.generation,
-        source: Object.freeze({ path: 'package.json', sha256: captured.sourceSha256 }),
-        producer: Object.freeze({ package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision }),
-        entries: Object.freeze([
-            ...REFERENCE_FILE_PATHS.map((path, index) => Object.freeze({ kind: 'file' as const, path, sha256: captured.files[index]!.sha256 })),
-            Object.freeze({ kind: 'markdown-region' as const, path: TROUBLESHOOTING_PATH, regionId: 'diagnostic-index' as const,
-                begin: TROUBLESHOOTING_BEGIN, end: TROUBLESHOOTING_END, sha256: captured.troubleshootingSha256 }),
-        ]),
-    })
-    const bytes = `${JSON.stringify({ ...payload, integrity: sha256(JSON.stringify(payload)) }, null, 2)}\n`
-    const manifest = parseReferenceManifest(bytes)
-    if (!manifest) throw new RefusalError('reference manifest encoder produced invalid bytes')
-    return Object.freeze({ bytes, manifest })
-}
-
-export type PublicationReference = Readonly<{ kind: 'file'; path: string; sha256: string }>
-    | Readonly<{ kind: 'markdown-region'; path: string; begin: string; end: string;
-        preimageSha256: string; regionSha256: string; postimageSha256: string }>
-
 export interface PublicationPlan {
     readonly changes: readonly PublicationChange[]
     readonly staleRemoval?: GeneratedStaleRemovalApprovalRequest
@@ -1715,13 +1487,11 @@ export interface PublicationPlanInput {
     readonly sourceSha256: string
     readonly rootIdentity: DirectoryIdentity
     readonly node: ResolvedExecutable
-    readonly mode: 'sync' | 'reference'
+    readonly mode: 'sync'
     readonly ledgerExpected: ExpectedEntryState
     readonly nextLedgerBytes: string
     readonly mutations: readonly PublicationMutation[]
     readonly surfaceActions?: readonly SurfaceChange[]
-    readonly references?: readonly PublicationReference[]
-    readonly referenceBootstrap?: ReferenceBootstrap
 }
 
 export interface BootstrapPublicationPlanInput {
@@ -1755,7 +1525,6 @@ interface PublicationRecord {
     readonly groups: readonly PublicationGroup[]
     readonly changes: readonly PublicationChange[]
     readonly checks: readonly PublicationCheck[]
-    readonly referenceBootstrap?: ReferenceBootstrap
     readonly staleRemoval?: GeneratedStaleRemovalApprovalRequest
 }
 
@@ -1804,155 +1573,6 @@ function classifyEntry(fact: GeneratedPathFact | undefined, current: AnchoredEnt
             : { path: entry.path, kind: current.kind, confinement: current.kind === 'missing' ? 'confined' : 'unknown' }
     const classified = classifyGeneratedPaths([fact], [observation])
     return classified.kind === 'complete' ? classified.paths[0]?.state : undefined
-}
-
-function troubleshootingRegion(document: string): Readonly<{ bytes: string; prefix: string; suffix: string }> | undefined {
-    const tokens = [...document.matchAll(/<!--\s*cockpit:diagnostic-index[^\r\n]*?(?:-->|$)/g)]
-    if (tokens.length !== 2 || tokens[0]![0] !== TROUBLESHOOTING_BEGIN || tokens[1]![0] !== TROUBLESHOOTING_END) return undefined
-    for (const token of tokens) {
-        const start = token.index!
-        if ((start !== 0 && document[start - 1] !== '\n') || !/^(?:\r?\n|$)/.test(document.slice(start + token[0].length))) return undefined
-    }
-    const contentStart = tokens[0]!.index! + TROUBLESHOOTING_BEGIN.length
-    const lineBreak = document.slice(contentStart).match(/^\r?\n/)?.[0]
-    if (!lineBreak) return undefined
-    const contentEnd = tokens[1]!.index!
-    return Object.freeze({ bytes: document.slice(contentStart + lineBreak.length, contentEnd),
-        prefix: document.slice(0, contentStart) + lineBreak, suffix: document.slice(contentEnd) })
-}
-
-async function admitReferencePlan(
-    captured: PublicationPlanInput,
-    bootstrap: ReferenceBootstrap | undefined,
-    adapters: PublicationAdapters,
-): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; plan: PublicationPlan }>> {
-    const { authority, node } = captured
-    if (authority.configPath !== join(authority.root, 'package.json') || typeof captured.nextLedgerBytes !== 'string') {
-        return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference publication requires the root package source and a complete reference ledger', REFERENCE_OWNERSHIP_PATH)
-    }
-    const ledger = await readAnchoredEntry(authority.root, REFERENCE_OWNERSHIP_PATH, MAX_OWNERSHIP_BYTES, node, adapters)
-    const ledgerState = expectedState(ledger)
-    if (!ledgerState || !sameExpected(ledgerState, captured.ledgerExpected)) {
-        return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference ownership metadata changed after observation', REFERENCE_OWNERSHIP_PATH)
-    }
-    let prior: ReferenceManifest | undefined
-    if (ledger.kind === 'file') {
-        let text: string | undefined
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(ledger.bytes) } catch { /* Not UTF-8: refused below. */ }
-        prior = text === undefined ? undefined : parseReferenceManifest(text)
-        // A ledger another cockpit version wrote is no evidence about these pages, exactly like a
-        // fresh clone with no ledger, which publishes against the committed pages instead. Refusing
-        // it stopped every maintainer's references run after each version bump.
-        if (!prior && !(text !== undefined && ledgerFromAnotherProducer(text))) {
-            return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference publication requires authenticated reference metadata', REFERENCE_OWNERSHIP_PATH,
-                `${REFERENCE_OWNERSHIP_PATH} is a local, ignored file that no longer authenticates; move it out of the repository and run npm run references again, which then checks the pages against the committed ones`)
-        }
-    } else if (ledger.kind !== 'missing') return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference ownership metadata is not a regular file', REFERENCE_OWNERSHIP_PATH)
-    const next = parseReferenceManifest(captured.nextLedgerBytes)
-    if (!next || next.generation !== captured.generation || next.source.sha256 !== captured.sourceSha256) {
-        return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference ledger does not match its declared source and generation', REFERENCE_OWNERSHIP_PATH)
-    }
-    const references = captured.references ?? []
-    if (references.length !== REFERENCE_PATHS.length || references.some((row, index) => {
-        const fields = ownRecord(row)
-        if (!fields || row.path !== REFERENCE_PATHS[index]) return true
-        return index < REFERENCE_FILE_PATHS.length
-            ? row.kind !== 'file' || !exactKeys(fields, ['kind', 'path', 'sha256']) || !SHA256.test(row.sha256) || row.sha256 !== next.entries[index]!.sha256
-            : row.kind !== 'markdown-region' || !exactKeys(fields, ['kind', 'path', 'begin', 'end', 'preimageSha256', 'regionSha256', 'postimageSha256'])
-                || row.begin !== TROUBLESHOOTING_BEGIN || row.end !== TROUBLESHOOTING_END || row.regionSha256 !== next.entries[index]!.sha256
-                || ![row.preimageSha256, row.regionSha256, row.postimageSha256].every(value => SHA256.test(value))
-    })) {
-        return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference destinations differ from the fixed reference estate', 'references')
-    }
-    const mutations = [...captured.mutations]
-    if (new Set(mutations.map(row => row.path)).size !== mutations.length || mutations.some(row => !REFERENCE_PATHS.includes(row.path as typeof REFERENCE_PATHS[number])
-        || row.phase !== 'desired' || row.operation !== 'write-file' || typeof row.bytes !== 'string'
-        || Buffer.byteLength(row.bytes) > MAX_GENERATED_BYTES || row.sha256 !== sha256(row.bytes))) {
-        return refuse('GENERATED_PUBLICATION_FAILED', 'reference publication contains an undeclared or non-exact operation', 'references')
-    }
-    const bootstrapRecord = bootstrap && referenceBootstraps.get(bootstrap)
-    if (!bootstrapRecord || bootstrapRecord.root !== authority.root || !await revalidateReferenceBootstrap(bootstrap!, adapters)) {
-        return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference publication requires current owner-issued Git bootstrap evidence', 'references')
-    }
-    const bootstrapFiles = new Map(bootstrapRecord?.files.map(row => [row.path, row]))
-    const reads = await readAnchoredBatches(authority.root, REFERENCE_PATHS.map(path => ({ path, action: 'read-entry', maxBytes: MAX_GENERATED_BYTES })), node, adapters)
-    if (!reads || reads.kind !== 'complete' || reads.results.length !== REFERENCE_PATHS.length) {
-        return refuse('GENERATED_PUBLICATION_FAILED', 'reference destinations could not be classified safely', 'references')
-    }
-    // Rebases replace committed pages without updating the ignored ledger. Only the entire
-    // authenticated Git estate can replace that baseline; a single hand edit keeps it closed.
-    if (prior && REFERENCE_PATHS.every((path, index) => {
-        const current = reads.results[index]!
-        const indexed = bootstrapFiles.get(path)
-        return indexed ? current.kind === 'file' && current.sha256 === indexed.sha256
-            && (indexed.mode === '100755') === ((current.mode & 0o111) !== 0) : current.kind === 'missing'
-    })) prior = undefined
-    const checks: PublicationCheck[] = []
-    for (const [index, path] of REFERENCE_PATHS.entries()) {
-        const current = reads.results[index]!
-        if (current.kind === 'complete' || current.kind === 'invalid' || current.kind === 'other' || current.kind === 'symlink') {
-            return refuse('GENERATED_PUBLICATION_FAILED', 'reference destination is not an anchored regular file or missing', path)
-        }
-        const expected = expectedState(current)
-        if (!expected) return refuse('GENERATED_PUBLICATION_FAILED', 'reference destination state is unknown', path)
-        const mutation = mutations.find(row => row.path === path)
-        if (mutation && !sameExpected(expected, mutation.expected)) return refuse('GENERATED_SOURCE_CHANGED', 'reference destination changed after classification', path)
-        if (!prior) {
-            const indexed = bootstrapFiles.get(path)
-            const modeMatches = current.kind === 'file' && (indexed?.mode === '100755') === ((current.mode & 0o111) !== 0)
-            if (indexed ? current.kind !== 'file' || current.sha256 !== indexed.sha256 || !modeMatches : current.kind !== 'missing') {
-                return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference destination differs from its immutable Git bootstrap', path)
-            }
-        }
-        const desired = next.entries[index]!
-        if (path !== TROUBLESHOOTING_PATH) {
-            const priorEntry = prior?.entries[index]
-            if (prior && (priorEntry?.kind !== 'file' || current.kind !== 'file' || current.sha256 !== priorEntry.sha256)) {
-                return refuse('GENERATED_STALE_ARTIFACT_DRIFT', 'owned reference file differs from its authenticated manifest', path)
-            }
-            if (!mutation) {
-                if (current.kind !== 'file' || current.sha256 !== desired.sha256) return refuse('GENERATED_PUBLICATION_FAILED', 'reference plan omitted a required whole-file write', path)
-            } else if (mutation.sha256 !== desired.sha256) return refuse('GENERATED_PUBLICATION_FAILED', 'reference whole-file postimage differs from its manifest', path)
-        } else {
-            if (current.kind !== 'file') return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting reference region requires an existing regular file', path)
-            let document: string
-            try { document = new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) } catch { /* undecodable bytes are malformed input the caller refuses. */ return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting reference is not UTF-8', path) }
-            const region = troubleshootingRegion(document)
-            const declaration = references[index]
-            if (!region || declaration?.kind !== 'markdown-region' || declaration.preimageSha256 !== current.sha256
-                || prior && (prior.entries[index]?.kind !== 'markdown-region' || prior.entries[index]?.sha256 !== sha256(region.bytes))) {
-                return refuse('GENERATED_STALE_ARTIFACT_DRIFT', 'troubleshooting reference region or foreign preimage is not authenticated', path)
-            }
-            if (!mutation) {
-                if (sha256(region.bytes) !== declaration.regionSha256 || current.sha256 !== declaration.postimageSha256) {
-                    return refuse('GENERATED_PUBLICATION_FAILED', 'reference plan omitted a required troubleshooting region write', path)
-                }
-            } else {
-                let nextDocument: string
-                try { nextDocument = mutation.bytes! } catch { /* an unreadable postimage is invalid; the refusal names it. */ return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting postimage is invalid', path) }
-                const nextRegion = troubleshootingRegion(nextDocument)
-                if (!nextRegion || nextRegion.prefix !== region.prefix || nextRegion.suffix !== region.suffix
-                    || sha256(nextRegion.bytes) !== declaration.regionSha256 || mutation.sha256 !== declaration.postimageSha256) {
-                    return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting write would change foreign bytes or differs from its declared region', path)
-                }
-            }
-        }
-        checks.push(Object.freeze({ path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1, ...(current.kind === 'file' ? { identity: current.identity } : {}) }))
-    }
-    checks.push(Object.freeze({ path: REFERENCE_OWNERSHIP_PATH, expected: ledgerState, maxBytes: ledger.kind === 'file' ? Math.max(1, ledger.bytes.byteLength) : 1, ...(ledger.kind === 'file' ? { identity: ledger.identity } : {}) }))
-    if (ledger.kind !== 'file' || ledger.sha256 !== sha256(captured.nextLedgerBytes)) mutations.push(Object.freeze({ path: REFERENCE_OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
-        bytes: captured.nextLedgerBytes, sha256: sha256(captured.nextLedgerBytes), expected: ledgerState }))
-    const groups = groupMutations(mutations)
-    const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0
-    if (!groups || count > REFERENCE_PATHS.length + 1 || count * PUBLICATION_HELPER_CALLS_PER_GROUP * PUBLICATION_HELPER_SLOT_MS > TRANSACTION_TIMEOUT_MS) {
-        return refuse('GENERATED_PUBLICATION_FAILED', 'reference publication exceeds the bounded helper schedule', 'references')
-    }
-    const ordered = Object.freeze(groups.flatMap(group => group.mutations))
-    const changes = Object.freeze(ordered.map(row => Object.freeze({ operation: 'write' as const, path: row.path })))
-    const plan = Object.freeze({ changes })
-    issuedPlans.set(plan, Object.freeze({ root: authority.root, rootIdentity: captured.rootIdentity, node, mutations: ordered, groups, changes,
-        checks: Object.freeze(checks), referenceBootstrap: bootstrap }))
-    return Object.freeze({ kind: 'complete', plan })
 }
 
 async function admitBootstrapPlan(
@@ -2067,7 +1687,6 @@ async function admitBootstrapPlan(
 }
 
 async function planCurrent(record: PublicationRecord, adapters: PublicationAdapters, deadline?: number, published = false): Promise<boolean> {
-    if (record.referenceBootstrap && !await revalidateReferenceBootstrap(record.referenceBootstrap, adapters, deadline)) return false
     const checks = published ? record.checks.filter(row => !record.mutations.some(mutation => mutation.path === row.path)) : record.checks
     const reads = await readAnchoredBatches(record.root, checks.map(row => ({ path: row.path, action: 'read-entry', maxBytes: row.maxBytes })), record.node, adapters, deadline)
     return reads?.kind === 'complete' && reads.results.length === checks.length && reads.results.every((read, index) => {
@@ -2089,14 +1708,11 @@ export async function admitPublicationPlan(input: AdmittedPublicationPlanInput, 
 async function admitPlan(input: AdmittedPublicationPlanInput, adapters: PublicationAdapters): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; plan: PublicationPlan }>> {
     const supplied = ownRecord(input)
     if (supplied?.mode === 'bootstrap') return admitBootstrapPlan(input as BootstrapPublicationPlanInput, adapters)
-    const rawBootstrap = supplied?.referenceBootstrap as ReferenceBootstrap | undefined
-    const serializable = supplied && Object.fromEntries(Object.entries(supplied).filter(([key]) => key !== 'referenceBootstrap'))
-    const captured = snapshotGeneratedJson(serializable) as unknown as PublicationPlanInput | undefined
+    const captured = snapshotGeneratedJson(supplied) as unknown as PublicationPlanInput | undefined
     const fields = ownRecord(captured)
     if (!captured || !fields || !exactKeys(fields, ['authority', 'generation', 'sourceSha256', 'rootIdentity', 'node', 'mode', 'ledgerExpected', 'nextLedgerBytes', 'mutations',
-        ...(Object.hasOwn(fields, 'surfaceActions') ? ['surfaceActions'] : []), ...(Object.hasOwn(fields, 'references') ? ['references'] : [])])
-        || !supplied || !exactKeys(supplied, [...Object.keys(fields), ...(Object.hasOwn(supplied, 'referenceBootstrap') ? ['referenceBootstrap'] : [])])
-        || !['sync', 'reference'].includes(captured.mode)
+        ...(Object.hasOwn(fields, 'surfaceActions') ? ['surfaceActions'] : [])])
+        || captured.mode !== 'sync'
         || !captured.authority || !isAbsolute(captured.authority.root)
         || dirname(captured.authority.configPath) !== captured.authority.root
         || !SHA256.test(captured.generation) || !SHA256.test(captured.sourceSha256)
@@ -2104,8 +1720,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         || !captured.node || !isAbsolute(captured.node.canonicalPath) || !SHA256.test(captured.node.sha256)) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'publication input is not a bounded exact plan', 'generated-environment')
     }
-    const { authority, node, mode } = captured
-    if (mode === 'reference') return admitReferencePlan(captured, rawBootstrap, adapters)
+    const { authority, node } = captured
     const ledger = await readAnchoredEntry(authority.root, OWNERSHIP_PATH, MAX_OWNERSHIP_BYTES, node, adapters)
     const ledgerState = expectedState(ledger)
     if (!ledgerState || !captured.ledgerExpected || !sameExpected(ledgerState, captured.ledgerExpected)) {
@@ -2138,8 +1753,6 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         && prior.producer !== null && next.producer !== null && prior.producer.package === next.producer.package
         && prior.producer.version === next.producer.version && prior.producer.sourceRevision === next.producer.sourceRevision
         && isDeepStrictEqual(prior.entries, next.entries)
-    const references = captured.references ?? []
-    if (!Array.isArray(references) || references.length !== 0) return refuse('GENERATED_PUBLICATION_FAILED', 'consumer publication cannot declare maintainer reference destinations', 'references')
     const mutations = [...captured.mutations]
     if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx --no cockpit sync --config <your cockpit.toml> --dry-run', 'generated-environment')
     if (new Set(mutations.map(row => row.path)).size !== mutations.length

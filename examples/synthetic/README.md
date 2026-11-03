@@ -4,8 +4,6 @@ The example the [tutorial](../../docs/tutorial.md) walks through: a product of t
 repositories, one with a local bare remote, and a stubbed vendor. It exercises `sync`, `setup` and
 `check` with no credentials and no Docker.
 
-<!-- cockpit:verified version=0.0.0 -->
-
 From this directory, [install the exact project-local cockpit package](../../docs/getting-started.md#install-cockpit).
 Until the first release, install from source: see [Install from source](../../docs/getting-started.md#install-from-source).
 

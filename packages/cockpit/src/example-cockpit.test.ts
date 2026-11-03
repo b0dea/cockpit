@@ -1,11 +1,14 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { classifyMarkdownPath, repositoryMarkdownPaths, walkMarkdownProse } from '../../../scripts/docs-lint.mjs'
+import { walkMarkdownProse } from '../../../scripts/docs-lint.ts'
 import { inventory } from '../test-support/example-inventory.js'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+// Pages a person reads; agent instructions and shipped templates are executable, not documentation.
+const HUMAN_PAGE = /^(?:(?!AGENTS\.md$|CLAUDE\.md$)[^/]+\.md|(?:docs|examples|\.changeset)\/.+(?<!\.(?:agent|skill|prompt)\.md)|packages\/cockpit\/(?:README|CHANGELOG)\.md)$/
 
 const developer = { kind: 'human-only', reason: 'developer prerequisite in the source checkout' } as const
 const packageInstall = { kind: 'human-only', reason: 'package installation prerequisite' } as const
@@ -39,10 +42,8 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
 function publicShellInventory(documents: ReadonlyMap<string, string>) {
     const blocks: Array<{ path: string; block: number; kind: string; reason: string }> = []
     for (const [path, body] of [...documents].sort(([left], [right]) => left.localeCompare(right))) {
-        if (classifyMarkdownPath(path) !== 'human') continue
-        const walked = walkMarkdownProse(path, body) as ReturnType<typeof walkMarkdownProse> & {
-            readonly fences: readonly { readonly info: string }[]
-        }
+        if (!HUMAN_PAGE.test(path)) continue
+        const walked = walkMarkdownProse(body)
         const fences = walked.fences.filter(fence => /^(?:sh|bash|shell)(?:\s|$)/.test(fence.info))
         const policy = DOCUMENTED_SHELL_BLOCKS.get(path) ?? []
         const count = Math.max(fences.length, policy.length)
@@ -80,7 +81,8 @@ describe('the public synthetic cockpit', () => {
     })
 
     it('inventories every public shell block as executed or human-only with an owner reason', () => {
-        const documents = new Map(repositoryMarkdownPaths(repositoryRoot)
+        const documents = new Map(execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '*.md'], { cwd: repositoryRoot, encoding: 'utf8' })
+            .split('\0').filter(Boolean)
             .map(path => [path, readFileSync(join(repositoryRoot, path), 'utf8')] as const))
         const classified = publicShellInventory(documents)
         expect(classified.filter(row => row.kind === 'unclassified')).toEqual([])

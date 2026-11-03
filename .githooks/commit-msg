@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 
 const messagePath = process.argv[2]
 const rootUrl = pathToFileURL(`${process.cwd()}/`)
-const { scanCommitMessage } = await import(new URL('scripts/hygiene-scan.mjs', rootUrl))
+const { scanCommitMessage } = await import(new URL('scripts/hygiene-scan.ts', rootUrl))
 const plural = (lines) => `line${lines.length === 1 ? '' : 's'} ${lines.join(', ')}`
 let result
 try {

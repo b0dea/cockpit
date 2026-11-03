@@ -1,7 +1,5 @@
 # @b00dea/cockpit
 
-<!-- cockpit:verified version=0.0.0 -->
-
 What changed in each release of cockpit, newest first, for someone deciding whether to upgrade:
 what breaks, what to do about it, and what is new. Changesets writes each entry from the
 changesets merged since the previous release. An entry that needs more than `cockpit sync` ends

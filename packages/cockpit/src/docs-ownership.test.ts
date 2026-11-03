@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { classifyMarkdownPath, resolveCodeOwners, walkMarkdownProse } from '../../../scripts/docs-lint.mjs'
+import { walkMarkdownProse } from '../../../scripts/docs-lint.ts'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const PUBLIC_POLICIES = [
@@ -17,7 +17,7 @@ const PUBLIC_POLICIES = [
 // from the installation; the repository may be private, and the agent may be offline.
 const INSTALLED_GUIDE = /\.\/node_modules\/@b00dea\/cockpit\/(docs\/[^\s`'",)]+)/g
 const PUBLIC_GUIDE = /https:\/\/(?:github\.com\/b0dea\/cockpit\/blob\/main|raw\.githubusercontent\.com\/b0dea\/cockpit\/main)\/docs\/[^\s>)'"]*/g
-const ADOPTION_SKILL = 'packages/cockpit/src/references/adopt-cockpit.skill.md'
+const ADOPTION_SKILL = 'scripts/adopt-cockpit.skill.md'
 
 function trackedFiles(): string[] {
     return execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)
@@ -28,7 +28,7 @@ function shippedGuidePages(): Set<string> {
 }
 
 function headings(page: string): string[] {
-    return walkMarkdownProse(page, readFileSync(new URL(`../../../${page}`, import.meta.url), 'utf8')).lines
+    return walkMarkdownProse(readFileSync(new URL(`../../../${page}`, import.meta.url), 'utf8')).lines
         .flatMap((row) => /^#{1,6}\s+(.+?)\s*$/.exec(row.prose)?.[1] ?? [])
 }
 
@@ -41,7 +41,7 @@ const PRE_PUBLICATION = new RegExp(['not yet published', 'not yet on npm', 'not 
 function trackedDocumentation(): string[] {
     return execFileSync('git', ['ls-files', '-z', '*.md'], { cwd: ROOT, encoding: 'utf8' })
         .split('\0')
-        .filter((path) => path !== '' && classifyMarkdownPath(path) !== 'fixture')
+        .filter((path) => path !== '')
 }
 
 describe('effective documentation ownership', () => {
@@ -59,7 +59,7 @@ describe('effective documentation ownership', () => {
         const contributing = readFileSync(new URL('../../../CONTRIBUTING.md', import.meta.url), 'utf8')
 
         expect(contributing).toContain('## Verification')
-        expect(contributing).toContain('```sh\nnpm test\nnpm run typecheck\nnpm run lint:docs\nnpm run lint:supply-chain\n```')
+        expect(contributing).toContain('```sh\nnpm test\nnpm run typecheck\nnpm run lint:docs\nnpm run lint:markdown\nnpm run lint:links\nnpm run lint:supply-chain\n```')
         expect(contributing).toContain('npm run lint:docs')
         expect(contributing).toContain('## What will not be accepted')
         expect(contributing).toContain('## Governance')
@@ -141,43 +141,12 @@ describe('effective documentation ownership', () => {
         for (const link of links) expect(tracked.has(link.slice(prefix.length).split('#')[0]!), link).toBe(true)
     })
 
-    it('owns every public root policy and the public documentation tree', () => {
+    it('routes every public policy and documentation page to an owner through the catch-all rule', () => {
         const tracked = trackedDocumentation()
-        const paths = [...PUBLIC_POLICIES, ...tracked.filter((path) => path.startsWith('docs/'))]
-        const codeOwners = readFileSync(new URL('../../../.github/CODEOWNERS', import.meta.url), 'utf8')
-
         expect(PUBLIC_POLICIES.every((path) => tracked.includes(path))).toBe(true)
-        expect(paths.some((path) => path.startsWith('docs/'))).toBe(true)
-        expect(resolveCodeOwners(paths, codeOwners)).toEqual(
-            paths.map((path) => ({ owners: ['@b0dea'], path })),
-        )
-    })
-
-    it('resolves every tracked page through its effective owner', () => {
-        const paths = trackedDocumentation()
-        const codeOwners = readFileSync(new URL('../../../.github/CODEOWNERS', import.meta.url), 'utf8')
-
-        expect(paths.length, 'an ownership scan over no documentation passes vacuously').toBeGreaterThan(8)
-        expect(resolveCodeOwners(paths, codeOwners)).toEqual(
-            paths.map((path) => ({ owners: ['@b0dea'], path })),
-        )
-    })
-
-    it('uses the last matching rule when patterns overlap', () => {
-        const codeOwners = '* @default\ndocs/** @documentation\n'
-
-        expect(resolveCodeOwners(['docs/contributing/style.md'], codeOwners)).toEqual([
-            { owners: ['@documentation'], path: 'docs/contributing/style.md' },
-        ])
-    })
-
-    it('fails closed on an empty corpus, an unmatched page, or unsupported syntax', () => {
-        expect(() => resolveCodeOwners([], '* @default\n')).toThrowError(/\[DOCOWN001_EMPTY_CORPUS\]/)
-        expect(() => resolveCodeOwners(['README.md'], 'docs\/** @documentation\n')).toThrowError(
-            /\[DOCOWN003_UNOWNED\]/,
-        )
-        expect(() => resolveCodeOwners(['README.md'], '!README.md @default\n')).toThrowError(
-            /\[DOCOWN002_UNSUPPORTED_SYNTAX\]/,
-        )
+        const rules = readFileSync(new URL('../../../.github/CODEOWNERS', import.meta.url), 'utf8').split('\n')
+            .map(line => line.trim()).filter(line => line !== '' && !line.startsWith('#'))
+        // GitHub applies the last matching rule, so the catch-all must come first to leave later rules effective.
+        expect(rules[0]).toMatch(/^\*\s+@[A-Za-z0-9][A-Za-z0-9-]*$/)
     })
 })

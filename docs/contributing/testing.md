@@ -1,7 +1,5 @@
 # Testing harness surfaces
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people working on cockpit itself: how tests split into a fast and a slow tier,
 which module owns each harness surface, and which focused test to run for each family of surface
 failure.

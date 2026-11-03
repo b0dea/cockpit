@@ -1,7 +1,5 @@
 # Operator paths
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This contract is for contributors: when cockpit takes its direct-fix path and when it creates a
 durable work order. It is an implementation contract, not a user procedure.
 

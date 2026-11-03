@@ -1,7 +1,5 @@
 # Troubleshooting
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for anyone holding a cockpit diagnostic code: what it means and what to do. Look the
 code up in the index at the end; remedies grouped by family are in the
 [environment reference](environment.md#respond-to-diagnostic-codes).
@@ -228,455 +226,135 @@ another cockpit, such as a directory left by an earlier cockpit build, does not 
 directory and the `rm -rf` command. Remove it with the same steps once no cockpit uses it.
 
 <!-- cockpit:diagnostic-index:begin -->
-Each diagnostic message names what failed and how to fix it. Where every place that raises a code gives the same fix, the table repeats it; where they give different fixes it says "depends on what failed; see the message", and otherwise "see the message". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
+## Codes with a fixed remedy
+
+Every diagnostic message names what failed and how to fix it. These codes always have the same remedy, or a section above that covers them; for any other code, follow its message.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `ADOPTION_EMPTY` | see the message |
-| `ADOPTION_ENCODING_INVALID` | see the message |
-| `ADOPTION_NOT_FOUND` | see the message |
-| `ADOPTION_ORDER_INVALID` | see the message |
-| `ADOPTION_RECORD_INVALID` | see the message |
-| `ADOPTION_STATE_INVALID` | see the message |
-| `ADOPTION_TOO_LARGE` | see the message |
-| `ADOPTION_UNREADABLE` | see the message |
-| `BOOTSTRAP_ANSWER_RESET_FIELD_INVALID` | see the message |
-| `BOOTSTRAP_ANSWER_RESET_INDETERMINATE` | see the message |
-| `BOOTSTRAP_ANSWER_RESET_STALE` | see the message |
-| `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` | see the message |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | see the message |
-| `CLAIM_CO_TENANT` | depends on what failed; see the message |
-| `CLAIM_LIVENESS_UNKNOWN` | see the message |
-| `CLAIM_STATE_UNHEALTHY` | see the message |
-| `CLI_COMMAND_REQUIRED` | see the message |
-| `CLI_INTERNAL_ERROR` | see the message |
-| `CLI_PLATFORM_UNSUPPORTED` | see the message |
-| `CLI_UNKNOWN_COMMAND` | see the message |
-| `CLI_USAGE_INVALID` | see the message |
+| `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
-| `COCKPIT_NOT_INSTALLED` | see the message |
-| `COCKPIT_REVISION_INVALID` | depends on what failed; see the message |
 | `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
-| `COCKPIT_VERSION_MISMATCH` | see the message |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
-| `COMPOSE_BIND_UNDECLARED` | see the message |
-| `COMPOSE_HEALTHCHECK_MISSING` | see the message |
-| `COMPOSE_IMAGE_UNPINNED` | see the message |
-| `COMPOSE_PORT_ALL_INTERFACES` | see the message |
-| `COMPOSE_PORT_NOT_LEASED` | see the message |
-| `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | depends on what failed; see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | depends on what failed; see the message |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
-| `CONFIG_NOT_FOUND` | depends on what failed; see the message |
-| `CONFIG_PARSE_INVALID` | depends on what failed; see the message |
-| `CONFIG_SCHEMA_INVALID` | depends on what failed; see the message |
-| `CONFIG_STALE` | see the message |
-| `CONFIG_UNREADABLE` | depends on what failed; see the message |
-| `DATA_MODE_UNAVAILABLE` | see the message |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `DEPENDENCY_RUNTIME_INCOMPATIBLE` | see the message |
-| `DEPENDENCY_RUNTIME_STALE` | see the message |
-| `DEPENDENCY_RUNTIME_UNAVAILABLE` | see the message |
-| `DEPENDENCY_RUNTIME_UNMOUNTED` | see the message |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | see the message |
-| `DOCUMENT_ANSWER_UNCONFIRMED` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | depends on what failed; see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_STALE` | see the message |
-| `DOCUMENT_CONFIGURATION_APPLICABILITY_INVALID` | see the message |
-| `DOCUMENT_CONFIGURATION_INVALID` | see the message |
-| `DOCUMENT_DEFAULT` | see the message |
-| `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` | see the message |
-| `DOCUMENT_ESTATE_GAPS_INVALID` | see the message |
-| `DOCUMENT_ESTATE_INCOMPLETE` | see the message |
-| `DOCUMENT_ESTATE_OBSERVATION_CHANGED` | see the message |
-| `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | declare one sibling for each repository the message says init observed, with that slug and dir, and no other; add any other repository after init with npx --no cockpit sibling add <slug> --config <your cockpit.toml> |
-| `DOCUMENT_GAP` | depends on what failed; see the message |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
-| `DOCUMENT_INFERRED` | see the message |
-| `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
-| `DOCUMENT_OPTION_DUPLICATE` | see the message |
-| `DOCUMENT_OUTPUT_JSON_UNSUPPORTED` | see the message |
-| `DOCUMENT_ROOT_COUNT` | see the message |
-| `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
-| `DOCUMENT_SOURCE_CONFLICT` | see the message |
-| `DOCUMENT_SOURCE_REQUIRED` | see the message |
-| `DOCUMENT_STDOUT_TARGET` | see the message |
-| `DOWN_RESOURCES_KEPT` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENVIRONMENT_FILE_MALFORMED` | see the message |
-| `ENVIRONMENT_FILE_NOT_FOUND` | see the message |
-| `ENVIRONMENT_FILE_TOO_LARGE` | see the message |
-| `ENVIRONMENT_FILE_UNREADABLE` | see the message |
-| `ENVIRONMENT_KEYS_STALE` | see the message |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `ENVIRONMENT_SEED_FAILED` | see the message |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `ENV_SCHEMA_UNHEALTHY` | see the message |
 | `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
-| `EVIDENCE_BASELINE_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | depends on what failed; see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | depends on what failed; see the message |
-| `EXECUTION_SPAWN_FAILED` | see the message |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | see the message |
-| `EXECUTION_STAGING_FAILED` | see the message |
-| `EXECUTION_STDERR_LIMIT` | see the message |
-| `EXECUTION_STDOUT_LIMIT` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `EXECUTION_TIMEOUT` | see the message |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | see the message |
-| `EXTERNAL_DEPENDENCY_DECLARATION_INVALID` | see the message |
-| `EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE` | see the message |
-| `EXTERNAL_DEPENDENCY_EXECUTION_UNAVAILABLE` | see the message |
-| `EXTERNAL_DEPENDENCY_EXPIRED` | see the message |
-| `EXTERNAL_DEPENDENCY_SHADOW_UNAVAILABLE` | see the message |
-| `EXTERNAL_DEPENDENCY_TEMPLATE_MISMATCH` | see the message |
-| `GENERATED_ARTIFACT_DRIFT` | depends on what failed; see the message |
-| `GENERATED_ARTIFACT_MISSING` | depends on what failed; see the message |
-| `GENERATED_COMPENSATION_FAILED` | see the message |
-| `GENERATED_COMPOSE_INVALID` | see the message |
-| `GENERATED_DECISIONS_UNDECIDED` | see the message |
-| `GENERATED_DECISION_COVERAGE` | see the message |
-| `GENERATED_DECISION_DUPLICATE` | see the message |
-| `GENERATED_DECISION_FUTURE` | see the message |
-| `GENERATED_DECISION_SENSITIVE` | see the message |
-| `GENERATED_DECISION_STALE` | see the message |
-| `GENERATED_DECLARATION_INVALID` | see the message |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
+| `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |
 | `GENERATED_DEPENDENCY_VOLUME_MISSING` | set toolchain = "none" on the sibling if its image already holds its dependencies; otherwise give the sibling exactly one generated service and mount one dependency volume in it: a [[environment.generated.volumes]] row whose id and install_policy are the volume of an install policy for the sibling's toolchain, with purpose = "dependencies", and a mounts row in that service with kind = "volume", that source, and the target where the toolchain reads its dependencies; then run npx --no cockpit sync --config <your cockpit.toml> |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | depends on what failed; see the message |
 | `GENERATED_HOST_EXECUTABLE_UNSUPPORTED` | make argv[0] of the host operation "node", or run the command in a service: set location = "in-stack" and service to a generated service whose image has the tool |
-| `GENERATED_INPUT_INVALID` | depends on what failed; see the message |
-| `GENERATED_INSPECTION_INVALID` | see the message |
 | `GENERATED_OWNERSHIP_DRIFT` | run npx --no cockpit sync --config <your cockpit.toml> |
-| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | see the message |
-| `GENERATED_OWNERSHIP_INVALID` | depends on what failed; see the message |
-| `GENERATED_OWNERSHIP_MISSING` | depends on what failed; see the message |
-| `GENERATED_PATH_DUPLICATE` | see the message |
-| `GENERATED_PATH_UNOWNED` | see the message |
-| `GENERATED_PATH_UNSAFE` | see the message |
-| `GENERATED_PERSONA_INVALID` | see the message |
-| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` | see the message |
-| `GENERATED_PUBLICATION_FAILED` | depends on what failed; see the message |
-| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` | see the message |
-| `GENERATED_REFERENCE_OWNERSHIP_INVALID` | see the message |
-| `GENERATED_RENDER_UNAUTHENTICATED` | see the message |
-| `GENERATED_SIBLING_ROOT_INVALID` | see the message |
-| `GENERATED_SOURCE_CHANGED` | see the message |
-| `GENERATED_STALE_APPROVAL_INVALID` | see the message |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | depends on what failed; see the message |
+| `GENERATED_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [see above](#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows |
-| `GENERATED_STALE_ARTIFACT_DRIFT` | see the message |
-| `GENERATED_TEMPLATE_INVALID` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GIT_STATE_UNHEALTHY` | see the message |
-| `GREENFIELD_ANSWER_INVALID` | see the message |
-| `GREENFIELD_ANSWER_REQUIRED` | see the message |
-| `GREENFIELD_ANSWER_UNEXPECTED` | see the message |
-| `GREENFIELD_DISCOVERY_UNAVAILABLE` | see the message |
-| `GREENFIELD_OBSERVATION_CHANGED` | see the message |
-| `GREENFIELD_OBSERVATION_INVALID` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_INPUT_UNAVAILABLE` | see the message |
-| `GUARD_REFUSED` | see the message |
+| `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness |
-| `GUARD_TRANSPORT_INVALID` | see the message |
-| `GUIDE_CAP_EXCEEDED` | depends on what failed; see the message |
-| `HARNESS_SURFACE_UNAVAILABLE` | see the message |
-| `INIT_ANSWER_AMBIGUOUS` | see the message |
-| `INIT_ANSWER_CONFLICT` | see the message |
-| `INIT_ANSWER_FIELD_UNKNOWN` | see the message |
-| `INIT_ANSWER_INVALID` | see the message |
-| `INIT_ANSWER_RESET_CONFLICT` | see the message |
-| `INIT_ANSWER_RESET_UNAVAILABLE` | see the message |
-| `INIT_ANSWER_UNUSED` | see the message |
-| `INIT_ARTIFACT_WRITE_FAILED` | see the message |
-| `INIT_BOOTSTRAP_IDENTITY_CHANGED` | see the message |
-| `INIT_CANONICAL_OWNERSHIP_MISSING` | see the message |
-| `INIT_COCKPIT_ROOT_CREATE_FAILED` | see the message |
-| `INIT_COCKPIT_ROOT_REQUIRED` | see the message |
-| `INIT_COCKPIT_ROOT_UNAVAILABLE` | see the message |
-| `INIT_DEFAULTS_NOT_ACCEPTED` | see the message |
-| `INIT_DESTINATION_UNAVAILABLE` | see the message |
-| `INIT_DRAFT_CHANGED` | see the message |
-| `INIT_DRAFT_INVALID` | see the message |
-| `INIT_DRAFT_SOURCE_CHANGED` | see the message |
-| `INIT_INTERVIEW_LIMIT_EXCEEDED` | see the message |
-| `INIT_INTERVIEW_PREVIEW_UNAVAILABLE` | see the message |
-| `INIT_PREVIEW_CHANGED` | see the message |
-| `INIT_PREVIEW_NOT_ACCEPTED` | see the message |
-| `INIT_ROOT_INVALID` | see the message |
-| `INIT_ROOT_OBSERVATION_FAILED` | see the message |
-| `INIT_STATE_DURABILITY_INDETERMINATE` | see the message |
-| `INIT_STATE_RESTARTED` | see the message |
-| `INIT_STATE_STALE` | see the message |
-| `INIT_STATE_UNAUTHENTICATED` | see the message |
-| `INIT_TARGET_CHANGED` | see the message |
-| `INIT_TERMINAL_REQUIRED` | see the message |
-| `INIT_UNAVAILABLE` | see the message |
-| `INIT_VERIFICATION_INCOMPLETE` | see the message |
-| `INSTALL_LOAD_PROBE_FAILED` | see the message |
-| `INSTALL_LOCKFILE_CHANGED` | see the message |
-| `INSTALL_LOCK_HELD` | see the message |
-| `INSTALL_LOCK_INVALID` | see the message |
-| `INSTALL_POLICY_AMBIGUOUS` | see the message |
-| `INSTALL_POLICY_MISSING` | see the message |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `INSTALL_STALE_PATH` | see the message |
-| `INSTALL_STATE_UNHEALTHY` | see the message |
-| `INSTANCE_NOT_IGNORED` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
 | `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
-| `MACHINE_COLD_START_EXCEEDED` | depends on what failed; see the message |
-| `MACHINE_CPU_BELOW_FLOOR` | depends on what failed; see the message |
-| `MACHINE_DISK_BELOW_FLOOR` | depends on what failed; see the message |
-| `MACHINE_MEMORY_BELOW_FLOOR` | depends on what failed; see the message |
-| `MCP_APPROVAL_UNKNOWN` | see the message |
-| `MCP_COMMAND_CONFLICT` | see the message |
-| `MCP_DECLARATION_INVALID` | depends on what failed; see the message |
-| `MCP_INPUT_INVALID` | see the message |
-| `MCP_NOT_APPROVED` | depends on what failed; see the message |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | see the message |
-| `MOUNT_POSTURE_UNAVAILABLE` | depends on what failed; see the message |
+| `MCP_APPROVAL_UNKNOWN` | [see above](#mcp-and-restrictions) |
+| `MCP_COMMAND_CONFLICT` | [see above](#mcp-and-restrictions) |
+| `MCP_DECLARATION_INVALID` | [see above](#mcp-and-restrictions) |
+| `MCP_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
+| `MCP_NOT_APPROVED` | [see above](#mcp-and-restrictions) |
 | `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |
-| `OUTPUT_WRITE_FAILED` | see the message |
-| `OVERRIDDEN_CORE_CHANGED` | depends on what failed; see the message |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | see the message |
-| `PORT_FAMILY_COLLISION` | depends on what failed; see the message |
-| `PORT_FAMILY_OUT_OF_RANGE` | see the message |
-| `PORT_LEASE_EXHAUSTED` | depends on what failed; see the message |
-| `PORT_LISTENER_EVIDENCE_INVALID` | depends on what failed; see the message |
-| `PORT_LOCAL_VALUE_CORRECTED` | see the message |
-| `PROJECTION_GRANT_MISMATCH` | see the message |
-| `PROJECTION_GUIDE_CHANGED` | see the message |
-| `PROJECTION_GUIDE_CLOSE_FAILED` | see the message |
-| `PROJECTION_GUIDE_ESCAPE` | see the message |
-| `PROJECTION_GUIDE_READ_FAILED` | see the message |
-| `PROJECTION_GUIDE_UNAVAILABLE` | see the message |
-| `PROJECTION_INPUT_INVALID` | see the message |
-| `PROJECTION_MOUNT_MISMATCH` | see the message |
-| `PROJECTION_RESULT_BOUNDS` | see the message |
-| `PROJECTION_ROOT_AMBIGUOUS` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RECLAIM_LABEL_ESCAPE` | see the message |
-| `REFERENCE_INPUT_INVALID` | see the message |
-| `REGISTRY_ADOPTION_REQUIRED` | see the message |
-| `REGISTRY_AMBIGUOUS` | see the message |
-| `REGISTRY_ARTIFACT_UNSAFE` | see the message |
-| `REGISTRY_AUTH_UNAVAILABLE` | see the message |
-| `REGISTRY_DIR_DUPLICATE` | see the message |
-| `REGISTRY_DIR_OUTSIDE_SIBLINGS_ROOT` | see the message |
-| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | see the message |
-| `REGISTRY_EMPTY` | see the message |
-| `REGISTRY_ENCODING_INVALID` | see the message |
-| `REGISTRY_GENERATED_BASELINE_MISSING` | see the message |
-| `REGISTRY_INPUT_INVALID` | see the message |
-| `REGISTRY_NOT_FOUND` | see the message |
-| `REGISTRY_OPTION_DUPLICATE` | see the message |
-| `REGISTRY_OUTPUT_UNSUPPORTED` | see the message |
-| `REGISTRY_POSITIONAL_UNSUPPORTED` | see the message |
-| `REGISTRY_ROW_SKIPPED` | depends on what failed; see the message |
-| `REGISTRY_SIBLINGS_ROOT_REQUIRED` | see the message |
-| `REGISTRY_SOURCE_REQUIRED` | see the message |
-| `REGISTRY_TOO_LARGE` | see the message |
-| `REGISTRY_UNREADABLE` | see the message |
-| `REGISTRY_VARIABLE_INVALID` | see the message |
-| `RESET_CONFIRMATION_MISMATCH` | see the message |
-| `RESET_CONFIRMATION_REQUIRED` | see the message |
-| `RESET_CO_TENANT` | see the message |
+| `PORT_FAMILY_COLLISION` | [see above](#common-refusal-guidance) |
+| `PORT_LEASE_EXHAUSTED` | [see above](#common-refusal-guidance) |
+| `PROJECTION_GRANT_MISMATCH` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CHANGED` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_CLOSE_FAILED` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_ESCAPE` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_READ_FAILED` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_GUIDE_UNAVAILABLE` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_INPUT_INVALID` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_MOUNT_MISMATCH` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_RESULT_BOUNDS` | [see above](#sibling-projection-and-skills) |
+| `PROJECTION_ROOT_AMBIGUOUS` | [see above](#sibling-projection-and-skills) |
+| `REGISTRY_EFFECTIVE_CONFIG_INVALID` | [see above](#harness-surface-failures) |
+| `REGISTRY_INPUT_INVALID` | [see above](#harness-surface-failures) |
 | `RESTORE_INTERRUPTED` | run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again |
-| `RESTRICTION_ADAPTER_INVALID` | see the message |
-| `RESTRICTION_EVENT_UNADAPTED` | see the message |
-| `RESTRICTION_INPUT_INVALID` | see the message |
-| `RESTRICTION_OUTPUT_LIMIT` | see the message |
-| `RESTRICTION_TEMPLATE_INVALID` | see the message |
-| `RUNNING_CHECKOUT_MISMATCH` | see the message |
-| `RUNTIME_COMPOSE_REMOTE` | see the message |
+| `RESTRICTION_ADAPTER_INVALID` | [see above](#mcp-and-restrictions) |
+| `RESTRICTION_EVENT_UNADAPTED` | [see above](#mcp-and-restrictions) |
+| `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
+| `RESTRICTION_OUTPUT_LIMIT` | [see above](#mcp-and-restrictions) |
+| `RESTRICTION_TEMPLATE_INVALID` | [see above](#mcp-and-restrictions) |
 | `RUNTIME_IMAGE_UNAVAILABLE` | pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | see the message |
-| `RUNTIME_PROBE_TIMEOUT` | see the message |
-| `RUNTIME_UNAVAILABLE` | depends on what failed; see the message |
-| `RUNTIME_UNMEASURED` | see the message |
+| `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SELFTEST_CUSTOM_PROBE_UNSUPPORTED` | measure the custom harness capability by hand with a candidate and a deliberately broken control, then record what you saw as its state and measured_on in cockpit.toml (enforced needs an evidence file); do not add a row for it |
-| `SELFTEST_EXECUTION_INVALID` | see the message |
-| `SELFTEST_SOURCE_INVALID` | depends on what failed; see the message |
+| `SELFTEST_EXECUTION_INVALID` | [see above](#selftest-and-upgrade) |
+| `SELFTEST_SOURCE_INVALID` | [see above](#selftest-and-upgrade) |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
 | `SESSION_STACK_RETAINED` | run npx --no cockpit sleep --config <your cockpit.toml> to release this checkout's remaining hold |
 | `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again |
-| `SETUP_CONFIG_REQUIRED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers |
-| `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again |
-| `SETUP_NONE_ABSENT` | see the message |
-| `SETUP_NONE_DIRECTORY` | see the message |
-| `SETUP_NONE_REPOSITORY` | see the message |
-| `SETUP_OPTION_DUPLICATE` | see the message |
-| `SETUP_PARENT_MISSING` | see the message |
-| `SETUP_PATH_OUTSIDE_ROOT` | see the message |
-| `SETUP_PATH_SYMLINK` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSITIONAL_UNSUPPORTED` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `SETUP_REMOTE_MISMATCH` | see the message |
+| `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again; [see above](#common-refusal-guidance) |
+| `SETUP_REMOTE_MISMATCH` | [see above](#common-refusal-guidance) |
 | `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again |
-| `SIBLING_DIRECTORY_MISSING` | see the message |
-| `SIBLING_DIR_DUPLICATE` | see the message |
-| `SIBLING_GIT_FAILED` | see the message |
 | `SIBLING_GUIDE_MISSING` | correct or remove the guide name in that sibling's guides list in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `SIBLING_MISSING` | see the message |
-| `SIBLING_NOT_FOUND` | see the message |
-| `SIBLING_PATH_NOT_EMPTY` | see the message |
-| `SIBLING_REFERENCED` | see the message |
-| `SIBLING_REMOTE_MISSING` | see the message |
-| `SIBLING_REMOTE_UNRECORDED` | see the message |
-| `SIBLING_SLUG_DUPLICATE` | see the message |
-| `SIBLING_STACK_RECORDED` | see the message |
-| `SIBLING_VAR_DUPLICATE` | see the message |
-| `SKILL_BUDGET_UNAVAILABLE` | see the message |
-| `SKILL_COMMAND_UNDECLARED` | see the message |
-| `SKILL_CONTRACT_INVALID` | see the message |
-| `SKILL_DECISION_LOGIC_EMBEDDED` | see the message |
-| `SKILL_ENTRY_POINT_EXCEEDED` | see the message |
-| `SKILL_FRONTMATTER_INVALID` | see the message |
-| `SKILL_IDENTITY_INVALID` | see the message |
-| `SKILL_INPUT_INVALID` | see the message |
-| `SKILL_NAME_DUPLICATE` | see the message |
-| `SKILL_PROCEDURE_MISSING` | see the message |
-| `SKILL_PROJECTION_INVALID` | see the message |
-| `SKILL_RENDER_INVALID` | see the message |
-| `SKILL_RENDER_INVENTORY_INVALID` | see the message |
-| `SKILL_STANDING_COST_EXCEEDED` | see the message |
-| `SKILL_TOOL_EQUIVALENCE_MISSING` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STACK_RECORDED_UNDER_EARLIER_NAME` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_FORMAT_UNSUPPORTED` | see the message |
-| `STATE_LOCKED` | depends on what failed; see the message |
-| `STATE_RECORD_MALFORMED` | depends on what failed; see the message |
-| `STATE_ROOT_UNAVAILABLE` | see the message |
-| `STATE_UNSEEDED` | see the message |
-| `SURFACE_ADOPTION_REFUSED` | see the message |
-| `SURFACE_ARTIFACT_INVALID` | see the message |
-| `SURFACE_BOUNDS` | see the message |
-| `SURFACE_CLEANUP_FAILED` | see the message |
-| `SURFACE_CUSTOM_REFUSED` | see the message |
-| `SURFACE_FEATURE_COVERAGE` | see the message |
-| `SURFACE_GENERATION_FAILED` | see the message |
-| `SURFACE_GENERATOR_TRUST_WARNING` | see the message |
-| `SURFACE_INPUT_INVALID` | see the message |
-| `SURFACE_KIND_AMBIGUOUS` | see the message |
-| `SURFACE_NAME_DUPLICATE` | see the message |
-| `SURFACE_NODE_UNAVAILABLE` | see the message |
-| `SURFACE_OUTPUT_COVERAGE` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
-| `SURFACE_OVERRIDE_INVALID` | see the message |
-| `SURFACE_OWNERSHIP_INVALID` | see the message |
-| `SURFACE_PACKAGE_UNAVAILABLE` | see the message |
-| `SURFACE_PATH_CONFLICT` | see the message |
+| `SKILL_COMMAND_UNDECLARED` | [see above](#sibling-projection-and-skills) |
+| `SKILL_CONTRACT_INVALID` | [see above](#sibling-projection-and-skills) |
+| `SKILL_DECISION_LOGIC_EMBEDDED` | [see above](#sibling-projection-and-skills) |
+| `SKILL_ENTRY_POINT_EXCEEDED` | [see above](#sibling-projection-and-skills) |
+| `SKILL_FRONTMATTER_INVALID` | [see above](#sibling-projection-and-skills) |
+| `SKILL_IDENTITY_INVALID` | [see above](#sibling-projection-and-skills) |
+| `SKILL_INPUT_INVALID` | [see above](#sibling-projection-and-skills) |
+| `SKILL_NAME_DUPLICATE` | [see above](#sibling-projection-and-skills) |
+| `SKILL_PROCEDURE_MISSING` | [see above](#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVALID` | [see above](#sibling-projection-and-skills) |
+| `SKILL_RENDER_INVENTORY_INVALID` | [see above](#sibling-projection-and-skills) |
+| `SKILL_STANDING_COST_EXCEEDED` | [see above](#sibling-projection-and-skills) |
+| `SKILL_TOOL_EQUIVALENCE_MISSING` | [see above](#sibling-projection-and-skills) |
+| `STATE_FORMAT_UNSUPPORTED` | [see above](#clear-cockpit-state) |
+| `STATE_RECORD_MALFORMED` | [see above](#clear-cockpit-state) |
+| `SURFACE_ADOPTION_REFUSED` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_ARTIFACT_INVALID` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_CLEANUP_FAILED` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_FEATURE_COVERAGE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_GENERATOR_TRUST_WARNING` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_KIND_AMBIGUOUS` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_NAME_DUPLICATE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_NODE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_OUTPUT_COVERAGE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [see above](#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` | [see above](#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_REFUSED` | [see above](#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [see above](#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INVALID` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_OWNERSHIP_INVALID` | [see above](#common-refusal-guidance) |
+| `SURFACE_PACKAGE_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [see above](#merge-ownership-and-generation) |
 | `SURFACE_RULE_SCOPE_UNSUPPORTED` | remove `globs` from the rule frontmatter, or narrow the rule text itself to the files it is about, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `SURFACE_SCRATCH_UNAVAILABLE` | see the message |
-| `SURFACE_SOURCE_UNAVAILABLE` | see the message |
-| `SURFACE_STAGE_VARIANCE` | see the message |
-| `SURFACE_STAGING_FAILED` | see the message |
-| `SURFACE_STATE_CONFLICT` | see the message |
-| `SURFACE_WORKER_NONZERO` | see the message |
-| `SURFACE_WORKER_OUTPUT` | see the message |
-| `SURFACE_WORKER_SIGNAL` | see the message |
-| `SURFACE_WORKER_STDERR` | see the message |
-| `SURFACE_WORKER_TIMEOUT` | see the message |
-| `TEAM_METADATA_UNAVAILABLE` | see the message |
-| `TEMPLATE_IGNORED` | see the message |
-| `TEMPLATE_NOT_FOUND` | see the message |
-| `TEMPLATE_NOT_TRACKED` | see the message |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | see the message |
+| `SURFACE_SCRATCH_UNAVAILABLE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [see above](#common-refusal-guidance) |
+| `SURFACE_STAGE_VARIANCE` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_STAGING_FAILED` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_STATE_CONFLICT` | [see above](#common-refusal-guidance) |
+| `SURFACE_WORKER_NONZERO` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_WORKER_OUTPUT` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_WORKER_SIGNAL` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_WORKER_STDERR` | [see above](#merge-ownership-and-generation) |
+| `SURFACE_WORKER_TIMEOUT` | [see above](#merge-ownership-and-generation) |
 | `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `TEST_GATE_UNSATISFIED` | the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged |
-| `UPGRADE_AUTH_FAILED` | see the message |
-| `UPGRADE_DISCOVERY_INVALID` | see the message |
-| `UPGRADE_NETWORK_FAILED` | see the message |
-| `UPGRADE_REPAIR_UNVERIFIED` | see the message |
-| `UPGRADE_SOURCE_INVALID` | see the message |
-| `UPGRADE_VERSION_AMBIGUOUS` | see the message |
-| `WORK_APPLICATION_REFUSED` | see the message |
+| `UPGRADE_AUTH_FAILED` | [see above](#selftest-and-upgrade) |
+| `UPGRADE_DISCOVERY_INVALID` | [see above](#selftest-and-upgrade) |
+| `UPGRADE_NETWORK_FAILED` | [see above](#selftest-and-upgrade) |
+| `UPGRADE_REPAIR_UNVERIFIED` | [see above](#selftest-and-upgrade) |
+| `UPGRADE_SOURCE_INVALID` | [see above](#selftest-and-upgrade) |
+| `UPGRADE_VERSION_AMBIGUOUS` | [see above](#selftest-and-upgrade) |
 | `WORK_EXECUTION_PAUSED` | read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work execute --config <your cockpit.toml> --work-order <id> --approach <text> |
 | `WORK_GRADE_UNSATISFIED` | read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id> |
-| `WORK_OPERATOR_REQUIRED` | see the message |
-| `WO_ACCEPTANCE_DECLINED` | see the message |
-| `WO_ACCEPTANCE_INVALID` | see the message |
-| `WO_ACCEPTANCE_REPLAY` | see the message |
-| `WO_ACCEPTANCE_STALE` | see the message |
-| `WO_AUDIT_INVALID` | see the message |
-| `WO_AUTHORITY_INVALID` | see the message |
-| `WO_CONTRACT_INVALID` | see the message |
-| `WO_CONTRADICTION` | see the message |
-| `WO_CRITERIA_INVALID` | see the message |
-| `WO_DECISION_INVALID` | see the message |
-| `WO_ENCODING_INVALID` | see the message |
-| `WO_EVIDENCE_INVALID` | see the message |
-| `WO_FIELD_INVALID` | see the message |
-| `WO_FRONTMATTER_INVALID` | see the message |
-| `WO_HUMAN_PARK` | see the message |
-| `WO_ID_EXISTS` | see the message |
-| `WO_INVESTIGATION_PATH` | see the message |
-| `WO_KEY_DUPLICATE` | see the message |
-| `WO_KEY_UNKNOWN` | see the message |
-| `WO_LINE_BYTES_LIMIT` | see the message |
-| `WO_LINE_LIMIT` | see the message |
-| `WO_METRICS_HISTORY` | see the message |
-| `WO_METRICS_INVENTORY` | see the message |
-| `WO_METRICS_PROCESS` | see the message |
-| `WO_PLAN_INVALID` | see the message |
-| `WO_POLICY_INVALID` | see the message |
-| `WO_PRESSURE_INVALID` | see the message |
-| `WO_PRESSURE_UNCLASSIFIABLE` | see the message |
-| `WO_PROGRAMME_CAP` | see the message |
-| `WO_PROGRAMME_CONTRACT` | see the message |
-| `WO_PROGRAMME_LEDGER` | see the message |
-| `WO_PROGRAMME_ORDER` | see the message |
-| `WO_PROGRAMME_PREDECESSOR` | see the message |
-| `WO_PROGRAMME_PRESSURE` | see the message |
-| `WO_PROGRAMME_SHIPPABILITY` | see the message |
-| `WO_RENEWAL_DECISION_REQUIRED` | see the message |
-| `WO_RESUME_AMBIGUOUS` | see the message |
-| `WO_RESUME_AWAITING_GRADE` | see the message |
-| `WO_RESUME_BLOCKED` | see the message |
-| `WO_RESUME_NO_ACTIVE` | see the message |
-| `WO_ROOT_CAUSE_REQUIRED` | see the message |
-| `WO_ROUTE_REQUIRED` | see the message |
-| `WO_SECTION_DUPLICATE` | see the message |
-| `WO_SECTION_INVALID` | see the message |
-| `WO_SECTION_MISSING` | see the message |
-| `WO_SIZE_LIMIT` | see the message |
-| `WO_SKILLS_INVALID` | see the message |
-| `WO_SOURCE_GAPS` | see the message |
-| `WO_SOURCE_INVALID` | see the message |
-| `WO_STATE_CONFLICT` | see the message |
-| `WO_STATE_CONTRADICTION` | see the message |
-| `WO_STATE_INVALID` | see the message |
-| `WO_STATE_PERSIST_FAILED` | see the message |
-| `WO_STATUS_AMBIGUOUS` | see the message |
-| `WO_STATUS_INVALID` | see the message |
-| `WO_SWEEP_OBSERVATION` | see the message |
-| `WO_SWEEP_REPLAY` | see the message |
-| `WO_SWEEP_STALE` | see the message |
-| `WO_SWEEP_WRITE_FAILED` | see the message |
-| `WO_VERIFICATION_INVALID` | see the message |
-| `WO_WIP_CAP` | see the message |
-| `WO_WIP_INVALID` | see the message |
 <!-- cockpit:diagnostic-index:end -->

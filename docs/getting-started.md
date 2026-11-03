@@ -1,7 +1,5 @@
 # Getting started
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This guide takes you from installing cockpit to your own product running under it. It is for
 developers setting cockpit up for a product with one or several repositories. To watch cockpit
 work on a throwaway example first, follow the [tutorial](tutorial.md).

@@ -1,7 +1,5 @@
 # Agent adoption guide
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This guide is for an AI coding agent asked to "set up cockpit for our project", and for the human
 watching it. It maps each starting situation to exact non-interactive commands and a completion
 check. The [getting started guide](getting-started.md) is the same journey for a person at a
@@ -242,7 +240,6 @@ several: instructions, guards and settings. Each step stops for the human.
    order, each with a `why` and the values it could propose. A trimmed real preview for three
    repositories:
 
-   <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
    ```console
    $ cockpit init "$(pwd)" --target claudecode --json
    {"result":{"stage":"surface-previewed","previewSha256":"5f16c475...",

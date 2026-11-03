@@ -1,7 +1,5 @@
 # @b00dea/cockpit
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This package is the cockpit CLI. cockpit boots a multi-repository product on your machine from one
 `cockpit.toml`, gives Claude Code, Codex CLI and OpenCode the same instructions, skills and guard
 hooks, and fails a check when any generated file drifts. What each tool actually enforces is in the

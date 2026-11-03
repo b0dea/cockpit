@@ -1,7 +1,5 @@
 # Contributor documentation
 
-<!-- cockpit:verified version=0.0.0 -->
-
 These pages are for people working on cockpit itself. Setup and the pull request rules are in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).
 

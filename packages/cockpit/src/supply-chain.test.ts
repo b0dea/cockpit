@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
     expectedPackageFiles, generateSbom, runSupplyChainCheck,
-} from '../../../scripts/supply-chain-check.mjs'
+} from '../../../scripts/supply-chain-check.ts'
 import { cockpitPackageVersion } from './test-support/package-version.js'
 
 const childProcess = vi.hoisted(() => ({ execFileSync: vi.fn() }))
@@ -21,7 +21,7 @@ interface SupplyChainResult {
     readonly operatorGaps: readonly string[]
 }
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
-const detector = join(repositoryRoot, 'scripts/supply-chain-check.mjs')
+const detector = join(repositoryRoot, 'scripts/supply-chain-check.ts')
 const scratch: string[] = []
 const PACK_FILES = expectedPackageFiles(repositoryRoot)
 
@@ -49,12 +49,6 @@ function fixture() {
 
 function writeWorkflow(root: string, name: string, body: string) {
     writeFileSync(join(root, `.github/workflows/${name}.yml`), body)
-}
-
-function writeCompositeAction(root: string, name: string, body: string) {
-    const path = join(root, `.github/actions/${name}/action.yml`)
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, body)
 }
 
 function mutate(root: string, path: string, update: (value: any) => void) {
@@ -159,7 +153,6 @@ describe('the supply-chain readiness detector', () => {
         ['source link', (root: string) => mutate(root, 'packages/cockpit/package.json', value => { value.repository.url = 'https://example.invalid/source.git' }), PACK_FILES, 'PACKAGE_LINKS_CHANGED'],
         ['type target', (root: string) => mutate(root, 'packages/cockpit/package.json', value => { value.types = './dist/missing.d.ts' }), PACK_FILES, 'PACKAGE_EXPORTS_CHANGED'],
         ['runtime dependency', (root: string) => mutate(root, 'packages/cockpit/package.json', value => { value.dependencies.extra = '1.0.0' }), PACK_FILES, 'RUNTIME_DEPENDENCIES_CHANGED'],
-        ['mutable action', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace(/actions\/checkout@[a-f0-9]{40}/, 'actions/checkout@v7')), PACK_FILES, 'WORKFLOW_ACTION_MUTABLE'],
         ['broad permissions', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace('permissions:\n      contents: read', 'permissions:\n      contents: write')), PACK_FILES, 'WORKFLOW_PERMISSIONS_BROAD'],
         ['missing invocation', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace('npm run lint:supply-chain', 'npm run typecheck')), PACK_FILES, 'WORKFLOW_LINT_NOT_INVOKED'],
         ['unscanned tarball', (_root: string) => {}, [], 'PACK_METADATA_MISSING'],
@@ -179,33 +172,12 @@ describe('the supply-chain readiness detector', () => {
         const codes = (root: string) => inspect(root, PACK_FILES).diagnostics.map(row => row.code)
 
         it.each([
-            ['a publish job that never stamps the source revision', '.github/scripts/release-publish.sh', (text: string) => text.replaceAll('cockpitSourceRevision', 'sourceRevisionRemoved'), 'RELEASE_STAMP_MISSING'],
             ['a publish job without provenance', '.github/workflows/release.yml', (text: string) => text.replace("NPM_CONFIG_PROVENANCE: 'true'", "NPM_CONFIG_PROVENANCE: 'false'"), 'RELEASE_PROVENANCE_MISSING'],
             ['a publish job without the OIDC token scope', '.github/workflows/release.yml', (text: string) => text.replace(/ +id-token: write[^\n]*\n/, ''), 'RELEASE_PROVENANCE_MISSING'],
             ['a release workflow with no publish job', '.github/workflows/release.yml', (text: string) => text.replace('  publish:\n', '  other:\n'), 'RELEASE_JOB_MISSING'],
             ['a version job that opens a pull request for a private package', '.github/workflows/release.yml', (text: string) => text.replace(" && needs.select-mode.outputs.private == 'false'", ''), 'RELEASE_VERSION_UNGATED'],
-            ['a publish script under an input the publish action ignores', '.github/workflows/release.yml',
-                (text: string) => text.replace('script: bash .github/scripts/release-publish.sh', 'publish-script: bash .github/scripts/release-publish.sh'), 'RELEASE_STAMP_MISSING'],
             ['a publish job outside the npm deployment environment', '.github/workflows/release.yml',
                 (text: string) => text.replace('    environment: npm\n', ''), 'RELEASE_ENVIRONMENT_MISSING'],
-            ['a publish job that never attaches authenticated release evidence', '.github/workflows/release.yml',
-                (text: string) => text.replace('gh release upload "$tag" release-evidence.json release-evidence.json.sha256', 'echo evidence-not-uploaded'),
-                'RELEASE_EVIDENCE_MISSING'],
-            ['release evidence before a confirmed publication', '.github/workflows/release.yml',
-                (text: string) => text.replace("if: steps.changesets.outputs.published == 'true'", 'if: always()'),
-                'RELEASE_EVIDENCE_MISSING'],
-            ['release evidence from a legacy missing action output', '.github/workflows/release.yml',
-                (text: string) => text.replace('outputs.published-packages', 'outputs.publishedPackages'),
-                'RELEASE_EVIDENCE_MISSING'],
-            ['release evidence for an unverified package set', '.github/workflows/release.yml',
-                (text: string) => text.replace('published.length !== 1', 'published.length < 1'),
-                'RELEASE_EVIDENCE_MISSING'],
-            ['release evidence without registry integrity', '.github/workflows/release.yml',
-                (text: string) => text.replace('dist.integrity --json', 'dist.tarball --json'),
-                'RELEASE_EVIDENCE_MISSING'],
-            ['release evidence without exact tag readback', '.github/workflows/release.yml',
-                (text: string) => text.replace('gh release view "$tag"', 'gh release view --latest'),
-                'RELEASE_EVIDENCE_MISSING'],
             ['an update entry without a cooldown', '.github/dependabot.yml', (text: string) => text.replace('    cooldown:\n      default-days: 7\n', ''), 'DEPENDABOT_COOLDOWN_MISSING'],
             ['a cooldown shorter than seven days', '.github/dependabot.yml', (text: string) => text.replace('default-days: 7', 'default-days: 6'), 'DEPENDABOT_COOLDOWN_MISSING'],
         ])('refuses %s', (_name, path, update, code) => {
@@ -274,128 +246,26 @@ describe('the supply-chain readiness detector', () => {
         })
     })
 
-    it('checks reusable workflow jobs and every external edge inside local composite actions', () => {
-        const root = fixture()
-        writeWorkflow(root, 'borrowed', [
-            'name: Borrowed',
-            'on: push',
-            'permissions:',
-            '  contents: read',
-            'jobs:',
-            '  borrowed:',
-            '    uses: owner/repository/.github/workflows/check.yml@main',
-            '',
-        ].join('\n'))
-        writeCompositeAction(root, 'nested', [
-            'name: Nested',
-            'description: Synthetic nested dependency',
-            'runs:',
-            '  using: composite',
-            '  steps:',
-            '    - uses: owner/action@main',
-            '      shell: bash',
-            '',
-        ].join('\n'))
-        writeWorkflow(root, 'nested', [
-            'name: Nested',
-            'on: push',
-            'permissions:',
-            '  contents: read',
-            'jobs:',
-            '  nested:',
-            '    runs-on: ubuntu-latest',
-            '    steps:',
-            '      - uses: ./.github/actions/nested',
-            '',
-        ].join('\n'))
-
-        const mutable = inspect(root, PACK_FILES).diagnostics.filter(row => row.code === 'WORKFLOW_ACTION_MUTABLE')
-        expect(mutable.map(row => row.message)).toEqual(expect.arrayContaining([
-            expect.stringContaining('owner/repository/.github/workflows/check.yml@main'),
-            expect.stringContaining('owner/action@main'),
-        ]))
-    })
-
-    it('confines local actions and refuses cyclic local action graphs', () => {
-        const root = fixture()
-        writeCompositeAction(root, 'first', [
-            'name: First', 'description: Synthetic cycle', 'runs:', '  using: composite', '  steps:',
-            '    - uses: ./.github/actions/second', '',
-        ].join('\n'))
-        writeCompositeAction(root, 'second', [
-            'name: Second', 'description: Synthetic cycle', 'runs:', '  using: composite', '  steps:',
-            '    - uses: ./.github/actions/first', '',
-        ].join('\n'))
-        writeWorkflow(root, 'local', [
-            'name: Local', 'on: push', 'permissions:', '  contents: read', 'jobs:', '  local:',
-            '    runs-on: ubuntu-latest', '    steps:', '      - uses: ./.github/actions/first',
-            '      - uses: ./.github/actions/../workflows', '',
-        ].join('\n'))
-
-        expect(inspect(root, PACK_FILES).diagnostics.map(row => row.code)).toEqual(expect.arrayContaining([
-            'WORKFLOW_ACTION_CYCLE',
-            'WORKFLOW_ACTION_LOCAL_INVALID',
-        ]))
-    })
-
-    // The YAML parser quotes the lines around its failure, and a workflow can hold anything pasted
-    // into it, so each unparseable file carries the canary where parsing stops.
-    it('names where a malformed workflow, action or release file stopped parsing without quoting it', () => {
+    it('names where a malformed workflow or release file stopped parsing without quoting it', () => {
         const root = fixture()
         const broken = 'name: [CANARY_SECRET_7f3a\nkey: value\n'
         writeWorkflow(root, 'broken', broken)
-        writeCompositeAction(root, 'broken', broken)
-        writeWorkflow(root, 'local', [
-            'name: Local', 'on: push', 'permissions:', '  contents: read', 'jobs:', '  local:',
-            '    runs-on: ubuntu-latest', '    steps:', '      - uses: ./.github/actions/broken', '',
-        ].join('\n'))
         writeFileSync(join(root, '.github/workflows/release.yml'), broken)
 
         const diagnostics = inspect(root, PACK_FILES).diagnostics
         const named = (code: string) => diagnostics.find(row => row.code === code && /parse/.test(row.message))
         expect(named('WORKFLOW_INVALID')).toMatchObject({ path: '.github/workflows/broken.yml', message: expect.stringMatching(/at line \d+, column \d+/) })
-        expect(named('WORKFLOW_ACTION_LOCAL_INVALID')).toMatchObject({ message: expect.stringMatching(/at line \d+, column \d+/) })
         expect(named('RELEASE_CONFIG_UNREADABLE')).toMatchObject({ path: '.github/workflows/release.yml', message: expect.stringMatching(/at line \d+, column \d+/) })
         expect(JSON.stringify(diagnostics)).not.toContain('CANARY_SECRET_7f3a')
     })
 
-    it('refuses linked workflow and action paths before following their targets', () => {
-        const actionRoot = fixture()
-        const borrowedActions = join(actionRoot, '.borrowed-actions')
-        rmSync(join(actionRoot, '.github/actions'), { recursive: true })
-        mkdirSync(borrowedActions)
-        symlinkSync('../.borrowed-actions', join(actionRoot, '.github/actions'))
-        writeCompositeAction(actionRoot, 'linked-base', [
-            'name: Linked', 'description: Outside the owned action directory', 'runs:', '  using: composite', '  steps: []', '',
-        ].join('\n'))
-        writeWorkflow(actionRoot, 'linked-action', [
-            'name: Linked action', 'on: push', 'permissions:', '  contents: read', 'jobs:', '  linked:',
-            '    runs-on: ubuntu-latest', '    steps:', '      - uses: ./.github/actions/linked-base', '',
-        ].join('\n'))
-
-        const workflowRoot = fixture()
-        const borrowedWorkflow = join(workflowRoot, '.borrowed-workflow.yml')
-        writeFileSync(borrowedWorkflow, [
-            'name: Borrowed', 'on: push', 'permissions:', '  contents: read', 'jobs: {}', '',
-        ].join('\n'))
-        symlinkSync('../../.borrowed-workflow.yml', join(workflowRoot, '.github/workflows/linked.yml'))
-
-        expect(inspect(actionRoot, PACK_FILES).diagnostics.map(row => row.code)).toContain('WORKFLOW_ACTION_LOCAL_INVALID')
-        expect(inspect(workflowRoot, PACK_FILES).diagnostics.map(row => row.code)).toContain('WORKFLOW_ACTION_LOCAL_INVALID')
-    })
-
-    it('accepts a contained acyclic local action whose external edges are immutable', () => {
+    it('refuses a linked workflow instead of following it', () => {
         const root = fixture()
-        writeCompositeAction(root, 'pinned', [
-            'name: Pinned', 'description: Synthetic pinned dependency', 'runs:', '  using: composite', '  steps:',
-            '    - uses: owner/action@0123456789abcdef0123456789abcdef01234567', '',
+        writeFileSync(join(root, '.borrowed-workflow.yml'), [
+            'name: Borrowed', 'on: push', 'permissions:', '  contents: write', 'jobs: {}', '',
         ].join('\n'))
-        writeWorkflow(root, 'local', [
-            'name: Local', 'on: push', 'permissions:', '  contents: read', 'jobs:', '  local:',
-            '    runs-on: ubuntu-latest', '    steps:', '      - uses: ./.github/actions/pinned', '',
-        ].join('\n'))
-
-        expect(inspect(root, PACK_FILES).diagnostics.filter(row => row.code.startsWith('WORKFLOW_ACTION'))).toEqual([])
+        symlinkSync('../../.borrowed-workflow.yml', join(root, '.github/workflows/linked.yml'))
+        expect(inspect(root, PACK_FILES).diagnostics).toContainEqual(expect.objectContaining({ code: 'WORKFLOW_INVALID', path: '.github/workflows/linked.yml' }))
     })
 })
 

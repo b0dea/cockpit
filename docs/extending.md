@@ -1,7 +1,5 @@
 # Extending cockpit
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for integrators adding product-specific behaviour to a cockpit: which declaration to
 use for each need, and how to keep your own build logic beside cockpit. Cockpit is not a plugin
 host. An extension stays ordinary version-controlled product code; cockpit manages only the

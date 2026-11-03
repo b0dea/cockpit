@@ -1,7 +1,5 @@
 # cockpit
 
-<!-- cockpit:verified version=0.0.0 -->
-
 <a href="https://github.com/b0dea/cockpit/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img alt="CI status" src="https://github.com/b0dea/cockpit/actions/workflows/ci.yml/badge.svg?branch=main&amp;event=push"></a>
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
@@ -20,7 +18,6 @@ It holds none of your product code.
 
 Edit a generated file by hand and `check` fails, naming the file and the fix:
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
 ```console
 $ echo "# tweak" >> compose.generated.yml
 $ npx --no cockpit check --config cockpit.toml
