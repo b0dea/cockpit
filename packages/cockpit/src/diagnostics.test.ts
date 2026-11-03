@@ -65,11 +65,11 @@ describe('diagnostic envelope', () => {
         expect(review('up', { stackId, change: 'invented' })).toBe('')
     })
 
-    it('prints the result of a work, browser or test command, including one that did not meet its bar', () => {
+    it('prints the result of a work, grade, browser or test command, including one that did not meet its bar', () => {
         const review = (command: string, status: number, result: unknown) => renderHumanDiagnostics([], { command, outcome: { status, result } })
         expect(review('test-run', 0, { verdict: 'PASS', satisfiesGate: true })).toBe('satisfiesGate: true\nverdict: PASS\n')
-        expect(review('work grade', 2, { criteria: [{ criterion: 'AC1', outcome: 'failed after execution' }] }))
-            .toBe('criteria:\n  -\n    criterion: AC1\n    outcome: failed after execution\n')
+        expect(review('work grade', 2, { criteria: [{ id: 'AC1', verdict: 'unmet' }] })).toBe('criteria:\n  -\n    id: AC1\n    verdict: unmet\n')
+        expect(review('grade', 0, { criteria: [{ id: 'AC1', verdict: 'met' }] })).toBe('criteria:\n  -\n    id: AC1\n    verdict: met\n')
         expect(review('browser drive', 0, { kind: 'complete' })).toBe('kind: complete\n')
         expect(review('sync', 2, { dryRun: true, changes: [] })).toBe('')
     })
