@@ -308,6 +308,8 @@ describe('Compose findings for a drafted cockpit.toml', () => {
             expect.objectContaining({ severity: 'warning', code: 'COMPOSE_HEALTHCHECK_MISSING', target: 'compose:web' })])
         // The same file is unleased for api until its variable is declared.
         expect((await composeFindings({ root, draft: draft('') })).map(row => row.target)).toContain('compose:api:4200')
+        // A draft that declares no Compose file has none to judge.
+        expect(await composeFindings({ root, draft: '[environment]\ncompose_files = []\n' })).toEqual([])
         // A declared file that cannot be read is said, not skipped.
         expect(await composeFindings({ root, draft: '[environment]\ncompose_files = ["missing.yml"]\n' })).toEqual([
             expect.objectContaining({ code: 'COMPOSE_FILE_UNREADABLE', target: 'missing.yml' })])

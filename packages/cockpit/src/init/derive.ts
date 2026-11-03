@@ -675,7 +675,7 @@ export async function composeFindings(input: Readonly<{ root: string; draft: str
     try { draft = parseToml(input.draft) as typeof draft }
     catch (error) { return [unreadable('cockpit.toml', `the draft is not valid TOML (${errorCause(error)})`)] }
     const references = draft.environment?.compose_files
-    if (!Array.isArray(references) || references.some(reference => typeof reference !== 'string')) return []
+    if (!Array.isArray(references) || references.length === 0 || references.some(reference => typeof reference !== 'string')) return []
     const services = new Map<string, ComposeServiceTopology>()
     const unread: Diagnostic[] = []
     for (const reference of references as string[]) {
