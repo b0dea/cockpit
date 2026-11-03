@@ -706,74 +706,13 @@ describe('observation contract and applicability', () => {
         }
     })
 
-    it('rejects hostile declaration collections without invoking iterators or accessors', () => {
+    it('rejects declarations whose identity or postures are not strings', () => {
         const declaration = {
             id: 'mount-state', owner: 'runtime-planning', postures: ['environment'], stages: everyStage,
             code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued,
         }
-        let iteratorCalls = 0
-        const declarations = [declaration]
-        Object.defineProperty(declarations, Symbol.iterator, { value: () => {
-            iteratorCalls += 1
-            throw new Error('declaration iterator invoked')
-        } })
-        expect(validateObservationDeclarations(declarations)).toMatchObject({ kind: 'invalid' })
-
-        const requiredPostures = ['environment']
-        Object.defineProperty(requiredPostures, Symbol.iterator, { value: () => {
-            iteratorCalls += 1
-            throw new Error('posture iterator invoked')
-        } })
-        expect(validateObservationDeclarations([declaration], requiredPostures)).toMatchObject({ kind: 'invalid' })
-
-        let accessorCalls = 0
-        const postures: string[] = []
-        Object.defineProperty(postures, '0', { configurable: true, enumerable: true, get: () => {
-            accessorCalls += 1
-            return 'environment'
-        } })
-        Object.defineProperty(postures, 'length', { value: 1 })
-        expect(validateObservationDeclarations([{ ...declaration, postures }])).toMatchObject({ kind: 'invalid' })
-
-        const accessorDeclaration = { ...declaration }
-        Object.defineProperty(accessorDeclaration, 'id', { enumerable: true, get: () => {
-            accessorCalls += 1
-            return 'mount-state'
-        } })
-        expect(validateObservationDeclarations([accessorDeclaration])).toMatchObject({ kind: 'invalid' })
-
-        const { proxy, revoke } = Proxy.revocable([declaration], {})
-        revoke()
-        expect(validateObservationDeclarations(proxy)).toMatchObject({ kind: 'invalid' })
-
-        let proxyTrapCalls = 0
-        const traps: ProxyHandler<object> = {
-            ownKeys(target) {
-                proxyTrapCalls += 1
-                return Reflect.ownKeys(target)
-            },
-            getOwnPropertyDescriptor(target, key) {
-                proxyTrapCalls += 1
-                return Reflect.getOwnPropertyDescriptor(target, key)
-            },
-        }
-        expect(validateObservationDeclarations(new Proxy([declaration], traps) as never)).toMatchObject({ kind: 'invalid' })
-        expect(validateObservationDeclarations([declaration], new Proxy(['environment'], traps) as never)).toMatchObject({ kind: 'invalid' })
-        expect(validateObservationDeclarations([new Proxy(declaration, traps) as never])).toMatchObject({ kind: 'invalid' })
-        expect(validateObservationDeclarations([{ ...declaration, postures: new Proxy(['environment'], traps) as never }])).toMatchObject({ kind: 'invalid' })
-        expect(validateObservationDeclarations([{ ...declaration, stages: new Proxy([...everyStage], traps) as never }])).toMatchObject({ kind: 'invalid' })
-        expect(validateObservationDeclarations([{ ...declaration, stages: [new Proxy(everyStage[0], traps) as never, everyStage[1]] }])).toMatchObject({ kind: 'invalid' })
-        const accessorStages = [...everyStage]
-        Object.defineProperty(accessorStages, '0', { enumerable: true, get: () => {
-            accessorCalls += 1
-            return everyStage[0]
-        } })
-        expect(validateObservationDeclarations([{ ...declaration, stages: accessorStages }])).toMatchObject({ kind: 'invalid' })
         expect(validateObservationDeclarations([{ ...declaration, id: Symbol('mount-state') as never }])).toMatchObject({ kind: 'invalid' })
         expect(validateObservationDeclarations([{ ...declaration, postures: [Symbol('environment') as never] }])).toMatchObject({ kind: 'invalid' })
-        expect(iteratorCalls).toBe(0)
-        expect(accessorCalls).toBe(0)
-        expect(proxyTrapCalls).toBe(0)
     })
 
     it('aggregates each implemented producer from its local declaration', () => {
@@ -849,78 +788,13 @@ describe('deterministic preflight and doctor', () => {
         ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
     })
 
-    it('bounds aggregate inputs without invoking collection accessors or iterators', async () => {
-        const issued = await context()
-        let iteratorCalls = 0
-        const groups = {
-            [Symbol.iterator]() {
-                iteratorCalls += 1
-                return [][Symbol.iterator]()
-            },
-        }
-        expect(() => aggregateObservations(groups as never, issued)).toThrow('bounded dense array')
-        expect(iteratorCalls).toBe(0)
-
-        const current = await observation()
-        const group = [current]
-        Object.defineProperty(group, Symbol.iterator, {
-            value: () => {
-                iteratorCalls += 1
-                return [current][Symbol.iterator]()
-            },
-        })
-        expect(() => aggregateObservations([group], issued)).toThrow('bounded dense array')
-        expect(iteratorCalls).toBe(0)
-
-        let accessorCalls = 0
-        const oversized = Array(4_097).fill([])
-        Object.defineProperty(oversized, '4096', {
-            configurable: true,
-            enumerable: true,
-            get: () => {
-                accessorCalls += 1
-                return []
-            },
-        })
-        expect(() => aggregateObservations(oversized, issued)).toThrow('bounded dense array')
-        expect(accessorCalls).toBe(0)
-
-        let ownKeyCalls = 0
-        const hostileOversized = new Proxy(Array(4_097).fill([]), {
-            ownKeys() {
-                ownKeyCalls += 1
-                throw new Error('own keys must not be inspected beyond the collection bound')
-            },
-        })
-        expect(() => aggregateObservations(hostileOversized, issued)).toThrow('bounded dense array')
-        expect(ownKeyCalls).toBe(0)
-    })
-
-    it('rejects non-array and oversized observation collections without invoking accessors or iterators', async () => {
+    it('rejects non-array and oversized observation collections', async () => {
         const current = await observation()
         const issued = await context()
-        let iteratorCalls = 0
-        const iterable = {
-            [Symbol.iterator]() {
-                iteratorCalls += 1
-                return [current][Symbol.iterator]()
-            },
-        }
-        expect(() => aggregateObservations([iterable as never], issued)).toThrow('bounded dense array')
-        expect(iteratorCalls).toBe(0)
-
-        let accessorCalls = 0
-        const oversized = Array(4_097).fill(current)
-        Object.defineProperty(oversized, '4096', {
-            configurable: true,
-            enumerable: true,
-            get: () => {
-                accessorCalls += 1
-                return current
-            },
-        })
-        expect(() => aggregateObservations([oversized], issued)).toThrow('bounded dense array')
-        expect(accessorCalls).toBe(0)
+        expect(() => aggregateObservations({ length: 0 } as never, issued)).toThrow('bounded dense array')
+        expect(() => aggregateObservations([{ length: 1, 0: current } as never], issued)).toThrow('bounded dense array')
+        expect(() => aggregateObservations(Array(4_097).fill([]), issued)).toThrow('bounded dense array')
+        expect(() => aggregateObservations([Array(4_097).fill(current)], issued)).toThrow('bounded dense array')
     })
 
     it('reports every omitted required declaration as unavailable', async () => {

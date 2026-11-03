@@ -11,7 +11,6 @@ import {
     type StackId,
 } from './contract.js'
 import { createHash } from 'node:crypto'
-import { isProxy } from 'node:util/types'
 import { observationDeclarations as claimDeclarations } from './claims.js'
 import { surfaceObservationDeclarations } from './generated-application.js'
 import { observationDeclarations as envSchemaDeclarations } from './env-schema-observation.js'
@@ -62,81 +61,16 @@ export interface DoctorProjection {
 
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
-function boundedDenseArray(value: unknown): readonly unknown[] | undefined {
-    try {
-        if (isProxy(value)) return undefined
-        if (!Array.isArray(value)) return undefined
-        const length = Object.getOwnPropertyDescriptor(value, 'length')
-        const count = length && 'value' in length ? length.value : undefined
-        if (typeof count !== 'number' || !Number.isSafeInteger(count)
-            || count < 0 || count > STRUCTURED_INPUT_ENTRY_LIMIT) return undefined
-        const keys = Reflect.ownKeys(value)
-        if (keys.length !== count + 1) return undefined
-        const items: unknown[] = []
-        for (let index = 0; index < count; index += 1) {
-            const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-            if (!descriptor || !('value' in descriptor)) return undefined
-            items.push(descriptor.value)
-        }
-        return items
-    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
-        return undefined
-    }
+function boundedArray(value: unknown): readonly unknown[] | undefined {
+    return Array.isArray(value) && value.length <= STRUCTURED_INPUT_ENTRY_LIMIT ? value : undefined
 }
 
-function stageDeclarationSnapshot(value: unknown): ObservationStageDeclaration | undefined {
-    try {
-        if (isProxy(value) || value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const stage = descriptors.stage && 'value' in descriptors.stage ? descriptors.stage.value : undefined
-        const disposition = descriptors.disposition && 'value' in descriptors.disposition ? descriptors.disposition.value : undefined
-        const reason = descriptors.reason && 'value' in descriptors.reason ? descriptors.reason.value : undefined
-        const keys = Reflect.ownKeys(descriptors)
-        if ((stage !== 'bootstrap' && stage !== 'steady') || (disposition !== 'required' && disposition !== 'not-applicable')) return undefined
-        if (disposition === 'required') {
-            return keys.length === 2 && reason === undefined
-                ? { stage, disposition }
-                : undefined
-        }
-        return keys.length === 3 && typeof reason === 'string' && reason.length > 0 && !reason.includes('\0')
-            && Buffer.byteLength(reason, 'utf8') <= 1_024
-            ? { stage, disposition, reason }
-            : undefined
-    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
-        return undefined
-    }
-}
-
-function declarationSnapshot(value: unknown): ObservationDeclaration | undefined {
-    try {
-        if (isProxy(value)) return undefined
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const required = ['id', 'owner', 'postures', 'stages', 'code', 'isIssued'] as const
-        const allowed = new Set<PropertyKey>([...required, 'issuedAt'])
-        const keys = Reflect.ownKeys(descriptors)
-        if (keys.some((key) => !allowed.has(key)) || required.some((key) => !('value' in (descriptors[key] ?? {})))) {
-            return undefined
-        }
-        const postures = boundedDenseArray(descriptors.postures!.value)
-        const stageInputs = boundedDenseArray(descriptors.stages!.value)
-        if (!postures || !stageInputs) return undefined
-        const stages = stageInputs.map(stageDeclarationSnapshot)
-        if (stages.some((stage) => stage === undefined)) return undefined
-        const issuedAtDescriptor = descriptors.issuedAt
-        if (issuedAtDescriptor && !('value' in issuedAtDescriptor)) return undefined
-        return {
-            id: descriptors.id!.value as string,
-            owner: descriptors.owner!.value as string,
-            postures: postures as string[],
-            stages: stages as ObservationStageDeclaration[],
-            code: descriptors.code!.value as EnvironmentObservation['code'],
-            isIssued: descriptors.isIssued!.value as ObservationDeclaration['isIssued'],
-            ...(issuedAtDescriptor ? { issuedAt: issuedAtDescriptor.value as ObservationDeclaration['issuedAt'] } : {}),
-        }
-    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
-        return undefined
-    }
+function validStage(value: ObservationStageDeclaration): boolean {
+    if ((value.stage !== 'bootstrap' && value.stage !== 'steady') || (value.disposition !== 'required' && value.disposition !== 'not-applicable')) return false
+    const reason = value.disposition === 'not-applicable' ? value.reason : undefined
+    if (value.disposition === 'required') return Object.keys(value).length === 2
+    return Object.keys(value).length === 3 && typeof reason === 'string' && reason.length > 0 && !reason.includes('\0')
+        && Buffer.byteLength(reason, 'utf8') <= 1_024
 }
 
 export const allObservationDeclarations: readonly ObservationDeclaration[] = Object.freeze([
@@ -157,8 +91,8 @@ export function validateObservationDeclarations(
     requiredPostures: readonly string[] = [],
 ): { readonly kind: 'valid'; readonly declarations: readonly ObservationDeclaration[] }
     | { readonly kind: 'invalid'; readonly reason: string } {
-    const declarationInputs = boundedDenseArray(declarations)
-    const postureInputs = boundedDenseArray(requiredPostures)
+    const declarationInputs = boundedArray(declarations)
+    const postureInputs = boundedArray(requiredPostures)
     if (!declarationInputs || !postureInputs || postureInputs.some((posture) => typeof posture !== 'string')) {
         return { kind: 'invalid', reason: 'observation declaration collection is malformed' }
     }
@@ -166,8 +100,9 @@ export function validateObservationDeclarations(
     const byCode = new Set<EnvironmentObservation['code']>()
     const owned: ObservationDeclaration[] = []
     for (let declarationIndex = 0; declarationIndex < declarationInputs.length; declarationIndex += 1) {
-        const declaration = declarationSnapshot(declarationInputs[declarationIndex])
-        if (!declaration) return { kind: 'invalid', reason: 'observation declaration is malformed' }
+        const declaration = declarationInputs[declarationIndex] as ObservationDeclaration
+        if (declaration === null || typeof declaration !== 'object' || !Array.isArray(declaration.postures) || !Array.isArray(declaration.stages)
+            || !declaration.stages.every(validStage)) return { kind: 'invalid', reason: 'observation declaration is malformed' }
         if (typeof declaration.id !== 'string' || typeof declaration.owner !== 'string'
             || !/^[a-z][a-z0-9-]*$/.test(declaration.id) || !/^[a-z][a-z0-9-]*$/.test(declaration.owner)
             || !Object.values(ENVIRONMENT_CODES).includes(declaration.code)
@@ -354,7 +289,7 @@ function evaluatePreflight(
     unobservable: ReadonlyMap<string, string> = new Map(),
 ): PreflightEvaluation {
     const observations: EnvironmentObservation[] = []
-    const observationInputs = boundedDenseArray(values)
+    const observationInputs = boundedArray(values)
     if (!observationInputs) throw new RefusalError('preflight observations must be a bounded dense array')
     const { evaluationInstant, authorities, stages, checks: postureChecks } = authenticateObservationPostureContext(context)
     if (authorities.size * validatedProductionDeclarations.length > STRUCTURED_INPUT_ENTRY_LIMIT) {
@@ -441,11 +376,11 @@ export function aggregateObservations(
     context: PreflightContext,
     unobservable?: ReadonlyMap<string, string>,
 ): PreflightEvaluation {
-    const groupInputs = boundedDenseArray(groups)
+    const groupInputs = boundedArray(groups)
     if (!groupInputs) throw new RefusalError('observation groups must be a bounded dense array')
     const values: EnvironmentObservation[] = []
     for (const group of groupInputs) {
-        const observations = boundedDenseArray(group)
+        const observations = boundedArray(group)
         if (!observations || values.length + observations.length > STRUCTURED_INPUT_ENTRY_LIMIT) {
             throw new RefusalError('observation groups must be a bounded dense array within the shared boundary')
         }
