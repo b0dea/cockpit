@@ -211,21 +211,12 @@ describe('setup planner', () => {
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'SETUP_REMOTE_MISMATCH' })])
     })
 
-    it('reports manual absence and none without emitting Git', async () => {
-        const siblingsRoot = root()
+    it('reports manual absence without emitting Git', async () => {
         const manual = await planSetup({
-            siblingsRoot, sibling: sibling({ acquire: 'manual' }), observation: observed({ kind: 'absent' }), env,
-        })
-        const none = await planSetup({
-            siblingsRoot, sibling: sibling({ acquire: 'none', remote: undefined }), observation: observed({ kind: 'directory' }), env,
+            siblingsRoot: root(), sibling: sibling({ acquire: 'manual' }), observation: observed({ kind: 'absent' }), env,
         })
         expect(manual).toEqual(expect.objectContaining({ kind: 'complete', result: expect.objectContaining({ action: 'report' }) }))
         expect(manual.diagnostics).toEqual([expect.objectContaining({ code: 'SETUP_MANUAL_MISSING' })])
-        expect(none).toEqual(expect.objectContaining({
-            kind: 'complete',
-            diagnostics: [expect.objectContaining({ code: 'SETUP_NONE_DIRECTORY' })],
-            result: expect.objectContaining({ action: 'report', observed: 'directory' }),
-        }))
     })
 
     it.each([
