@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -158,8 +158,21 @@ describe('test protection diff classifier', () => {
         'packages/cockpit/src/harness-support.test.ts',
         'packages/cockpit/src/guards/evaluator.test.ts',
         ...['js', 'jsx', 'ts', 'tsx', 'cjs', 'mjs', 'cts', 'mts'].map(extension => `packages/cockpit/src/future/control.spec.${extension}`),
-    ])('protects every cockpit test or spec path: %s', path => {
+        'vitest.config.ts', 'scripts/run-tests.mjs', 'scripts/run-changed-tests.mjs', 'scripts/immediate-failure-reporter.mjs',
+        'packages/cockpit/src/test-support/git-isolation.ts', 'packages/cockpit/test-support/application-fixture.ts',
+    ])('protects every cockpit test or spec path and the files that decide what runs: %s', path => {
         expect(classifyTestProtection(patch(path, 'expect(result).toBe(false)')).allowed).toBe(false)
+    })
+
+    it('guards the root manifest test scripts but not dependency or metadata edits', () => {
+        for (const line of ['    "test": "node scripts/run-tests.mjs",', '    "test:changed": "node scripts/run-changed-tests.mjs",',
+            '    "typecheck": "tsc",', '    "pretest": "npm run build",']) {
+            expect(classifyTestProtection(patch('package.json', line, line.replace('run-', 'skip-'))).allowed).toBe(false)
+        }
+        for (const line of ['    "vitest": "^5.0.4",', '  "description": "before",']) {
+            expect(classifyTestProtection(patch('package.json', line, line.replace('5.0.4', '5.0.5'))).allowed).toBe(true)
+        }
+        expect(classifyTestProtection(`diff --git a/package.json b/package.json\ndeleted file mode 100644\n`).allowed).toBe(false)
     })
 
     it('keeps explicit bypass comments, strings and unrelated production edits allowed', () => {
@@ -319,5 +332,49 @@ describe('test protection authenticated Git CLI', () => {
         const result = repo.cli(base, head, 'merge-base')
         expect(result.status).toBe(2)
         expect(result.stderr).toContain('TEST_PROTECTION_RANGE_INVALID')
+    })
+})
+
+// A guard run from the change it judges can be loosened by that same change, so CI runs the base
+// revision's copy. These execute the workflow's own step text against a synthetic repository.
+describe('CI runs the base revision of its change guards', () => {
+    const workflow = readFileSync(fileURLToPath(new URL('../../../.github/workflows/ci.yml', import.meta.url)), 'utf8')
+    const stepAfter = (marker: string) => {
+        const from = workflow.indexOf(marker)
+        const run = /\n {8}run: \|\n(?<body>(?: {10}.*\n)+)/.exec(workflow.slice(from))?.groups?.body
+        if (from < 0 || !run) throw new Error(`no run step after ${marker}`)
+        return run
+    }
+    const marker = (name: string) => `console.log('${name}')\n`
+
+    it.each([
+        ['test protection push step', 'BEFORE_SHA: ${{ github.event.before }}', 'scripts/check-test-protection.mjs', 'BEFORE_SHA', 'AFTER_SHA'],
+        ['test protection pull request step', 'BASE_SHA: ${{ github.event.pull_request.base.sha }}', 'scripts/check-test-protection.mjs', 'BASE_SHA', 'HEAD_SHA'],
+    ])('%s executes the base copy and refuses when the base has none', (_name, anchor, script, baseVar, headVar) => {
+        const repo = repository()
+        const base = repo.commit({ [script]: marker('base copy') })
+        const head = repo.commit({ [script]: marker('head copy') }, base)
+        const temp = mkdtempSync(join(tmpdir(), 'test-protection-temp-'))
+        roots.push(temp)
+        const run = (baseSha: string) => spawnSync('bash', ['-c', stepAfter(anchor)], {
+            cwd: repo.root, encoding: 'utf8',
+            env: { ...process.env, RUNNER_TEMP: temp, [baseVar]: baseSha, [headVar]: head },
+        })
+
+        const trusted = run(base)
+        expect(trusted.stdout).toContain('base copy')
+        expect(trusted.stdout).not.toContain('head copy')
+
+        const missing = run('0'.repeat(40))
+        expect(missing.status).toBe(1)
+        expect(missing.stdout).toContain(`Cannot read ${script} at the base revision`)
+        expect(missing.stdout).not.toContain('head copy')
+    })
+
+    it('version pull request scope runs the base parent copy of its guard', () => {
+        const step = workflow.slice(workflow.indexOf('Like the test-protection job'), workflow.indexOf('# Needs a public repository'))
+        expect(step).toContain('git show HEAD^1:.github/scripts/check-version-pr-scope.sh')
+        expect(step).toContain('bash "$RUNNER_TEMP/check-version-pr-scope.sh" HEAD^1 HEAD')
+        expect(workflow).not.toMatch(/bash \.github\/scripts\/check-version-pr-scope\.sh|node scripts\/check-test-protection\.mjs/)
     })
 })

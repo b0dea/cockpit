@@ -233,12 +233,28 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/check-test-protection.mjs "$BASE_SHA" "$HEAD_SHA" merge-base
+        run: |
+          set -euo pipefail
+          # The guard that judges a change must not come from the change: a pull request could
+          # loosen it and weaken tests in the same diff. Fail closed when the base has no copy
+          # (first commit, new branch, or a base that is no longer fetched).
+          if ! git show "$BASE_SHA:scripts/check-test-protection.mjs" > "$RUNNER_TEMP/check-test-protection.mjs"; then
+            echo "::error::Cannot read scripts/check-test-protection.mjs at the base revision $BASE_SHA, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
+            exit 1
+          fi
+          node "$RUNNER_TEMP/check-test-protection.mjs" "$BASE_SHA" "$HEAD_SHA" merge-base
       - if: github.event_name == 'push'
         env:
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
-        run: node scripts/check-test-protection.mjs "$BEFORE_SHA" "$AFTER_SHA" exact
+        run: |
+          set -euo pipefail
+          # Same as the pull request step: the base's guard, and fail closed without one.
+          if ! git show "$BEFORE_SHA:scripts/check-test-protection.mjs" > "$RUNNER_TEMP/check-test-protection.mjs"; then
+            echo "::error::Cannot read scripts/check-test-protection.mjs at the base revision $BEFORE_SHA, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
+            exit 1
+          fi
+          node "$RUNNER_TEMP/check-test-protection.mjs" "$BEFORE_SHA" "$AFTER_SHA" exact
 
   runtime-floor-negative:
     name: runtime floor negative control (node 20)
@@ -310,7 +326,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
-      - run: bash .github/scripts/check-version-pr-scope.sh HEAD^1 HEAD
+      # Like the test-protection job, the guard comes from the base parent, not from the change it judges.
+      - run: |
+          set -euo pipefail
+          if ! git show HEAD^1:.github/scripts/check-version-pr-scope.sh > "$RUNNER_TEMP/check-version-pr-scope.sh"; then
+            echo "::error::Cannot read .github/scripts/check-version-pr-scope.sh at the base parent commit, so this change cannot be checked against a trusted guard. Refusing to run the copy from the change itself."
+            exit 1
+          fi
+          bash "$RUNNER_TEMP/check-version-pr-scope.sh" HEAD^1 HEAD
 
   # Needs a public repository (or GitHub Advanced Security), so it skips itself in a private
   # repository instead of failing every dependency change there.

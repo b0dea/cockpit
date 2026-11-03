@@ -318,8 +318,12 @@ function ownerTests(root, paths, extras, wide) {
         }
         if (CHANGESET_FRAGMENT.test(path)) mapped.push(...testsInDirectory(root, [CHANGESET_FRAGMENT_TEST]))
         else if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
-        if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS))
-        if (path.startsWith('.github/')) mapped.push(...testsInDirectory(root, WORKFLOW_TESTS))
+        // Beside the fixed owners, any test that reads the file by name: the architecture contract
+        // pins workflow jobs and root scripts, and the ownership tests read CODEOWNERS. A manifest
+        // is matched by basename because tests reach it through relative URLs, so this
+        // over-selects rather than miss one.
+        if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS), ...testsReferencing(root, posix.basename(path)))
+        if (path.startsWith('.github/')) mapped.push(...testsInDirectory(root, WORKFLOW_TESTS), ...testsReferencing(root, path))
         if (SURFACES_PATH.test(path)) {
             mapped.push(...packageTestFiles(root).filter(candidate => candidate.startsWith(`${TEST_DIRECTORY}/surfaces/`)))
         }

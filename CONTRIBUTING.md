@@ -117,6 +117,10 @@ edit a generated reference by hand. How publication verifies these pages is in
 CI runs the build, tests, typecheck and documentation lint, plus the anonymisation scan as its own
 job; `.github/workflows/` defines its matrix.
 
+The test-protection and version-pull-request-scope jobs run the base revision's copy of their
+script, so a change cannot loosen the guard that judges it. A pull request can still delete either
+job from its own workflow; only a ruleset-required check closes that, which is a repository setting.
+
 ## The rule that is not negotiable
 
 **Nothing consumer-identifying enters the tracked tree.** No client or employer names, private

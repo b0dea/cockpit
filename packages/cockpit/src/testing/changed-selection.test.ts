@@ -351,16 +351,47 @@ describe('changed adjacent-owner test runner', () => {
             expect(fixture.dispatched()).toEqual(['packages/cockpit/src/packaging.slow.test.ts', 'packages/cockpit/src/supply-chain.test.ts'])
         })
 
-    it('runs the supply-chain, workflow-contract and test-protection tests when a workflow changes', () => {
-        const fixture = withOwners({ '.github/workflows/ci.yml': 'before\n' })
+    it('runs the fixed workflow owners and every test that reads the changed .github file by name', () => {
+        const fixture = withOwners({
+            '.github/workflows/ci.yml': 'before\n',
+            '.github/CODEOWNERS': 'before\n',
+            'packages/cockpit/src/jobs-reader.test.ts': "readFileSync(resolve(ROOT, '.github/workflows/ci.yml'))\n",
+            'packages/cockpit/src/owners-reader.test.ts': "new URL('../../../.github/CODEOWNERS', import.meta.url)\n",
+        })
         edit(fixture.root, '.github/workflows/ci.yml')
 
-        const result = fixture.run()
+        const workflow = fixture.run()
+
+        expect(workflow.status, workflow.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([
+            'packages/cockpit/src/docs-lint.contracts.test.ts', 'packages/cockpit/src/jobs-reader.test.ts',
+            'packages/cockpit/src/supply-chain.test.ts', 'packages/cockpit/src/test-protection.test.ts',
+        ])
+        rmSync(fixture.capture)
+        rmSync(join(fixture.root, '.vitest-reports'), { recursive: true, force: true })
+        execFileSync('git', ['checkout', '--quiet', '--', '.github/workflows/ci.yml'], { cwd: fixture.root })
+
+        edit(fixture.root, '.github/CODEOWNERS')
+        const owners = fixture.run()
+
+        expect(owners.status, owners.stderr).toBe(0)
+        expect(fixture.dispatched()).toContain('packages/cockpit/src/owners-reader.test.ts')
+        expect(fixture.dispatched()).not.toContain('packages/cockpit/src/jobs-reader.test.ts')
+    })
+
+    it('runs the tests that read a changed manifest by name beside the packaging owners', () => {
+        const fixture = withOwners({
+            'package.json': '{}\n',
+            'packages/cockpit/src/scripts-reader.test.ts': "JSON.parse(readFileSync(resolve(ROOT, 'package.json')))\n",
+        })
+        edit(fixture.root, 'package.json')
+
+        const result = fixture.run('--wide')
 
         expect(result.status, result.stderr).toBe(0)
         expect(fixture.dispatched()).toEqual([
-            'packages/cockpit/src/docs-lint.contracts.test.ts', 'packages/cockpit/src/supply-chain.test.ts',
-            'packages/cockpit/src/test-protection.test.ts',
+            'packages/cockpit/src/packaging.slow.test.ts', 'packages/cockpit/src/scripts-reader.test.ts',
+            'packages/cockpit/src/supply-chain.test.ts',
         ])
     })
 

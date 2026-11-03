@@ -12,10 +12,22 @@ const protectedPaths = new Set([
     'scripts/check-test-protection.mjs',
     'scripts/check-test-protection.d.mts',
     '.github/workflows/ci.yml',
+    // What decides which tests run and how their results are judged.
+    'vitest.config.ts',
+    'scripts/run-tests.mjs',
+    'scripts/run-changed-tests.mjs',
+    'scripts/immediate-failure-reporter.mjs',
+    'package.json',
 ])
+
+// The root manifest also carries dependency and metadata edits that say nothing about testing, so
+// only a removed or replaced script that runs tests, checks or the build counts there. A change
+// to `test` always removes its old line, which is why removal is what is measured.
+const MANIFEST_CONTROL_LINE = /^\s*"(?:pre|post)?(?:test|lint|typecheck|build)[^"]*"\s*:/
 
 function protectedPath(path) {
     return protectedPaths.has(path) || path.startsWith('packages/cockpit/src/guards/fixtures/')
+        || path.startsWith('packages/cockpit/src/test-support/') || path.startsWith('packages/cockpit/test-support/')
         || /^packages\/cockpit\/src\/.*\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/.test(path)
 }
 
@@ -43,7 +55,7 @@ export function classifyTestProtection(diff, commitMessages = '') {
     for (const line of diff.split('\n')) {
         if (line.startsWith('diff --git ')) {
             const names = /^diff --git ("(?:\\.|[^"])*"|a\/\S+) ("(?:\\.|[^"])*"|b\/\S+)$/.exec(line)
-            file = { old: names ? gitPath(names[1]).slice(2) : '', next: names ? gitPath(names[2]).slice(2) : '', hunk: false, removed: false, renamed: false, deleted: false, added: [] }
+            file = { old: names ? gitPath(names[1]).slice(2) : '', next: names ? gitPath(names[2]).slice(2) : '', hunk: false, removed: false, removedLines: [], renamed: false, deleted: false, added: [] }
             files.push(file)
         } else if (file) {
             if (line.startsWith('@@ ')) file.hunk = true
@@ -52,7 +64,7 @@ export function classifyTestProtection(diff, commitMessages = '') {
             else if (line.startsWith('rename from ')) { file.old = gitPath(line.slice(12)); file.renamed = true }
             else if (line.startsWith('rename to ')) file.next = gitPath(line.slice(10))
             else if (line.startsWith('deleted file mode ')) file.deleted = true
-            else if (line.startsWith('-') && line.slice(1).trim()) file.removed = true
+            else if (line.startsWith('-') && line.slice(1).trim()) { file.removed = true; file.removedLines.push(line.slice(1)) }
             else if (line.startsWith('+')) file.added.push(line.slice(1))
             else if (line.startsWith('Binary files ')) file.removed = true
         }
@@ -62,7 +74,8 @@ export function classifyTestProtection(diff, commitMessages = '') {
         if (!protectedPath(path)) continue
         if (item.deleted || item.next === '/dev/null') findings.push({ path, reason: 'protected control file deleted' })
         else if (item.renamed) findings.push({ path, reason: 'protected control file renamed' })
-        else if (item.removed) findings.push({ path, reason: 'protected control lines removed or replaced' })
+        else if (item.removed && (path !== 'package.json' || item.removedLines.length === 0
+            || item.removedLines.some(line => MANIFEST_CONTROL_LINE.test(line)))) findings.push({ path, reason: 'protected control lines removed or replaced' })
         const added = item.added.join('\n')
         if (/(?:\.\s*|\[\s*['"])(?:skip|todo|only|skipIf|runIf|fails)\b|\b(?:skip|todo|only)\s*:\s*true/.test(added)) {
             findings.push({ path, reason: 'test selection or expected-failure semantics added' })
