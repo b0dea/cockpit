@@ -2936,12 +2936,7 @@
           "maximum": 7200
         },
         "evaluators": {
-          "default": [
-            "codexcli",
-            "claudecode",
-            "opencode"
-          ],
-          "description": "Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode.",
+          "description": "Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.",
           "minItems": 1,
           "maxItems": 3,
           "type": "array",
