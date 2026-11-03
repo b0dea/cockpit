@@ -1,11 +1,11 @@
 # cockpit
 
-> cockpit runs the environment AI coding agents work in: one `cockpit.toml` declares a product's repositories, services and ports; `cockpit sync` renders each agent tool's instructions, skills and guards and runs your Compose stack over the live checkouts; `cockpit check` fails on drift; and a separate evaluator grades finished work. The package is not yet published on npm; install it from source as Getting started describes.
+> cockpit turns one `cockpit.toml` into the instructions, skills, permissions and guard hook that Claude Code, Codex CLI and OpenCode each expect: `cockpit sync` renders them and `cockpit check` fails on drift, and you can adopt just that. Optionally it also runs your Compose stack over the live checkouts with leased ports, and a separate evaluator grades finished work. Pre-1.0, macOS and Linux. The package is not yet published on npm; install it from source as Getting started describes.
 
 ## Set cockpit up
 
 - [Getting started](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md): the on-ramp, the safety contract and exact non-interactive commands for an agent setting cockpit up, and the bring-up sequence
-- [README](https://raw.githubusercontent.com/b0dea/cockpit/main/README.md): what cockpit is, the quickstart, and its current limits
+- [README](https://raw.githubusercontent.com/b0dea/cockpit/main/README.md): what cockpit is, a sample `cockpit.toml`, the quickstart with its requirements and caveats
 
 ## Reference
 

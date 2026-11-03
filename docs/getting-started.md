@@ -29,7 +29,7 @@ Install cockpit as an exact dev dependency of the repository and start `init`:
 
 ```sh
 npm install --save-dev --save-exact @b00dea/cockpit
-npx cockpit init . --target claudecode
+npx --no cockpit init . --target claudecode
 ```
 
 Replace `claudecode` with `codexcli` or `opencode` for those tools, or list several, yours first
