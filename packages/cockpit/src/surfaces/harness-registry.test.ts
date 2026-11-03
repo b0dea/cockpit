@@ -6,6 +6,7 @@ import {
     SURFACE_EXECUTION_CONTROL_PATHS,
     SURFACE_PUBLICATION_ANCHORS,
     SURFACE_TARGETS,
+    isMeasurementDate,
     type GuardSurfaceTarget,
     type SurfaceTarget,
 } from './harness-registry.js'
@@ -43,6 +44,16 @@ describe('shipped harness registry', () => {
         expect(HARNESS_REGISTRY.every(row => Object.isFrozen(row) && Object.isFrozen(row.outputs)
             && Object.isFrozen(row.outputs.permissions)
             && Object.isFrozen(row.guard) && Object.isFrozen(row.native))).toBe(true)
+    })
+
+    it('accepts a measurement date only as a real calendar day that is not in the future', () => {
+        const today = new Date('2026-11-03T12:00:00.000Z')
+        expect(['2026-11-03', '2026-09-26', '2024-02-29'].map(date => isMeasurementDate(date, today))).toEqual([true, true, true])
+        expect(['2026-11-04', '2026-02-30', '2026-9-26', '2026-11-03T00:00:00Z', '', 20261103].map(date => isMeasurementDate(date, today)))
+            .toEqual([false, false, false, false, false, false])
+        // Every recorded date holds against the real clock, so a typo in the future fails here and not at a user's machine.
+        const recorded = HARNESS_REGISTRY.flatMap(row => [row.native.measuredOn, ...('firing' in row.guard ? [row.guard.firing.measuredOn] : [])])
+        expect(recorded.every(date => isMeasurementDate(date))).toBe(true)
     })
 
     it('keeps all shipped and guard-capable target types compiler-derived from the owner', () => {

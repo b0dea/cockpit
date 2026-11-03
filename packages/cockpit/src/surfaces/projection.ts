@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 
 import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
-import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type GuardSurfaceTarget, type HarnessRegistryRow } from './harness-registry.js'
+import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, isMeasurementDate, type GuardSurfaceTarget, type HarnessRegistryRow } from './harness-registry.js'
 
 export const mechanism = {
     id: 'sibling-projection',
@@ -111,7 +111,7 @@ export interface NativeProjection {
     readonly capability: 'instructed'
     // `not_applicable`: the dated run settled the cell; `pending_evidence`: part of it is still unmeasured.
     readonly evidence: 'pending_evidence' | 'not_applicable'
-    readonly characterizedOn: '2026-11-02'
+    readonly characterizedOn: string
     readonly provenance: string
 }
 
@@ -753,7 +753,7 @@ function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, 
     const fact = issuedInstructionCapabilities.has(capabilities)
         ? capabilities.find(row => row.target === targetName) : undefined
     if (!fact || !issuedInstructionCapabilities.has(fact) || fact.capability !== 'instructed'
-        || fact.mechanism === 'rulesync-rules' || fact.characterizedOn !== '2026-11-02') {
+        || fact.mechanism === 'rulesync-rules' || !isMeasurementDate(fact.characterizedOn)) {
         throw new Error(`instruction capability is unavailable for ${targetName}`)
     }
     if (targetName === 'claudecode') return {
