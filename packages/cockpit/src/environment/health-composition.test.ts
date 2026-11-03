@@ -313,7 +313,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         // Codex on PATH says nothing about a cockpit whose list names only Claude Code and OpenCode.
         await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[work]\nevaluators = ["claudecode", "opencode"]\n`)
         expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ code: 'EVALUATOR_UNAVAILABLE',
-            message: expect.stringMatching(/Claude Code \(claude\) is not on PATH .*; OpenCode \(opencode\) is not on PATH/) }))
+            message: expect.stringMatching(/Claude Code \(claude\) is not on PATH; install it with .*; OpenCode \(opencode\) is not on PATH; install it/) }))
         await writeFile(join(candidate.root, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
 
