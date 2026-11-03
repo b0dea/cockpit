@@ -192,14 +192,6 @@ export async function runGuardEvaluationApplication(
             if (result.kind !== 'complete') throw new RefusalError('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
             return result
         }
-        const module = await read(dirname(identity.module), basename(identity.module), 16_777_216)
-        if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
-        const loaded = await adapters.loadConfig(identity.configPath)
-        if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath || loaded.result.source.sha256 !== identity.configSha256) {
-            return unavailable(guardHeld(identity, `${identity.configPath} changed since the guards were generated`,
-                'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' }))
-        }
-        const config = loaded.result.config
         const manifestPath = '.cockpit/generated-environment-ownership.json'
         const registration = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }[harness]
         // The configuration rides in the same batch: the policy pin applies an edit to exactly these bytes.
@@ -217,8 +209,24 @@ export async function runGuardEvaluationApplication(
                 return [request.path, result] as const
             }))
         }
+        // The module, configuration and publication reads are independent and each costs a child
+        // process, so they run together. Results are consumed in the order the checks below need, so
+        // the first failing check is the one reported.
+        const settle = <T>(work: Promise<T>) => work.then(value => ({ value }), (error: unknown) => ({ error }))
+        const unwrap = <T>(settled: { value: T } | { error: unknown }): T => { if ('error' in settled) throw settled.error; return settled.value }
+        const modulePending = settle(read(dirname(identity.module), basename(identity.module), 16_777_216))
+        const configPending = settle(adapters.loadConfig(identity.configPath))
+        const publicationPending = settle(readPublication())
+        const module = unwrap(await modulePending)
+        if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
+        const loaded = unwrap(await configPending)
+        if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath || loaded.result.source.sha256 !== identity.configSha256) {
+            return unavailable(guardHeld(identity, `${identity.configPath} changed since the guards were generated`,
+                'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' }))
+        }
+        const config = loaded.result.config
         let publication: Awaited<ReturnType<typeof readPublication>>
-        try { publication = await readPublication() }
+        try { publication = unwrap(await publicationPending) }
         catch (error) {
             if (!(error instanceof GuardFileMissing)) throw error
             return unavailable(GUARD_RESTORABLE.has(error.path)
