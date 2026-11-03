@@ -148,7 +148,7 @@ attempt.
 
 ## Cockpit generated ownership
 
-The record of every file, symlink and delimited region of a shared file that cockpit wrote, with
+The record of every file and delimited region of a shared file that cockpit wrote, with
 the bytes it expects. It lets `check` detect drift and `sync` replace its own output without
 touching anything else.
 

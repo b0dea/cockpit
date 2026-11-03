@@ -12,12 +12,12 @@ import { SURFACE_TARGETS } from './harness-registry.js'
 export const mechanism = {
     id: 'surface-ownership',
     module: 'packages/cockpit/src/surfaces/ownership.ts',
-    exports: ['classifySurfaceOwnership', 'symlinkSource', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
+    exports: ['classifySurfaceOwnership', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
         'encodeOwnershipManifest', 'parseOwnershipManifest', 'projectGeneratedPathFacts',
         'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths', 'SURFACE_HAND_EDIT_FIX', 'SURFACE_UNRECORDED_FIX'],
 } as const
 
-export type SurfaceOwnership = 'whole-file' | 'symlink' | 'shared-region'
+export type SurfaceOwnership = 'whole-file' | 'shared-region'
 export type SurfaceScope = 'always' | 'scoped'
 export type SurfaceCapability = 'enforced' | 'instructed'
 
@@ -30,19 +30,10 @@ interface SurfaceEntryBase {
     readonly schemaVersion: 1
 }
 
-export type SymlinkSource = Readonly<{ sibling: string; path: string }>
-
 export interface OpenCodeRootMember { readonly key: string; readonly valueBytes: string }
 
 export type SurfaceDesiredEntry =
     | Readonly<SurfaceEntryBase & { kind: 'file'; ownership: 'whole-file'; bytes: string; sha256: string }>
-    | Readonly<SurfaceEntryBase & {
-          kind: 'symlink'; ownership: 'symlink'; target: string
-          // The link is cockpit's; the guide it reaches is the sibling team's file. Only the sibling
-          // slug and the guide's path inside that sibling are recorded, so a clone at another path,
-          // a checkout or an edit to the guide leaves the committed record unchanged.
-          source: SymlinkSource
-      }>
     | Readonly<SurfaceEntryBase & {
           kind: 'shared-region'; ownership: 'shared-region'; regionId: string
           region: Readonly<
@@ -53,10 +44,6 @@ export type SurfaceDesiredEntry =
 
 export type SurfacePriorOwnedEntry =
     | Readonly<SurfaceEntryBase & { kind: 'file'; ownership: 'whole-file'; sha256: string }>
-    | Readonly<SurfaceEntryBase & {
-          kind: 'symlink'; ownership: 'symlink'; target: string
-          source: SymlinkSource
-      }>
     | Readonly<SurfaceEntryBase & { kind: 'shared-region'; ownership: 'shared-region'; regionId: string
           region: Readonly<
               | { format: 'markdown-delimited'; begin: string; end: string; sha256: string }
@@ -95,7 +82,6 @@ const SHARED_FILE_MAX_BYTES = 16_777_216
 const MARKDOWN = Object.freeze({
     'AGENTS.md': { regionId: 'cockpit-instructions', begin: '<!-- cockpit:instructions:start -->', end: '<!-- cockpit:instructions:end -->' },
     'CLAUDE.md': { regionId: 'cockpit-instructions', begin: '<!-- cockpit:instructions:start -->', end: '<!-- cockpit:instructions:end -->' },
-    'CLAUDE.local.md': { regionId: 'cockpit-instructions', begin: '<!-- cockpit:instructions:start -->', end: '<!-- cockpit:instructions:end -->' },
 } as const)
 const OPENCODE_PATH = 'opencode.jsonc'
 const OPENCODE_REGION = 'cockpit-opencode-root-properties'
@@ -149,14 +135,6 @@ function exact(value: JsonSnapshotObject, required: readonly string[]): boolean 
     return keys.length === expected.length && keys.every((key, index) => key === expected[index])
 }
 
-export function symlinkSource(value: unknown): value is SymlinkSource {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-    const record = value as Record<string, unknown>
-    const keys = Object.keys(record).sort()
-    return keys.length === 2 && keys[0] === 'path' && keys[1] === 'sibling'
-        && typeof record.sibling === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(record.sibling) && safePath(record.path)
-}
-
 function digest(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex') }
 
 function refusal(code: SurfaceDiagnostic['code'], message: string, target?: string, fix?: string): Extract<SurfaceOwnershipResult, { kind: 'refusal' }> {
@@ -170,7 +148,6 @@ function sortedUniqueStrings(value: JsonSnapshot | undefined, allowed?: Readonly
 
 function entryBytes(entry: SurfaceDesiredEntry): number {
     if (entry.kind === 'file') return Buffer.byteLength(entry.bytes)
-    if (entry.kind === 'symlink') return Buffer.byteLength(entry.target)
     return entry.region.format === 'markdown-delimited' ? Buffer.byteLength(entry.region.bytes)
         : entry.region.members.reduce((total, member) => total + Buffer.byteLength(member.key) + Buffer.byteLength(member.valueBytes), 0)
 }
@@ -184,10 +161,6 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
             || value.ownership !== 'whole-file' || typeof value.bytes !== 'string' || Buffer.byteLength(value.bytes) > MAX_FILE_BYTES
             || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256) || digest(value.bytes) !== value.sha256
             || Object.hasOwn(MARKDOWN, value.path) || value.path === OPENCODE_PATH) return undefined
-    } else if (value.kind === 'symlink') {
-        if (!exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'target', 'source'])
-            || value.ownership !== 'symlink' || typeof value.target !== 'string' || value.target.length === 0 || Buffer.byteLength(value.target) > MAX_FILE_BYTES
-            || /[\x00-\x1f\x7f]/.test(value.target) || !symlinkSource(value.source)) return undefined
     } else if (value.kind === 'shared-region') {
         if (!exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
             || value.ownership !== 'shared-region' || typeof value.regionId !== 'string' || !object(value.region)) return undefined
@@ -591,7 +564,6 @@ function ownershipPayload(prepared: OwnershipManifestInput): OwnershipManifestPa
                 const { bytes: _bytes, ...prior } = entry
                 return prior
             }
-            if (entry.kind === 'symlink') return entry
             if (entry.region.format === 'markdown-delimited') {
                 const { bytes: _bytes, ...region } = entry.region
                 return Object.freeze({ ...entry, region })
@@ -690,10 +662,6 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
             if (row.kind === 'file') {
                 if (!exactKeys(row, [...producerKeys, 'sha256']) || row.ownership !== 'whole-file'
                     || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
-            } else if (row.kind === 'symlink') {
-                const sourceRow = ownRecord(row.source)
-                if (!exactKeys(row, [...producerKeys, 'target', 'source']) || row.ownership !== 'symlink'
-                    || typeof row.target !== 'string' || !sourceRow || !symlinkSource(sourceRow)) return undefined
             } else if (row.kind === 'shared-region') {
                 const region = ownRecord(row.region)
                 if (!exactKeys(row, [...producerKeys, 'regionId', 'region']) || row.ownership !== 'shared-region'
@@ -881,11 +849,6 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
                         else if (parsed && !parsed.owner && !parsed.members.some(member => entry.region.format === 'opencode-json-root-properties' && entry.region.keys.includes(member.key))) state = 'missing'
                     }
                 }
-            } else if (row.kind === 'symlink' && entry.kind === 'symlink' && typeof row.identity === 'string' && row.identity.length > 0
-                && typeof row.target === 'string') {
-                // Ownership is the link's own text. What the target holds belongs to the sibling, and
-                // its edits must never make the link look foreign.
-                state = row.target === entry.target ? 'unchanged' : 'modified'
             }
         }
         const diagnostics: readonly SurfaceDiagnostic[] = state === 'unchanged' || state === 'missing' && fact.allowsMissing ? Object.freeze([])

@@ -79,13 +79,12 @@ describe('generated ownership manifest', () => {
         expect(projectGeneratedPathFacts(encoded.manifest, authority, [{ producer: 'surface-render', applicability: 'sibling-unavailable', path: entry.path }])).toMatchObject({ kind: 'complete', facts: [{ declaration: { applicability: 'sibling-unavailable' }, allowsMissing: false }] })
     })
 
-    it('binds surface producer facts to shared hashes and machine-independent symlink sources', () => {
-        const link: SurfaceDesiredEntry = { kind: 'symlink', path: 'guide.md', harnesses: ['codexcli'], scope: 'always',
-            capability: 'instructed', writer: 'cockpit', schemaVersion: 1, ownership: 'symlink', target: '../sibling/AGENTS.md',
-            source: { sibling: 'sibling', path: 'AGENTS.md' } }
-        expect(encodeOwnershipManifest({ ...manifestInput(), surfaces: [link] }).bytes).not.toMatch(/"(?:root|identity)"|\/synthetic/)
-        expect(() => encodeOwnershipManifest({ ...manifestInput(), surfaces: [{ ...link, source: { sibling: 'sibling', path: '/synthetic/sibling/AGENTS.md' } }] })).toThrow()
-        const encoded = encodeOwnershipManifest({ ...manifestInput(), surfaces: [markdown(), link] })
+    it('binds surface producer facts to shared hashes and records no surface link', () => {
+        // Sibling guides are copied into AGENTS.md now, so no surface entry is a link.
+        const link = { kind: 'symlink', path: 'guide.md', harnesses: ['codexcli'], scope: 'always', capability: 'instructed',
+            writer: 'cockpit', schemaVersion: 1, ownership: 'symlink', target: '../sibling/AGENTS.md', source: { sibling: 'sibling', path: 'AGENTS.md' } }
+        expect(() => encodeOwnershipManifest({ ...manifestInput(), surfaces: [link as unknown as SurfaceDesiredEntry] })).toThrow()
+        const encoded = encodeOwnershipManifest({ ...manifestInput(), surfaces: [markdown()] })
         for (const entry of encoded.manifest.entries.filter(entry => 'harnesses' in entry)) {
             const declaration = { producer: 'surface-render', applicability: 'declared-before-sync', entry }
             const result = projectGeneratedPathFacts(encoded.manifest, authority, [declaration])
@@ -94,11 +93,7 @@ describe('generated ownership manifest', () => {
             const fact = result.facts.find(fact => fact.path === entry.path)!
             expect(fact.allowsMissing).toBe(true)
             expect('harnesses' in fact.entry && Object.isFrozen(fact.entry.harnesses)).toBe(true)
-            const changed = entry.kind === 'symlink' ? [
-                { ...entry, target: '../other/AGENTS.md' },
-                { ...entry, source: { ...entry.source, sibling: 'other' } },
-                { ...entry, source: { ...entry.source, path: 'CLAUDE.md' } },
-            ] : entry.kind === 'shared-region' ? [{ ...entry, region: { ...entry.region, sha256: digest('wrong') } }] : []
+            const changed = entry.kind === 'shared-region' ? [{ ...entry, region: { ...entry.region, sha256: digest('wrong') } }] : []
             for (const tampered of changed) expect(projectGeneratedPathFacts(encoded.manifest, authority, [{ ...declaration, entry: tampered }])).toMatchObject({ kind: 'refusal' })
         }
         const payload = JSON.parse(encoded.bytes)
@@ -108,7 +103,7 @@ describe('generated ownership manifest', () => {
     })
 })
 
-function markdown(bytes = 'generated\n', path: 'AGENTS.md' | 'CLAUDE.md' | 'CLAUDE.local.md' = 'AGENTS.md'): SurfaceDesiredEntry {
+function markdown(bytes = 'generated\n', path: 'AGENTS.md' | 'CLAUDE.md' = 'AGENTS.md'): SurfaceDesiredEntry {
     return {
         kind: 'shared-region', path, harnesses: ['codexcli', 'opencode'], scope: 'always', capability: 'instructed',
         writer: 'cockpit', schemaVersion: 1, ownership: 'shared-region', regionId: 'cockpit-instructions',
@@ -161,7 +156,7 @@ describe('surface ownership', () => {
     })
 
     it('rejects reserved ownership markers in every forced Markdown body', () => {
-        for (const path of ['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md'] as const) {
+        for (const path of ['AGENTS.md', 'CLAUDE.md'] as const) {
             for (const marker of ['<!-- cockpit:instructions:start -->', '<!-- cockpit:instructions:end -->']) {
                 expect(classifySurfaceOwnership({
                     configuredHarnesses: ['codexcli', 'opencode'],
@@ -304,20 +299,12 @@ describe('confined generated ownership', () => {
         expect(bytes).toEqual(Uint8Array.from([0xc3, 0x28]))
     })
 
-    it('rejects undecodable shared bytes and classifies an owned link by its own target, not by the guide it reaches', () => {
-        const target = '../sibling/AGENTS.md'
-        const link: SurfaceDesiredEntry = { kind: 'symlink', path: 'guide.md', harnesses: ['codexcli'], scope: 'always', capability: 'instructed',
-            writer: 'cockpit', schemaVersion: 1, ownership: 'symlink', target, source: { sibling: 'sibling', path: 'AGENTS.md' } }
-        const manifest = encodeOwnershipManifest({ ...manifestInput(), owned: [], surfaces: [markdown(), link] }).manifest
+    it('rejects undecodable shared bytes', () => {
+        const manifest = encodeOwnershipManifest({ ...manifestInput(), owned: [], surfaces: [markdown()] }).manifest
         const projected = projectGeneratedPathFacts(manifest, authority, [])
         if (projected.kind !== 'complete') throw new Error('expected facts')
-        const rows = [{ path: 'AGENTS.md', kind: 'file', bytes: Uint8Array.of(0xff), confinement: 'confined', identity: 'inode' },
-            { path: 'guide.md', kind: 'symlink', target, confinement: 'confined', identity: 'link-inode' }]
-        expect(classifyGeneratedPaths(projected.facts, rows)).toMatchObject({ kind: 'complete', paths: [{ state: 'unknown' }, { state: 'unchanged' }] })
-        expect(classifyGeneratedPaths(projected.facts, [rows[0], { ...rows[1], target: '../elsewhere/AGENTS.md' }])).toMatchObject({ kind: 'complete', paths: [{ state: 'unknown' }, { state: 'modified' }] })
-        expect(classifyGeneratedPaths(projected.facts, [rows[0], { path: 'guide.md', kind: 'file', bytes: Uint8Array.of(0x61), confinement: 'confined', identity: 'file-inode' }]))
-            .toMatchObject({ kind: 'complete', paths: [{ state: 'unknown' }, { state: 'unknown' }] })
-        for (const confinement of ['dangling', 'escaping']) expect(classifyGeneratedPaths(projected.facts, [rows[0], { ...rows[1], confinement }])).toMatchObject({ kind: 'complete', paths: [{ state: 'unknown' }, { state: 'unknown' }] })
+        expect(classifyGeneratedPaths(projected.facts, [{ path: 'AGENTS.md', kind: 'file', bytes: Uint8Array.of(0xff), confinement: 'confined', identity: 'inode' }]))
+            .toMatchObject({ kind: 'complete', paths: [{ state: 'unknown' }] })
     })
 })
 

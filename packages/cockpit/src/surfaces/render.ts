@@ -92,7 +92,7 @@ export interface SurfaceRenderInput {
 
 const SHA256 = /^[a-f0-9]{64}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
-const MARKDOWN_PATHS = new Set(['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md'])
+const MARKDOWN_PATHS = new Set(['AGENTS.md', 'CLAUDE.md'])
 const BUILT_INS = new Set<SurfaceTarget>(SURFACE_TARGETS)
 const NATIVE_BUILT_INS = new Set<SurfaceTarget>(GUARD_SURFACE_TARGETS)
 const SKILL_REFERENCE_PATH = /^references\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/

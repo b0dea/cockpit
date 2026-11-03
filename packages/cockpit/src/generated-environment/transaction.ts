@@ -1568,9 +1568,7 @@ function classifyEntry(fact: GeneratedPathFact | undefined, current: AnchoredEnt
     const entry = fact.entry
     const observation = current.kind === 'file' ? { path: entry.path, kind: 'file', bytes: current.bytes,
         identity: JSON.stringify(current.identity), confinement: 'confined' }
-        : current.kind === 'symlink' && entry.kind === 'symlink' ? { path: entry.path, kind: 'symlink', target: current.target,
-            identity: JSON.stringify(current.identity), source: entry.source, confinement: 'confined' }
-            : { path: entry.path, kind: current.kind, confinement: current.kind === 'missing' ? 'confined' : 'unknown' }
+        : { path: entry.path, kind: current.kind, confinement: current.kind === 'missing' ? 'confined' : 'unknown' }
     const classified = classifyGeneratedPaths([fact], [observation])
     return classified.kind === 'complete' ? classified.paths[0]?.state : undefined
 }
@@ -1806,30 +1804,26 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
                 const removed = removeSharedOwnership(new TextDecoder('utf-8', { fatal: true }).decode(current.bytes), previous, prior)
                 if (removed.kind !== 'complete' || mutation.operation !== 'write-file' || mutation.bytes !== removed.bytes
                     || mutation.sha256 !== sha256(removed.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'shared removal must preserve the exact foreign postimage', path)
-            } else if (mutation.operation !== (previous.kind === 'symlink' ? 'remove-symlink' : 'remove-file')) {
+            } else if (mutation.operation !== 'remove-file') {
                 return refuse('GENERATED_PUBLICATION_FAILED', 'removal does not name the exact owned leaf kind', path)
             }
         } else {
             if (mutation.phase !== 'desired' || mutation.operation.startsWith('remove-') || !previous && current.kind !== 'missing' && desired.kind !== 'shared-region') {
                 return refuse('GENERATED_PUBLICATION_FAILED', 'write destination lacks applicable ownership', path)
             }
-            if (desired.kind === 'symlink') {
-                if (mutation.operation !== 'write-symlink' || mutation.target !== desired.target) return refuse('GENERATED_PUBLICATION_FAILED', 'symlink publication differs from its exact declaration', path)
-            } else {
-                if (mutation.operation !== 'write-file' || typeof mutation.bytes !== 'string' || Buffer.byteLength(mutation.bytes) > MAX_GENERATED_BYTES
-                    || mutation.sha256 !== sha256(mutation.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'file publication has invalid bounded bytes', path)
-                const post = { kind: 'file' as const, bytes: Buffer.from(mutation.bytes), sha256: mutation.sha256, identity: current.kind === 'file' ? current.identity
-                    : { root: captured.rootIdentity, chain: [], file: captured.rootIdentity }, mode: 0o600 }
-                if (classifyEntry(nextFact, post) !== 'unchanged') return refuse('GENERATED_PUBLICATION_FAILED', 'write postimage differs from its declared ownership', path)
-                if (desired.kind === 'shared-region') {
-                    const before = current.kind === 'file' ? new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) : desired.region.format === 'opencode-json-root-properties' ? '{}' : ''
-                    const action = captured.surfaceActions?.find(row => row.path === path)
-                    if (!action || action.kind !== 'write' || action.desired.kind !== 'shared-region') return refuse('GENERATED_PUBLICATION_FAILED', 'shared write has no matching planned surface write', path)
-                    // A deleted shared file has no foreign bytes left to protect, so it is recreated from an
-                    // empty base exactly as the surface planner did; the prior region would demand bytes that are gone.
-                    const rendered = renderSharedPostimage(before, action.desired, current.kind === 'missing' ? undefined : previous)
-                    if (rendered.kind !== 'complete' || rendered.bytes !== mutation.bytes || action.postimage !== mutation.bytes) return refuse('GENERATED_PUBLICATION_FAILED', 'shared write would change foreign bytes', path)
-                }
+            if (mutation.operation !== 'write-file' || typeof mutation.bytes !== 'string' || Buffer.byteLength(mutation.bytes) > MAX_GENERATED_BYTES
+                || mutation.sha256 !== sha256(mutation.bytes)) return refuse('GENERATED_PUBLICATION_FAILED', 'file publication has invalid bounded bytes', path)
+            const post = { kind: 'file' as const, bytes: Buffer.from(mutation.bytes), sha256: mutation.sha256, identity: current.kind === 'file' ? current.identity
+                : { root: captured.rootIdentity, chain: [], file: captured.rootIdentity }, mode: 0o600 }
+            if (classifyEntry(nextFact, post) !== 'unchanged') return refuse('GENERATED_PUBLICATION_FAILED', 'write postimage differs from its declared ownership', path)
+            if (desired.kind === 'shared-region') {
+                const before = current.kind === 'file' ? new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) : desired.region.format === 'opencode-json-root-properties' ? '{}' : ''
+                const action = captured.surfaceActions?.find(row => row.path === path)
+                if (!action || action.kind !== 'write' || action.desired.kind !== 'shared-region') return refuse('GENERATED_PUBLICATION_FAILED', 'shared write has no matching planned surface write', path)
+                // A deleted shared file has no foreign bytes left to protect, so it is recreated from an
+                // empty base exactly as the surface planner did; the prior region would demand bytes that are gone.
+                const rendered = renderSharedPostimage(before, action.desired, current.kind === 'missing' ? undefined : previous)
+                if (rendered.kind !== 'complete' || rendered.bytes !== mutation.bytes || action.postimage !== mutation.bytes) return refuse('GENERATED_PUBLICATION_FAILED', 'shared write would change foreign bytes', path)
             }
         }
         checks.push(Object.freeze({ path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1, ...(current.kind === 'file' ? { identity: current.identity } : {}) }))

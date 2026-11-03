@@ -6,7 +6,6 @@ import {
     classifySurfaceOwnership,
     removeSharedOwnership,
     renderSharedPostimage,
-    symlinkSource,
     SURFACE_HAND_EDIT_FIX,
     SURFACE_UNRECORDED_FIX,
     type SurfaceDesiredEntry,
@@ -76,11 +75,6 @@ function priorEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Surfa
             && value.ownership === 'whole-file' && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
             ? value as unknown as SurfacePriorOwnedEntry : undefined
     }
-    if (value.kind === 'symlink') {
-        return exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'target', 'source'])
-            && value.ownership === 'symlink' && typeof value.target === 'string' && symlinkSource(value.source)
-            ? value as unknown as SurfacePriorOwnedEntry : undefined
-    }
     if (value.kind !== 'shared-region' || value.ownership !== 'shared-region'
         || !exact(value, ['kind', 'path', 'harnesses', 'scope', 'capability', 'writer', 'schemaVersion', 'ownership', 'regionId', 'region'])
         || typeof value.regionId !== 'string' || !object(value.region) || typeof value.region.sha256 !== 'string' || !SHA256.test(value.region.sha256)) return undefined
@@ -108,7 +102,6 @@ function observedEntry(value: JsonSnapshot): SurfaceObservedEntry | undefined {
 
 function priorMatchesObserved(prior: SurfacePriorOwnedEntry, observed: SurfaceObservedEntry): boolean {
     if (prior.kind === 'file') return observed.kind === 'file' && observed.sha256 === prior.sha256
-    if (prior.kind === 'symlink') return observed.kind === 'symlink' && observed.target === prior.target
     return observed.kind === 'file'
 }
 
@@ -148,8 +141,7 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
     for (const desired of ownership.entries) {
         const current = observedByPath.get(desired.path) ?? { path: desired.path, kind: 'missing' as const }
         const previous = priorByPath.get(desired.path)
-        if (desired.kind === 'file' && current.kind === 'file' && current.sha256 === desired.sha256
-            || desired.kind === 'symlink' && current.kind === 'symlink' && current.target === desired.target) {
+        if (desired.kind === 'file' && current.kind === 'file' && current.sha256 === desired.sha256) {
             if (!previous || !priorMatchesObserved(previous, current)) return refuse('this path already holds exactly what sync would write, but no ownership record names it, so sync cannot tell whether cockpit or a person put it there', desired.path, SURFACE_UNRECORDED_FIX)
             continue
         }

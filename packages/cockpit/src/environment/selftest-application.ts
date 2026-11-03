@@ -364,7 +364,6 @@ function selectedEntryBytes(probe: PlannedSelftestProbe): string | undefined {
     })
     if (!selected) return undefined
     if (selected.kind === 'file') return selected.bytes
-    if (selected.kind === 'symlink') return JSON.stringify({ target: selected.target, source: selected.source })
     return selected.region.format === 'markdown-delimited'
         ? selected.region.bytes
         : `${JSON.stringify(Object.fromEntries(selected.region.members.map((member) => [member.key, JSON.parse(member.valueBytes)])), null, 2)}\n`

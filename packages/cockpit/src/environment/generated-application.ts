@@ -3521,10 +3521,7 @@ async function classifyOwnedState(
         if (!fact) continue
         facts.push(fact)
         if (observed.kind === 'file') observations.push({ path, kind: 'file', bytes: observed.bytes, confinement: 'confined', identity: sourceIdentity(observed.identity) })
-        else if (observed.kind === 'symlink' && fact.entry.kind === 'symlink') {
-            // The anchored read reported the link itself, inside the cockpit root, without following it.
-            observations.push({ path, kind: 'symlink', target: observed.target, identity: JSON.stringify(observed.identity), confinement: 'confined' })
-        } else observations.push({ path, kind: observed.kind, confinement: observed.kind === 'missing' ? 'confined' : 'unknown' })
+        else observations.push({ path, kind: observed.kind, confinement: observed.kind === 'missing' ? 'confined' : 'unknown' })
     }
     return classifyGeneratedPaths(facts, observations)
 }
@@ -3584,17 +3581,13 @@ function surfaceMutations(
         if (!expected) return undefined
         if (action.kind === 'write') {
             const compactAnchor = compactSurfacePaths.has(action.path) ? compactAnchorFor(action.path) : undefined
-            if (action.desired.kind === 'symlink') result.push(Object.freeze({ path: action.path, phase: 'desired', operation: 'write-symlink', target: action.desired.target, expected,
+            const bytes = action.desired.kind === 'file' ? action.desired.bytes : action.postimage
+            if (bytes === undefined) return undefined
+            result.push(Object.freeze({ path: action.path, phase: 'desired', operation: 'write-file', bytes, sha256: sha256(bytes), expected,
                 ...(compactAnchor ? { compactAnchor } : {}) }))
-            else {
-                const bytes = action.desired.kind === 'file' ? action.desired.bytes : action.postimage
-                if (bytes === undefined) return undefined
-                result.push(Object.freeze({ path: action.path, phase: 'desired', operation: 'write-file', bytes, sha256: sha256(bytes), expected,
-                    ...(compactAnchor ? { compactAnchor } : {}) }))
-            }
         } else if (action.postimage !== undefined) result.push(Object.freeze({ path: action.path, phase: 'stale', operation: 'write-file', bytes: action.postimage,
             sha256: sha256(action.postimage), expected }))
-        else result.push(Object.freeze({ path: action.path, phase: 'stale', operation: action.priorOwned.kind === 'symlink' ? 'remove-symlink' : 'remove-file', expected }))
+        else result.push(Object.freeze({ path: action.path, phase: 'stale', operation: 'remove-file', expected }))
     }
     return Object.freeze(result)
 }

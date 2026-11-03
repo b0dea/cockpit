@@ -584,7 +584,7 @@ synthetic example shows a Compose file, a generated copy of a secrets template,
 ### Check and sync
 
 `check` works out what the generated files should contain now and compares that with every whole
-file, symlink target and shared-file region listed in the ownership manifest (see
+file and shared-file region listed in the ownership manifest (see
 [generated ownership](concepts.md#cockpit-generated-ownership)). It reports drift and never changes
 an output. `sync --dry-run` does the same preparation and lists the writes and removals, in order,
 without changing anything. `sync` writes the full set as one recoverable filesystem transaction.
@@ -598,7 +598,7 @@ while the generated-file transaction reports its own recovery result.
 Removing a stale file needs a separate approval of the exact path, operation and current bytes that
 the dry run showed. Plain `sync` refuses to apply it; `sync --interactive` shows the request and
 asks you to type its exact digest. After approval and a final recheck, cockpit can remove an
-unchanged whole file or symlink, or its own region in a shared file. Files cockpit did not write,
+unchanged whole file, or its own region in a shared file. Files cockpit did not write,
 and bytes outside its regions, are kept. A stale path that changed or is unsafe needs manual
 reconciliation before you retry.
 

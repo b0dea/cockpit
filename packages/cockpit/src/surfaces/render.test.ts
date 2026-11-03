@@ -143,7 +143,6 @@ describe('surface rendering', () => {
             kind: 'shared-region', harnesses: [...input().configuredHarnesses].sort(),
             region: { bytes: `base instructions\n${block}\n` },
         })
-        expect(result.entries.some(entry => entry.kind === 'symlink')).toBe(false)
         expect(render(digest('other guide\n'))).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
     })
 
