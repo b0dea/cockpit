@@ -846,12 +846,11 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
         const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'), new Date().toISOString(), env)
         const observation = await observeSetupCheckout(input)
         const calls = (await readFile(log, 'utf8')).split('CALL\n').filter(Boolean)
+        // The main checkout is the current one, so its identity is probed once and confirmed once.
         expect(calls).toEqual([
             ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
             ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'config', '--show-origin', '--null', '--list', ''].join('\n'),
             ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'worktree', 'list', '--porcelain', '-z', ''].join('\n'),
-            ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
-            ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
             ['-c', 'core.excludesFile=/dev/null', '-C', repository.main, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir', ''].join('\n'),
         ])
 
