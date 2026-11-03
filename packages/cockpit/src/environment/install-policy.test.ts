@@ -15,7 +15,6 @@ import {
 } from './install-policy-observation.js'
 import { resolveInstallPolicies, renderGuardProjectCommand, GUARD_PROJECT_COMMAND_RENDERED_BYTES } from './install-policy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
-import { planGuardTransport } from '../guards/harness-adapter.js'
 import { expandRestrictions } from '../surfaces/restrictions.js'
 
 const scratch: string[] = []
@@ -142,7 +141,6 @@ describe('install policy resolution', () => {
                 // The parser consumes closed fields; native metadata is framing evidence, and the plugin relies on process cwd.
                 const stdin = JSON.stringify({ hook_event_name: envelope.hook_event_name, tool_name: envelope.tool_name,
                     tool_input: envelope.tool_input, cwd: envelope.cwd ?? '/workspace/project' })
-                expect(planGuardTransport({ target: row.target, handler: '/workspace/bin/cockpit', cwd: '/workspace/project', stdin }).kind).toBe('complete')
                 const parsed = parseGuardInput(stdin)
                 expect(parsed.status).toBe('parsed')
                 if (parsed.status !== 'parsed') throw new Error(JSON.stringify(parsed))

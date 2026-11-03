@@ -65,7 +65,6 @@ import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../guards/rea
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { cockpitCommand, formatShellCommand, type FixContext } from '../fix-catalogue.js'
-import { completeGuardTransport, planGuardTransport, type NativeGuardOutput } from '../guards/harness-adapter.js'
 import {
     abortStateTransaction,
     authenticateStateNamespace,
@@ -235,7 +234,6 @@ export interface GuardEvaluationApplicationInput {
     readonly payload: unknown
     readonly harness: GuardSurfaceTarget
     readonly cwd: string
-    readonly transport?: boolean
     readonly askIsDeny?: boolean
     readonly ripgrepConfigActive?: boolean
     /** The harness's command search path, whose directories inside the allowed roots the guard protects. */
@@ -276,7 +274,6 @@ export interface GuardEvaluationApplicationResult {
     readonly decision: GuardDecision
     readonly diagnostics: readonly import('./contract.js').Diagnostic[]
     readonly fixContext?: FixContext
-    readonly native?: NativeGuardOutput
 }
 
 // Every refusal below holds all of the agent's calls, `git restore` included, so each says what
@@ -304,10 +301,9 @@ export async function runGuardEvaluationApplication(
         diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }],
     })
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['transport', 'askIsDeny', 'ripgrepConfigActive', 'searchPath'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath'])
         if (!data
             || data.searchPath !== undefined && (typeof data.searchPath !== 'string' || /[\x00-\x1f\x7f]/.test(data.searchPath) || Buffer.byteLength(data.searchPath) > GUARD_INPUT_LIMITS.inputBytes)
-            || data.transport !== undefined && typeof data.transport !== 'boolean'
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
             || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
@@ -408,40 +404,8 @@ export async function runGuardEvaluationApplication(
         for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
             const entry = ownership.manifest.entries.find(entry => entry.path === path)
             const actual = publication.get(path)!
-            if (!entry || entry.kind !== 'file' || entry.sha256 !== actual.sha256) return unavailable('Installed guard registration or transport bytes drifted.')
+            if (!entry || entry.kind !== 'file' || entry.sha256 !== actual.sha256) return unavailable('Installed guard registration or launcher bytes drifted.')
             published.set(path, actual.sha256)
-        }
-        if (data.transport === true) {
-            const plan = planGuardTransport({ target: harness, handler: identity.module, cwd: data.cwd, stdin: data.payload })
-            if (plan.kind !== 'complete') return unavailable(plan.message)
-            const guard = join(identity.root, '.cockpit/guards/bash-guard.sh')
-            const shell = realpathSync('/bin/bash')
-            const shellStatus = lstatSync(shell)
-            if (!shellStatus.isFile() || shellStatus.isSymbolicLink() || !(shellStatus.mode & 0o111)
-                || shellStatus.size > 16_777_216) return unavailable('Guard transport shell identity is unavailable.')
-            const shellSha256 = createHash('sha256').update(readFileSync(shell)).digest('hex')
-            const step: ExecutionStep = {
-                id: 'guard-handler', argv: [shell, guard, '--handler-stdio', ...plan.argv.slice(1)], argv0: '/bin/bash',
-                cwd: plan.cwd, env: { COCKPIT_GUARD_STDIN: plan.stdin, COCKPIT_GUARD_ROOT: identity.root, COCKPIT_ASK_IS_DENY: data.askIsDeny ? '1' : '0',
-                    ...(data.ripgrepConfigActive ? { COCKPIT_RIPGREP_CONFIG_ACTIVE: '1' } : {}),
-                    ...(data.searchPath ? { COCKPIT_GUARD_SEARCH_PATH: data.searchPath } : {}) },
-                timeoutMs: plan.timeoutMs, stdoutLimitBytes: plan.stdoutBytes, stderrLimitBytes: plan.stderrBytes,
-                paths: [], ports: [], labels: { action: 'guard-handler' }, expected: [],
-                consumedFiles: [
-                    { path: shell, sha256: shellSha256, maxBytes: 16_777_216, argvIndexes: [0], executable: true, executionMode: 'verified-path' },
-                    { path: guard, sha256: published.get('.cockpit/guards/bash-guard.sh')!, maxBytes: 65_536, argvIndexes: [1], executable: false },
-                ],
-                filesystemChecks: [], compensation: [],
-            }
-            const outcome = authenticatedExecutionOutcome(await (adapters.execute ?? executeProbe)(step), step)
-            if (!outcome) return unavailable('Guard handler execution evidence is unauthenticated or changed.')
-            const native = completeGuardTransport(plan, {
-                exitCode: outcome.kind === 'complete' ? outcome.execution.exitCode : 2,
-                signal: outcome.execution.signal,
-                stdout: new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout),
-                stderr: new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr),
-            })
-            return { decision: { decision: native.decision, reason: 'Guard transport completed its bounded handler dispatch.' }, diagnostics: [], native }
         }
         const git = await adapters.resolveGit()
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')

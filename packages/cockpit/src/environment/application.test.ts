@@ -227,9 +227,6 @@ describe('guard policy construction', () => {
             const searchPath = `/usr/bin:${join(root, 'tools/bin')}/:relative/bin`
             expect(await runGuardEvaluationApplication({ ...request, payload: plant, searchPath }, adapters))
                 .toMatchObject({ decision: { decision: 'deny', reason: expect.stringContaining('command search path directory') } })
-            // The handler runs with a scrubbed environment, so transport carries the harness's search path to it.
-            const transport = await runGuardEvaluationApplication({ ...request, payload: JSON.stringify(plant), searchPath, transport: true }, { ...adapters, execute: executeProbe })
-            expect(transport, JSON.stringify(transport)).toMatchObject({ native: { decision: 'deny' } })
             // A relative entry makes any file the agent wrote a candidate for a bare command name.
             const listing = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'ls fixtures' } }
             expect(await runGuardEvaluationApplication({ ...request, payload: listing, searchPath: '/usr/bin:/bin' }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
@@ -441,9 +438,8 @@ describe('guard policy construction', () => {
 
     it('keeps the captured harness authoritative across an awaited adapter mutation', async () => {
         const { root, request: captured, adapters } = await installedGuardRequest()
-        const request = { ...captured, transport: true, payload: JSON.stringify(captured.payload) }
+        const request = { ...captured }
         rmSync(join(root, '.codex/hooks.json'))
-        const dispatched: ExecutionStep[] = []
         const result = await runGuardEvaluationApplication(request, {
             ...adapters,
             loadConfig: async path => {
@@ -451,15 +447,10 @@ describe('guard policy construction', () => {
                 request.harness = 'codexcli'
                 return loaded
             },
-            execute: async step => {
-                if (step.id === 'guard-handler') dispatched.push(step)
-                return executeProbe(step)
-            },
         })
         expect(request.harness).toBe('codexcli')
-        expect(result, JSON.stringify(result)).toMatchObject({ decision: { decision: 'allow' }, native: { decision: 'allow' } })
-        expect(dispatched).toHaveLength(1)
-        expect(dispatched[0]!.argv.slice(-3)).toEqual(['--handler-stdio', '--harness', 'claudecode'])
+        // The claudecode registration was authenticated; honouring the mutated harness would have needed the removed codex hooks file.
+        expect(result, JSON.stringify(result)).toMatchObject({ decision: { decision: 'allow' } })
     }, 120_000)
 
     it('authenticates the installed application route and refuses copied, unresolved, ambiguous and changed authority', async () => {
@@ -490,18 +481,6 @@ describe('guard policy construction', () => {
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('Git executable') } })
         expect(await runGuardEvaluationApplication({ ...request, payload: { ...payload, cwd: join(root, 'app') } }, adapters))
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('cwd') } })
-        let dispatched = false
-        const transport = await runGuardEvaluationApplication({ ...request, transport: true, payload: JSON.stringify(payload) }, {
-            ...adapters, execute: async step => {
-                const outcome = await executeProbe(step)
-                if (step.id !== 'guard-handler') return outcome
-                dispatched = true
-                expect(step).toMatchObject({ timeoutMs: 20000, stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536 })
-                return { ...outcome }
-            },
-        })
-        expect(dispatched).toBe(true)
-        expect(transport).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('execution evidence') } })
         let loads = 0
         expect(await runGuardEvaluationApplication(request, { ...adapters, loadConfig: async path => {
             loads += 1

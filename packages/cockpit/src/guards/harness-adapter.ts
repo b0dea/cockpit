@@ -13,19 +13,7 @@ export interface NativeGuardOutput {
     readonly stdout: string
     readonly stderr: string
 }
-export interface GuardTransportPlan {
-    readonly kind: 'complete'
-    readonly target: GuardSurfaceTarget
-    readonly executable: string
-    readonly cwd: string
-    readonly argv: readonly ['guard-evaluate', '--harness', GuardSurfaceTarget]
-    readonly stdin: string
-    readonly timeoutMs: 20000
-    readonly stdoutBytes: 65536
-    readonly stderrBytes: 65536
-}
-export interface GuardTransportRefusal { readonly kind: 'refusal'; readonly code: 'GUARD_TRANSPORT_INVALID'; readonly message: string }
-const plans = new WeakSet<object>()
+
 function target(value: unknown): value is GuardSurfaceTarget { return typeof value === 'string' && GUARD_SURFACE_TARGETS.some((item) => item === value) }
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject { return value !== null && typeof value === 'object' && !Array.isArray(value) }
 function keys(value: JsonSnapshotObject, fields: readonly string[]): boolean { return Object.keys(value).length === fields.length && fields.every((field) => Object.hasOwn(value, field)) }
@@ -76,35 +64,3 @@ export function normalizeOpenCodeInput(input: unknown): JsonSnapshotObject | und
 }
 
 /** The application binds this data to the shared process executor; no handler is installed here. */
-export function planGuardTransport(input: unknown): GuardTransportPlan | GuardTransportRefusal {
-    const value = snapshotJson(input)
-    if (!record(value) || !keys(value, ['target', 'handler', 'cwd', 'stdin']) || !target(value.target)
-        || !absolute(value.handler) || !absolute(value.cwd) || !text(value.stdin, GUARD_INPUT_LIMITS.inputBytes)) {
-        return { kind: 'refusal', code: 'GUARD_TRANSPORT_INVALID', message: 'Guard transport requires a resolved handler, canonical cwd and bounded stdin.' }
-    }
-    // The handler is a second Node process started per tool call. Five seconds was exceeded by Node
-    // start-up alone on a loaded developer machine, which failed closed and blocked every tool call;
-    // twenty stays well inside the harnesses' own hook timeouts.
-    const plan: GuardTransportPlan = { kind: 'complete', target: value.target, executable: value.handler, cwd: value.cwd,
-        argv: [...GUARD_HANDLER_ARGV, '--harness', value.target] as const, stdin: value.stdin, timeoutMs: 20000, stdoutBytes: 65536, stderrBytes: 65536 }
-    plans.add(plan)
-    return plan
-}
-
-export function completeGuardTransport(plan: unknown, response: unknown): NativeGuardOutput {
-    const fail = (reason: string): NativeGuardOutput => ({ target: null, capability: 'instructed', decision: 'unavailable', exitCode: 2, stdout: '', stderr: `cockpit guard: ${reason}\n` })
-    if (typeof plan !== 'object' || plan === null || !plans.has(plan)) return fail('Guard transport plan was not issued by the adapter.')
-    const issued = plan as GuardTransportPlan
-    const value = snapshotJson(response)
-    if (!record(value) || !keys(value, ['exitCode', 'signal', 'stdout', 'stderr']) || value.exitCode !== 0 || value.signal !== null
-        || !text(value.stdout, issued.stdoutBytes) || !text(value.stderr, issued.stderrBytes)) {
-        return adaptGuardDecision(issued.target, { decision: 'unavailable', reason: 'Guard handler transport failed or exceeded its output bounds.' })
-    }
-    let reply: unknown
-    try { reply = JSON.parse(value.stdout) }
-    catch (error) {
-        if (!(error instanceof SyntaxError)) throw error
-        return adaptGuardDecision(issued.target, { decision: 'unavailable', reason: 'Guard handler returned invalid JSON.' })
-    }
-    return adaptGuardDecision(issued.target, reply)
-}

@@ -19,21 +19,15 @@ shell_arg() {
         *) printf '%s' "$1" ;;
     esac
 }
-if [ "${1:-}" = '--handler-stdio' ]; then
-    # The application runs a verified snapshot of this file from a private directory, so it passes
-    # the checkout it has already authenticated instead of this file's location.
-    root="${COCKPIT_GUARD_ROOT:?authenticated guard root is missing}"
-else
-    source_path="${BASH_SOURCE[0]:-}"
-    case "$source_path" in
-        */*) guards="${source_path%/*}" ;;
-        *) guards=. ;;
-    esac
-    if ! root=$(cd -P -- "$guards/../.." && pwd -P); then
-        config_arg=$(shell_arg "<checkout>/$config")
-        printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so every tool call is refused. Fix: run `npx --no cockpit sync --config %s` in a terminal, outside the agent.\n' "$guards" "$config_arg" >&2
-        exit 2
-    fi
+source_path="${BASH_SOURCE[0]:-}"
+case "$source_path" in
+    */*) guards="${source_path%/*}" ;;
+    *) guards=. ;;
+esac
+if ! root=$(cd -P -- "$guards/../.." && pwd -P); then
+    config_arg=$(shell_arg "<checkout>/$config")
+    printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so every tool call is refused. Fix: run `npx --no cockpit sync --config %s` in a terminal, outside the agent.\n' "$guards" "$config_arg" >&2
+    exit 2
 fi
 local_file="$root/.cockpit/local/guard-identity"
 config_arg=$(shell_arg "$root/$config")
@@ -51,11 +45,4 @@ fi
 export COCKPIT_GUARD_IDENTITY="$identity" COCKPIT_GUARD_ROOT="$root"
 # Ambient Node options can execute code before the authenticated application starts.
 unset NODE_OPTIONS NODE_PATH
-if [ "${1:-}" = '--handler-stdio' ]; then
-    shift
-    unset COCKPIT_GUARD_TRANSPORT
-    printf '%s' "${COCKPIT_GUARD_STDIN:?bounded transport input is missing}" | "$node" "$handler" guard-evaluate "$@"
-    exit $?
-fi
-export COCKPIT_GUARD_TRANSPORT=1
 exec "$node" "$handler" guard-evaluate "$@"

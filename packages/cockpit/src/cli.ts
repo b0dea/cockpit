@@ -1442,25 +1442,20 @@ export async function runCli(
                 chunks.push(buffer)
             }
             const raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes))
-            const reply = (runtime.env ?? process.env).COCKPIT_GUARD_TRANSPORT !== '1'
-            let payload: unknown = raw
-            if (reply) {
-                const native = JSON.parse(raw)
-                payload = harness === 'opencode' && native?.tool !== undefined
-                    ? normalizeOpenCodeInput(native)
-                    : { hook_event_name: native?.hook_event_name, tool_name: native?.tool_name,
-                        tool_input: native?.tool_input, cwd: native?.cwd ?? process.cwd() }
-            }
+            const native = JSON.parse(raw)
+            const payload = harness === 'opencode' && native?.tool !== undefined
+                ? normalizeOpenCodeInput(native)
+                : { hook_event_name: native?.hook_event_name, tool_name: native?.tool_name,
+                    tool_input: native?.tool_input, cwd: native?.cwd ?? process.cwd() }
             const identityBytes = (runtime.env ?? process.env).COCKPIT_GUARD_IDENTITY
             if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Installed guard identity is missing or oversized.')
             const guardRoot = (runtime.env ?? process.env).COCKPIT_GUARD_ROOT
             if (!guardRoot) throw new RefusalError('Installed guard root is missing.')
             const guardEnvironment = runtime.env ?? process.env
-            response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(), transport: !reply,
+            response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(),
                 askIsDeny: guardEnvironment.COCKPIT_ASK_IS_DENY === '1',
                 ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1',
-                // The handler runs with a scrubbed environment, so the dispatching process forwards the harness's search path.
-                searchPath: (reply ? guardEnvironment.COCKPIT_GUARD_SEARCH_PATH ?? guardEnvironment.PATH : guardEnvironment.PATH) ?? '' }, {
+                searchPath: guardEnvironment.PATH ?? '' }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
                 resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
                 resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
@@ -1475,11 +1470,7 @@ export async function runCli(
         const projected = JSON.parse(renderJsonResponse({ result: response.decision, diagnostics: response.diagnostics }, response.fixContext)) as { result: typeof response.decision }
         const decision = projected.result.decision === 'ask' && (runtime.env ?? process.env).COCKPIT_ASK_IS_DENY === '1'
             ? { ...projected.result, decision: 'deny' as const } : projected.result
-        if ((runtime.env ?? process.env).COCKPIT_GUARD_TRANSPORT !== '1') {
-            io.stdout.write(JSON.stringify(decision) + '\n')
-            return finish(EXIT_CODES.success)
-        }
-        const output = response.native ?? adaptGuardDecision(harness, decision)
+        const output = adaptGuardDecision(harness, decision)
         io.stdout.write(output.stdout)
         io.stderr.write(output.stderr)
         return finish(output.exitCode)

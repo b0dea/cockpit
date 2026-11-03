@@ -1021,7 +1021,9 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
     }
     const declaredMain = first.path
     const mainProbeRoot = separateMain ? current.topLevel : declaredMain
-    const main = await gitIdentity('setup:observe:checkout-main', mainProbeRoot, value, currentChecks)
+    // When the current checkout is the main one, probing its top level again would repeat the first answer.
+    const main = mainProbeRoot === current.topLevel ? current
+        : await gitIdentity('setup:observe:checkout-main', mainProbeRoot, value, currentChecks)
     if (!main || main.topLevel !== mainProbeRoot || main.commonDirectory !== current.commonDirectory) {
         return setupCheckoutFailure('Git could not authenticate the main checkout; setup requires its Git working-tree identity to bound repository writes. '
             + `Inspect it with ${formatShellCommand(['git', '-C', mainProbeRoot, 'rev-parse', '--show-toplevel'])}, `
@@ -1074,7 +1076,8 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         }
     }
     const confirmedCurrent = await gitIdentity('setup:observe:checkout-current-confirm', current.topLevel, value, allChecks)
-    const confirmedMain = await gitIdentity('setup:observe:checkout-main-confirm', main.topLevel, value, allChecks)
+    const confirmedMain = main.topLevel === current.topLevel ? confirmedCurrent
+        : await gitIdentity('setup:observe:checkout-main-confirm', main.topLevel, value, allChecks)
     if (!confirmedCurrent || !confirmedMain || !sameGitIdentity(current, confirmedCurrent)
         || !sameGitIdentity(main, confirmedMain)) {
         return setupCheckoutFailure('checkout identity changed during observation')

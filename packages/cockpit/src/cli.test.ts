@@ -40,22 +40,16 @@ describe('invocation publication', () => {
         [['--version'], 'version', 0],
         [[], 'unknown', 2], [['unknown'], 'unknown', 2],
         [['unsafe\u202e'], 'unknown', 2], [['check', '--unknown'], 'check', 2],
-        [['guard-evaluate', '--harness', 'claudecode'], 'guard-evaluate', 0],
+        [['guard-evaluate', '--harness', 'claudecode'], 'guard-evaluate', 2],
         [['guard-evaluate', '--harness', 'codexcli'], 'guard-evaluate', 2],
     ] as const)('publishes no invocation record on stderr for %j', (args, verb, exitCode) => {
-        const native = args[2] === 'codexcli'
-        const result = run([...args], native ? { COCKPIT_GUARD_TRANSPORT: '1' } : {})
+        const result = run([...args])
         expect(result.status).toBe(exitCode)
         const diagnostics = humanStderr(result.stderr)
         if (verb === 'version') expect(result.stdout).toBe(`@b00dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
         else if (verb === 'guard-evaluate') {
-            if (native) {
-                expect(result.stdout).toBe('')
-                expect(diagnostics).toContain('Guard input, arguments or installed identity')
-            } else {
-                expect(JSON.parse(result.stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
-                expect(diagnostics).toBe('')
-            }
+            expect(result.stdout).toBe('')
+            expect(diagnostics).toContain('Guard input, arguments or installed identity')
         } else expect(diagnostics).toContain(args.length ? verb === 'check' ? 'CLI_USAGE_INVALID' : 'CLI_UNKNOWN_COMMAND' : 'CLI_COMMAND_REQUIRED')
     })
 
@@ -1738,10 +1732,9 @@ describe('terminal-safe diagnostics', () => {
             const io = { stdin: Readable.from([input]), stdout: { write: (text: string) => { stdout += text; return true } },
                 stderr: { write: (text: string) => { stderr += text; return true } } } as unknown as CliIo
             try {
-                expect(await runCli(['guard-evaluate', '--harness', 'claudecode'], io, {}, { env: {} })).toBe(0)
-                expect(JSON.parse(stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
-                expect(stdout.split('\n')).toHaveLength(2)
-                expect(humanStderr(stderr)).toBe('')
+                expect(await runCli(['guard-evaluate', '--harness', 'claudecode'], io, {}, { env: {} })).toBe(2)
+                expect(stdout).toBe('')
+                expect(stderr).toMatch(/^cockpit guard: .+\n$/)
                 expect(projector).toHaveBeenCalledTimes(1)
             } finally { projector.mockRestore() }
         }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { adaptGuardDecision, completeGuardTransport, normalizeOpenCodeInput, planGuardTransport, GUARD_HANDLER_ARGV } from './harness-adapter.js'
-import { parseGuardInput, GUARD_INPUT_LIMITS } from './invocation-parser.js'
+import { adaptGuardDecision, normalizeOpenCodeInput } from './harness-adapter.js'
+import { parseGuardInput } from './invocation-parser.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
 
 const cwd = '/workspace/product'
@@ -12,21 +12,17 @@ const unsafeReasonCharacters = Array.from({ length: 160 }, (_, code) => code)
     .map((code) => String.fromCodePoint(code))
 
 describe('closed native guard representation', () => {
-    it('refuses every unsafe reason character at direct and completed transport seams while preserving safe reasons', () => {
+    it('refuses every unsafe reason character while preserving safe reasons', () => {
         const safe = 'Approval required: café, 日本語, 🙂.'
         for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {
-            const plan = planGuardTransport({ target, handler: '/workspace/bin/cockpit', cwd, stdin: payload })
             for (const verdict of ['ask', 'deny', 'unavailable'] as const) {
-                const complete = (reason: string) => completeGuardTransport(plan, {
-                    exitCode: 0, signal: null, stdout: JSON.stringify({ decision: verdict, reason }), stderr: '',
-                })
                 for (const reason of unsafeReasonCharacters.map((character) => `Before${character}After`)) {
-                    for (const result of [adaptGuardDecision(target, { decision: verdict, reason }), complete(reason)]) {
+                    for (const result of [adaptGuardDecision(target, { decision: verdict, reason })]) {
                         expect(result).toMatchObject({ decision: 'unavailable', exitCode: 2, stdout: '' })
                         expect(result.stderr).toBe('cockpit guard: Guard adapter received an invalid harness or closed decision.\n')
                     }
                 }
-                for (const result of [adaptGuardDecision(target, { decision: verdict, reason: safe }), complete(safe)]) {
+                for (const result of [adaptGuardDecision(target, { decision: verdict, reason: safe })]) {
                     if (result.stdout) expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecisionReason).toBe(safe)
                     else expect(result.stderr).toBe(`cockpit guard: ${safe}\n`)
                 }
@@ -92,36 +88,7 @@ describe('closed native guard representation', () => {
     })
 })
 
-describe('bounded staged guard transport', () => {
-    it('forwards raw stdin with only frozen handler argv and accepts only a closed bounded reply', () => {
-        const plan = planGuardTransport({ target: 'codexcli', handler: '/workspace/bin/cockpit', cwd, stdin: payload })
-        expect(GUARD_HANDLER_ARGV).toEqual(['guard-evaluate'])
-        expect(plan).toEqual({ kind: 'complete', target: 'codexcli', executable: '/workspace/bin/cockpit', cwd,
-            argv: ['guard-evaluate', '--harness', 'codexcli'], stdin: payload,
-            timeoutMs: 20000, stdoutBytes: 65536, stderrBytes: 65536 })
-        const response = { exitCode: 0, signal: null, stdout: JSON.stringify({ decision: 'deny', reason: 'Protected branch.' }), stderr: '' }
-        expect(completeGuardTransport(plan, response).decision).toBe('deny')
-        for (const failed of [
-            { ...response, exitCode: 2 }, { ...response, signal: 'SIGTERM' }, { ...response, stdout: '' },
-            { ...response, stdout: '{' }, { ...response, stdout: JSON.stringify({ decision: 'allow' }) },
-            { ...response, stdout: response.stdout + '\n{}' }, { ...response, stderr: 'x'.repeat(65537) },
-        ]) expect(completeGuardTransport(plan, failed)).toMatchObject({ decision: 'unavailable', exitCode: 2 })
-        expect(completeGuardTransport({ ...plan }, response).exitCode).toBe(2)
-    })
-
-    it('does not classify shell text and fails closed before dispatch on invalid or oversized transport data', () => {
-        const base = { target: 'claudecode', handler: '/workspace/bin/cockpit', cwd, stdin: 'not JSON or shell $(anything)' }
-        expect(planGuardTransport(base).kind).toBe('complete')
-        expect(planGuardTransport({ ...base, argv: ['internal', 'guard', '--harness', 'claudecode'] }).kind).toBe('refusal')
-        expect(planGuardTransport({ ...base, stdin: 'x'.repeat(GUARD_INPUT_LIMITS.inputBytes) }).kind).toBe('complete')
-        for (const extra of [{ stdin: 'x'.repeat(GUARD_INPUT_LIMITS.inputBytes + 1) }, { handler: 'cockpit' }, { handler: '/bin/../bin/cockpit' }, { argv: ['other'] }, { target: 'other' }, { stdin: '\ud800' }]) {
-            expect(planGuardTransport({ ...base, ...extra }).kind).toBe('refusal')
-        }
-        let reads = 0
-        expect(planGuardTransport(Object.defineProperty({ ...base }, 'stdin', { get() { reads++; return payload }, enumerable: true })).kind).toBe('refusal')
-        expect(reads).toBe(0)
-    })
-
+describe('OpenCode input', () => {
     it('normalizes only OpenCode field names and leaves unsupported shell interpretation to the single parser', () => {
         const raw = { tool: 'bash', args: { command: 'echo $(dynamic)' }, cwd }
         const normalized = normalizeOpenCodeInput(raw)
