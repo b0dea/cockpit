@@ -1,12 +1,11 @@
 # cockpit
 
-> cockpit runs the environment AI coding agents work in: one `cockpit.toml` declares a product's repositories, services and ports; `cockpit sync` renders each agent tool's instructions, skills and guards plus a Docker Compose stack over the live checkouts; `cockpit check` fails on drift; and a separate evaluator grades finished work. The package is not yet published on npm; install it from source as Getting started describes.
+> cockpit runs the environment AI coding agents work in: one `cockpit.toml` declares a product's repositories, services and ports; `cockpit sync` renders each agent tool's instructions, skills and guards and runs your Compose stack over the live checkouts; `cockpit check` fails on drift; and a separate evaluator grades finished work. The package is not yet published on npm; install it from source as Getting started describes.
 
 ## Set cockpit up
 
-- [Agent adoption guide](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md): the safety contract and exact non-interactive commands for an agent adopting cockpit, by situation
+- [Getting started](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md): the on-ramp, the safety contract and exact non-interactive commands for an agent setting cockpit up, and the bring-up sequence
 - [README](https://raw.githubusercontent.com/b0dea/cockpit/main/README.md): what cockpit is, the quickstart, and its current limits
-- [Getting started](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md): install, bootstrap and the canonical bring-up sequence
 
 ## Reference
 

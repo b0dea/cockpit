@@ -71,12 +71,6 @@ The grader for a finished work order. It grades each acceptance criterion agains
 ran and the change since the order was accepted. It never edits code and is never the agent that did
 the work.
 
-### Persona
-
-A stable synthetic identity for seed data and signed-in tests, such as a test user with a known
-role. Personas come from one declared source file and are generated into typed outputs the
-product's tests can import.
-
 ### Enforced, instructed, generated and unavailable
 
 The four states of a harness feature. See
@@ -95,9 +89,15 @@ directory can `sync` before Git exists; `setup` and lifecycle commands need a Gi
 
 ## Where the cockpit lives
 
-The cockpit root is a folder of its own beside the product repositories, not one of them. By
-default it is a dedicated folder or repository such as `shop-cockpit`, with
-`siblings_root = ".."` so each product repository is a sibling next to it:
+The cockpit root is the directory that holds `cockpit.toml`, the generated instructions, the guard
+and the harness settings. There are two layouts, and `init` does not ask which to use for a single
+repository:
+
+- **In-repo** is the default for one product repository. The repository itself is the cockpit root
+  (`siblings_root = "."`, the repository is the sibling with `dir = "."`), so the cockpit files are
+  committed with the product.
+- **Dedicated** is the layout for a product made of several repositories. The root is a folder or
+  repository of its own beside them, such as `shop-cockpit`, with `siblings_root = ".."`:
 
 ```text
 work/
@@ -105,30 +105,19 @@ work/
   shop-cockpit/    cockpit root: cockpit.toml, AGENTS.md, guards, harness settings
 ```
 
-cockpit writes its configuration, instructions, guards and harness settings into the cockpit
-root. A dedicated folder keeps those files out of the product repositories, lets one cockpit own
-several repositories neutrally, and grows from one repository to many with `cockpit sibling add`
-without ever moving. To create one, follow [Getting started](getting-started.md#choose-a-starting-point);
-the first installation stays outside the intended root so it cannot change what `init` observes.
+A dedicated root keeps cockpit files out of the product repositories and lets one cockpit own several
+neutrally; an in-repo cockpit cannot. Pick it by answering `cockpit.root = "dedicated"` to `init` run
+from the product repository: `init` creates `../<repo>-cockpit` as a local Git repository (the one
+directory it writes outside the folder it ran in; an existing destination must be empty or a local
+Git repository with a plain `.git` directory) and declares the product repository as its first
+sibling. An empty folder or a folder of documents is itself the cockpit: `init` declares it as its
+own first sibling (`dir = "."`), and repositories are added later with
+`cockpit sibling add <slug> --create`.
 
-- **A new product, an empty folder or a folder of documents** is itself the cockpit. `init`
-  declares that folder as its own first sibling (`dir = "."`), and the product's repositories
-  are added under it later with `cockpit sibling add <slug> --create`.
-- **Inside an existing product repository** (a Git checkout with a package manifest), `init`
-  first asks where the cockpit lives (answers key `cockpit.root`) and never picks for you:
-  `--accept-preview` and `--accept-defaults` refuse with `INIT_COCKPIT_ROOT_REQUIRED` until it is
-  answered.
-  - `"dedicated"`, the recommendation, creates `../<repo>-cockpit` as a local Git repository, so
-    setup and lifecycle checks can identify it, and declares the product repository as its first
-    sibling. This is the one directory `init` writes outside the folder it ran in. An existing
-    destination must be empty or a local Git repository with a plain `.git` directory, so adoption
-    cannot follow redirected Git metadata or take over unrelated files.
-  - `"in-repo"` makes the product repository the cockpit root: it carries the cockpit files, and
-    the cockpit cannot neutrally own several repositories.
-
-There is no command to move an in-repo cockpit. Do not delete the ownership manifest or the paths
-it lists by hand; create a new dedicated cockpit as a separate adoption, and remove the old one
-only once a command can preview and check that cleanup.
+There is no command to move an in-repo cockpit. Do not delete the ownership manifest or the paths it
+lists by hand; create a new dedicated cockpit as a separate adoption, and remove the old one only
+once a command can preview and check that cleanup. To create one, follow
+[Getting started](getting-started.md).
 
 ## Cockpit sibling declaration
 

@@ -19,11 +19,11 @@ const runtime = { kind: 'human-only', reason: 'runtime or destructive environmen
 const executed = { kind: 'executed', reason: 'run by the example acceptance tests' } as const
 const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof packageInstall | typeof operator | typeof runtime | typeof executed)[]>([
     ['CONTRIBUTING.md', [developer, developer, developer]],
-    ['docs/agent-adoption.md', [operator, operator, operator, operator, operator, runtime, operator, operator, operator, operator, runtime, runtime, operator]],
+    ['README.md', [packageInstall, operator]],
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [operator, runtime, runtime, runtime]],
-    ['docs/getting-started.md', [packageInstall, packageInstall, packageInstall, operator, packageInstall, operator, operator, operator, operator, operator, runtime,
-        operator, operator, operator, operator, operator, operator, runtime, runtime, runtime]],
+    ['docs/getting-started.md', [packageInstall, operator, operator, operator, runtime, operator, operator, operator, operator, operator, operator,
+        runtime, runtime, runtime, operator, developer]],
     ['docs/harness-surfaces.md', [operator, operator, operator, operator, operator]],
     ['docs/joining-a-team.md', [packageInstall, operator, operator]],
     ['docs/contributing/releasing.md', [operator, operator, developer, developer]],

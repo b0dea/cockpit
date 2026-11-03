@@ -140,9 +140,8 @@ The automation above needs these settings, done once by the maintainer:
 - **Package:** remove `"private": true` from the package manifest and set `access` to `public` in
   the Changesets configuration.
 - **Pre-publication wording:** in the same change, rewrite every statement that the package is not
-  yet published or that sends readers to the source install first: `README.md`, `llms.txt`,
-  `docs/tutorial.md`, `docs/getting-started.md` and the adopt skill
-  source `scripts/adopt-cockpit.skill.md`, then run `npm run references`.
+  yet published or that sends readers to the source install first: `llms.txt` and
+  `docs/tutorial.md`, then run `npm run references`.
   `docs-ownership.test.ts` fails while this list misses a file with such wording, and fails on any
   that remains once the package is public.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`

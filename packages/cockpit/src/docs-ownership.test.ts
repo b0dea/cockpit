@@ -88,18 +88,18 @@ describe('effective documentation ownership', () => {
             return
         }
         const item = /^- \*\*Pre-publication wording:\*\*[^\n]*(?:\n {2}[^\n]*)*/m.exec(checklist)?.[0] ?? ''
-        expect(pending).toContain('README.md')
+        expect(pending, 'a checklist check over no files passes vacuously').not.toEqual([])
         expect(pending.filter(path => !item.includes(`\`${path}\``))).toEqual([])
     })
 
-    it('points the llms.txt agent index only at tracked pages, starting with the agent adoption guide', () => {
+    it('points the llms.txt agent index only at tracked pages, starting with the getting started guide', () => {
         const index = readFileSync(new URL('../../../llms.txt', import.meta.url), 'utf8')
         const tracked = new Set(execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0'))
         const links = [...index.matchAll(/\]\(([^)]+)\)/g)].map(match => match[1]!)
         const prefix = 'https://raw.githubusercontent.com/b0dea/cockpit/main/'
 
         expect(index).toMatch(/^# cockpit\n\n> \S/)
-        expect(links[0]).toBe(`${prefix}docs/agent-adoption.md`)
+        expect(links[0]).toBe(`${prefix}docs/getting-started.md`)
         for (const link of links) {
             expect(link.startsWith(prefix), link).toBe(true)
             expect(tracked.has(link.slice(prefix.length)), link).toBe(true)
@@ -134,10 +134,10 @@ describe('effective documentation ownership', () => {
         const links = skill.match(PUBLIC_GUIDE) ?? []
 
         const text = skill.replace(/\s+/g, ' ')
-        expect(text).toContain('`./node_modules/@b00dea/cockpit/docs/agent-adoption.md`')
+        expect(text).toContain('`./node_modules/@b00dea/cockpit/docs/getting-started.md`')
         // Before the install the same page is in the package tarball, which works while the repository is private.
-        expect(text).toContain('`package/docs/agent-adoption.md` inside the `.tgz`')
-        expect(links).toEqual([`${prefix}docs/agent-adoption.md`])
+        expect(text).toContain('`package/docs/getting-started.md` inside the `.tgz`')
+        expect(links).toEqual([`${prefix}docs/getting-started.md`])
         for (const link of links) expect(tracked.has(link.slice(prefix.length).split('#')[0]!), link).toBe(true)
     })
 

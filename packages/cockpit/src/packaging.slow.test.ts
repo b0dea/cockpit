@@ -252,7 +252,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         // Rendered surfaces point agents at these pages; an agent offline, or one that cannot reach
         // the repository, has only what the installation carries.
         const files = packedFiles()
-        expect(files).toEqual(expect.arrayContaining(['docs/README.md', 'docs/agent-adoption.md', 'docs/getting-started.md']))
+        expect(files).toEqual(expect.arrayContaining(['docs/README.md', 'docs/getting-started.md']))
         expect(files.filter((f) => f.startsWith('docs/contributing/'))).toEqual([])
         const installed = packedPackageRoot()
         const tracked = new Set(execFileSync('git', ['ls-files', '-z'], { cwd: repoRoot, encoding: 'utf8' }).split('\0'))

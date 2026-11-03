@@ -25,7 +25,7 @@ The full list of non-goals, with reasons, is in [Architecture](architecture.md#n
 
 ## How do I install it?
 
-As an exact-pinned, project-local development dependency of the cockpit directory.
+As an exact-pinned, project-local development dependency of the repository that holds the cockpit.
 [Install cockpit](getting-started.md#install-cockpit) has the steps, including the install from
 source.
 
