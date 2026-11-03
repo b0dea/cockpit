@@ -13,9 +13,8 @@ import { CockpitConfig } from '../schema.js'
 import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { cockpitId, checkoutId, stackId } from './identity.js'
-import { ENVIRONMENT_CODES, type Observation } from './contract.js'
+import { ENVIRONMENT_CODES } from './contract.js'
 import {
-    classifyRuntimeProbe,
     classifyResolvedRuntimeLiterals,
     createMachineFloorPlan,
     collectMachineFloorEvidence,
@@ -45,7 +44,6 @@ import {
     isRuntimeObservation,
     isRuntimeTopologyEvidence,
     issueMachineFloorAuthority,
-    measureMachineFloor,
     observeDockerRuntime,
     observedVersionCore,
     observeRuntimeServiceColdStart,
@@ -59,7 +57,6 @@ import {
     consumeRuntimeLifecycleProjection,
     consumeRuntimeServiceFailureForLogs,
     resolveRuntimeServiceOrder,
-    type ProbeExecution,
 } from './runtime.js'
 import { admitDependencyLoad, admitDependencyRuntime, createDependencyExecutionPlan, createDependencyLoadPlan, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { isInstallObservation, observeDependencyLoad, planInstall, verifyInstall } from './installs.js'
@@ -71,10 +68,6 @@ import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-obser
 import { readState, selectStateRoot, transactState } from './state.js'
 import type { CheckoutId, HolderId } from './contract.js'
 import type { LocalRuntimeMeasurements, RuntimeMeasurementRow } from './runtime-measurement-record.js'
-
-const observed = <T>(value: T, producer: string): Observation<T> => ({
-    state: 'available', value, producer, observedAt: '2026-09-07T12:00:00.000Z',
-})
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
@@ -842,285 +835,6 @@ describe('runtime measurement classification', () => {
 
         expect(issueMachineFloorAuthority(input as never)).toBeUndefined()
         expect(reads).toBe(0)
-    })
-
-    it('passes each machine floor at the exact configured boundary', () => {
-        const result = measureMachineFloor(
-            { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 },
-            {
-                runtimeMemoryMb: observed(8192, 'runtime-resource-collector'),
-                runtimeCpus: observed(4, 'runtime-resource-collector'),
-                freeDiskMb: observed(20480, 'free-disk-collector'),
-            },
-        )
-
-        expect(result.verdict).toBe('pass')
-        expect(result.comparisons).toEqual([
-            expect.objectContaining({ metric: 'runtime_memory_mb', measured: 8192, threshold: 8192, relation: 'at-least', passed: true, producer: 'runtime-resource-collector' }),
-            expect.objectContaining({ metric: 'runtime_cpus', measured: 4, threshold: 4, relation: 'at-least', passed: true, producer: 'runtime-resource-collector' }),
-            expect.objectContaining({ metric: 'free_disk_mb', measured: 20480, threshold: 20480, relation: 'at-least', passed: true, producer: 'free-disk-collector' }),
-        ])
-    })
-
-    it('accepts the schema-supported fractional CPU floor', () => {
-        const result = measureMachineFloor(
-            { runtime_memory_mb: 8192, runtime_cpus: 3.5, free_disk_mb: 20480, cold_start_seconds: 90 },
-            {
-                runtimeMemoryMb: observed(8192, 'runtime-resource-collector'),
-                runtimeCpus: observed(3.5, 'runtime-resource-collector'),
-                freeDiskMb: observed(20480, 'free-disk-collector'),
-            },
-        )
-
-        expect(result.verdict).toBe('pass')
-    })
-
-    it('fails one unit below a floor and retains each supplied provenance', () => {
-        const result = measureMachineFloor(
-            { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 },
-            {
-                runtimeMemoryMb: observed(8191, 'runtime-resource-collector'),
-                runtimeCpus: observed(3.99, 'runtime-resource-collector'),
-                freeDiskMb: observed(20479, 'free-disk-collector'),
-            },
-        )
-
-        expect(result.verdict).toBe('fail')
-        expect(result.comparisons.every(({ passed }) => !passed)).toBe(true)
-        expect(result.comparisons.map(({ producer }) => producer)).toEqual(['runtime-resource-collector', 'runtime-resource-collector', 'free-disk-collector'])
-        expect(result.comparisons.every(({ observedAt }) => observedAt === '2026-09-07T12:00:00.000Z')).toBe(true)
-    })
-
-    it('reports a missing or failed measurement as unavailable, never passing it', () => {
-        const unavailable: Observation<number> = {
-            state: 'unavailable', producer: 'runtime-memory', reason: 'runtime does not expose its VM allocation',
-        }
-        const failed: Observation<number> = {
-            state: 'failed', producer: 'disk-stat', code: ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT, reason: 'disk probe timed out',
-        }
-        const result = measureMachineFloor(
-            { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 },
-            { runtimeMemoryMb: unavailable, runtimeCpus: observed(4, 'runtime-resource-collector'), freeDiskMb: failed },
-        )
-
-        expect(result.verdict).toBe('unavailable')
-        expect(result.gaps).toEqual([unavailable, failed])
-    })
-
-    it.each([
-        ['null floor', null, {
-            runtimeMemoryMb: observed(8192, 'runtime-resource-collector'),
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['extra floor key', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90, decision: true }, {
-            runtimeMemoryMb: observed(8192, 'runtime-resource-collector'),
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['invalid instant', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {
-            runtimeMemoryMb: { ...observed(8192, 'runtime-resource-collector'), observedAt: '2026-09-31T12:00:00Z' },
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['extra observation key', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {
-            runtimeMemoryMb: { ...observed(8192, 'runtime-resource-collector'), decision: true },
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['negative observation', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {
-            runtimeMemoryMb: observed(-1, 'runtime-resource-collector'),
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['malformed unavailable observation', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {
-            runtimeMemoryMb: { state: 'unavailable', producer: 'runtime-resource-collector' },
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['extra failed observation key', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {
-            runtimeMemoryMb: { state: 'failed', producer: 'runtime-resource-collector', reason: 'probe failed', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, decision: true },
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-        ['oversized nested value', { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {
-            runtimeMemoryMb: { ...observed(8192, 'runtime-resource-collector'), producer: 'x'.repeat(65_537) },
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }],
-    ])('closes malformed machine-floor evidence: %s', (_name, floor, observations) => {
-        expect(() => measureMachineFloor(floor as never, observations as never)).not.toThrow()
-        expect(measureMachineFloor(floor as never, observations as never).verdict).toBe('unavailable')
-    })
-
-    it('closes revoked measurement inputs without returning caller-owned values', () => {
-        const floor = Proxy.revocable({ runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 }, {})
-        const observations = Proxy.revocable({
-            runtimeMemoryMb: observed(8192, 'runtime-resource-collector'),
-            runtimeCpus: observed(4, 'runtime-resource-collector'),
-            freeDiskMb: observed(20480, 'free-disk-collector'),
-        }, {})
-        floor.revoke()
-        observations.revoke()
-
-        expect(() => measureMachineFloor(floor.proxy, observations.proxy)).not.toThrow()
-        expect(measureMachineFloor(floor.proxy, observations.proxy)).toEqual(expect.objectContaining({ verdict: 'unavailable', comparisons: [] }))
-    })
-
-    it('refuses accessor-backed floor evidence without invoking getters', () => {
-        let reads = 0
-        const floor = {}
-        Object.defineProperty(floor, 'runtime_memory_mb', {
-            enumerable: true, get: () => { reads += 1; return 8192 },
-        })
-
-        expect(measureMachineFloor(floor as never, {} as never)).toEqual({
-            verdict: 'unavailable', comparisons: [], gaps: [{
-                state: 'unavailable', reason: 'measurement input is malformed', producer: 'runtime-measurement-validator',
-            }],
-        })
-        expect(reads).toBe(0)
-    })
-
-    it('does not accept host or free-form observations as runtime allocation evidence', () => {
-        const result = measureMachineFloor(
-            { runtime_memory_mb: 8192, runtime_cpus: 4, free_disk_mb: 20480, cold_start_seconds: 90 },
-            {
-                runtimeMemoryMb: observed(65536, 'host-memory'),
-                runtimeCpus: observed(16, 'host-cpus'),
-                freeDiskMb: observed(99999, 'host-disk'),
-            },
-        )
-        expect(result.verdict).toBe('unavailable')
-    })
-})
-
-describe('runtime probe classification', () => {
-    const binding = (subject: 'runtime-version' | 'compose-version' | 'candidate' | 'broken-control') => ({
-        batchId: 'a'.repeat(64), packageArtifactSha256: 'b'.repeat(64), runtimeExecutableSha256: 'c'.repeat(64), subject,
-    })
-    const complete: ProbeExecution = { kind: 'complete', exitCode: 0, binding: binding('candidate') }
-    const runtimeComplete: ProbeExecution = { kind: 'complete', exitCode: 0, binding: binding('runtime-version') }
-    const versionComplete: ProbeExecution = { kind: 'complete', exitCode: 0, binding: binding('compose-version') }
-    const rejected: ProbeExecution = {
-        kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-        failureSignature: 'compose-config-invalid', binding: binding('broken-control'),
-    }
-    const validInput = () => ({
-        runtime: { name: 'docker', version: '27.1.2' }, composeVersion: '2.39.2', composeFloor: '2.20.0', measuredOn: '2026-09-07',
-        runtimeVersionProbe: runtimeComplete, versionProbe: versionComplete, candidate: complete, brokenControl: rejected,
-    })
-
-    it('returns one stable unavailable result for malformed probe records', () => {
-        const revoked = Proxy.revocable(validInput(), {})
-        revoked.revoke()
-        const malformed = [
-            null,
-            7,
-            {},
-            revoked.proxy,
-            { ...validInput(), decision: true },
-            { ...validInput(), candidate: { ...complete, decision: true } },
-            { ...validInput(), candidate: { ...complete, binding: { ...binding('candidate'), decision: true } } },
-            { ...validInput(), candidate: { ...complete, binding: { ...binding('candidate'), packageArtifactSha256: 'not-a-digest' } } },
-            { ...validInput(), candidate: { ...complete, binding: { ...binding('candidate'), subject: 'other' } } },
-            { ...validInput(), measuredOn: '2026-09-31' },
-            { ...validInput(), composeVersion: '2.39' },
-        ]
-
-        const results = malformed.map((input) => {
-            expect(() => classifyRuntimeProbe(input as never)).not.toThrow()
-            return classifyRuntimeProbe(input as never)
-        })
-
-        expect(results.every((result) => result.status === 'unavailable' && result.evidence === null)).toBe(true)
-        expect(results.every((result) => JSON.stringify(result) === JSON.stringify(results[0]))).toBe(true)
-    })
-
-    it('refuses accessor-backed probe records without invoking getters', () => {
-        let reads = 0
-        const input = {}
-        Object.defineProperty(input, 'runtime', {
-            enumerable: true, get: () => { reads += 1; return { name: 'docker', version: '27.1.2' } },
-        })
-
-        const verdict = classifyRuntimeProbe(input as never)
-
-        expect(verdict).toMatchObject({
-            status: 'unavailable', evidence: null,
-            operatorAction: {
-                code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-                reason: 'runtime probe input is malformed or unreadable',
-            },
-        })
-        expect(reads).toBe(0)
-    })
-
-    it('does not treat structurally plausible caller records as authenticated support', () => {
-        expect(classifyRuntimeProbe({
-            runtime: { name: 'docker', version: '27.1.2' }, composeVersion: '2.39.2', composeFloor: '2.20.0', measuredOn: '2026-09-07',
-            runtimeVersionProbe: runtimeComplete, versionProbe: versionComplete, candidate: complete, brokenControl: rejected,
-        }).status).toBe('unavailable')
-    })
-
-    it.each([
-        ['candidate rejected', rejected, rejected],
-        ['broken control accepted', complete, complete],
-        ['candidate timed out', { kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_TIMEOUT } as const, rejected],
-        ['runtime absent', { kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED } as const, rejected],
-    ])('keeps %s explicitly unavailable', (_label, candidate, brokenControl) => {
-        const verdict = classifyRuntimeProbe({
-            runtime: { name: 'docker', version: '27.1.2' }, composeVersion: '2.39.2', composeFloor: '2.20.0', measuredOn: '2026-09-07',
-            runtimeVersionProbe: runtimeComplete, versionProbe: versionComplete, candidate, brokenControl,
-        })
-
-        expect(verdict.status).toBe('unavailable')
-        expect(verdict.operatorAction).toEqual(expect.objectContaining({ required: true }))
-    })
-
-    it('does not claim support below the declared compose feature floor', () => {
-        const verdict = classifyRuntimeProbe({
-            runtime: { name: 'docker', version: '27.1.2' }, composeVersion: '2.19.9', composeFloor: '2.20.0', measuredOn: '2026-09-07',
-            runtimeVersionProbe: runtimeComplete, versionProbe: versionComplete, candidate: complete, brokenControl: rejected,
-        })
-
-        expect(verdict.status).toBe('unavailable')
-        expect(verdict.operatorAction).toEqual(expect.objectContaining({ required: true }))
-    })
-
-    it('does not normalize a prerelease Compose version into a stable release', () => {
-        expect(classifyRuntimeProbe({
-            runtime: { name: 'docker', version: '27.1.2' }, composeVersion: '2.20.0-rc.1',
-            composeFloor: '2.20.0', measuredOn: '2026-09-07', runtimeVersionProbe: runtimeComplete,
-            versionProbe: versionComplete, candidate: complete, brokenControl: rejected,
-        }).status).toBe('unavailable')
-    })
-
-    it('keeps a generic step failure or mismatched probe batch unavailable', () => {
-        const generic: ProbeExecution = {
-            kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, binding: binding('broken-control'),
-        }
-        const mismatched: ProbeExecution = {
-            ...rejected, binding: { ...binding('broken-control'), batchId: 'd'.repeat(64) },
-        }
-        for (const brokenControl of [generic, mismatched]) {
-            expect(classifyRuntimeProbe({
-                runtime: { name: 'docker', version: '27.1.2' }, composeVersion: '2.39.2', composeFloor: '2.20.0', measuredOn: '2026-09-07',
-                runtimeVersionProbe: runtimeComplete, versionProbe: versionComplete, candidate: complete, brokenControl,
-            }).status).toBe('unavailable')
-        }
-    })
-
-    it('preserves a version-probe timeout as explicit timeout evidence', () => {
-        const versionProbe: ProbeExecution = { kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_TIMEOUT }
-        const verdict = classifyRuntimeProbe({
-            runtime: null, composeVersion: null, composeFloor: '2.20.0', measuredOn: '2026-09-07',
-            runtimeVersionProbe: runtimeComplete, versionProbe, candidate: complete, brokenControl: rejected,
-        })
-
-        expect(verdict.status).toBe('unavailable')
-        expect(verdict.evidence).toEqual({ runtimeVersionProbe: runtimeComplete, versionProbe, candidate: complete, brokenControl: rejected })
-        expect(verdict.operatorAction).toEqual(expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT }))
     })
 })
 

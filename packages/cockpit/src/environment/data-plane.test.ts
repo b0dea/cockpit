@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { stringify } from 'smol-toml'
 import { executeProbe } from '../environment-exec/execute.js'
-import { acquireClaim, coordinationStateRecord, type CoordinationRecord } from './claims.js'
+import { coordinationStateRecord, type CoordinationRecord } from './claims.js'
+import { leasePortFamily } from './ports.js'
 import { type CheckoutId, type CockpitId, type ExecutionStep, type HolderId, type StackId } from './contract.js'
 import { consumeDataModeOutcomeProjection, executeDataMode, isDataModeCompletion, isDataModeObservation, observeDataMode, planDataMode, projectDataModeObservationSteps, projectPersonaOutputs, readDataModeOutcome } from './data-plane.js'
 import { readState, selectStateRoot, transactState, type StateNamespace } from './state.js'
@@ -97,6 +98,16 @@ async function seedSoleHolder(state: StateNamespace): Promise<void> {
     if (result.kind !== 'complete') throw new Error('coordination seed failed')
 }
 
+// The live co-tenant join: a second holder takes the stack's existing port lease.
+function joinStack(state: StateNamespace, now: string) {
+    return leasePortFamily({
+        namespace: state, stackId, holderId: holderB, checkoutId: checkoutB, now,
+        config: { step: 100, count: 3, bases: { WEB: 4100 } }, listenerTimeoutMs: 100,
+        // The sole holder's lease is at offset 0, the only family the join observes.
+        listenerEvidence: [{ ports: [4100], observation: { state: 'available', value: [], observedAt: now, producer: 'test-listener-probe' } }],
+    })
+}
+
 function nodeStep(id: string, cwd: string, script = ''): ExecutionStep {
     return {
         id, argv: [process.execPath, '-e', script], argv0: process.execPath, cwd, env: {},
@@ -110,7 +121,7 @@ function nodeStep(id: string, cwd: string, script = ''): ExecutionStep {
     }
 }
 
-const validCockpitConfig = '[cockpit]\nname = "synthetic-cockpit"\nsiblings_root = "siblings"\n\n[[sibling]]\nslug = "app"\ndir = "app-service"\nremote = "ssh://example.invalid/app.git"\nbranch = "main"\nmount = "always"\nacquire = "auto"\nvar = "APP_DIR"\ntoolchain = "node"\npurpose = "Synthetic application"\n\n[ports]\nstep = 100\ncount = 4\nbases = { APP_PORT = 4100 }\n'
+const validCockpitConfig = '[cockpit]\nname = "synthetic-cockpit"\nsiblings_root = "siblings"\n\n[[sibling]]\nslug = "app"\ndir = "app-service"\nremote = "ssh://example.invalid/app.git"\nbranch = "main"\nmount = "always"\nacquire = "auto"\nvar = "APP_DIR"\ntoolchain = "none"\npurpose = "Synthetic application"\n\n[ports]\nstep = 100\ncount = 4\nbases = { APP_PORT = 4100 }\n'
 
 async function configuration(declaration: typeof environment = environment) {
     const directory = await mkdtemp(join(tmpdir(), 'cockpit-data-config-'))
@@ -321,9 +332,7 @@ describe('data mode execution', () => {
             executed.push(step.id)
             const outcome = await executeProbe(step)
             if (step.id === 'data:restored:schema') {
-                const joined = await acquireClaim({
-                    namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-26T06:01:00.000Z',
-                })
+                const joined = await joinStack(state, '2026-09-26T06:01:00.000Z')
                 if (joined.kind !== 'complete') throw new Error('co-tenant join failed')
             }
             return outcome
@@ -340,9 +349,7 @@ describe('data mode execution', () => {
         const blocked: string[] = []
         const result = await executeDataMode(plan, async (step) => {
             if (step.id === 'data:restored:restore' || step.id.startsWith('data:restored:rewrite')) {
-                const joined = await acquireClaim({
-                    namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-26T06:02:00.000Z',
-                })
+                const joined = await joinStack(state, '2026-09-26T06:02:00.000Z')
                 if (joined.kind === 'refusal') blocked.push(step.id)
             }
             return executeProbe(step)
@@ -350,9 +357,7 @@ describe('data mode execution', () => {
 
         expect(result.kind).toBe('complete')
         expect(blocked).toEqual(['data:restored:restore', 'data:restored:rewrite', 'data:restored:rewrite:object-store'])
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-26T06:03:00.000Z',
-        })).resolves.toMatchObject({ kind: 'complete' })
+        await expect(joinStack(state, '2026-09-26T06:03:00.000Z')).resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('holds one reservation across multiple restore operations and releases it after completion', async () => {
@@ -367,9 +372,7 @@ describe('data mode execution', () => {
         const plan = await planned('restored', state, { declaration })
 
         await expect(executeDataMode(plan, executeProbe)).resolves.toMatchObject({ kind: 'complete' })
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-26T06:04:00.000Z',
-        })).resolves.toMatchObject({ kind: 'complete' })
+        await expect(joinStack(state, '2026-09-26T06:04:00.000Z')).resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('releases the restore reservation when execution throws', async () => {
@@ -385,9 +388,7 @@ describe('data mode execution', () => {
         const message = JSON.stringify(result.kind === 'refusal' ? result.diagnostics : [])
         expect(message).toContain('data execution did not return an outcome: Error')
         expect(message).not.toContain('synthetic executor failure')
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-26T06:05:00.000Z',
-        })).resolves.toMatchObject({ kind: 'complete' })
+        await expect(joinStack(state, '2026-09-26T06:05:00.000Z')).resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('keeps fixture volume separate and names the wipe remedy for fresh-only work', async () => {

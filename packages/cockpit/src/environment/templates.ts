@@ -22,7 +22,7 @@ import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp,
 export const mechanism = {
     id: 'environment-template-seeding',
     module: 'packages/cockpit/src/environment/templates.ts',
-    exports: ['externalDependencyTemplateFragments', 'inspectEnvironmentKeys', 'planEnvironmentSeed', 'seedEnvironmentInstance', 'seedEnvironmentInstanceSync', 'observeSiblingPresence', 'observeEnvironmentKeys', 'observeTemplateHealth', 'isTemplateObservation', 'observationDeclarations'],
+    exports: ['externalDependencyTemplateFragments', 'inspectEnvironmentKeys', 'planEnvironmentSeed', 'seedEnvironmentInstanceSync', 'observeSiblingPresence', 'observeEnvironmentKeys', 'observeTemplateHealth', 'isTemplateObservation', 'observationDeclarations'],
 } as const
 
 export interface ExternalEndpointRuntimeFragment {
@@ -933,8 +933,4 @@ export function seedEnvironmentInstanceSync(plan: EnvironmentSeedPlan): Environm
         }
     }
     return seedFromPinnedDirectory(plan)
-}
-
-export async function seedEnvironmentInstance(plan: EnvironmentSeedPlan): Promise<EnvironmentSeedResult> {
-    return seedEnvironmentInstanceSync(plan)
 }

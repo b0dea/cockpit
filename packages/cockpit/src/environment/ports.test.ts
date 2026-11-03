@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENTRYPOINT_KINDS } from '../entrypoint-kinds.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type EntrypointDerivative } from '../schema.js'
-import { acquireClaim, coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
+import { coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
 import {
     ENVIRONMENT_CODES,
     type CheckoutId,
@@ -150,16 +150,6 @@ async function interceptDirectorySync(directoryPath: string, intercept: () => Pr
         await realSync.call(this)
     })
     return () => spy.mockRestore()
-}
-
-async function claim(state: StateNamespace, stackId: StackId, holderId: HolderId): Promise<void> {
-    const result = await acquireClaim({
-        namespace: state,
-        stackId,
-        holder: { holderId, checkoutId },
-        now,
-    })
-    if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
 }
 
 const noListeners = async (ports: readonly number[]) => ({
@@ -487,8 +477,8 @@ describe('whole-family port leases', () => {
         } })
         expect(reserved.kind).toBe('complete')
         const before = await readState(state.paths.coordination(stackA))
-        expect(await acquireClaim({ namespace: state, stackId: stackA, holder: { holderId: holderA, checkoutId }, now }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
+        expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
         expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
         for (const release of [
@@ -1171,10 +1161,10 @@ describe('whole-family port leases', () => {
             namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners,
         })).toMatchObject({ kind: 'complete' })
-        expect(await acquireClaim({
-            namespace: state, stackId: stackA,
-            holder: { holderId: holderB, checkoutId }, now,
-        })).toMatchObject({ kind: 'complete', change: 'acquired' })
+        expect(await leasePortFamily({
+            namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners,
+        })).toMatchObject({ kind: 'complete' })
 
         expect(await releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now }))
             .toEqual({ kind: 'complete', change: 'retained' })

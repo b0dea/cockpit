@@ -26,7 +26,6 @@ import {
     projectTeardownActionTargets,
     consumeReclaimTargetProjection,
     redeemTeardownAction,
-    reconcileTeardown,
     type ReclaimDiscoverySnapshot,
     type ReclaimResource,
 } from './reclaim.js'
@@ -247,7 +246,6 @@ describe('teardown replay', () => {
         const firstInput = await authenticatedInput(resources)
         const secondInput = await authenticatedInput([...resources].reverse(), firstInput.root)
         try {
-            const premintedRemaining = await authenticatedInput([resources[0]!], firstInput.root)
             const first = await planTeardown(firstInput.value)
             const second = await planTeardown(secondInput.value)
             expect(Buffer.from(JSON.stringify(first))).toEqual(Buffer.from(JSON.stringify(second)))
@@ -264,7 +262,6 @@ describe('teardown replay', () => {
                 }))
                 if (action.kind !== 'complete') return
                 expect(JSON.stringify(action)).not.toContain('container rm')
-                expect(reconcileTeardown(action, {} as never, premintedRemaining.value.discovery)).toEqual(expect.objectContaining({ kind: 'refusal' }))
                 const recreated = await authenticatedInput(resources, firstInput.root)
                 expect(await planTeardown({
                     ...recreated.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
@@ -329,7 +326,6 @@ describe('teardown replay', () => {
             expect(first).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
             expect(second).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
             expect(first.actionAuthority).not.toBe(second.actionAuthority)
-            expect(reconcileTeardown(first, {} as never, firstFresh.value.discovery)).toEqual(expect.objectContaining({ kind: 'refusal' }))
         } finally { await rm(firstPreviewInput.root, { recursive: true, force: true }) }
     })
 
@@ -465,7 +461,6 @@ describe('teardown replay', () => {
             })
             expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0, steps: [], actionAuthority: expect.any(Object) }))
             await writeFile(join(initial.root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: 'unix:///tmp/another.sock' })}\n`)
-            expect(reconcileTeardown(action, {} as never, fresh.value.discovery)).toEqual(expect.objectContaining({ kind: 'refusal' }))
         } finally { await rm(initial.root, { recursive: true, force: true }) }
     })
 

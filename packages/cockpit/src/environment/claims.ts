@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { lstatSync } from 'node:fs'
 import { lstat, opendir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
@@ -8,9 +7,6 @@ import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
     ENVIRONMENT_CODES,
     errorCause,
-    OBSERVATION_PRODUCER_BYTE_LIMIT,
-    OBSERVATION_REASON_BYTE_LIMIT,
-    REFUSAL_CODES,
     isCanonicalTimestamp,
     snapshotJson,
     snapshotExecutionPlan,
@@ -21,18 +17,14 @@ import {
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
     type HolderId,
-    type Observation,
-    type EnvironmentCommandOutcome,
-    type ExecutionPlan,
     type ExecutionStep,
     type ExecutionFence,
     type JsonSnapshot,
     type StackId,
 } from './contract.js'
 import { authenticatedExecutionOutcome, consumeFencedExecutionTermination, type ExecuteProbeOutcome, type FencedExecutionTermination } from '../environment-exec/execute.js'
-import { resolveExecutablePath, resolvedExecutable, type ResolvedExecutable } from './executable.js'
+import { resolveExecutablePath, type ResolvedExecutable } from './executable.js'
 import { observeConfigSource } from '../config/load.js'
-import { checkoutId as deriveCheckoutId } from './identity.js'
 import {
     abortStateTransaction,
     authenticateStateNamespace,
@@ -57,10 +49,10 @@ export const mechanism = {
     id: 'environment-claims',
     module: 'packages/cockpit/src/environment/claims.ts',
     exports: [
-        'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
+        'releaseClaim', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
-        'observeProcessStart', 'processHost', 'isProcessStart', 'isProcessGone', 'releaseDeadSessionHolders', 'describeHolder', 'liveHolderMessage',
-        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
+        'observeProcessStart', 'processHost', 'isProcessStart', 'isProcessGone', 'releaseDeadSessionHolders', 'liveHolderMessage',
+        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'isRestoreActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
 
@@ -309,27 +301,6 @@ const CoordinationValueSchema = z.object({
         context.addIssue({ code: 'custom', message: 'coordination invariants are inconsistent' })
     }
 })
-
-const HolderLivenessEvidenceSchema = z.discriminatedUnion('state', [
-    z.object({ state: z.literal('live') }).strict(),
-    z.object({ state: z.literal('dead'), evidence: z.enum(['process-absent', 'checkout-missing']) }).strict(),
-])
-
-const HolderObservationSchema = z.discriminatedUnion('state', [
-    z.object({
-        state: z.literal('available'),
-        value: HolderLivenessEvidenceSchema,
-        observedAt: z.string().refine(isCanonicalTimestamp),
-        producer: z.string().min(1),
-    }).strict(),
-    z.object({ state: z.literal('unavailable'), reason: z.string().min(1), producer: z.string().min(1) }).strict(),
-    z.object({
-        state: z.literal('failed'),
-        code: z.enum(REFUSAL_CODES),
-        reason: z.string().min(1),
-        producer: z.string().min(1),
-    }).strict(),
-])
 
 export interface ClaimHolder {
     readonly holderId: HolderId
@@ -621,45 +592,10 @@ const drainContinuationEvidence = new WeakMap<object,
     | { readonly kind: 'progress'; readonly authority: DrainProgressAuthority }
     | { readonly kind: 'failure'; readonly authority: DrainAttemptFailureAuthority }>()
 
-declare const releaseAuthorityBrand: unique symbol
-
-export interface HolderReleaseAuthority {
-    readonly [releaseAuthorityBrand]: true
-    readonly stackId: StackId
-    readonly requesterId: HolderId
-    readonly holderId: HolderId
-    readonly claimedAt: string
-    readonly recordRevision: number
-    readonly requestedAt: string
-    readonly observedAt: string
-    readonly validThrough: string
-    readonly producer: string
-}
-
-const releaseAuthorities = new WeakSet<object>()
-const reservedReleaseAuthorities = new WeakSet<object>()
-const releaseAuthorityCheckoutPaths = new WeakMap<object, string>()
-const issuedHolderObservations = new WeakMap<object, {
-    readonly subjectId: StackId
-    readonly revision: number
-    readonly requestedAt: string
-    readonly timeoutMs: number
-    readonly checkoutPaths?: ReadonlyMap<HolderId, string>
-}>()
-
 type ClaimMutationRefusal = {
     readonly kind: 'refusal'
     readonly diagnostics: readonly EnvironmentDiagnostic[]
 }
-
-export type AcquireClaimResult =
-    | {
-          readonly kind: 'complete'
-          readonly change: 'acquired' | 'unchanged'
-          readonly holders: readonly HolderId[]
-          readonly ownership: Readonly<{ stackId: StackId; holderId: HolderId; recordRevision: number; change: 'acquired' | 'unchanged' }>
-      }
-    | ClaimMutationRefusal
 
 export type ReleaseClaimResult =
     | {
@@ -669,31 +605,6 @@ export type ReleaseClaimResult =
           readonly remaining: readonly HolderId[]
       }
     | ClaimMutationRefusal
-
-export type HolderLivenessEvidence =
-    | { readonly state: 'live' }
-    | { readonly state: 'dead'; readonly evidence: 'process-absent' | 'checkout-missing' }
-
-export interface HolderObservationInput {
-    readonly holderId: HolderId
-    readonly observation: Observation<HolderLivenessEvidence>
-}
-
-export interface HolderProcessProbe {
-    readonly requestedAt: string
-    readonly observations: readonly HolderObservationInput[]
-}
-
-export interface HolderCheckoutProbe extends HolderProcessProbe {
-    readonly timeoutMs: number
-}
-
-const issuedHolderProbePlans = new WeakMap<object, {
-    readonly subjectId: StackId
-    readonly revision: number
-    readonly timeoutMs: number
-    readonly holderIds: readonly HolderId[]
-}>()
 
 export interface HolderProcess {
     readonly pid?: number
@@ -813,6 +724,9 @@ export function processHost(execute: (step: ExecutionStep) => Promise<ExecutePro
     })
 }
 
+// Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
+const PROCESS_PRESENCE_PROBE = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
+
 // One short read-only step through the executor; its stdout when it exits 0, otherwise undefined.
 async function runBoundedProbe(
     executable: ResolvedExecutable,
@@ -835,7 +749,7 @@ async function runBoundedProbe(
     return outcome?.kind === 'complete' && outcome.execution.exitCode === 0 ? Buffer.from(outcome.stdout).toString('utf8') : undefined
 }
 
-export function describeHolder(holder: ClaimHolder): string {
+function describeHolder(holder: ClaimHolder): string {
     return holder.pid === undefined ? holder.holderId : `${holder.holderId} (process ${holder.pid})`
 }
 
@@ -871,11 +785,10 @@ export async function releaseDeadSessionHolders(input: {
     const value = decodeCoordinationRecord(stored.value, input.stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
     if (isDrainActive(value) || isRestoreActive(value)) return { kind: 'complete', released: [] }
-    const dead: ClaimHolder[] = []
-    for (const holder of value.holders) {
-        if (holder.holderId === input.successor.holderId || holder.pid === undefined) continue
-        if (isProcessGone(holder.processStart, await input.observe(holder.pid))) dead.push(holder)
-    }
+    // Probes are independent child processes; Promise.all keeps the verdicts in holder order.
+    const candidates = value.holders.filter((holder) => holder.holderId !== input.successor.holderId && holder.pid !== undefined)
+    const observed = await Promise.all(candidates.map((holder) => input.observe(holder.pid!)))
+    const dead = candidates.filter((holder, index) => isProcessGone(holder.processStart, observed[index]!))
     if (dead.length === 0) return { kind: 'complete', released: [] }
     let committed: readonly ClaimHolder[] = []
     const result = await transactClaim<ReleaseDeadSessionHoldersResult>(input.namespace, input.stackId, input.successor.holderId, (current) => {
@@ -902,188 +815,6 @@ export async function releaseDeadSessionHolders(input: {
         ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
     return { kind: 'complete', released: Object.freeze(committed) }
 }
-
-// Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
-const PROCESS_PRESENCE_PROBE = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
-
-export async function createHolderProcessProbePlan(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly executable: ResolvedExecutable
-    readonly timeoutMs: number
-}): Promise<EnvironmentCommandOutcome<null>> {
-    if (!input || typeof input !== 'object' || !hasExactKeys(input, ['namespace', 'stackId', 'executable', 'timeoutMs'])) {
-        throw new TypeError('holder process probe input is malformed')
-    }
-    const namespace = snapshotStateNamespace(input?.namespace)
-    if (!namespace || !validIdentity(input?.stackId, stackIdentity)) throw new TypeError('holder process probe input is malformed')
-    const stored = await readState(namespace.paths.coordination(input.stackId))
-    if (stored.kind !== 'complete') throw new TypeError('holder process probe coordination is unavailable')
-    const record = stored.value
-    const value = decodeCoordinationRecord(record, input.stackId)
-    const executable = resolvedExecutable(input?.executable)
-    if (!value || !Number.isSafeInteger(record.revision) || !Number.isSafeInteger(input.timeoutMs)
-        || input.timeoutMs < 1 || input.timeoutMs > 30_000 || !executable
-        || executable.canonicalPath !== process.execPath
-        || executable.invocationPath !== executable.canonicalPath
-        || executable.executionMode !== 'verified-path'
-        || value.holders.some(({ pid }) => !Number.isSafeInteger(pid) || pid! < 1 || pid! > 2_147_483_647)) {
-        throw new TypeError('holder process probe input is malformed')
-    }
-    const steps = value.holders.map(({ holderId, pid }): ExecutionStep => Object.freeze({
-        id: `holder:probe:${holderId.slice(7, 19)}`,
-        argv: Object.freeze([executable.canonicalPath, '-e', PROCESS_PRESENCE_PROBE, String(pid)] as const),
-        argv0: executable.invocationPath, cwd: dirname(executable.canonicalPath), env: Object.freeze({}), timeoutMs: input.timeoutMs,
-        stdoutLimitBytes: 1_024, stderrLimitBytes: 1_024, paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ holderId }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode })]),
-        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-    }))
-    const plan = snapshotExecutionPlan({ steps })
-    if (!plan) throw new TypeError('holder process probe input is malformed')
-    issuedHolderProbePlans.set(plan, Object.freeze({
-        subjectId: record.subjectId as StackId,
-        revision: record.revision,
-        timeoutMs: input.timeoutMs,
-        holderIds: Object.freeze(value.holders.map(({ holderId }) => holderId)),
-    }))
-    return { kind: 'preview', status: 0, diagnostics: [], result: null, plan }
-}
-
-export function collectHolderProcessProbe(plan: ExecutionPlan, outcomes: readonly ExecuteProbeOutcome[]): HolderProcessProbe | undefined {
-    const contract = issuedHolderProbePlans.get(plan)
-    if (!contract || outcomes.length !== contract.holderIds.length || plan.steps.length !== contract.holderIds.length) return undefined
-    const authenticated = outcomes.map((outcome, index) => authenticatedExecutionOutcome(outcome, plan.steps[index]!))
-    if (authenticated.some((outcome) => !outcome?.receipt || outcome.kind !== 'complete')) return undefined
-    const requestedAt = authenticated.map((outcome) => outcome!.receipt!.startedAt).sort()[0]!
-    const observations: HolderObservationInput[] = []
-    for (const [index, outcome] of authenticated.entries()) {
-        let result: string
-        try { result = new TextDecoder('utf-8', { fatal: true }).decode(outcome!.stdout) } catch {
-            // Non-UTF-8 probe output is unproven; the caller refuses a missing probe.
-            return undefined
-        }
-        if (result !== 'live' && result !== 'absent' && result !== 'unavailable') return undefined
-        observations.push(Object.freeze({
-            holderId: contract.holderIds[index]!,
-            observation: Object.freeze({
-                state: 'unavailable' as const,
-                reason: 'process liveness has no issued long-lived holder association',
-                producer: 'bounded-process-probe',
-            }),
-        }))
-    }
-    const ownedObservations = Object.freeze(observations)
-    return Object.freeze({ requestedAt, observations: ownedObservations })
-}
-
-export async function observeHolderCheckouts(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly timeoutMs: number
-    readonly checkouts: readonly { readonly checkoutId: CheckoutId; readonly path: string }[]
-}): Promise<HolderCheckoutProbe> {
-    let owned: { namespace: unknown; stackId: unknown; timeoutMs: unknown; checkouts: unknown }
-    try {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid input')
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        const keys = Reflect.ownKeys(descriptors)
-        const expected = ['checkouts', 'namespace', 'stackId', 'timeoutMs']
-        if (keys.length !== expected.length || !expected.every((key) => keys.includes(key))) throw new Error('invalid input')
-        if (expected.some((key) => !('value' in descriptors[key]!))) throw new Error('invalid input')
-        owned = {
-            namespace: descriptors.namespace!.value,
-            stackId: descriptors.stackId!.value,
-            timeoutMs: descriptors.timeoutMs!.value,
-            checkouts: descriptors.checkouts!.value,
-        }
-    } catch { throw new TypeError('holder checkout probe input is malformed') }
-    const namespace = snapshotStateNamespace(owned.namespace as StateNamespace)
-    const checkouts: { readonly checkoutId: CheckoutId; readonly path: string }[] = []
-    try {
-        if (!Array.isArray(owned.checkouts)) throw new Error('invalid checkouts')
-        const descriptors = Object.getOwnPropertyDescriptors(owned.checkouts) as unknown as Record<PropertyKey, PropertyDescriptor>
-        const length = descriptors.length
-        const count = length && 'value' in length ? length.value : undefined
-        if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0
-            || count > STRUCTURED_INPUT_ENTRY_LIMIT || Reflect.ownKeys(descriptors).length !== count + 1) {
-            throw new Error('invalid checkouts')
-        }
-        for (let index = 0; index < count; index += 1) {
-            const indexed = descriptors[String(index)]
-            if (!indexed || !('value' in indexed) || !indexed.value || typeof indexed.value !== 'object' || Array.isArray(indexed.value)) {
-                throw new Error('invalid checkout')
-            }
-            const entry = Object.getOwnPropertyDescriptors(indexed.value)
-            const entryKeys = Reflect.ownKeys(entry)
-            if (entryKeys.length !== 2 || !entryKeys.includes('checkoutId') || !entryKeys.includes('path')
-                || !('value' in entry.checkoutId!) || !('value' in entry.path!)) throw new Error('invalid checkout')
-            checkouts.push(Object.freeze({ checkoutId: entry.checkoutId.value, path: entry.path.value }))
-        }
-    } catch { throw new TypeError('holder checkout probe input is malformed') }
-    const stackId = owned.stackId as StackId
-    const timeoutMs = owned.timeoutMs as number
-    if (!namespace || !validIdentity(stackId, stackIdentity) || !Number.isSafeInteger(timeoutMs)
-        || timeoutMs < 1 || timeoutMs > 30_000) throw new TypeError('holder checkout probe input is malformed')
-    const paths = new Map<CheckoutId, string>()
-    try {
-        for (const checkout of checkouts) {
-            if (!validIdentity(checkout.checkoutId, checkoutIdentity) || typeof checkout.path !== 'string'
-                || !isAbsolute(checkout.path) || normalize(checkout.path) !== checkout.path
-                || deriveCheckoutId({ checkoutPath: checkout.path }) !== checkout.checkoutId || paths.has(checkout.checkoutId)) {
-                throw new Error('invalid checkout')
-            }
-            paths.set(checkout.checkoutId, checkout.path)
-        }
-    } catch { throw new TypeError('holder checkout probe input is malformed') }
-    const stored = await readState(namespace.paths.coordination(stackId))
-    if (stored.kind !== 'complete') throw new TypeError('holder checkout probe coordination is unavailable')
-    const record = decodeCoordinationRecord(stored.value, stackId)
-    const requiredCheckouts = new Set(record?.holders.map(({ checkoutId }) => checkoutId))
-    if (!record || requiredCheckouts.size !== paths.size || [...requiredCheckouts].some((checkoutId) => !paths.has(checkoutId))) {
-        throw new TypeError('holder checkout probe input is malformed')
-    }
-    const requestedAt = new Date().toISOString()
-    const observations: HolderObservationInput[] = []
-    for (const holder of record.holders) {
-        const path = paths.get(holder.checkoutId)!
-        let observation: Observation<HolderLivenessEvidence>
-        try {
-            const status = await lstat(path)
-            observation = status.isDirectory() && !status.isSymbolicLink()
-                ? { state: 'available', value: { state: 'live' }, observedAt: new Date().toISOString(), producer: 'bounded-checkout-probe' }
-                : { state: 'unavailable', reason: 'checkout path is not a directory', producer: 'bounded-checkout-probe' }
-        } catch (error) {
-            observation = (error as NodeJS.ErrnoException).code === 'ENOENT'
-                ? { state: 'available', value: { state: 'dead', evidence: 'checkout-missing' }, observedAt: new Date().toISOString(), producer: 'bounded-checkout-probe' }
-                : { state: 'unavailable', reason: 'checkout presence could not be established', producer: 'bounded-checkout-probe' }
-        }
-        observations.push(Object.freeze({ holderId: holder.holderId, observation: Object.freeze(observation) }))
-    }
-    const ownedObservations = Object.freeze(observations)
-    issuedHolderObservations.set(ownedObservations, Object.freeze({
-        subjectId: stored.value.subjectId as StackId,
-        revision: stored.value.revision,
-        requestedAt,
-        timeoutMs,
-        checkoutPaths: new Map(record.holders.map((holder) => [holder.holderId, paths.get(holder.checkoutId)!])),
-    }))
-    return Object.freeze({ requestedAt, timeoutMs, observations: ownedObservations })
-}
-
-export interface ClassifiedHolder {
-    readonly holderId: HolderId
-    readonly checkoutId: CheckoutId
-    readonly state: 'live' | 'dead' | 'checkout-missing'
-}
-
-export type HolderClassificationResult =
-    | {
-          readonly kind: 'complete'
-          readonly classifications: readonly ClassifiedHolder[]
-          readonly authorities: readonly HolderReleaseAuthority[]
-      }
-    | ClaimMutationRefusal
 
 export type ActiveStackInventoryResult =
     | { readonly kind: 'complete'; readonly value: readonly { readonly stackId: StackId; readonly record: CoordinationRecord }[] }
@@ -1285,24 +1016,6 @@ function validIdentity(value: string, pattern: RegExp): boolean {
     return typeof value === 'string' && pattern.test(value)
 }
 
-function exactArrayLength(value: unknown, expected: number): number | undefined {
-    try {
-        if (!Array.isArray(value)) return undefined
-        const descriptor = Object.getOwnPropertyDescriptor(value, 'length')
-        if (
-            !descriptor
-            || !('value' in descriptor)
-            || !Number.isSafeInteger(descriptor.value)
-            || descriptor.value < 0
-            || descriptor.value !== expected
-        ) return undefined
-        return descriptor.value
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
 function hasExactKeys(value: object, keys: readonly string[]): boolean {
     try {
         const actual = Reflect.ownKeys(Object.getOwnPropertyDescriptors(value))
@@ -1311,76 +1024,6 @@ function hasExactKeys(value: object, keys: readonly string[]): boolean {
         // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return false
     }
-}
-
-function snapshotHolderObservations(
-    value: unknown,
-    expected: number,
-): readonly HolderObservationInput[] | undefined {
-    const length = exactArrayLength(value, expected)
-    if (length === undefined) return undefined
-    const snapshots: HolderObservationInput[] = []
-    try {
-        for (let index = 0; index < length; index += 1) {
-            if (!Object.hasOwn(value as object, index)) return undefined
-            const rawEntry = (value as readonly unknown[])[index]
-            if (!rawEntry || typeof rawEntry !== 'object' || !hasExactKeys(rawEntry, ['holderId', 'observation'])) return undefined
-            const holderId = (rawEntry as { holderId?: unknown }).holderId
-            const rawObservation = (rawEntry as { observation?: unknown }).observation
-            if (!validIdentity(holderId as string, holderIdentity) || !rawObservation || typeof rawObservation !== 'object') return undefined
-            const state = (rawObservation as { state?: unknown }).state
-            let observation: Observation<HolderLivenessEvidence>
-            if (state === 'available') {
-                if (!hasExactKeys(rawObservation, ['state', 'value', 'observedAt', 'producer'])) return undefined
-                const rawEvidence = (rawObservation as { value?: unknown }).value
-                const observedAt = (rawObservation as { observedAt?: unknown }).observedAt
-                const producer = (rawObservation as { producer?: unknown }).producer
-                if (
-                    !rawEvidence || typeof rawEvidence !== 'object'
-                    || typeof observedAt !== 'string'
-                    || typeof producer !== 'string'
-                    || producer.length < 1
-                    || Buffer.byteLength(producer, 'utf8') > OBSERVATION_PRODUCER_BYTE_LIMIT
-                ) return undefined
-                const evidenceState = (rawEvidence as { state?: unknown }).state
-                const evidence = (rawEvidence as { evidence?: unknown }).evidence
-                if (evidenceState === 'live' && hasExactKeys(rawEvidence, ['state'])) {
-                    observation = { state, value: { state: 'live' }, observedAt, producer }
-                } else if (
-                    evidenceState === 'dead'
-                    && (evidence === 'process-absent' || evidence === 'checkout-missing')
-                    && hasExactKeys(rawEvidence, ['state', 'evidence'])
-                ) {
-                    observation = { state, value: { state: 'dead', evidence }, observedAt, producer }
-                } else return undefined
-            } else if (state === 'unavailable') {
-                if (!hasExactKeys(rawObservation, ['state', 'reason', 'producer'])) return undefined
-                const reason = (rawObservation as { reason?: unknown }).reason
-                const producer = (rawObservation as { producer?: unknown }).producer
-                if (
-                    typeof reason !== 'string' || reason.length < 1 || Buffer.byteLength(reason, 'utf8') > OBSERVATION_REASON_BYTE_LIMIT
-                    || typeof producer !== 'string' || producer.length < 1 || Buffer.byteLength(producer, 'utf8') > OBSERVATION_PRODUCER_BYTE_LIMIT
-                ) return undefined
-                observation = { state, reason, producer }
-            } else if (state === 'failed') {
-                if (!hasExactKeys(rawObservation, ['state', 'code', 'reason', 'producer'])) return undefined
-                const code = (rawObservation as { code?: unknown }).code
-                const reason = (rawObservation as { reason?: unknown }).reason
-                const producer = (rawObservation as { producer?: unknown }).producer
-                if (
-                    !REFUSAL_CODES.includes(code as never)
-                    || typeof reason !== 'string' || reason.length < 1 || Buffer.byteLength(reason, 'utf8') > OBSERVATION_REASON_BYTE_LIMIT
-                    || typeof producer !== 'string' || producer.length < 1 || Buffer.byteLength(producer, 'utf8') > OBSERVATION_PRODUCER_BYTE_LIMIT
-                ) return undefined
-                observation = { state, code: code as typeof REFUSAL_CODES[number], reason, producer }
-            } else return undefined
-            snapshots.push(Object.freeze({ holderId: holderId as HolderId, observation: Object.freeze(observation) }))
-        }
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-    return Object.freeze(snapshots)
 }
 
 export function decodeCoordinationRecord(record: StateRecord | null, stackId: StackId): CoordinationRecord | undefined {
@@ -1763,7 +1406,7 @@ export function isDrainActive(value: CoordinationRecord): boolean {
     return value.drain != null
 }
 
-function isRestoreActive(value: CoordinationRecord): boolean {
+export function isRestoreActive(value: CoordinationRecord): boolean {
     return value.restore != null
 }
 
@@ -3296,101 +2939,18 @@ async function transactClaim<T>(
     return aborted.aborted === true ? aborted.value : result as StateResult<StateRecord>
 }
 
-export async function acquireClaim(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly holder: { readonly holderId: HolderId; readonly checkoutId: CheckoutId }
-    readonly now: string
-}): Promise<AcquireClaimResult> {
-    let request: {
-        readonly namespace: StateNamespace
-        readonly stackId: StackId
-        readonly holder: { readonly holderId: HolderId; readonly checkoutId: CheckoutId }
-        readonly now: string
-    }
-    try {
-        const namespaceProperty = Object.getOwnPropertyDescriptor(input, 'namespace')
-        if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
-        const stableNamespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
-        if (!stableNamespace) throw new Error('invalid namespace')
-        request = Object.freeze({
-            namespace: stableNamespace,
-            stackId: input.stackId,
-            holder: Object.freeze({ holderId: input.holder.holderId, checkoutId: input.holder.checkoutId }),
-            now: input.now,
-        })
-    } catch (error) {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `claim acquisition input could not be read safely: ${errorCause(error)}`, 'claim acquisition input')
-    }
-    if (
-        !validIdentity(request.stackId, stackIdentity)
-        || !validIdentity(request.holder.holderId, holderIdentity)
-        || !validIdentity(request.holder.checkoutId, checkoutIdentity)
-        || !isCanonicalTimestamp(request.now)
-    ) {
-        return refuse(
-            ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            'claim acquisition requires canonical stack, holder, checkout, and timestamp values',
-            String(request.stackId ?? ''),
-        )
-    }
-
-    const result = await transactClaim<AcquireClaimResult>(
-        request.namespace,
-        request.stackId,
-        request.holder.holderId,
-        (current) => {
-            const value = decodeCoordinationRecord(current, request.stackId)
-            if (!value) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', request.stackId))
-            if (isDrainActive(value) || isRestoreActive(value)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'claim acquisition is blocked while the stack has an exclusive mutation', request.stackId))
-            if (current === null || value.lease === null || value.lease.released) {
-                return abortStateTransaction(refuse(
-                    ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-                    'an initial holder must acquire its port lease in the same coordination transaction',
-                    request.stackId,
-                ))
-            }
-            const added = addCoordinationHolder(value, request.holder, request.now)
-            if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', request.holder.holderId))
-            const complete: AcquireClaimResult = {
-                kind: 'complete', change: added.change, holders: added.value.holders.map((holder) => holder.holderId),
-                ownership: { stackId: request.stackId, holderId: request.holder.holderId, recordRevision: current?.revision ?? 0, change: added.change },
-            }
-            return added.change === 'unchanged'
-                ? abortStateTransaction(complete)
-                : coordinationStateRecord(request.namespace, request.stackId, current, request.now, added.value)
-        },
-    )
-    if ('diagnostics' in result || 'holders' in result) return result
-    if (result.kind === 'missing') {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path)
-    }
-    if (result.kind !== 'complete') return stateRefusal(result)
-    const value = decodeCoordinationRecord(result.value, request.stackId)
-    if (!value) {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published claim record is malformed', result.value.subjectId)
-    }
-    return {
-        kind: 'complete', change: 'acquired', holders: value.holders.map((holder) => holder.holderId),
-        ownership: { stackId: request.stackId, holderId: request.holder.holderId, recordRevision: result.value.revision, change: 'acquired' },
-    }
-}
-
 export async function releaseClaim(input: {
     readonly namespace: StateNamespace
     readonly stackId: StackId
     readonly requesterId: HolderId
     readonly holderId: HolderId
-    readonly authority?: HolderReleaseAuthority
     readonly now: string
 }): Promise<ReleaseClaimResult> {
-    let authorityToken: HolderReleaseAuthority | undefined
     let request: {
         readonly namespace: StateNamespace
         readonly stackId: StackId
         readonly requesterId: HolderId
         readonly holderId: HolderId
-        readonly authority?: Omit<HolderReleaseAuthority, typeof releaseAuthorityBrand>
         readonly now: string
     }
     try {
@@ -3398,24 +2958,11 @@ export async function releaseClaim(input: {
         if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
         const stableNamespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
         if (!stableNamespace) throw new Error('invalid namespace')
-        authorityToken = input.authority
-        const authority = authorityToken === undefined ? undefined : Object.freeze({
-            stackId: authorityToken.stackId,
-            requesterId: authorityToken.requesterId,
-            holderId: authorityToken.holderId,
-            claimedAt: authorityToken.claimedAt,
-            recordRevision: authorityToken.recordRevision,
-            requestedAt: authorityToken.requestedAt,
-            observedAt: authorityToken.observedAt,
-            validThrough: authorityToken.validThrough,
-            producer: authorityToken.producer,
-        })
         request = Object.freeze({
             namespace: stableNamespace,
             stackId: input.stackId,
             requesterId: input.requesterId,
             holderId: input.holderId,
-            ...(authority ? { authority } : {}),
             now: input.now,
         })
     } catch (error) {
@@ -3433,34 +2980,14 @@ export async function releaseClaim(input: {
             String(request.stackId ?? ''),
         )
     }
-
-    const crossHolder = request.requesterId !== request.holderId
-    const authorityIssued = authorityToken !== undefined
-        && releaseAuthorities.has(authorityToken)
-        && !reservedReleaseAuthorities.has(authorityToken)
-    if (authorityIssued && authorityToken) reservedReleaseAuthorities.add(authorityToken)
-    const preserveAuthority = () => {
-        if (authorityIssued && authorityToken) reservedReleaseAuthorities.delete(authorityToken)
-    }
-    const consumeAuthority = () => {
-        if (authorityIssued && authorityToken) {
-            reservedReleaseAuthorities.delete(authorityToken)
-            releaseAuthorities.delete(authorityToken)
-            releaseAuthorityCheckoutPaths.delete(authorityToken)
-        }
-    }
-    const checkoutPath = crossHolder && authorityToken ? releaseAuthorityCheckoutPaths.get(authorityToken) : undefined
-    if (checkoutPath !== undefined) {
-        try {
-            await lstat(checkoutPath)
-            preserveAuthority()
-            return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'checkout is present; absence authority is no longer current', request.holderId)
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                preserveAuthority()
-                return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'checkout absence could not be confirmed', request.holderId)
-            }
-        }
+    // A holder whose session is gone is released by `releaseDeadSessionHolders`, which proves the
+    // death itself; no other holder's claim is this function's to drop.
+    if (request.requesterId !== request.holderId) {
+        return refuse(
+            ENVIRONMENT_CODES.CLAIM_CO_TENANT,
+            'a holder can release only its own claim',
+            request.holderId,
+        )
     }
 
     const result = await transactClaim<ReleaseClaimResult>(
@@ -3468,72 +2995,22 @@ export async function releaseClaim(input: {
         request.stackId,
         request.requesterId,
         (current) => {
-            const observedNow = new Date().toISOString()
-            if (checkoutPath !== undefined) {
-                try {
-                    lstatSync(checkoutPath)
-                    return abortStateTransaction(refuse(
-                        ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                        'checkout is present; absence authority is no longer current',
-                        request.holderId,
-                    ))
-                } catch (error) {
-                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                        return abortStateTransaction(refuse(
-                            ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                            'checkout absence could not be confirmed',
-                            request.holderId,
-                        ))
-                    }
-                }
-            }
             const value = decodeCoordinationRecord(current, request.stackId)
             if (!value) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', request.stackId))
             if (isDrainActive(value) || isRestoreActive(value)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'claim release is blocked while the stack has an exclusive mutation', request.stackId))
-            const target = value.holders.find((holder) => holder.holderId === request.holderId)
-            if (request.requesterId !== request.holderId) {
-                const authority = request.authority
-                if (
-                    !authorityIssued
-                    || !authority
-                    || authority.stackId !== request.stackId
-                    || authority.requesterId !== request.requesterId
-                    || authority.holderId !== request.holderId
-                    || authority.claimedAt !== target?.claimedAt
-                    || authority.recordRevision !== current?.revision
-                    || !isCanonicalTimestamp(authority.observedAt)
-                    || !isCanonicalTimestamp(authority.validThrough)
-                    || Date.parse(authority.observedAt) > Date.parse(observedNow)
-                    || Date.parse(observedNow) > Date.parse(authority.validThrough)
-                ) {
-                    return abortStateTransaction(refuse(
-                        ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                        'requester has no positive-evidence authority to release the target holder',
-                        request.holderId,
-                    ))
-                }
-            }
             const holders = value.holders.filter((holder) => holder.holderId !== request.holderId)
             if (holders.length === value.holders.length) {
-                if (request.requesterId === request.holderId) {
-                    if (holders.length === 0) {
-                        return abortStateTransaction(refuse(
-                            ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                            'claim release requires an active non-final holder',
-                            request.stackId,
-                        ))
-                    }
-                    return abortStateTransaction({
-                        kind: 'complete', change: 'unchanged',
-                        decision: holders.length === 0 && value.lease?.released ? 'stop' : 'retain',
-                        remaining: holders.map((holder) => holder.holderId),
-                    })
+                if (holders.length === 0) {
+                    return abortStateTransaction(refuse(
+                        ENVIRONMENT_CODES.CLAIM_CO_TENANT,
+                        'claim release requires an active non-final holder',
+                        request.stackId,
+                    ))
                 }
-                return abortStateTransaction(refuse(
-                    ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-                    'holder does not own a claim on the target stack',
-                    request.stackId,
-                ))
+                return abortStateTransaction({
+                    kind: 'complete', change: 'unchanged', decision: 'retain',
+                    remaining: holders.map((holder) => holder.holderId),
+                })
             }
             if (holders.length === 0) {
                 return abortStateTransaction(refuse(
@@ -3542,7 +3019,7 @@ export async function releaseClaim(input: {
                     request.stackId,
                 ))
             }
-            return coordinationStateRecord(request.namespace, request.stackId, current, observedNow, {
+            return coordinationStateRecord(request.namespace, request.stackId, current, new Date().toISOString(), {
                 holders,
                 lease: value.lease,
                 lastReleasedHolder: request.holderId,
@@ -3550,53 +3027,12 @@ export async function releaseClaim(input: {
                 restore: value.restore,
             })
         },
-        crossHolder
-            ? () => {
-                  if (request.requesterId !== request.holderId && request.authority
-                      && Date.now() > Date.parse(request.authority.validThrough)) {
-                      return abortStateTransaction(refuse(
-                          ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                          'holder release authority expired before claim release commit',
-                          request.holderId,
-                      ))
-                  }
-                  if (checkoutPath === undefined) return undefined
-                  try {
-                      lstatSync(checkoutPath)
-                      return abortStateTransaction(refuse(
-                          ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                          'checkout appeared before its claim release could be committed',
-                          request.holderId,
-                      ))
-                  } catch (error) {
-                      return (error as NodeJS.ErrnoException).code === 'ENOENT'
-                          ? undefined
-                          : abortStateTransaction(refuse(
-                                ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                                'checkout absence could not be confirmed before claim release commit',
-                                request.holderId,
-                            ))
-                  }
-              }
-            : undefined,
-    ).catch((error: unknown) => {
-        preserveAuthority()
-        throw error
-    })
-    if ('diagnostics' in result || 'remaining' in result) {
-        preserveAuthority()
-        return result
-    }
+    )
+    if ('diagnostics' in result || 'remaining' in result) return result
     if (result.kind === 'missing') {
-        preserveAuthority()
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path)
     }
-    if (result.kind !== 'complete') {
-        if (result.kind === 'indeterminate') consumeAuthority()
-        else preserveAuthority()
-        return stateRefusal(result)
-    }
-    consumeAuthority()
+    if (result.kind !== 'complete') return stateRefusal(result)
     const value = decodeCoordinationRecord(result.value, request.stackId)
     if (!value) {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published claim record is malformed', result.value.subjectId)
@@ -3608,189 +3044,4 @@ export async function releaseClaim(input: {
         decision: remaining.length === 0 ? 'stop' : 'retain',
         remaining,
     }
-}
-
-export async function classifyHolders(input: {
-    readonly record: StateRecord | null
-    readonly requester: HolderId
-    readonly requestedAt: string
-    readonly timeoutMs: number
-    readonly observations: readonly HolderObservationInput[]
-}): Promise<HolderClassificationResult> {
-    let record: StateRecord | null
-    let requester: HolderId
-    let requestedAt: string
-    let timeoutMs: number
-    try {
-        record = input.record
-        requester = input.requester
-        requestedAt = input.requestedAt
-        timeoutMs = input.timeoutMs
-    } catch (error) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, `holder classification input could not be read safely: ${errorCause(error)}`, 'holder classification input')
-    }
-    let stack: string
-    let revision: number | undefined
-    let value: CoordinationRecord | undefined
-    try {
-        stack = record?.subjectId ?? ''
-        revision = record?.revision
-        value = decodeCoordinationRecord(record, stack as StackId)
-    } catch (error) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, `holder classification record could not be read safely: ${errorCause(error)}`, 'holder classification record')
-    }
-    let suppliedObservations: readonly HolderObservationInput[]
-    try {
-        suppliedObservations = input.observations
-    } catch (error) {
-        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, `holder classification input could not be read safely: ${errorCause(error)}`, 'holder classification input')
-    }
-    const probeContract = issuedHolderObservations.get(suppliedObservations)
-    if (!value || !Number.isSafeInteger(revision) || revision! < 0) {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim holder record is malformed', stack)
-    }
-    const observations = snapshotHolderObservations(suppliedObservations, value.holders.length)
-    if (!observations) {
-        return refuse(
-            ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-            'holder classification requires exactly one bounded resolved observation for each holder',
-            stack,
-        )
-    }
-    if (
-        !validIdentity(requester, holderIdentity)
-        || !isCanonicalTimestamp(requestedAt)
-        || !Number.isSafeInteger(timeoutMs)
-        || timeoutMs < 1
-        || timeoutMs > 30_000
-        || !Array.isArray(observations)
-    ) {
-        return refuse(
-            ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-            'holder classification requires bounded resolved positive evidence',
-            String(requester ?? ''),
-            'provide a holder observation budget between 1 and 30000 milliseconds',
-        )
-    }
-    const releaseEvidenceAuthentic = probeContract?.subjectId === stack
-        && probeContract.revision === revision
-        && probeContract.requestedAt === requestedAt
-        && probeContract.timeoutMs === timeoutMs
-    if (probeContract !== undefined && !releaseEvidenceAuthentic) {
-        return refuse(
-            ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-            'holder observations do not match their issued coordination and evidence window',
-            stack,
-        )
-    }
-    const observationsByHolder = new Map<HolderId, Observation<HolderLivenessEvidence>>()
-    for (const entry of observations) {
-        if (
-            !entry
-            || Object.keys(entry).sort().join(',') !== 'holderId,observation'
-            || !validIdentity(entry.holderId, holderIdentity)
-            || observationsByHolder.has(entry.holderId)
-        ) {
-            return refuse(
-                ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-                'holder observations do not cover the coordination record exactly once',
-                stack,
-            )
-        }
-        observationsByHolder.set(entry.holderId, entry.observation)
-    }
-    if (
-        observationsByHolder.size !== value.holders.length
-        || value.holders.some((holder) => !observationsByHolder.has(holder.holderId))
-    ) {
-        return refuse(
-            ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-            'holder observations do not cover the coordination record exactly once',
-            stack,
-        )
-    }
-
-    const classifications: ClassifiedHolder[] = []
-    const authorities: HolderReleaseAuthority[] = []
-    const releasable: {
-        readonly holder: ClaimHolder
-        readonly evidence: 'process-absent' | 'checkout-missing'
-        readonly observedAt: string
-        readonly producer: string
-    }[] = []
-    for (const holder of value.holders) {
-        let observation = observationsByHolder.get(holder.holderId)
-        const parsedObservation = HolderObservationSchema.safeParse(observation)
-        if (!parsedObservation.success) {
-            return refuse(
-                ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-                'holder liveness observation is malformed',
-                holder.holderId,
-                'restore the named bounded liveness probe and retry',
-            )
-        }
-        observation = parsedObservation.data as Observation<HolderLivenessEvidence>
-        if (observation.state !== 'available') {
-            return refuse(
-                ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-                'holder liveness is unknown; elapsed age grants no authority',
-                holder.holderId,
-                'inspect the named holder and retry with positive process or checkout evidence',
-            )
-        }
-        const observedAt = Date.parse(observation.observedAt)
-        const windowStart = Date.parse(requestedAt)
-        if (observedAt < windowStart || observedAt > windowStart + timeoutMs) {
-            return refuse(
-                ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-                'holder liveness observation is outside the requested evidence window',
-                holder.holderId,
-                'retry with fresh positive process or checkout evidence',
-            )
-        }
-        if (observation.value.state === 'live') {
-            classifications.push({ holderId: holder.holderId, checkoutId: holder.checkoutId, state: 'live' })
-        } else {
-            const evidence = observation.value.evidence
-            classifications.push({
-                holderId: holder.holderId,
-                checkoutId: holder.checkoutId,
-                state: evidence === 'checkout-missing' ? 'checkout-missing' : 'dead',
-            })
-            releasable.push({ holder, evidence, observedAt: observation.observedAt, producer: observation.producer })
-        }
-    }
-
-    const peer = classifications.find((holder) => holder.holderId !== requester && holder.state === 'live')
-    if (peer) {
-        return refuse(
-            ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-            'another live holder shares this stack',
-            peer.holderId,
-            'ask the named holder to release the stack before down or reset',
-        )
-    }
-    if (releaseEvidenceAuthentic && releasable.length > 0) {
-        issuedHolderObservations.delete(suppliedObservations)
-        for (const { holder, evidence, observedAt, producer } of releasable) {
-            const authority = Object.freeze({
-                stackId: stack as StackId,
-                requesterId: requester,
-                holderId: holder.holderId,
-                claimedAt: holder.claimedAt,
-                recordRevision: revision!,
-                requestedAt,
-                observedAt,
-                validThrough: new Date(Date.parse(requestedAt) + timeoutMs).toISOString(),
-                producer,
-            }) as HolderReleaseAuthority
-            releaseAuthorities.add(authority)
-            if (evidence === 'checkout-missing') {
-                const checkoutPath = probeContract?.checkoutPaths?.get(holder.holderId)
-                if (checkoutPath !== undefined) releaseAuthorityCheckoutPaths.set(authority, checkoutPath)
-            }
-            authorities.push(authority)
-        }
-    }
-    return { kind: 'complete', classifications, authorities }
 }

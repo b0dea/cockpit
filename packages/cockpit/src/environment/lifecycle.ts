@@ -25,7 +25,7 @@ import type { DrainReservationRequest } from './claims.js'
 export const mechanism = {
     id: 'lifecycle-planning',
     module: 'packages/cockpit/src/environment/lifecycle.ts',
-    exports: ['admitUpProgress', 'planAdmittedUp', 'planUp', 'planSleep', 'planDown', 'planResetLifecycle', 'consumeLifecycleIssuance'],
+    exports: ['admitUpProgress', 'planAdmittedUp', 'planSleep', 'planDown', 'planResetLifecycle', 'consumeLifecycleIssuance'],
 } as const
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -433,28 +433,6 @@ export function planAdmittedUp(input: {
     })
     if (complete) return Object.freeze({ kind: 'noop', plan })
     return Object.freeze({ kind: 'execute', mode: evidence.mode, plan })
-}
-
-export function planUp(input: {
-    readonly lifecycleStage: LifecycleStageProjection
-    readonly runtime: RuntimeLifecycleProjection
-    readonly ports: PortLeaseProjection
-    readonly progress: LifecycleProgress | null
-    readonly completedServices: readonly RuntimeServiceEvidence[]
-    readonly operationGeneration: string
-}): UpLifecycleResult {
-    const captured = ownData(input, ['lifecycleStage', 'runtime', 'ports', 'progress', 'completedServices', 'operationGeneration'])
-    if (!captured) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning evidence is invalid', 'up')
-    const admitted = admitUpProgress({
-        lifecycleStage: captured.lifecycleStage as LifecycleStageProjection,
-        runtime: captured.runtime as RuntimeLifecycleProjection,
-        ports: captured.ports as PortLeaseProjection,
-        progress: captured.progress as LifecycleProgress | null,
-        operationGeneration: captured.operationGeneration as string,
-    })
-    return admitted.kind === 'refusal' ? admitted : planAdmittedUp({
-        authority: admitted.authority, completedServices: captured.completedServices as readonly RuntimeServiceEvidence[],
-    })
 }
 
 function validDrainInputs(generation: unknown, runtimeStopValidForMs: unknown, reclaimValidForMs?: unknown): boolean {

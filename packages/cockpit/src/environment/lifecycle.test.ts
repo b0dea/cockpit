@@ -47,8 +47,8 @@ import {
     planDown,
     planResetLifecycle,
     planSleep,
-    planUp,
 } from './lifecycle.js'
+import { planUp } from '../../test-support/lifecycle-planning.js'
 
 const stackId = `stack:${'1'.repeat(64)}` as StackId
 const holderId = `holder:${'3'.repeat(64)}:session` as HolderId
@@ -508,9 +508,9 @@ describe('lifecycle planning', () => {
         const inputs = [
             () => {
                 const value = projections()
-                return [planUp, {
+                return [admitUpProgress, {
                     lifecycleStage: value.stage, runtime: value.runtime, ports: value.ports,
-                    progress: null, completedServices: [], operationGeneration: generation,
+                    progress: null, operationGeneration: generation,
                 }] as const
             },
             () => {

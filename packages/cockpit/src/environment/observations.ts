@@ -38,7 +38,7 @@ export type { PreflightContext, ResolvedPostureAuthority } from './posture-obser
 export const mechanism = {
     id: 'environment-observation-evaluation',
     module: 'packages/cockpit/src/environment/observations.ts',
-    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'evaluatePreflight', 'projectDoctor', 'validateObservationDeclarations', 'allObservationDeclarations', 'aggregateObservations', 'observationSatisfiesExpectation', 'stoppedStackApplicability'],
+    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'projectDoctor', 'validateObservationDeclarations', 'allObservationDeclarations', 'aggregateObservations', 'observationSatisfiesExpectation', 'stoppedStackApplicability'],
 } as const
 
 export interface EvaluatedObservation {
@@ -363,7 +363,7 @@ function missingObservation(
  * `unobservable` comes from {@link stoppedStackApplicability}: rows no producer can observe in the
  * stack's current state, reported as not applicable with its reason instead of as missing.
  */
-export function evaluatePreflight(
+function evaluatePreflight(
     values: readonly EnvironmentObservation[],
     context: PreflightContext,
     unobservable: ReadonlyMap<string, string> = new Map(),
