@@ -1191,7 +1191,7 @@ describe('installed code, search path and secret links', () => {
     it('denies every write channel into the installed cockpit, its dependencies, node_modules/.bin and search path directories', () => {
         // The guard authenticates its entry point only, so any other module it loads is a control.
         for (const path of [`${installed}/dist/guards/harness-adapter.js`, `${installed}/package.json`, `${root}/node_modules/zod/index.js`,
-            `${root}/NODE_MODULES/@B0DEA/COCKPIT/dist/cli.js`, `${root}/node_modules/.bin/docker`, `${other}/node_modules/.bin/cockpit`, `${root}/tools/bin/ls`]) {
+            `${root}/NODE_MODULES/@B00DEA/COCKPIT/dist/cli.js`, `${root}/node_modules/.bin/docker`, `${other}/node_modules/.bin/cockpit`, `${root}/tools/bin/ls`]) {
             for (const input of [payload('Write', { file_path: path, content: 'x' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
                 payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch` }), shellPayload(`printf x >> ${path}`)]) {
                 expect(evaluateGuard(parseGuardInput(input), configured(), inspect), `${input.tool_name} ${path}`).toEqual({ decision: 'deny', reason: execution })
