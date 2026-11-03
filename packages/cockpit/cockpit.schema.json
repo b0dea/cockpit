@@ -2902,41 +2902,23 @@
       },
       "additionalProperties": false
     },
-    "workorders": {
-      "description": "Limits for work orders.",
+    "work": {
+      "description": "How work orders are accepted, graded and closed.",
       "default": {},
       "type": "object",
       "properties": {
-        "attempt_cap": {
-          "default": 2,
-          "description": "Repeated failures allowed before a work order stops; may be lowered but not raised.",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 2
-        },
-        "wip_cap": {
-          "default": 3,
-          "description": "Work orders that may be in progress at once; may be lowered but not raised.",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 3
-        },
-        "verification_timeout_seconds": {
-          "default": 1800,
-          "description": "Seconds one declared work-order verification command may run before it is stopped and reported as not run.",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 7200
-        },
-        "evaluator_timeout_seconds": {
-          "default": 900,
-          "description": "Seconds one independent review or grading run of the evaluator may take before it is stopped.",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 7200
+        "grading": {
+          "default": "independent",
+          "description": "How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note).",
+          "type": "string",
+          "enum": [
+            "independent",
+            "checks",
+            "self"
+          ]
         },
         "evaluators": {
-          "description": "Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.",
+          "description": "Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.",
           "minItems": 1,
           "maxItems": 3,
           "type": "array",
@@ -2948,6 +2930,128 @@
               "opencode"
             ]
           }
+        },
+        "attempt_cap": {
+          "default": 2,
+          "description": "Failed checks or grades before an order is blocked; may be lowered but not raised.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "wip_cap": {
+          "default": 3,
+          "description": "Accepted orders that may be unfinished at once; may be lowered but not raised.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "verification_timeout_seconds": {
+          "default": 1800,
+          "description": "Seconds one criterion's check command may run before it is stopped and reported as not run.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
+        },
+        "evaluator_timeout_seconds": {
+          "default": 900,
+          "description": "Seconds one independent grading run may take before it is stopped.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
+        },
+        "gates": {
+          "description": "Who passes each work-order decision.",
+          "default": {},
+          "type": "object",
+          "properties": {
+            "accept": {
+              "description": "Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = \"agent\".",
+              "type": "string",
+              "enum": [
+                "agent",
+                "person",
+                "ci"
+              ]
+            },
+            "amend": {
+              "description": "Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci.",
+              "type": "string",
+              "enum": [
+                "agent",
+                "person",
+                "ci"
+              ]
+            },
+            "answer": {
+              "description": "Who answers an open question on an order. Default person.",
+              "type": "string",
+              "enum": [
+                "agent",
+                "person",
+                "ci"
+              ]
+            },
+            "signoff": {
+              "description": "Who closes a graded order. Default agent.",
+              "type": "string",
+              "enum": [
+                "agent",
+                "person",
+                "ci"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "autonomy": {
+      "description": "Which decisions an agent may take without a person.",
+      "default": {},
+      "type": "object",
+      "properties": {
+        "preset": {
+          "description": "agent: every decision this table and [work.gates] leave unset defaults to agent.",
+          "type": "string",
+          "enum": [
+            "agent"
+          ]
+        },
+        "sync": {
+          "description": "Who may run a sync that writes: agent, person or ci. Default agent.",
+          "type": "string",
+          "enum": [
+            "agent",
+            "person",
+            "ci"
+          ]
+        },
+        "stale_delete": {
+          "description": "Who approves sync deleting files cockpit generated before and no longer generates. Default agent.",
+          "type": "string",
+          "enum": [
+            "agent",
+            "person",
+            "ci"
+          ]
+        },
+        "reset": {
+          "description": "Who may apply a reset, which deletes stack data. Default person.",
+          "type": "string",
+          "enum": [
+            "agent",
+            "person",
+            "ci"
+          ]
+        },
+        "mcp_approve": {
+          "description": "Who approves a declared MCP server: agent lets sync enable every declared server; person records each digest in [mcp.approved]. Default agent.",
+          "type": "string",
+          "enum": [
+            "agent",
+            "person"
+          ]
         }
       },
       "additionalProperties": false

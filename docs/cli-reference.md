@@ -310,7 +310,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit reset
 
-Preview a reset, or approve that exact preview interactively (on the active local Docker context).
+Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context).
 
 Reads `cockpit.toml` from `--config`.
 
@@ -318,6 +318,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--interactive` | boolean | `false` |
+| `--apply` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -363,29 +364,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-## cockpit work intake
-
-Prepare a work order from its source document.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--work-order` | string | unset |
-| `--intent` | string | unset |
-| `--candidate` | string | unset |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
 ## cockpit work status
 
-Report current work-order state.
+Report each work order, its state and how it closed.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -403,7 +384,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work accept
 
-Interactively accept the exact current work order.
+Accept a work order, or a change to an accepted one, as [work.gates] allows.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -420,64 +401,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-## cockpit work renew
+## cockpit work check
 
-Interactively renew a changed work-order contract.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--work-order` | string | unset |
-| `--interactive` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work resume
-
-Resume the next executable step of the single active work order.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work recover
-
-Inspect or explicitly recover one interrupted work lock.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--lock` | string | unset |
-| `--apply` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work execute
-
-Execute one accepted work-order step.
+Run every criterion's check and the order's gates.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -486,7 +412,6 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
-| `--approach` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -494,9 +419,9 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
-## cockpit work record
+## cockpit work note
 
-Persist current work-order progress.
+Record a note on an order, or with --ask an open question that blocks it.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -505,7 +430,8 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
-| `--event-file` | string | unset |
+| `--text` | string | unset |
+| `--ask` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -515,7 +441,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work answer
 
-Interactively record a person's answer to an open gap, or their decision.
+Answer an open question on an order, as [work.gates] allows.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -524,99 +450,9 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
-| `--event-file` | string | unset |
+| `--question` | string | unset |
+| `--text` | string | unset |
 | `--interactive` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work review
-
-Review the current accepted work order.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--work-order` | string | unset |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work sweep
-
-Inspect or apply a reversible work-order sweep.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--apply` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work reverse
-
-Reverse a recorded work-order sweep.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--work-order` | string | unset |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work programme-mint
-
-Mint the next declared programme work order.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
-| `--programme` | string | unset |
-| `--item` | string | unset |
-| `--candidate` | string | unset |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit work metrics
-
-Report work-order metrics.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
-| `--json` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -626,7 +462,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work grade
 
-Independently grade the current accepted work order.
+Grade an accepted order the way [work] grading says.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -635,6 +471,84 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
+| `--verdict` | string | unset |
+| `--note` | string | unset |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit work signoff
+
+Close a graded order as done, or any open one as partial or abandoned.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--work-order` | string | unset |
+| `--partial` | boolean | `false` |
+| `--abandon` | boolean | `false` |
+| `--note` | string | unset |
+| `--interactive` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit work recover
+
+Inspect or remove a crashed command's work-order lock.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--work-order` | string | unset |
+| `--apply` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit work verify
+
+Check every record against its order; in CI, pass the steps gated on ci.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit grade
+
+Independently grade uncommitted work against a criteria file, with no work order.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--json` | boolean | `false` |
+| `--criteria` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |

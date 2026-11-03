@@ -28,7 +28,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit logs`: Show recent logs for one declared service.
 - `cockpit sleep`: Release this checkout and stop the stack if no other holder remains.
 - `cockpit down`: Stop and remove the stack (on the active local Docker context).
-- `cockpit reset`: Preview a reset, or approve that exact preview interactively (on the active local Docker context).
+- `cockpit reset`: Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context).
 
 ## Diagnose
 
@@ -37,21 +37,16 @@ This generated index is for users choosing the command that owns their next oper
 ## Test and grade
 
 - `cockpit test-run`: Run a declared product test gate and report which tests it selected.
-- `cockpit work intake`: Prepare a work order from its source document.
-- `cockpit work status`: Report current work-order state.
-- `cockpit work accept`: Interactively accept the exact current work order.
-- `cockpit work renew`: Interactively renew a changed work-order contract.
-- `cockpit work resume`: Resume the next executable step of the single active work order.
-- `cockpit work recover`: Inspect or explicitly recover one interrupted work lock.
-- `cockpit work execute`: Execute one accepted work-order step.
-- `cockpit work record`: Persist current work-order progress.
-- `cockpit work answer`: Interactively record a person's answer to an open gap, or their decision.
-- `cockpit work review`: Review the current accepted work order.
-- `cockpit work sweep`: Inspect or apply a reversible work-order sweep.
-- `cockpit work reverse`: Reverse a recorded work-order sweep.
-- `cockpit work programme-mint`: Mint the next declared programme work order.
-- `cockpit work metrics`: Report work-order metrics.
-- `cockpit work grade`: Independently grade the current accepted work order.
+- `cockpit work status`: Report each work order, its state and how it closed.
+- `cockpit work accept`: Accept a work order, or a change to an accepted one, as [work.gates] allows.
+- `cockpit work check`: Run every criterion's check and the order's gates.
+- `cockpit work note`: Record a note on an order, or with --ask an open question that blocks it.
+- `cockpit work answer`: Answer an open question on an order, as [work.gates] allows.
+- `cockpit work grade`: Grade an accepted order the way [work] grading says.
+- `cockpit work signoff`: Close a graded order as done, or any open one as partial or abandoned.
+- `cockpit work recover`: Inspect or remove a crashed command's work-order lock.
+- `cockpit work verify`: Check every record against its order; in CI, pass the steps gated on ci.
+- `cockpit grade`: Independently grade uncommitted work against a criteria file, with no work order.
 - `cockpit browser drive`: Drive the declared application browser surfaces.
 - `cockpit browser screenshot`: Capture the declared application surfaces.
 - `cockpit browser debugger`: Prepare an explicitly requested browser debugger.

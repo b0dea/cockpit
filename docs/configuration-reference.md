@@ -41,12 +41,15 @@ The values cockpit uses for a key the configuration leaves out.
   "mcp": {
     "approved": {}
   },
-  "workorders": {
+  "work": {
+    "grading": "independent",
     "attempt_cap": 2,
     "wip_cap": 3,
     "verification_timeout_seconds": 1800,
-    "evaluator_timeout_seconds": 900
+    "evaluator_timeout_seconds": 900,
+    "gates": {}
   },
+  "autonomy": {},
   "environment": {
     "resettable_volumes": [],
     "generated_host_paths": [],
@@ -82,7 +85,8 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `ports` | Port leasing for running stacks side by side. | table: [`[ports]`](#ports) |  | required |
 | `guards` | Rules that restrict what agents may run. | table: [`[guards]`](#guards) | `{}` |  |
 | `mcp` | Approval of MCP servers. | table: [`[mcp]`](#mcp) | `{}` |  |
-| `workorders` | Limits for work orders. | table: [`[workorders]`](#workorders) | `{}` |  |
+| `work` | How work orders are accepted, graded and closed. | table: [`[work]`](#work) | `{}` |  |
+| `autonomy` | Which decisions an agent may take without a person. | table: [`[autonomy]`](#autonomy) | `{}` |  |
 | `browser` | Browser automation for the stack. | table: [`[browser]`](#browser) |  |  |
 | `testing` | Test stages and gates. | table: [`[testing]`](#testing) |  |  |
 | `environment` | How the stack is reached, signed in to, built and kept. | table: [`[environment]`](#environment) | `{}` |  |
@@ -232,15 +236,36 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
 
-### `[workorders]`
+### `[work]`
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `attempt_cap` | Repeated failures allowed before a work order stops; may be lowered but not raised. | integer | `2` | 1–2 |
-| `wip_cap` | Work orders that may be in progress at once; may be lowered but not raised. | integer | `3` | 1–3 |
-| `verification_timeout_seconds` | Seconds one declared work-order verification command may run before it is stopped and reported as not run. | integer | `1800` | 1–7200 |
-| `evaluator_timeout_seconds` | Seconds one independent review or grading run of the evaluator may take before it is stopped. | integer | `900` | 1–7200 |
-| `evaluators` | Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order. | array of string |  | 1–3 items; each item: one of `"codexcli"`, `"claudecode"`, `"opencode"` |
+| `grading` | How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note). | string | `"independent"` | one of `"independent"`, `"checks"`, `"self"` |
+| `evaluators` | Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order. | array of string |  | 1–3 items; each item: one of `"codexcli"`, `"claudecode"`, `"opencode"` |
+| `attempt_cap` | Failed checks or grades before an order is blocked; may be lowered but not raised. | integer | `2` | 1–2 |
+| `wip_cap` | Accepted orders that may be unfinished at once; may be lowered but not raised. | integer | `3` | 1–3 |
+| `verification_timeout_seconds` | Seconds one criterion's check command may run before it is stopped and reported as not run. | integer | `1800` | 1–7200 |
+| `evaluator_timeout_seconds` | Seconds one independent grading run may take before it is stopped. | integer | `900` | 1–7200 |
+| `gates` | Who passes each work-order decision. | table: [`[work.gates]`](#workgates) | `{}` |  |
+
+### `[work.gates]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `accept` | Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = "agent". | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `amend` | Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `answer` | Who answers an open question on an order. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `signoff` | Who closes a graded order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+
+### `[autonomy]`
+
+| Key | Meaning | Type | Default | Constraints |
+| --- | --- | --- | --- | --- |
+| `preset` | agent: every decision this table and [work.gates] leave unset defaults to agent. | string |  | exactly `"agent"` |
+| `sync` | Who may run a sync that writes: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `reset` | Who may apply a reset, which deletes stack data. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
+| `mcp_approve` | Who approves a declared MCP server: agent lets sync enable every declared server; person records each digest in [mcp.approved]. Default agent. | string |  | one of `"agent"`, `"person"` |
 
 ### `[browser]`
 
@@ -1005,11 +1030,11 @@ Agent tools load every skill's frontmatter into each session and its entry point
 
 | Skill entry point | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
-| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/setup.md` |
-| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/explain.md` |
-| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
-| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/work.md` |
+| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/setup.md` |
+| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/explain.md` |
+| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 15 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
+| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `88a28da19effa9cea4276f018d7d02015c4250e6d623ef038d367ac25eab92e9`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `09cfb3fbd42d8c5e2409ce37594e8f854e147998187888f8c9c0bd9a65742834`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `bea13e418e4c3ad968e36c9f5426d96664fcdecced3fc43d6b527ada5571936f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `14241f1f7cef449a540a89f01e0e585fdabe418a147899d2ca1bee3da4975ffe`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `4cdec39414f4cf3eb0e87dff1b8b4c6228a7686ffd051e2faaf0cc458acf5646`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `09cfb3fbd42d8c5e2409ce37594e8f854e147998187888f8c9c0bd9a65742834`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `bea13e418e4c3ad968e36c9f5426d96664fcdecced3fc43d6b527ada5571936f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `eccc44f4b86c4d5a3fe75937986aa85b4889ac7310058f28c306c36c3beace6d`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
