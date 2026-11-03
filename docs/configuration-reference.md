@@ -232,7 +232,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `harnesses` | Agent tools, with versions, that are wired to the browser. | array of table: [`[[browser.harnesses]]`](#browserharnesses) |  | required; 1–3 items; unique items |
 | `images` | Pinned container images for the browser. | table: [`[browser.images]`](#browserimages) |  | required |
 | `project` | Node project the browser commands load their Playwright driver from. | table: [`[browser.project]`](#browserproject) |  | required |
-| `endpoint` | WebSocket address of the browser server, using an allowed host. | string |  | format `uri` |
+| `endpoint` | WebSocket address of the browser server, using an allowed loopback host. | string |  | format `uri` |
 | `max_clients` | Most browser clients that may connect at once. | integer |  | required; 1–64 |
 | `proxy` | Proxy the browser reaches the application through. | table: [`[browser.proxy]`](#browserproxy) |  | required |
 | `resolver` | Fixed host name to address mappings the browser uses. | array of table: [`[[browser.resolver]]`](#browserresolver) | `[]` | at most 64 items |
@@ -616,6 +616,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 15 | `packages/cockpit/surfaces/skills/procedures/fix.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/work.md` |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `92b62cfa79adc4b5f1f8df89f7e1a15b77e3e88079fe99e5ff6521d3f47b3037`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `263e45cef7fe840349b87ef2642209f32a5f99a4b2b6dca4a183e1cb797e16a4`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `bea13e418e4c3ad968e36c9f5426d96664fcdecced3fc43d6b527ada5571936f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `eccc44f4b86c4d5a3fe75937986aa85b4889ac7310058f28c306c36c3beace6d`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `d831cb92ebc03a9373f71a43f3aca220f672ed8d8ec29cd6cb8a013d4d080691`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `263e45cef7fe840349b87ef2642209f32a5f99a4b2b6dca4a183e1cb797e16a4`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `bea13e418e4c3ad968e36c9f5426d96664fcdecced3fc43d6b527ada5571936f`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `eccc44f4b86c4d5a3fe75937986aa85b4889ac7310058f28c306c36c3beace6d`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

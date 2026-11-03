@@ -965,7 +965,7 @@
           "description": "Node project the browser commands load their Playwright driver from."
         },
         "endpoint": {
-          "description": "WebSocket address of the browser server, using an allowed host.",
+          "description": "WebSocket address of the browser server, using an allowed loopback host.",
           "type": "string",
           "format": "uri"
         },

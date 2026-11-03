@@ -13,7 +13,7 @@ import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, harnessFact, SURFACE_TARG
 import { shippedInstructionCapabilities } from '../packages/cockpit/src/surfaces/projection.js'
 import { inspectShippedRestrictionCapabilities } from '../packages/cockpit/src/surfaces/restrictions.js'
 import { inspectSkillSet } from '../packages/cockpit/src/surfaces/skill-contract.js'
-import { CORE_PROCEDURE_ASSETS, CORE_SKILL_PROCEDURES } from '../packages/cockpit/src/surfaces/core-declarations.js'
+import { CORE_PROCEDURE_ASSETS, shippedSkillSources } from '../packages/cockpit/src/surfaces/core-declarations.js'
 import { diagnosticInventory, type DiagnosticInventory } from './diagnostic-inventory.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -152,14 +152,13 @@ async function capabilityCells(sources: ReferenceSources) {
     if (restrictions.kind !== 'complete') throw new Error(`shipped guards: ${restrictions.message}`)
     const collection = { path: 'skills/collection.json', bytes: sources.collection, sha256: digest(sources.collection) }
     const procedures = [...sources.procedures].map(([path, bytes]) => ({ path, bytes, sha256: digest(bytes) }))
-    const skillSources = SKILLS.flatMap(name => {
-        const bytes = sources.skills.get(name)
-        const procedure = CORE_SKILL_PROCEDURES[name]
-        const procedureBytes = sources.procedures.get(`skills/${procedure}`)
-        if (bytes === undefined || procedureBytes === undefined) throw new Error(`shipped skill ${name} or its procedure is missing`)
-        return [{ path: `skills/${name}/SKILL.md`, bytes }, { path: `skills/${name}/${procedure}`, bytes: procedureBytes }]
-    })
-    const skills = await inspectSkillSet({ sources: skillSources, collection, procedures })
+    const assets = new Map<string, { bytes: string }>([['skills/collection.json', { bytes: sources.collection }],
+        ...[...sources.skills].map(([name, bytes]) => [`skills/${name}.skill.md`, { bytes }] as const),
+        ...[...sources.procedures].map(([path, bytes]) => [path, { bytes }] as const)])
+    const shipped = shippedSkillSources(assets, SURFACE_TARGETS)
+    if (!shipped) throw new Error('shipped skill sources are incomplete')
+    const skillSources = shipped.flatMap(skill => skill.sources)
+    const skills = await inspectSkillSet({ sources: skillSources, tools: SURFACE_TARGETS, collection, procedures })
     if (skills.kind !== 'complete') throw new Error(`shipped skills: ${skills.diagnostics.map(row => row.message).join('; ')}`)
     const cells: CapabilityCell[] = []
     for (const row of restrictions.targets) {
