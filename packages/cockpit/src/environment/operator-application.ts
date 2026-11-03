@@ -10,7 +10,7 @@ import type {
     GeneratedEnvironmentSyncInput,
     GeneratedStaleRemovalApproval,
     GeneratedStaleRemovalApprovalRequest,
-} from './generated-application.js'
+} from './generated-application/shared.js'
 
 export interface OperatorAdmission {
     readonly interactive: boolean

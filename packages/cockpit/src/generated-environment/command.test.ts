@@ -5,9 +5,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { observeConfigSource } from '../config/load.js'
-import {
-    type GeneratedEnvironmentCommandAdapters,
-} from '../environment/generated-application.js'
+import { type GeneratedEnvironmentCommandAdapters } from '../environment/generated-application/shared.js'
 import { applyGeneratedEnvironmentRepair, applySelectedBootstrapSurface, prepareGeneratedEnvironmentCurrentness,
     prepareSelectedBootstrapSurface, syncGeneratedEnvironment } from './command.js'
 

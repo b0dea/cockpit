@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { ExecutionStep } from './contract.js'
-import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-application.js'
+import { checkGeneratedEnvironment } from './generated-application/check.js'
+import { syncGeneratedEnvironment } from './generated-application/sync.js'
 
 const hooks = vi.hoisted(() => ({
     before: undefined as ((step: ExecutionStep) => Promise<void>) | undefined,

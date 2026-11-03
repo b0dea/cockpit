@@ -20,7 +20,8 @@ import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage
 import { createHealthCommandAdapters } from './health-composition.js'
 import { readState } from './state.js'
 import { decodeCoordinationRecord, inspectDestructiveDrainRecovery, readActiveStackInventory } from './claims.js'
-import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-application.js'
+import { checkGeneratedEnvironment } from './generated-application/check.js'
+import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import { checkoutId, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
 import {

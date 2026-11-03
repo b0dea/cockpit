@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { browserEndpointUnpublished } from './generated-application.js'
+import { browserEndpointUnpublished } from './generated-application/prepare.js'
 
 const compose = (...services: string[]) => [{ reference: 'compose.yml', source: `services:\n${services.join('')}` }]
 const service = (id: string, port: string) => `  ${id}:\n    image: synthetic\n    ports: ["${port}"]\n`

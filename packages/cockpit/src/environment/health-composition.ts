@@ -35,12 +35,10 @@ import {
     projectRetainedPortFamilyResult,
     revalidatePortLeaseProjection,
 } from './ports.js'
-import {
-    generatedApplicationProjection,
-    checkGeneratedEnvironment,
-    observeGeneratedApplicationSurfaces,
-    syncGeneratedEnvironment,
-} from './generated-application.js'
+import { generatedApplicationProjection } from './generated-application/authorities.js'
+import { checkGeneratedEnvironment } from './generated-application/check.js'
+import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
+import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import {
     admitRuntimeMeasurement,
     observeDockerRuntime,

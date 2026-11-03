@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
-import type { GeneratedSurfaceSelftestProjection } from '../environment/generated-application.js'
+import type { GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
 import { classifySurfaceOwnership, type SurfaceDesiredEntry } from './ownership.js'
 import {

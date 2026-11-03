@@ -11,9 +11,7 @@ import { observeConfigSource } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { bootstrapHolderId, checkoutId } from '../environment/identity.js'
 import { selectBootstrapStateRoot, transactState, type BootstrapStateRecord } from '../environment/state.js'
-import {
-    type GeneratedEnvironmentCommandAdapters,
-} from '../environment/generated-application.js'
+import { type GeneratedEnvironmentCommandAdapters } from '../environment/generated-application/shared.js'
 import { applyGeneratedEnvironmentRepair, applySelectedBootstrapSurface, checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness,
     prepareSelectedBootstrapSurface, syncGeneratedEnvironment } from './command.js'
 import * as publicationTransaction from './transaction.js'

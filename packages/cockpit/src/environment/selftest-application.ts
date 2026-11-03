@@ -15,11 +15,9 @@ import {
 } from '../../libexec/validate-harness-evidence.mjs'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { Diagnostic } from '../diagnostics.js'
-import {
-    checkGeneratedEnvironment,
-    generatedApplicationProjection,
-    type GeneratedApplicationProjection,
-} from './generated-application.js'
+import { generatedApplicationProjection } from './generated-application/authorities.js'
+import { checkGeneratedEnvironment } from './generated-application/check.js'
+import { type GeneratedApplicationProjection } from './generated-application/shared.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import {
     snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep,

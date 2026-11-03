@@ -4,14 +4,15 @@ import type { Diagnostic } from '../diagnostics.js'
 import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
 import { runSyncAdoption, type SyncAdoptionInput, type SyncAdoptionOutcome } from './adopt.js'
 import {
-    checkGeneratedEnvironment as check,
-    prepareGeneratedEnvironmentCurrentness as prepareCurrentness,
-    applyGeneratedEnvironmentRepair as applyRepair,
     applySelectedBootstrapSurface as applyBootstrap,
     prepareSelectedBootstrapSurface as prepareBootstrap,
     resumeSelectedBootstrapSurface as resumeBootstrap,
-    syncGeneratedEnvironment as synchronize,
-    syncTeamGeneratedEnvironment as synchronizeTeam,
+} from '../environment/generated-application/bootstrap-skill.js'
+import {
+    checkGeneratedEnvironment as check,
+    prepareGeneratedEnvironmentCurrentness as prepareCurrentness,
+} from '../environment/generated-application/check.js'
+import {
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedEnvironmentChange,
     type GeneratedEnvironmentCommandInput,
@@ -26,7 +27,12 @@ import {
     type SelectedBootstrapSurfaceOutcome,
     type GeneratedStaleRemovalApproval,
     type GeneratedStaleRemovalApprovalRequest,
-} from '../environment/generated-application.js'
+} from '../environment/generated-application/shared.js'
+import {
+    applyGeneratedEnvironmentRepair as applyRepair,
+    syncGeneratedEnvironment as synchronize,
+    syncTeamGeneratedEnvironment as synchronizeTeam,
+} from '../environment/generated-application/sync.js'
 
 export type {
     GeneratedEnvironmentCommandAdapters,
@@ -41,7 +47,7 @@ export type {
     SelectedBootstrapResumeInput,
     SelectedBootstrapResumeOutcome,
     SelectedBootstrapSurfaceOutcome,
-} from '../environment/generated-application.js'
+} from '../environment/generated-application/shared.js'
 
 export function prepareSelectedBootstrapSurface(
     input: SelectedBootstrapSurfaceInput,

@@ -10,7 +10,7 @@ import type { ExecutionStep } from '../src/environment/contract.js'
 import {
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedStaleRemovalApprovalRequest,
-} from '../src/environment/generated-application.js'
+} from '../src/environment/generated-application/shared.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
 import { mcpApprovalDigest } from '../src/surfaces/mcp.js'
 

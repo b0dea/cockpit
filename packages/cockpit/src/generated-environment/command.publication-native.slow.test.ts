@@ -13,10 +13,10 @@ import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import {
     generatedApplicationProjection,
-    observeGeneratedApplicationSurfaces,
     projectWorkApplicationAuthorities,
     consumeWorkApplicationAuthorities,
-} from '../environment/generated-application.js'
+} from '../environment/generated-application/authorities.js'
+import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 

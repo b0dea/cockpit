@@ -11,11 +11,9 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { CockpitConfig } from '../schema.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import {
-    generatedApplicationProjection,
-    observeGeneratedApplicationSurfaces,
-    type GeneratedStaleRemovalApprovalRequest,
-} from '../environment/generated-application.js'
+import { generatedApplicationProjection } from '../environment/generated-application/authorities.js'
+import { type GeneratedStaleRemovalApprovalRequest } from '../environment/generated-application/shared.js'
+import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
 import { DEFAULT_SURFACE_TOOLS } from '../surfaces/harness-registry.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment, syncTeamGeneratedEnvironment } from './command.js'

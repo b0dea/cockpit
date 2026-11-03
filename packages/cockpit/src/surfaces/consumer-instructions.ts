@@ -2,7 +2,7 @@
 // consumer's cockpit: what the cockpit is, how to work in it, the rules and their reasons, and
 // which skills exist. Must not: read files, invent values the configuration does not declare, or
 // restate what a skill already says (it points at the skill instead).
-// Hands off to: generated-application.ts, which supplies the facts, and render.ts, which places
+// Hands off to: generated-application/, which supplies the facts, and render.ts, which places
 // the text in the shared instruction region beside the testing-tier guide.
 //
 // Why it is short: this text loads into every agent session, and adherence falls as it grows.

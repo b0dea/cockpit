@@ -22,8 +22,11 @@ import { decodeLifecycleRecord } from '../environment/application/lifecycle.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
 import { resolveExecutablePath } from '../environment/executable.js'
 import {
-    consumeWorkApplicationAuthorities, prepareGeneratedEnvironmentCurrentness, prepareWorkApplicationAuthorities, projectWorkApplicationAuthorities,
-} from '../environment/generated-application.js'
+    consumeWorkApplicationAuthorities,
+    prepareWorkApplicationAuthorities,
+    projectWorkApplicationAuthorities,
+} from '../environment/generated-application/authorities.js'
+import { prepareGeneratedEnvironmentCurrentness } from '../environment/generated-application/check.js'
 import { createLifecycleCommandAdapters } from '../environment/lifecycle-composition.js'
 import { createReadCommandAdapters } from '../environment/read-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily } from '../environment/ports.js'

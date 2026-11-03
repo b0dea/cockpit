@@ -40,9 +40,9 @@ Every module below is under `packages/cockpit/src/`. All process dispatch goes t
 | Sibling guides and grants | [surfaces/projection.ts](../../packages/cockpit/src/surfaces/projection.ts) | `packages/cockpit/src/surfaces/projection.test.ts` |
 | Skills | [surfaces/skill-contract.ts](../../packages/cockpit/src/surfaces/skill-contract.ts) | `packages/cockpit/src/surfaces/skill-contract.test.ts` |
 | Owned regions, changes and drift | [surfaces/ownership.ts](../../packages/cockpit/src/surfaces/ownership.ts), [surfaces/sync.ts](../../packages/cockpit/src/surfaces/sync.ts) | `packages/cockpit/src/surfaces/ownership.test.ts`, `packages/cockpit/src/surfaces/sync.test.ts` |
-| Checking publication inputs | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.authentication.slow.test.ts` |
-| Durable manifest and publication | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.publication-bounds.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-core.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-custom.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-native.slow.test.ts` |
-| Repair and recovery | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
+| Checking publication inputs | [environment/generated-application/publication.ts](../../packages/cockpit/src/environment/generated-application/publication.ts) | `packages/cockpit/src/generated-environment/command.authentication.slow.test.ts` |
+| Durable manifest and publication | [environment/generated-application/publication.ts](../../packages/cockpit/src/environment/generated-application/publication.ts) | `packages/cockpit/src/generated-environment/command.publication-bounds.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-core.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-custom.slow.test.ts`, `packages/cockpit/src/generated-environment/command.publication-native.slow.test.ts` |
+| Repair and recovery | [environment/generated-application/check.ts](../../packages/cockpit/src/environment/generated-application/check.ts), [environment/generated-application/sync.ts](../../packages/cockpit/src/environment/generated-application/sync.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
 | Selftest | [surfaces/selftest.ts](../../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.slow.test.ts`, `packages/cockpit/src/selftest/command.native-execution.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.test.ts` |
 | Human approval prompts | [environment/operator-application.ts](../../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
 
@@ -66,7 +66,7 @@ synthetic data; they do not exercise a real harness. See
 | Skill contracts/budgets | `npm test -- packages/cockpit/src/surfaces/skill-contract.test.ts` |
 | Selftest checks and approval | `npm test -- packages/cockpit/src/selftest/command.configured-artifact.slow.test.ts packages/cockpit/src/selftest/command.native-execution.test.ts packages/cockpit/src/selftest/command.custom-operator.test.ts` |
 
-Publication recovery lives in `packages/cockpit/src/environment/generated-application.ts`. This
+Publication recovery lives in `packages/cockpit/src/environment/generated-application/`. This
 test checks that recovery data is kept when cleanup cannot be confirmed:
 
 ```sh
@@ -80,7 +80,7 @@ Follow the named diagnostic and its recovery procedure.
 
 | Responsibility | Module |
 |---|---|
-| Rendering, inspection, publication and recovery | `packages/cockpit/src/environment/generated-application.ts` |
+| Rendering, inspection, publication and recovery | `packages/cockpit/src/environment/generated-application/` |
 | `sync` and `check` command adapter | `packages/cockpit/src/generated-environment/command.ts` |
 | Stack rendering | `packages/cockpit/src/environment/generated-stack.ts` |
 

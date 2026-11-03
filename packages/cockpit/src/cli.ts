@@ -101,10 +101,7 @@ import {
     type GeneratedEnvironmentCommandInput,
     type GeneratedEnvironmentCommandOutcome,
 } from './generated-environment/command.js'
-import type {
-    GeneratedStaleRemovalApproval,
-    GeneratedStaleRemovalApprovalRequest,
-} from './environment/generated-application.js'
+import type { GeneratedStaleRemovalApproval, GeneratedStaleRemovalApprovalRequest } from './environment/generated-application/shared.js'
 import { runUpgrade } from './environment/upgrade-application.js'
 import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
 import {

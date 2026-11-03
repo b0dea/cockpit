@@ -1,9 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import type {
-    GeneratedCustomSurfaceSelftestInput,
-    GeneratedSurfaceSelftestProjection,
-} from '../environment/generated-application.js'
+import type { GeneratedCustomSurfaceSelftestInput, GeneratedSurfaceSelftestProjection } from '../environment/generated-application/shared.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
 import type { SurfaceFeature } from './contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'

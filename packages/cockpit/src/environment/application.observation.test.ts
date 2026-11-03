@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
-import * as generatedCurrentnessOwner from './generated-application.js'
+import * as generatedCurrentnessOwner from './generated-application/check.js'
 import { RefusalError } from './contract.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
 const applicationOwners = vi.hoisted(() => ({

@@ -12,7 +12,7 @@ import {
 } from './contract.js'
 import { createHash } from 'node:crypto'
 import { observationDeclarations as claimDeclarations } from './claims.js'
-import { surfaceObservationDeclarations } from './generated-application.js'
+import { surfaceObservationDeclarations } from './generated-application/shared.js'
 import { observationDeclarations as envSchemaDeclarations } from './env-schema-observation.js'
 import { observationDeclarations as gitDeclarations } from './git-observation.js'
 import { observationDeclarations as hostDeclarations } from './host-observation.js'
