@@ -302,8 +302,8 @@ function cockpitRootQuestion(root: string): CockpitRootQuestion {
         : `the directory name ${JSON.stringify(basename(root))} is not a valid sibling slug (lowercase letters, digits and hyphens, starting with a letter); rename the directory, or create a dedicated cockpit folder yourself and add this repository with cockpit sibling add --from`
     return {
         field: 'cockpit.root',
-        why: `${root} is a product repository, and the cockpit root is where init writes cockpit.toml, AGENTS.md, guards and harness settings, so init never chooses it for you; answer cockpit.root = "dedicated" or "in-repo"`,
-        recommended: 'dedicated',
+        why: `${root} is a product repository, and the cockpit root is where init writes cockpit.toml, AGENTS.md, guards and harness settings, so answer cockpit.root = "dedicated" or "in-repo"`,
+        recommended: 'in-repo',
         options: [
             { answer: 'dedicated' as const, root: dedicated, creates: [dedicated], siblingsRoot: '..',
                 firstSibling: root,
@@ -568,11 +568,17 @@ async function initStagesFrom(
         }
         if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
     }
-    // Accepting publishes files into the root, so a product repository's root must be chosen first;
-    // --accept-preview and --accept-defaults consent to bytes, never to a location. Every durable
-    // bootstrap stage follows accepted placement, which init-created files must not reopen on resume.
-    if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
-        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run ${initCommand({ root: input.root, target: input.tools.join(','), args: '--interactive' })}`, 'cockpit.root')
+    // A single product repository defaults to the cockpit living in it, so --accept-preview and
+    // --accept-defaults take the recommended placement; a directory name that cannot be a sibling
+    // slug leaves no default and refuses.
+    if (rootQuestion && input.accepted) {
+        const unavailable = rootQuestion.options.find(option => option.answer === rootQuestion!.recommended)?.unavailable
+        if (unavailable !== undefined) return refused('INIT_COCKPIT_ROOT_REQUIRED',
+            `${input.root} is a product repository and cannot default to cockpit.root = "in-repo": ${unavailable}`, 'cockpit.root')
+        input = { ...input, cockpitRoot: { kind: 'in-repo' } }
+        boundInput = input
+        rootQuestion = undefined
+    }
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'

@@ -136,15 +136,11 @@ describe('init application', () => {
         const dedicated = resolve(f.root, '..', 'checkout-cockpit')
         const placement = await runInitApplication(greenfield, adapters)
         expect(placement).toMatchObject({ kind: 'pending', result: {
-            cockpitRoot: { field: 'cockpit.root', recommended: 'dedicated', options: [
+            cockpitRoot: { field: 'cockpit.root', recommended: 'in-repo', options: [
                 { answer: 'dedicated', root: dedicated, creates: [dedicated], siblingsRoot: '..', firstSibling: f.root },
                 { answer: 'in-repo', root: f.root, creates: [], siblingsRoot: '.', firstSibling: f.root }] } } })
         expect(placement.result).not.toHaveProperty('nextCommand')
         expect(observed).toEqual([])
-        // Consent to the preview bytes is not consent to a location.
-        expect(await runInitApplication({ ...greenfield, accepted: true, acceptedPreviewSha256: digest('3') }, adapters))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_COCKPIT_ROOT_REQUIRED', target: 'cockpit.root',
-                message: expect.stringContaining('cockpit.root = "dedicated"') }] })
         expect(f.calls).not.toContain('apply')
         expect(existsSync(join(f.input.home!, 'state'))).toBe(false)
 
@@ -177,6 +173,16 @@ describe('init application', () => {
         const resumedInRepo = await runInitApplication({ ...greenfield, accepted: false }, adapters)
         expect(resumedInRepo).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
         expect(observed).toEqual([{ root: f.root, rootIsRepository: true }])
+
+        // Accepting without an answer takes the recommended in-repo placement.
+        observed.length = 0
+        const g = fixture()
+        const defaulted = await runInitApplication({ ...g.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') },
+            { ...g.adapters, observeRoot: async () => 'product-repository',
+                classifyEstate: async input => { observed.push(input); return estate(input.root, 'one-sibling') },
+                document: interviewDocument(g.destination) })
+        expect(defaulted).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
+        expect(observed.at(-1)).toEqual({ root: g.root, rootIsRepository: true })
     })
 
     it('accepts a dedicated answer reset from the original product root through the public driver', async () => {

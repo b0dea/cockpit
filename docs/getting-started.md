@@ -227,7 +227,7 @@ vendor_endpoint_hosts = []
 
 | Field | Answer |
 |---|---|
-| `cockpit.root` | `"dedicated"` or `"in-repo"`; asked only where both are possible, and never chosen by a digest flag |
+| `cockpit.root` | `"dedicated"` or `"in-repo"`; asked only where both are possible, and a digest flag takes `"in-repo"` |
 | `cockpit.name` | always asked; the root directory's name is proposed. It scopes Compose projects, state and generated files ([Rename a cockpit](#rename-a-cockpit)) |
 | `sibling` | one `[[sibling]]` table per repository |
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |

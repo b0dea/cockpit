@@ -122,8 +122,9 @@ Dockerfile, or standard Compose filename), it conservatively asks for root place
 settles whether that source is runnable. Its
 `--json` preview carries `result.cockpitRoot`: a question, its options and a recommended answer.
 Relay that question to the human and write their answer under the `cockpit.root` key of the answers
-file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
-lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
+file (`dedicated` or `in-repo`; `in-repo` is the default when accepting without an answer, except a
+directory name that is not a valid sibling slug, which refuses with `INIT_COCKPIT_ROOT_REQUIRED`). It
+decides where every generated file lives. `dedicated`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
 Explain the trade-off in a sentence or two from the root placement choices in
 `./node_modules/@b00dea/cockpit/docs/concepts.md`.
