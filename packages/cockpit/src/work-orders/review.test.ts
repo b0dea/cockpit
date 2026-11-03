@@ -149,6 +149,14 @@ describe('work-order review gate', () => {
         await expect(reviewWorkOrderWave({ subject: unavailable.subject, author: 'fixture-author', changedPaths: ['src/cache.ts'] }, unavailable.dependencies))
             .resolves.toMatchObject({ kind: 'refusal', reason: 'Independent simplification review did not run: the Codex CLI exited with status 1: Invalid schema for response_format' })
 
+        // A real reviewer wrote its evidence in paragraphs; the refusal names the field and the character.
+        const paragraphs = await harness()
+        paragraphs.response((kind, context) => ({ kind: 'review', runId: context.runId, reviewer: `${kind}-reviewer`, contractDigest: paragraphs.subject.contractDigest,
+            artifactDigest: paragraphs.subject.artifactDigest, findings: [], dispositions: [], evidence: 'The cache reads current values.\n\nNo finding.' }))
+        await expect(reviewWorkOrderWave({ subject: paragraphs.subject, author: 'fixture-author', changedPaths: ['src/cache.ts'] }, paragraphs.dependencies))
+            .resolves.toMatchObject({ kind: 'refusal', reason: 'Independent simplification review returned a response that does not match the current subject and review schema: '
+                + 'evidence contains the control character U+000A (a line break or tab among them) at offset 31' })
+
         const corrupt = await harness()
         corrupt.readback('different')
         expect((await reviewWorkOrderWave({ subject: corrupt.subject, author: 'fixture-author', changedPaths: ['src/cache.ts'] }, corrupt.dependencies)).kind).toBe('refusal')

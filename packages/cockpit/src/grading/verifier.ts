@@ -37,8 +37,10 @@ export interface CriterionAssessment {
     readonly observation: string
     readonly alternative: string
 }
+// Which agent tool answered, and those passed over on the way; the grader's identity is fixed before the run.
+export type GradingEvaluator = Readonly<{ tool: string; fallbacks: readonly Readonly<{ tool: string; code: string; message: string }>[] }>
 export type GraderResponse =
-    | Readonly<{ kind: 'assessment'; runId: string; grader: string; integrity: 'clean' | 'contaminated'; criteria: readonly CriterionAssessment[] }>
+    | Readonly<{ kind: 'assessment'; runId: string; grader: string; integrity: 'clean' | 'contaminated'; criteria: readonly CriterionAssessment[]; evaluator?: GradingEvaluator }>
     | Readonly<{ kind: 'error' | 'abstained' | 'never-ran'; reason: string }>
 export interface GradingInput {
     readonly accepted: AcceptedWorkOrder
@@ -91,6 +93,7 @@ export interface WorkOrderGrade {
     readonly runId: string
     readonly author: string
     readonly grader: string
+    readonly evaluator?: GradingEvaluator
     readonly criteria: readonly CriterionGrade[]
     readonly verification: readonly VerificationRecord[]
 }
@@ -340,6 +343,7 @@ export async function verifyPreparedWorkOrder(subject: PreparedWorkOrderVerifica
         if (after.artifactDigest !== context.artifactDigest || after.contract.digest !== context.contract.digest) return refused('Current artifact or criterion changed during grading')
         const grade: WorkOrderGrade = immutable({ workOrderId: contract.frontmatter.id, contractDigest: contract.digest,
             artifactDigest: context.artifactDigest, runId, author: subject.author, grader: subject.grader,
+            ...response?.kind === 'assessment' && response.evaluator ? { evaluator: structuredClone(response.evaluator) } : {},
             verification, criteria: context.contract.criteria.map(criterion => gradeCriterion(criterion, response, context)) })
         issuedGrades.set(grade, { input: issued.input, context })
         return grade

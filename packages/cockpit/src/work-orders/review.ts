@@ -78,8 +78,15 @@ const MAX_REVIEW_RECORD_BYTES = 8 * 1_048_576
 const MAX_FINDINGS = 64
 
 function boundedText(value: unknown, maximum = 4_096): value is string {
-    return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maximum
-        && !/[\x00-\x1f\x7f]/.test(value)
+    return textProblem(value, maximum) === undefined
+}
+
+// Why a text field is refused, so a reviewer's answer is refused naming what to change.
+function textProblem(value: unknown, maximum = 4_096): string | undefined {
+    if (typeof value !== 'string' || !value.trim()) return 'is missing or empty'
+    if (Buffer.byteLength(value) > maximum) return `exceeds ${maximum} bytes`
+    const control = /[\x00-\x1f\x7f]/.exec(value)
+    return control ? `contains the control character U+${control[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')} (a line break or tab among them) at offset ${control.index}` : undefined
 }
 
 function sameCommand(left: readonly string[], right: readonly string[]): boolean {
@@ -94,31 +101,43 @@ function immutable<T>(value: T): T {
     return value
 }
 
+// The answer itself, or why it is refused, naming the field.
 function validateReview(
     response: WorkOrderReviewerResponse,
     context: WorkOrderReviewerContext,
     author: string,
-): Extract<WorkOrderReviewerResponse, { kind: 'review' }> | undefined {
-    if (response?.kind !== 'review' || response.runId !== context.runId || response.contractDigest !== context.subject.contractDigest
-        || response.artifactDigest !== context.subject.artifactDigest || !boundedText(response.reviewer, 256)
-        || response.reviewer === author || !boundedText(response.evidence, MAX_REVIEW_BYTES)
-        || !Array.isArray(response.findings) || response.findings.length > MAX_FINDINGS
-        || !Array.isArray(response.dispositions) || response.dispositions.length > MAX_FINDINGS) return undefined
+): Readonly<{ review: Extract<WorkOrderReviewerResponse, { kind: 'review' }> }> | Readonly<{ problem: string }> {
+    if (response?.kind !== 'review') return { problem: 'kind is not review' }
+    if (response.runId !== context.runId) return { problem: 'runId is not the current run' }
+    if (response.contractDigest !== context.subject.contractDigest) return { problem: 'contractDigest is not the current contract' }
+    if (response.artifactDigest !== context.subject.artifactDigest) return { problem: 'artifactDigest is not the current artifact' }
+    const reviewer = textProblem(response.reviewer, 256); if (reviewer) return { problem: `reviewer ${reviewer}` }
+    if (response.reviewer === author) return { problem: 'reviewer is the author' }
+    const evidence = textProblem(response.evidence, MAX_REVIEW_BYTES); if (evidence) return { problem: `evidence ${evidence}` }
+    if (!Array.isArray(response.findings) || response.findings.length > MAX_FINDINGS) return { problem: `findings is not a list of at most ${MAX_FINDINGS}` }
+    if (!Array.isArray(response.dispositions) || response.dispositions.length > MAX_FINDINGS) return { problem: `dispositions is not a list of at most ${MAX_FINDINGS}` }
     const ids = new Set<string>()
-    for (const finding of response.findings) {
-        if (!boundedText(finding?.id, 256) || ids.has(finding.id)
-            || !['blocking', 'advisory'].includes(finding.severity) || !boundedText(finding.summary)
-            || !Array.isArray(finding.affectedVerification) || finding.affectedVerification.length === 0
-            || finding.affectedVerification.some((command: readonly string[]) => !context.subject.verification.some(record => sameCommand(record.argv, command)))) return undefined
+    for (const [index, finding] of response.findings.entries()) {
+        const field = `findings[${index}]`
+        const id = textProblem(finding?.id, 256); if (id) return { problem: `${field}.id ${id}` }
+        if (ids.has(finding.id)) return { problem: `${field}.id repeats ${finding.id}` }
+        if (!['blocking', 'advisory'].includes(finding.severity)) return { problem: `${field}.severity is not blocking or advisory` }
+        const summary = textProblem(finding.summary); if (summary) return { problem: `${field}.summary ${summary}` }
+        if (!Array.isArray(finding.affectedVerification) || finding.affectedVerification.length === 0
+            || finding.affectedVerification.some((command: readonly string[]) => !context.subject.verification.some(record => sameCommand(record.argv, command)))) {
+            return { problem: `${field}.affectedVerification does not select declared verification commands` }
+        }
         ids.add(finding.id)
     }
     const dispositionIds = new Set<string>()
-    for (const disposition of response.dispositions) {
-        if (!ids.has(disposition?.findingId) || dispositionIds.has(disposition.findingId)
-            || !['fixed', 'accepted-risk'].includes(disposition.outcome) || !boundedText(disposition.reason)) return undefined
+    for (const [index, disposition] of response.dispositions.entries()) {
+        const field = `dispositions[${index}]`
+        if (!ids.has(disposition?.findingId) || dispositionIds.has(disposition.findingId)) return { problem: `${field}.findingId names no finding, or one already disposed of` }
+        if (!['fixed', 'accepted-risk'].includes(disposition.outcome)) return { problem: `${field}.outcome is not fixed or accepted-risk` }
+        const reason = textProblem(disposition.reason); if (reason) return { problem: `${field}.reason ${reason}` }
         dispositionIds.add(disposition.findingId)
     }
-    return response
+    return { review: response }
 }
 
 function reviewEvidenceBytes(subject: PreparedWorkOrderVerification, reviews: readonly CompletionReview[]): string {
@@ -166,14 +185,15 @@ export async function reviewWorkOrderWave(input: WorkOrderReviewInput, dependenc
         for (const kind of REQUIRED_GRADE_REVIEWS) {
             const context = Object.freeze({ runId: randomUUID(), kind, subject: input.subject, changedPaths })
             const captured = snapshotJson(await dependencies.review(context))
-            const response = validateReview(captured as unknown as WorkOrderReviewerResponse, context, input.author)
-            if (!response) {
+            const validated = validateReview(captured as unknown as WorkOrderReviewerResponse, context, input.author)
+            if ('problem' in validated) {
                 // An evaluator that could not run says why; that cause is what the person has to fix.
                 const failed = captured as { kind?: unknown; reason?: unknown } | undefined
                 return refusal(failed && ['error', 'abstained', 'never-ran'].includes(failed.kind as string) && typeof failed.reason === 'string'
                     ? `Independent ${kind} review ${failed.kind === 'never-ran' ? 'did not run' : failed.kind === 'abstained' ? 'abstained' : 'failed'}: ${failed.reason}`
-                    : `Independent ${kind} review returned a response that does not match the current subject and review schema`)
+                    : `Independent ${kind} review returned a response that does not match the current subject and review schema: ${validated.problem}`)
             }
+            const response = validated.review
             if (reviewers.has(response.reviewer)) return refusal(`Independent ${kind} review came from a reviewer who already reviewed this subject`)
             reviewers.add(response.reviewer)
             const commands: readonly (readonly string[])[] = response.findings

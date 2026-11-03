@@ -67,7 +67,10 @@ describe('work review and grade through the independent evaluation seam', () => 
         const orderDirectory = join(fixture.root, '.cockpit/work-orders/WO-001')
         const gradePath = (await readdir(orderDirectory)).filter(name => name.startsWith('generation-')).sort()
             .map(name => join(orderDirectory, name, 'grade.json')).filter(path => existsSync(path)).at(-1)!
-        const reviews = JSON.parse(await readFile(gradePath, 'utf8')) as { reviews: { reviewer: string; evidence: string }[] }
+        const reviews = JSON.parse(await readFile(gradePath, 'utf8')) as { grade: { grader: string }; reviews: { reviewer: string; evidence: string }[] }
+        // The grader's identity is fixed before the run, so the grade names the tool that answered beside it.
+        expect(reviews.grade).toMatchObject({ grader: expect.stringMatching(/^evaluator:grader:/), evaluator: { tool: 'claudecode',
+            fallbacks: [{ tool: 'codexcli', code: 'EVALUATOR_UNAVAILABLE', message: expect.stringContaining('the Codex CLI (codex) is not on PATH') }] } })
         expect(reviews.reviews).toHaveLength(3)
         for (const review of reviews.reviews) {
             expect(review.reviewer).toMatch(/^claudecode:/)

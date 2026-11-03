@@ -1766,7 +1766,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const criteria = Array.isArray(response.criteria) ? response.criteria.map(row => !row || typeof row !== 'object' || !Array.isArray((row as { evidence?: unknown }).evidence) ? row
                 : { ...row, evidence: (row as { evidence: unknown[] }).evidence.map(item => item && typeof item === 'object' && (item as { symbol?: unknown }).symbol === null
                     ? Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'symbol')) : item) }) : response.criteria
-            return Object.freeze({ ...response, criteria, grader: identity }) as unknown as GraderResponse
+            return Object.freeze({ ...response, criteria, grader: identity, evaluator: { tool: result.tool, fallbacks: result.fallbacks } }) as unknown as GraderResponse
         }
         // A review persists its evidence, so a tool passed over on the way to this answer is recorded there.
         const evidence = result.fallbacks.length ? `${String(response.evidence)} [cockpit] answered by ${result.tool} after: ${result.fallbacks.map(row => `${row.tool}: ${row.message}`).join('; ')}`
