@@ -56,6 +56,8 @@ describe('repository identity', () => {
         '/srv/owner/service.git',
         '../owner/service.git',
         'C:\\owner\\service.git',
+        // A drive-relative Windows path has the host:path shape of an SCP remote.
+        'C:owner/service.git',
         'ssh://git@code.invalid:2200/owner/service.git',
         'ssh://git@[2001:db8::1]/owner/service.git',
     ])('returns explicit unknown for unsupported transport %s', (remote) => {
@@ -102,10 +104,6 @@ describe('repository identity', () => {
         'git@@code.invalid:owner/service.git',
     ])('returns explicit unknown for malformed or ambiguous input %j', (remote) => {
         expect(repositoryIdentity(remote)).toEqual({ kind: 'unknown', reason: 'malformed' })
-    })
-
-    it('refuses Windows drive-relative paths instead of treating them as SCP remotes', () => {
-        expect(repositoryIdentity('C:owner/service.git')).toEqual({ kind: 'unknown', reason: 'unsupported' })
     })
 
     it('preserves ordinary DNS labels that contain digits', () => {
