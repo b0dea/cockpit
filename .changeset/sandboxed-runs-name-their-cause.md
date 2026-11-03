@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Commands run inside a sandbox such as Codex's `workspace-write` now pass where they can and say why where they cannot.

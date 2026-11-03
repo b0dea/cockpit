@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Browser screenshots can no longer be committed by accident, and the first screenshot no longer needs the artifact directory to exist.

@@ -263,7 +263,7 @@ function resolveRegistry(
                 code: 'COCKPIT_REVISION_INVALID',
                 message: `the installed package records cockpitSourceRevision ${JSON.stringify(stamp.slice(0, 64))}, which is neither a 40-hex commit nor "development"`,
                 target: 'cockpitSourceRevision',
-                fix: 'reinstall @b0dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry',
+                fix: 'reinstall @b00dea/cockpit from the registry or from a tarball packed from an unmodified checkout, then retry',
             }],
             result: null,
             status: 2,
@@ -274,7 +274,7 @@ function resolveRegistry(
         code: 'COCKPIT_REVISION_UNSTAMPED',
         message: 'this cockpit was built from source and records no release commit, so COCKPIT_SOURCE_REVISION is "development"',
         target: 'cockpitSourceRevision',
-        fix: 'install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit',
+        fix: 'install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit',
     }] : []
     const variables = parsed.siblings.map((sibling, index) => ({
         name: sibling.var,
@@ -343,7 +343,7 @@ export async function registryResolveCommand(input: RegistryResolveCommandInput)
             'COCKPIT_REVISION_INVALID',
             `the installed package manifest could not be read or records no cockpitSourceRevision${revision.cause ? `: ${revision.cause}` : ''}`,
             packageManifest,
-            'reinstall @b0dea/cockpit, then retry',
+            'reinstall @b00dea/cockpit, then retry',
         )
     }
     const registrySha256 = createHash('sha256').update(registryRead).digest('hex')

@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 A generated browser runner now reaches the application, and `up` completes with one.

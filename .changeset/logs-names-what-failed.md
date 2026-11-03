@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `logs` no longer reports `RUNTIME_UNMEASURED` for failures that have nothing to do with the runtime measurement, and it no longer tells you to run `runtime measure` on a runtime that is already measured.

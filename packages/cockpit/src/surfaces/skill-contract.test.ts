@@ -294,14 +294,14 @@ describe('shipped skill contract', () => {
         expect(body).toContain('result.orders[0].state.attempts')
         expect(body).toContain('cockpit test-run --config cockpit.toml --gate declared-gate-id')
         const work = body.slice(body.indexOf('## Work'))
-        expect(work).toContain('examples in the *Declare work and the files it may change* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md`')
+        expect(work).toContain('examples in the *Declare work and the files it may change* section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md`')
         expect(work).toContain('Inspect applicable installed thinking, research, specification and planning skills')
         expect(work).toContain('Record an audited empty selection when none applies')
         expect(work).not.toContain("Run the harness's installed brainstorming and planning skills")
         const installedReview = work.indexOf("Run the harness's installed simplification and code-review skills")
         expect(installedReview).toBeGreaterThan(-1)
         expect(work.indexOf('cockpit work review')).toBeGreaterThan(installedReview)
-        expect(body).toContain('npm install --save-dev --save-exact @b0dea/cockpit@<version>')
+        expect(body).toContain('npm install --save-dev --save-exact @b00dea/cockpit@<version>')
         expect(body).not.toContain('`npm update` moves the pinned')
         expect(body).toContain('cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json')
         expect(body).toContain('cockpit sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json')
@@ -316,7 +316,7 @@ describe('shipped skill contract', () => {
         const setup = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-setup/SKILL.md')
         expect(setup?.bytes).toContain('references/test-data-and-personas.md')
         expect(setup?.bytes).toContain('adopt-cockpit')
-        const upgradeReview = setup?.bytes.indexOf('*Review an upgrade* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`') ?? -1
+        const upgradeReview = setup?.bytes.indexOf('*Review an upgrade* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`') ?? -1
         const exactInstall = setup?.bytes.indexOf('install that exact release') ?? -1
         const humanSync = setup?.bytes.indexOf('ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`') ?? -1
         expect(upgradeReview).toBeGreaterThan(-1)

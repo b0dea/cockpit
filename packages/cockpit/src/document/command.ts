@@ -142,7 +142,7 @@ const defaultReason = (field: string, source: DefaultSource) => source === 'regi
 
 // cockpit.toml is committed beside the cockpit's own install, so the directive names that install.
 // A path to the package that ran this command would point into one machine's temporary or product tree.
-const SCHEMA_DIRECTIVE = './node_modules/@b0dea/cockpit/cockpit.schema.json'
+const SCHEMA_DIRECTIVE = './node_modules/@b00dea/cockpit/cockpit.schema.json'
 
 const SCHEMA_ISSUES_SHOWN = 10
 

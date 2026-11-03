@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The guard answers a default `rg` search faster in a checkout with large ignored directories such as `node_modules`, and stops asking about files ripgrep never reads.

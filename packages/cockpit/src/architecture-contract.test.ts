@@ -6070,7 +6070,7 @@ describe('clean-checkout controls', () => {
             scripts?: Record<string, string>
         }
 
-        expect(manifest.scripts?.build).toBe('npm run build --workspace @b0dea/cockpit')
+        expect(manifest.scripts?.build).toBe('npm run build --workspace @b00dea/cockpit')
         expect(manifest.scripts?.['lint:docs']).toBe('node scripts/docs-lint.mjs')
     })
 

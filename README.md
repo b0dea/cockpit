@@ -99,7 +99,7 @@ The synthetic example needs no Docker and no credentials.
 git clone https://github.com/b0dea/cockpit && cd cockpit
 npm ci --ignore-scripts && npm run build
 COCKPIT_PACKAGE_DIR="$(mktemp -d)"
-npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
+npm pack --workspace @b00dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
 ```
 
 **2. Copy the example somewhere else and install the package there:**

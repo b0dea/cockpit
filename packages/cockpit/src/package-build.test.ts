@@ -16,7 +16,7 @@ afterEach(async () => Promise.all(scratch.splice(0).map(path => rm(path, { recur
 function packageFixture(): string {
     const root = mkdtempSync(join(tmpdir(), 'cockpit-build-'))
     scratch.push(root)
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@b0dea/cockpit' }))
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@b00dea/cockpit' }))
     return root
 }
 
@@ -30,7 +30,7 @@ describe('package build output ownership', () => {
         mkdirSync(join(packageRoot, 'dist'), { recursive: true })
         mkdirSync(dirname(buildScript), { recursive: true })
         mkdirSync(dirname(compiler), { recursive: true })
-        writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: '@b0dea/cockpit' }))
+        writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: '@b00dea/cockpit' }))
         writeFileSync(join(packageRoot, 'dist/stale-wrapper.js'), 'stale')
         mkdirSync(join(packageRoot, 'docs'))
         writeFileSync(join(packageRoot, 'docs/retired.md'), 'stale')

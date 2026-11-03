@@ -1,4 +1,4 @@
-# @b0dea/cockpit
+# @b00dea/cockpit
 
 <!-- cockpit:verified version=0.0.0 -->
 
@@ -10,7 +10,7 @@ hooks, and fails a check when any generated file drifts. What each tool actually
 Install it as an exact, project-local dev dependency (the package is pre-alpha, so pin the version):
 
 ```sh
-npm install --save-dev --save-exact @b0dea/cockpit
+npm install --save-dev --save-exact @b00dea/cockpit
 ```
 
 Start with the [repository README](https://github.com/b0dea/cockpit#readme) and

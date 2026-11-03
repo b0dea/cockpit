@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Removed `cockpit.toml` fields that had no effect or could be written only one way. A configuration that still sets one is refused as an unknown key, so delete the line.

@@ -14,7 +14,7 @@ From the cockpit root, install the lockfile without changing it:
 npm ci
 ```
 
-The root `package.json` pins `@b0dea/cockpit` exactly, because different cockpit versions can render
+The root `package.json` pins `@b00dea/cockpit` exactly, because different cockpit versions can render
 different guards and teammates would keep reporting each other's output as drift. `cockpit check`
 refuses a running version that differs from the pin and prints the
 `npm install --save-dev --save-exact` command that realigns them. Do not replace the pin with a range.

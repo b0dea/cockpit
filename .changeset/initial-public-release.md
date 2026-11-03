@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": minor
+"@b00dea/cockpit": minor
 ---
 
 Initial public release.

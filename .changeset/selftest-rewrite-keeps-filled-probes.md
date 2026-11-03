@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Rewriting the `cockpit selftest` probe-specification file after a config change keeps the probes you wrote.

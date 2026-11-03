@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `cockpit selftest` can now be run: `selftest --config <path> --write-probe-specifications <new file>` writes the probe-specification file it needs for the current `cockpit.toml` and generated manifest.

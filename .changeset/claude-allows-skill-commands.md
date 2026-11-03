@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The generated `.claude/settings.json` now allows, by prefix, the cockpit commands the shipped skills tell an agent to run and the guard admits, such as `test-run`, `check` and `doctor`. Claude Code's default mode previously refused them in a headless session. Person-only commands such as `sync`, `down` and `work accept` still prompt, the guard hook still decides first, and Claude Code applies the rules only once a person has trusted the workspace.

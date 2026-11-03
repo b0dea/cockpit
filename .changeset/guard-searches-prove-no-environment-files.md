@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The guard no longer lets a recursive search or a shadowed command name read secrets without a prompt.

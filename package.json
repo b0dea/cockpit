@@ -9,7 +9,7 @@
     "node": "^22.22.0 || ^24.0.0 || ^26.0.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @b0dea/cockpit",
+    "build": "npm run build --workspace @b00dea/cockpit",
     "lint:docs": "node scripts/docs-lint.mjs",
     "lint:supply-chain": "node scripts/supply-chain-check.mjs",
     "references": "npm run build && node --input-type=module -e \"import { publishRepositoryReferences } from './scripts/diagnostic-inventory.mjs'; const r = await publishRepositoryReferences(process.cwd()); console.log(JSON.stringify(r, null, 2)); process.exitCode = r.ok ? 0 : 1\"",

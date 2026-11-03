@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `init` now proposes more of what the product's own files already declare, and `document` no longer writes undecided values as decisions.

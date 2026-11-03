@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The guard now admits the read-only idioms agents use constantly, which headless Codex and OpenCode previously turned into refusals, and every remaining refusal names the command and says what to do instead.

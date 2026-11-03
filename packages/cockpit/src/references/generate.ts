@@ -647,7 +647,7 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const configuration = documentHeading('Configuration reference')
             + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version. '
             + 'For the handful of tables a typical cockpit sets, start with [Configuration essentials](configuration-essentials.md).\n\n'
-            + 'The same schema ships as JSON Schema in [`cockpit.schema.json`](../packages/cockpit/cockpit.schema.json), installed at `node_modules/@b0dea/cockpit/cockpit.schema.json`; '
+            + 'The same schema ships as JSON Schema in [`cockpit.schema.json`](../packages/cockpit/cockpit.schema.json), installed at `node_modules/@b00dea/cockpit/cockpit.schema.json`; '
             + 'point an editor at it for completion and validation as you type.\n\n'
             + '## Defaults\n\nThe values cockpit uses for a key the configuration leaves out.\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
             + renderConfigurationTables(JSON.parse(renderCockpitSchema()) as SchemaNode) + '\n'

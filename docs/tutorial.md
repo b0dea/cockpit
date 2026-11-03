@@ -19,13 +19,13 @@ The package itself is installed in the next step, inside the demo directory.
 Copy the example outside the cockpit checkout, so its generated files and Git repositories stay
 out of this repository. Until the first release, build the tarball as in
 [Install from source](getting-started.md#install-from-source) and install it in place of
-`@b0dea/cockpit` below.
+`@b00dea/cockpit` below.
 
 ```sh
 rm -rf "${TMPDIR:-/tmp}/cockpit-demo" && cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo"
 cd "${TMPDIR:-/tmp}/cockpit-demo"
 npm init --yes
-npm install --save-dev --save-exact @b0dea/cockpit
+npm install --save-dev --save-exact @b00dea/cockpit
 ```
 
 Now run the bootstrap block of [examples/synthetic/README.md](../examples/synthetic/README.md) in

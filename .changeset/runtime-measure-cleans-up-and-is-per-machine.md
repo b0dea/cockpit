@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `runtime measure` now cleans up after itself and is recorded once per machine.

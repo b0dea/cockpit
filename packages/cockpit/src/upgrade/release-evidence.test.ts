@@ -19,7 +19,7 @@ import {
 const roots: string[] = []
 const sha = (character: string): string => character.repeat(64)
 const digest = (bytes: string): string => createHash('sha256').update(bytes).digest('hex')
-const installed = () => ({ package: '@b0dea/cockpit', version: '1.4.2' } as const)
+const installed = () => ({ package: '@b00dea/cockpit', version: '1.4.2' } as const)
 
 const projection = (): AuthenticatedCurrentOverrideProjection => Object.freeze({
     activeOverrides: Object.freeze([Object.freeze({
@@ -34,13 +34,13 @@ const projection = (): AuthenticatedCurrentOverrideProjection => Object.freeze({
 const evidence = () => ({
     schema: 'cockpit-upgrade-release-evidence/v1',
     current: {
-        package: '@b0dea/cockpit',
+        package: '@b00dea/cockpit',
         version: '1.4.2',
         integrity: `sha256-${createHash('sha256').update('a').digest('base64')}`,
         originals: [{ name: 'review', feature: 'skills', sha256: sha('1') }],
     },
     candidate: {
-        package: '@b0dea/cockpit',
+        package: '@b00dea/cockpit',
         version: '1.5.0',
         integrity: `sha512-${createHash('sha512').update('b').digest('base64')}`,
         originals: [{ name: 'review', feature: 'skills', sha256: sha('2') }],
@@ -167,10 +167,10 @@ describe('authenticated release evidence discovery', () => {
         await expect(discover({ configPath: 'cockpit.toml' })).resolves.toEqual({
             kind: 'complete',
             current: {
-                package: '@b0dea/cockpit', version: '1.4.2', integrity: `sha256-${createHash('sha256').update('a').digest('base64')}`,
+                package: '@b00dea/cockpit', version: '1.4.2', integrity: `sha256-${createHash('sha256').update('a').digest('base64')}`,
             },
             candidate: {
-                package: '@b0dea/cockpit', version: '1.5.0', integrity: `sha512-${createHash('sha512').update('b').digest('base64')}`,
+                package: '@b00dea/cockpit', version: '1.5.0', integrity: `sha512-${createHash('sha512').update('b').digest('base64')}`,
             },
             affectedOverrideOriginals: [{
                 name: 'review', feature: 'skills', recordedSha256: sha('1'),
@@ -195,8 +195,8 @@ describe('authenticated release evidence discovery', () => {
 
     it.each([
         ['package', { package: '@scope/other', version: '1.4.2' }],
-        ['version', { package: '@b0dea/cockpit', version: '1.4.1' }],
-        ['available integrity', { package: '@b0dea/cockpit', version: '1.4.2', integrity: `sha256-${createHash('sha256').update('c').digest('base64')}` }],
+        ['version', { package: '@b00dea/cockpit', version: '1.4.1' }],
+        ['available integrity', { package: '@b00dea/cockpit', version: '1.4.2', integrity: `sha256-${createHash('sha256').update('c').digest('base64')}` }],
     ] as const)('refuses evidence whose current release does not match the installed %s', async (_field, identity) => {
         const { path, bytes } = await fixture()
         const discover = createReleaseEvidenceDiscovery({

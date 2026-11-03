@@ -886,7 +886,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
     let bundle: BundleAuthority
     try { bundle = await bundleAuthority() } catch (error) {
         return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE',
-            `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable: ${errorCause(error)} — fix: reinstall @b0dea/cockpit`,
+            `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable: ${errorCause(error)} — fix: reinstall @b00dea/cockpit`,
             'package', 'rulesync-generator.cjs'))
     }
     let programs: SurfacePrograms

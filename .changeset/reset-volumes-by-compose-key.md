@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `environment.resettable_volumes` now names volumes by their Compose key, and a name that matches no declared volume is refused.

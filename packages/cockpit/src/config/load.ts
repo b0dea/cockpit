@@ -474,7 +474,7 @@ export async function loadCockpitConfig(
     if (!validated.success) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
             `cockpit configuration does not match the schema: ${schemaIssueSummary(validated.error.issues)}`, path,
-            'correct each named key to the shape and values ./node_modules/@b0dea/cockpit/docs/configuration-reference.md gives for it, then retry')
+            'correct each named key to the shape and values ./node_modules/@b00dea/cockpit/docs/configuration-reference.md gives for it, then retry')
     }
 
     const undated = undatedForeignProvenance(validated.data, basename(path))
@@ -515,7 +515,7 @@ export async function loadCockpitConfig(
     const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))
     if (!reconstructed.success) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'cockpit configuration does not match the schema', path,
-            'correct each named key to the shape and values ./node_modules/@b0dea/cockpit/docs/configuration-reference.md gives for it, then retry')
+            'correct each named key to the shape and values ./node_modules/@b00dea/cockpit/docs/configuration-reference.md gives for it, then retry')
     }
     const writtenGuards = (parsed as { guards?: unknown }).guards
     const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'

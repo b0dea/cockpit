@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `init` now proposes `[testing]` from the product's own test entry points, and a cockpit with no test gate says so instead of pointing agents at a gate that does not exist.

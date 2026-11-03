@@ -42,19 +42,19 @@ directory beside the product finds nothing to run and builds a cockpit that does
 product.) Once the cockpit directory has its own `package.json`, install cockpit there:
 
 ```sh
-npm install --save-dev --save-exact @b0dea/cockpit
+npm install --save-dev --save-exact @b00dea/cockpit
 ./node_modules/.bin/cockpit --help
 ```
 
 Until the first release, install from source instead: build the tarball as in
-[Install from source](#install-from-source), and wherever this guide installs `@b0dea/cockpit`,
+[Install from source](#install-from-source), and wherever this guide installs `@b00dea/cockpit`,
 install `"$COCKPIT_PACKAGE_DIR"/*.tgz`.
 
 Run every command from the cockpit directory as `./node_modules/.bin/cockpit <command>`. That
 path fails when the dependency is missing and never downloads a package; so does the `npx --no`
 form fix hints print, such as `npx --no cockpit check --config cockpit.toml`. Once `init` has
 written the `cockpit:*` package scripts, use them for setup, sync and check. The package ships
-these guides under `./node_modules/@b0dea/cockpit/docs/`, so skills and fix hints cite them offline.
+these guides under `./node_modules/@b00dea/cockpit/docs/`, so skills and fix hints cite them offline.
 
 ### Install from source
 
@@ -67,7 +67,7 @@ cd cockpit
 npm ci --ignore-scripts
 npm run build
 COCKPIT_PACKAGE_DIR="$(mktemp -d)"
-npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
+npm pack --workspace @b00dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
 cd /path/to/the-cockpit-directory
 npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
 ./node_modules/.bin/cockpit --help
@@ -91,7 +91,7 @@ From the intended cockpit directory, install a temporary executable and preview:
 
 ```sh
 COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
-npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/cockpit
+npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b00dea/cockpit
 "$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target <tool> --json
 ```
 
@@ -118,7 +118,7 @@ From inside the product repository, install the same temporary executable and pr
 
 ```sh
 COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
-npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/cockpit
+npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b00dea/cockpit
 "$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target <tool> --json
 ```
 

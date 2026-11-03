@@ -69,7 +69,7 @@ beforeAll(() => {
         'install', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock',
         '--prefix', installation, tarball,
     ], { env: npmEnvironment(), stdio: ['ignore', 'ignore', 'pipe'], timeout: 30_000 })
-    installedModulePath = realpathSync(join(installation, 'node_modules/@b0dea/cockpit/dist/environment/runtime-probe.js'))
+    installedModulePath = realpathSync(join(installation, 'node_modules/@b00dea/cockpit/dist/environment/runtime-probe.js'))
     installedModuleSha = sha256(readFileSync(installedModulePath))
     gitInvocationPath = execFileSync('which', ['git'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     gitPath = realpathSync(gitInvocationPath)

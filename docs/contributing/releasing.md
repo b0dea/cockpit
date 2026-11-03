@@ -61,15 +61,15 @@ still goes through the workflow with provenance, a tag, a GitHub release and its
 Do it once, when the repository is public, the package manifest is no longer private, and the
 Version Packages pull request is open but not merged:
 
-1. Log in to npm with an account that owns the `b0dea` scope and has two-factor authentication,
+1. Log in to npm with an account that owns the `b00dea` scope and has two-factor authentication,
    then publish and deprecate the placeholder from an empty directory:
 
    ```sh
    mkdir cockpit-bootstrap && cd cockpit-bootstrap
-   printf '%s\n' '{"name": "@b0dea/cockpit", "version": "0.0.0-bootstrap.0", "license": "MIT", "description": "Reserves the package name. Install a release instead."}' > package.json
-   printf '%s\n' '# @b0dea/cockpit' '' 'This version reserves the package name. Install a release instead.' > README.md
+   printf '%s\n' '{"name": "@b00dea/cockpit", "version": "0.0.0-bootstrap.0", "license": "MIT", "description": "Reserves the package name. Install a release instead."}' > package.json
+   printf '%s\n' '# @b00dea/cockpit' '' 'This version reserves the package name. Install a release instead.' > README.md
    npm publish --access public --tag bootstrap --provenance=false
-   npm deprecate '@b0dea/cockpit@0.0.0-bootstrap.0' 'Reserves the package name. Install a release instead.'
+   npm deprecate '@b00dea/cockpit@0.0.0-bootstrap.0' 'Reserves the package name. Install a release instead.'
    ```
 
    npm may point `latest` at the placeholder until the first release replaces it.
@@ -90,7 +90,7 @@ Version Packages pull request is open but not merged:
    default.
 3. Within two days, merge the Version Packages pull request as described above. An unused trusted
    publisher configuration expires after two days.
-4. When the release run finishes, check that `npm view @b0dea/cockpit dist-tags` shows the new
+4. When the release run finishes, check that `npm view @b00dea/cockpit dist-tags` shows the new
    version as `latest`, and that the GitHub release has `release-evidence.json` attached.
 5. Under the package's **Settings**, **Publishing access**, choose **Require two-factor
    authentication and disallow tokens**, so trusted publishing is the only way to publish.
@@ -124,7 +124,7 @@ Check out the update's pull request, then regenerate and review:
 ```sh
 gh pr checkout <number> --repo b0dea/cockpit
 npm ci --ignore-scripts
-npm run bundle:rulesync --workspace @b0dea/cockpit
+npm run bundle:rulesync --workspace @b00dea/cockpit
 npm run lint:supply-chain
 ```
 

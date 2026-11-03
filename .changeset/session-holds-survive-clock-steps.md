@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 A `cockpit session` hold now survives a wall-clock step on Linux, and a hold whose start could not be read is released once its process is gone.

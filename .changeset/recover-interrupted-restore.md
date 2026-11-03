@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 An interrupted restore, and Git or state read failures, no longer leave a stack wedged or a check silently clean.

@@ -8,4 +8,4 @@ Before changing behavior, add a characterization test at the nearest public boun
 
 Never report work as verified or passing: report which tests you ran and how they exited, and that no gate graded them.
 
-Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` describes.
+Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md` describes.

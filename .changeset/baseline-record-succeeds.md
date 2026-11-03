@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `baseline-record` now records a baseline against a running stack. It previously refused every time with `EVIDENCE_UNAVAILABLE`.

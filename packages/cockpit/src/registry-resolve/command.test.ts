@@ -308,7 +308,7 @@ describe('registry resolver command', () => {
 
             expect(outcome).toEqual(expect.objectContaining({ artifact: null, result: null, status: 2 }))
             expect(outcome.diagnostics).toEqual([expect.objectContaining({
-                code: 'COCKPIT_REVISION_INVALID', fix: expect.stringContaining('reinstall @b0dea/cockpit'),
+                code: 'COCKPIT_REVISION_INVALID', fix: expect.stringContaining('reinstall @b00dea/cockpit'),
             })])
 
             const malformed = fixture(Buffer.from('SYNTHETIC_SIBLINGS=(\n  "api|api-service"\n)\n'))

@@ -11,7 +11,7 @@ Until the first release, install from source: see [Install from source](../../do
 
 ```sh human-only:package-install
 npm init --yes
-npm install --save-dev --save-exact @b0dea/cockpit
+npm install --save-dev --save-exact @b00dea/cockpit
 ```
 
 Then create the synthetic repositories once:

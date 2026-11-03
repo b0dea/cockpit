@@ -495,7 +495,7 @@ Before the first `up`, measure the local container runtime on this machine:
 - It measures the daemon `up` will use, chosen as
   [Choose the Docker daemon](environment.md#choose-the-docker-daemon) describes.
 - Name an image already on the machine; the probe never pulls.
-- The probe runs only from an installed `@b0dea/cockpit` package, not a linked source checkout.
+- The probe runs only from an installed `@b00dea/cockpit` package, not a linked source checkout.
 - It can run for minutes with no progress output; wait for it to exit.
 - It records the result for this machine only, under the per-user state root, so every checkout and
   worktree shares it, and leaves `cockpit.toml` unchanged. `cockpit check` still passes and the guard does not hold later tool
@@ -547,7 +547,7 @@ through the agent included, until a human regenerates. That is deliberate: guard
 what changed and the command to run. The upgrade sequence:
 
 1. Select the reviewed version and run
-   `npm install --save-dev --save-exact @b0dea/cockpit@<version>`.
+   `npm install --save-dev --save-exact @b00dea/cockpit@<version>`.
 2. In a terminal, outside the agent, run
    `./node_modules/.bin/cockpit sync --config cockpit.toml`.
 3. Review and commit the regenerated files.

@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `setup` now clones a sibling whose `remote` is a relative local path and passes its own check afterwards.

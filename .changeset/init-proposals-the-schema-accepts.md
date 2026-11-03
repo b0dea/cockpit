@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `init` and `document` no longer propose values the schema rejects, and say where every inferred port base came from.

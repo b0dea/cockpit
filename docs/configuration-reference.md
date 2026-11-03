@@ -4,7 +4,7 @@
 
 This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version. For the handful of tables a typical cockpit sets, start with [Configuration essentials](configuration-essentials.md).
 
-The same schema ships as JSON Schema in [`cockpit.schema.json`](../packages/cockpit/cockpit.schema.json), installed at `node_modules/@b0dea/cockpit/cockpit.schema.json`; point an editor at it for completion and validation as you type.
+The same schema ships as JSON Schema in [`cockpit.schema.json`](../packages/cockpit/cockpit.schema.json), installed at `node_modules/@b00dea/cockpit/cockpit.schema.json`; point an editor at it for completion and validation as you type.
 
 ## Defaults
 

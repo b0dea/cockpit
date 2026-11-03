@@ -84,10 +84,10 @@ describe('the supply-chain readiness detector', () => {
         generateSbom(repositoryRoot, output)
 
         expect(childProcess.execFileSync).toHaveBeenNthCalledWith(1, 'npm', [
-            'pack', '--json', '--dry-run', '--workspace', '@b0dea/cockpit',
+            'pack', '--json', '--dry-run', '--workspace', '@b00dea/cockpit',
         ], expect.objectContaining({ cwd: repositoryRoot }))
         expect(childProcess.execFileSync).toHaveBeenNthCalledWith(2, 'npm', [
-            'sbom', '--workspace', '@b0dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
+            'sbom', '--workspace', '@b00dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
         ], expect.objectContaining({ cwd: expect.stringContaining('cockpit-sbom-input-') }))
         expect(readFileSync(output, 'utf8')).toBe('{"bomFormat":"CycloneDX"}\n')
     })
@@ -408,9 +408,9 @@ it('reads both supported npm pack inventories and refuses ambiguous or malformed
     const artifact = { filename: 'synthetic.tgz', files: PACK_FILES.map(path => ({ path })) }
     for (const [output, valid] of [
         [[artifact], true],
-        [{ '@b0dea/cockpit': artifact }, true],
+        [{ '@b00dea/cockpit': artifact }, true],
         [{ first: artifact, second: artifact }, false],
-        [{ '@b0dea/cockpit': { files: [{ path: null }] } }, false],
+        [{ '@b00dea/cockpit': { files: [{ path: null }] } }, false],
     ] as const) {
         writeFileSync(npm, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify(output))})\n`)
         chmodSync(npm, 0o755)
@@ -436,7 +436,7 @@ it('stops the release publish before stamping when the package does not exist on
     scratch.push(root)
     mkdirSync(join(root, 'packages/cockpit'), { recursive: true })
     const manifest = join(root, 'packages/cockpit/package.json')
-    writeFileSync(manifest, `${JSON.stringify({ name: '@b0dea/cockpit', version: '0.1.0', cockpitSourceRevision: 'development' }, null, 2)}\n`)
+    writeFileSync(manifest, `${JSON.stringify({ name: '@b00dea/cockpit', version: '0.1.0', cockpitSourceRevision: 'development' }, null, 2)}\n`)
     const bin = join(root, 'fake-bin')
     mkdirSync(bin)
     const published = join(root, 'changeset-publish-ran')
@@ -462,11 +462,11 @@ it('stops the release publish before stamping when the package does not exist on
 
     const absent = run('absent')
     expect(absent.status).toBe(1)
-    expect(absent.stderr).toContain('@b0dea/cockpit does not exist on npm yet')
+    expect(absent.stderr).toContain('@b00dea/cockpit does not exist on npm yet')
     expect(absent.stderr).toContain('docs/contributing/releasing.md')
     const unreachable = run('unreachable')
     expect(unreachable.status).toBe(1)
-    expect(unreachable.stderr).toContain('could not read @b0dea/cockpit from the npm registry')
+    expect(unreachable.stderr).toContain('could not read @b00dea/cockpit from the npm registry')
     expect(unreachable.stderr).toContain('ECONNREFUSED')
     expect(JSON.parse(readFileSync(manifest, 'utf8')).cockpitSourceRevision).toBe('development')
     expect(existsSync(published)).toBe(false)
@@ -493,18 +493,18 @@ it('admits only version fields, changelogs and consumed changesets on the Versio
         writeFileSync(join(root, path), body)
     }
     const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
-    const manifest = (version: string, extra: object = {}) => json({ name: '@b0dea/cockpit', version, ...extra })
+    const manifest = (version: string, extra: object = {}) => json({ name: '@b00dea/cockpit', version, ...extra })
     const lock = (version: string, integrity = 'sha512-synthetic') => json({
         name: 'synthetic-workspace', lockfileVersion: 3,
-        packages: { '': { name: 'synthetic-workspace' }, 'packages/cockpit': { name: '@b0dea/cockpit', version }, 'node_modules/zod': { version: '4.4.3', integrity } },
+        packages: { '': { name: 'synthetic-workspace' }, 'packages/cockpit': { name: '@b00dea/cockpit', version }, 'node_modules/zod': { version: '4.4.3', integrity } },
     })
     git('init', '-q', '-b', 'main')
     write('packages/cockpit/package.json', manifest('0.1.0'))
     write('package-lock.json', lock('0.1.0'))
-    write('packages/cockpit/CHANGELOG.md', '# @b0dea/cockpit\n')
+    write('packages/cockpit/CHANGELOG.md', '# @b00dea/cockpit\n')
     write('.changeset/README.md', 'readme\n')
     write('.changeset/config.json', '{}\n')
-    write('.changeset/brave-fox.md', '---\n"@b0dea/cockpit": minor\n---\n\nA change.\n')
+    write('.changeset/brave-fox.md', '---\n"@b00dea/cockpit": minor\n---\n\nA change.\n')
     write('src.ts', 'export {}\n')
     git('add', '.')
     git('commit', '-q', '-m', 'base')
@@ -512,7 +512,7 @@ it('admits only version fields, changelogs and consumed changesets on the Versio
     const bump = () => {
         write('packages/cockpit/package.json', manifest('0.2.0'))
         write('package-lock.json', lock('0.2.0'))
-        write('packages/cockpit/CHANGELOG.md', '# @b0dea/cockpit\n\n## 0.2.0\n\n- A change.\n')
+        write('packages/cockpit/CHANGELOG.md', '# @b00dea/cockpit\n\n## 0.2.0\n\n- A change.\n')
         rmSync(join(root, '.changeset/brave-fox.md'))
     }
     const check = (edit: () => void, from = base) => {

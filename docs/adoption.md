@@ -23,7 +23,7 @@ or defaulted. Output for one of this repository's synthetic registry fixtures:
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
 $ cockpit document --registry fixtures/registries/tier-dialect.sh
-#:schema ./node_modules/@b0dea/cockpit/cockpit.schema.json
+#:schema ./node_modules/@b00dea/cockpit/cockpit.schema.json
 # COCKPIT DOCUMENT: INCOMPLETE DRAFT — this file intentionally fails validation.
 # Provenance — every unread value names its source and reason.
 # [default] cockpit.siblings_root = "..": the registry dialect does not record the sibling checkout root; materialised from the CockpitConfig schema default

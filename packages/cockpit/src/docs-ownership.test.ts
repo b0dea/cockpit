@@ -15,7 +15,7 @@ const PUBLIC_POLICIES = [
 
 // Surfaces run inside a consumer's cockpit after cockpit is installed there, so they read the guide
 // from the installation; the repository may be private, and the agent may be offline.
-const INSTALLED_GUIDE = /\.\/node_modules\/@b0dea\/cockpit\/(docs\/[^\s`'",)]+)/g
+const INSTALLED_GUIDE = /\.\/node_modules\/@b00dea\/cockpit\/(docs\/[^\s`'",)]+)/g
 const PUBLIC_GUIDE = /https:\/\/(?:github\.com\/b0dea\/cockpit\/blob\/main|raw\.githubusercontent\.com\/b0dea\/cockpit\/main)\/docs\/[^\s>)'"]*/g
 const ADOPTION_SKILL = 'packages/cockpit/src/references/adopt-cockpit.skill.md'
 
@@ -134,7 +134,7 @@ describe('effective documentation ownership', () => {
         const links = skill.match(PUBLIC_GUIDE) ?? []
 
         const text = skill.replace(/\s+/g, ' ')
-        expect(text).toContain('`./node_modules/@b0dea/cockpit/docs/agent-adoption.md`')
+        expect(text).toContain('`./node_modules/@b00dea/cockpit/docs/agent-adoption.md`')
         // Before the install the same page is in the package tarball, which works while the repository is private.
         expect(text).toContain('`package/docs/agent-adoption.md` inside the `.tgz`')
         expect(links).toEqual([`${prefix}docs/agent-adoption.md`])

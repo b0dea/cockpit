@@ -288,7 +288,7 @@ describe('observation application runners', () => {
             expect(release).toHaveBeenCalledTimes(1)
             expect(result.result).toMatchObject({ verdict: 'unavailable', freshness: {
                 local: { kind: 'refusal' }, release: { kind: 'unknown', reason: 'synthetic registry unavailable' },
-                installedProducer: { package: '@b0dea/cockpit', version: cockpitPackageVersion, sourceRevision: 'development' },
+                installedProducer: { package: '@b00dea/cockpit', version: cockpitPackageVersion, sourceRevision: 'development' },
                 repair: { fixes: [], refusal: { kind: 'refusal' } },
             } })
             // The full check envelope lists every owned path; doctor keeps only whether files are current.

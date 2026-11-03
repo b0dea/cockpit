@@ -180,7 +180,7 @@ const NO_GATE_GUIDE = '# Testing tiers\n\n'
     + 'This cockpit declares no product test gate, so no change can be graded PASS.\n\n'
     + 'Before changing behavior, add a characterization test at the nearest public boundary in the product\'s existing test runner and run it with that runner. If the product has no test runner, propose one to a person; do not add a test framework unasked. Comments or documentation changes that leave behavior unchanged need no test.\n\n'
     + 'Never report work as verified or passing: report which tests you ran and how they exited, and that no gate graded them.\n\n'
-    + 'Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` describes.\n'
+    + 'Ask a person to declare `[testing]` stages and gates in cockpit.toml, as the *Choose the proving test tier* section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md` describes.\n'
 
 export type TierGuideResult = Readonly<{ kind: 'complete'; bytes: string; lines: number; costs: readonly StandingCost[] }>
     | Readonly<{ kind: 'refusal'; reason: string; exceeded?: Readonly<{ target: string; value: number; cap: number }> }>

@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `init` no longer strands a cockpit after it writes `cockpit.toml`, and its refusals say what mismatched and how to recover.

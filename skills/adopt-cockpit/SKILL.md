@@ -14,7 +14,7 @@ live checkouts.
 
 The full guide, with every situation and its completion check, ships inside the cockpit package
 under `docs/`. Once cockpit is installed (below), read
-`./node_modules/@b0dea/cockpit/docs/agent-adoption.md`. Until then, read the same page from a
+`./node_modules/@b00dea/cockpit/docs/agent-adoption.md`. Until then, read the same page from a
 package tarball (`package/docs/agent-adoption.md` inside the `.tgz`), a cockpit source checkout
 (`docs/agent-adoption.md`) or <https://github.com/b0dea/cockpit/blob/main/docs/agent-adoption.md>.
 Each step below names its guide section. Guide pages cited after the install step are in that
@@ -58,7 +58,7 @@ Done when the exact project-local executable lists the commands.
 
 4. Every `init` below takes `--target <tool>`: replace `<tool>` with the target of the agent tool
    you are running in, as the **Bootstrap** section lists. For an instructions-only tool, follow
-   the *Capability states* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
+   the *Capability states* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`.
 
 Run every command from the cockpit root through `./node_modules/.bin/cockpit`; if that file is
 absent, stop and repair the project-local install. Read flags from
@@ -117,7 +117,7 @@ its reference generator so this skill and the installed one cannot disagree.
 
 Replace `<tool>` below with the target of the agent tool you are running in: `claudecode` (Claude
 Code), `codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build).
-The capability matrix, `./node_modules/@b0dea/cockpit/docs/capability-matrix.md`, separates what
+The capability matrix, `./node_modules/@b00dea/cockpit/docs/capability-matrix.md`, separates what
 cockpit generates for each from what has been tested as enforced.
 Preview with `./node_modules/.bin/cockpit init . --target <tool> --json`. Supply `--registry` only
 when adopting an existing registry.
@@ -182,7 +182,7 @@ every tool call would run unguarded. An agent cannot give that trust. Ask the hu
 the name before accepting: it scopes the cockpit's Compose projects, state and generated files, so
 changing it after the first sync means bringing the stack down and syncing again. Never edit
 `cockpit.name` while the stack is up; to rename, follow the *Rename a cockpit* section of
-`./node_modules/@b0dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
+`./node_modules/@b00dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
 
 For a runnable product, `init` asks `testing` and proposes stages and gates from the test entry
 points it finds, each naming the file it came from. Confirm with the human which commands prove a
@@ -219,7 +219,7 @@ file (`dedicated` or `in-repo`); never answer it yourself. It decides where ever
 lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
 Explain the trade-off in a sentence or two from the root placement choices in
-`./node_modules/@b0dea/cockpit/docs/concepts.md`.
+`./node_modules/@b00dea/cockpit/docs/concepts.md`.
 
 After accepted initialization, and only with explicit permission to change the product's fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat

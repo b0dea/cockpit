@@ -548,7 +548,7 @@ describe('built-in read-only profile', () => {
 
     it('judges every launcher spelling by the one proof that it starts the installed cockpit', () => {
         // The application proves each spelling, with its exact launcher words, from one directory.
-        const script = './node_modules/@b0dea/cockpit/bin/cockpit.mjs'
+        const script = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
         const launched = () => ({ ...policy(), cockpitLaunchers: [candidate('cockpit', []), candidate('npx', ['--no', 'cockpit']),
             candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script])] })
         const decideLaunched = (command: string, configured = launched(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
@@ -1174,7 +1174,7 @@ describe('cockpit structure protection', () => {
 })
 
 describe('installed code, search path and secret links', () => {
-    const installed = `${root}/node_modules/@b0dea/cockpit`
+    const installed = `${root}/node_modules/@b00dea/cockpit`
     const execution = 'Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.'
     const link = 'Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.'
     const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
@@ -1197,8 +1197,8 @@ describe('installed code, search path and secret links', () => {
                 expect(evaluateGuard(parseGuardInput(input), configured(), inspect), `${input.tool_name} ${path}`).toEqual({ decision: 'deny', reason: execution })
             }
         }
-        for (const command of ['rm -rf node_modules', 'rm node_modules/@b0dea/cockpit/dist/cli.js', 'mv node_modules/@b0dea/cockpit old',
-            'cp evil.js node_modules/@b0dea/cockpit/dist/cli.js', 'cp evil node_modules/.bin', 'ln -s /bin/rm node_modules/.bin/ls',
+        for (const command of ['rm -rf node_modules', 'rm node_modules/@b00dea/cockpit/dist/cli.js', 'mv node_modules/@b00dea/cockpit old',
+            'cp evil.js node_modules/@b00dea/cockpit/dist/cli.js', 'cp evil node_modules/.bin', 'ln -s /bin/rm node_modules/.bin/ls',
             'chmod +x node_modules/.bin/docker', 'touch tools/bin/git', 'tee tools/bin/rg', 'mv evil tools/bin', 'cp -t tools evil-bin', 'install evil tools/bin/ls']) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect), command).toEqual({ decision: 'deny', reason: execution })
         }
@@ -1250,7 +1250,7 @@ describe('installed code, search path and secret links', () => {
     it('denies links to secrets, instances, guard controls and installed code', () => {
         for (const command of ['ln env/.secrets/token notes/token', 'ln -s ../env/.secrets/token notes/token', 'ln -s env/.SECRETS notes/secrets',
             'ln config/active.instance notes/copy', 'ln -s ../config/active.instance notes/copy', 'ln -s config notes/config', 'ln -s ../other/.secrets/key notes/key',
-            'ln .claude/settings.json notes/settings.json', `ln ${installed}/dist/cli.js notes/cli.js`, 'ln -st notes ../node_modules/@b0dea/cockpit']) {
+            'ln .claude/settings.json notes/settings.json', `ln ${installed}/dist/cli.js notes/cli.js`, 'ln -st notes ../node_modules/@b00dea/cockpit']) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect), command).toEqual({ decision: 'deny', reason: link })
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('ln -s ../README.md notes/readme.md')), configured(), inspect).decision).toBe('allow')

@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Generated agent surfaces are portable across clones and tolerate the product teams' own edits.

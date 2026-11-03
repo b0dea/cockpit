@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `cockpit selftest` probes now reach a signed-in tool's sign-in.

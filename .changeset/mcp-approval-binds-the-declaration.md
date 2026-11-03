@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 An MCP approval now binds the reviewed declaration, not only the server name, and the generated wrapper starts in the right directory under any shell setup.

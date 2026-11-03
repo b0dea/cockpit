@@ -54,24 +54,24 @@ and candidate records from their exact tags, review both SHA-256 files, pair the
 shipped offline assembler, and only then plan and apply:
 
 ```sh
-CURRENT_VERSION="$(node -p "require('./node_modules/@b0dea/cockpit/package.json').version")"
+CURRENT_VERSION="$(node -p "require('./node_modules/@b00dea/cockpit/package.json').version")"
 TARGET_VERSION="1.2.3"
 mkdir -p .cockpit/releases/current .cockpit/releases/candidate
-gh release download "@b0dea/cockpit@${CURRENT_VERSION}" \
+gh release download "@b00dea/cockpit@${CURRENT_VERSION}" \
   --pattern release-evidence.json.sha256 \
   --dir .cockpit/releases/current
-gh release download "@b0dea/cockpit@${TARGET_VERSION}" \
+gh release download "@b00dea/cockpit@${TARGET_VERSION}" \
   --pattern release-evidence.json.sha256 \
   --dir .cockpit/releases/candidate
 cat .cockpit/releases/current/release-evidence.json.sha256
 cat .cockpit/releases/candidate/release-evidence.json.sha256
 CURRENT_RECORD_SHA256="REVIEWED_CURRENT_RECORD_SHA256"
 CANDIDATE_RECORD_SHA256="REVIEWED_CANDIDATE_RECORD_SHA256"
-gh release download "@b0dea/cockpit@${CURRENT_VERSION}" \
+gh release download "@b00dea/cockpit@${CURRENT_VERSION}" \
   --pattern release-evidence.json --dir .cockpit/releases/current
-gh release download "@b0dea/cockpit@${TARGET_VERSION}" \
+gh release download "@b00dea/cockpit@${TARGET_VERSION}" \
   --pattern release-evidence.json --dir .cockpit/releases/candidate
-node ./node_modules/@b0dea/cockpit/libexec/release-evidence.mjs assemble \
+node ./node_modules/@b00dea/cockpit/libexec/release-evidence.mjs assemble \
   --current .cockpit/releases/current/release-evidence.json \
   --current-sha256 "$CURRENT_RECORD_SHA256" \
   --candidate .cockpit/releases/candidate/release-evidence.json \

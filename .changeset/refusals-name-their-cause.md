@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Refusals that come from a caught error now say why. A filesystem or process failure appends its system error, for example `EACCES: permission denied, open '<path>'`. Any other failure appends only its error class, because parser and child-process messages can quote file contents or environment values.

@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `cockpit selftest` no longer asks you to fill probe rows for custom harness cells that it never ran.

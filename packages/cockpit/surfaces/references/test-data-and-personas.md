@@ -6,7 +6,7 @@ Use this when authentication changes what the product does and an agent needs se
 signed-in browser state for them. It is a product change, so it needs explicit permission to edit
 the product's fixtures and auth setup. The cockpit-setup skill loads it, and so does cockpit-browser
 before signed-in testing. The declaration side (modes, personas, fixture hygiene) is described in
-the *Demo data, test users and roles* section of `./node_modules/@b0dea/cockpit/docs/environment.md`;
+the *Demo data, test users and roles* section of `./node_modules/@b00dea/cockpit/docs/environment.md`;
 this page is the procedure an agent follows against a real product and does not repeat it.
 
 ## Find what already exists

@@ -109,7 +109,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     from: 'Path to an existing local repository',
     gate: 'Declared product gate to run',
     image: 'Local container image the runtime measurement probe runs; it is never pulled',
-    intent: 'Relative path to the closed JSON intent descriptor; see the Intent descriptor section of ./node_modules/@b0dea/cockpit/docs/work-and-browser.md',
+    intent: 'Relative path to the closed JSON intent descriptor; see the Intent descriptor section of ./node_modules/@b00dea/cockpit/docs/work-and-browser.md',
     'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
     interactive: 'Ask for explicit approval in a terminal',
     item: 'Declared programme item key',

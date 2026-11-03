@@ -370,7 +370,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const modulePath = fileURLToPath(import.meta.url)
     try {
         const [canonicalModule, moduleBytes] = await Promise.all([realpath(modulePath), readFile(modulePath)])
-        const installedSuffix = join('node_modules', '@b0dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js')
+        const installedSuffix = join('node_modules', '@b00dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js')
         if (!canonicalModule.endsWith(installedSuffix)
             || canonicalModule !== input.installedModule.canonicalPath || hash(moduleBytes) !== input.installedModule.sha256
             || !await emptyDirectory(input.cwd)) {

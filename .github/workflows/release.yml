@@ -131,7 +131,7 @@ jobs:
           IFS=$'\t' read -r package_name version < <(node -e '
             const published = JSON.parse(process.env.PUBLISHED_PACKAGES)
             if (!Array.isArray(published) || published.length !== 1
-                || published[0]?.name !== "@b0dea/cockpit"
+                || published[0]?.name !== "@b00dea/cockpit"
                 || typeof published[0]?.version !== "string") process.exit(2)
             process.stdout.write(`${published[0].name}\t${published[0].version}\n`)
           ')

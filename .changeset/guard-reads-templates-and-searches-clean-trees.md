@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The guard lets agents read declared templates and search code, and protects the MCP wrapper scripts.

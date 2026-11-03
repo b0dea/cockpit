@@ -159,7 +159,7 @@ purpose = "Synthetic local repository"
         await mkdir(join(installed, 'bin'))
         await writeFile(join(installed, 'bin/cockpit.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 })
         await mkdir(join(root, 'node_modules/.bin'))
-        await symlink('../@b0dea/cockpit/bin/cockpit.mjs'.replace('@b0dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))
+        await symlink('../@b00dea/cockpit/bin/cockpit.mjs'.replace('@b00dea/cockpit', installedPackageMetadata.name), join(root, 'node_modules/.bin/cockpit'))
         expect(await inspectTeamReadiness(configPath)).toEqual([])
         // npm applies a root .npmrc to npx, so only the path spelling stays provable.
         await writeFile(join(root, '.npmrc'), 'script-shell=/bin/sh\n')

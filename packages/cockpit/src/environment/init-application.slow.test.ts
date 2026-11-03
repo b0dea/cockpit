@@ -237,7 +237,7 @@ it.each([
             readiness: { state: 'runtime', gaps: [{ id: 'cockpit-git', level: 'required' }, { id: 'cockpit-installed', level: 'recommended' }] } } })
     expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({
         ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
-        devDependencies: { '@b0dea/cockpit': expect.any(String) } })
+        devDependencies: { '@b00dea/cockpit': expect.any(String) } })
 
     // A product source changed after acceptance is still a different estate. Rerunning init alone
     // refuses again, so the remedy names both ways out.

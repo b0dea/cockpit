@@ -17,12 +17,12 @@ const sha = (character: string): string => character.repeat(64)
 const completeDiscovery = (): AuthenticatedUpgradeDiscoveryComplete => ({
     kind: 'complete',
     current: {
-        package: '@b0dea/cockpit',
+        package: '@b00dea/cockpit',
         version: '1.4.2',
         integrity: `sha256-${createHash('sha256').update('1').digest('base64')}`,
     },
     candidate: {
-        package: '@b0dea/cockpit',
+        package: '@b00dea/cockpit',
         version: '1.5.0',
         integrity: `sha512-${createHash('sha512').update('2').digest('base64')}`,
     },
@@ -107,7 +107,7 @@ describe('reviewable upgrade plan', () => {
 
         expect(outcome.kind).toBe('complete')
         if (outcome.kind !== 'complete') throw new Error('expected a complete upgrade plan')
-        expect(outcome.result.current.package).toBe('@b0dea/cockpit')
+        expect(outcome.result.current.package).toBe('@b00dea/cockpit')
         expect(outcome.result.affectedOverrideOriginals).toHaveLength(1)
         expect(outcome.result.affectedOverrideOriginals[0]?.name).toBe('review')
         expect(discoverAuthenticated).toHaveBeenCalledWith({ configPath: 'cockpit.toml' })
@@ -191,7 +191,7 @@ describe('configured upgrade discovery', () => {
     it('refuses absent release evidence before touching configuration or discovery transport', async () => {
         const createReleaseEvidenceDiscovery = vi.fn(() => async () => completeDiscovery())
         const outcome = await runConfiguredUpgradeCommand({ configPath: 'missing/cockpit.toml' }, {
-            installed: { package: '@b0dea/cockpit', version: '1.4.2' },
+            installed: { package: '@b00dea/cockpit', version: '1.4.2' },
             createReleaseEvidenceDiscovery,
         })
         expect(outcome).toMatchObject({
@@ -217,13 +217,13 @@ describe('configured upgrade discovery', () => {
             const outcome = await runConfiguredUpgradeCommand({
                 configPath, releaseEvidencePath: evidencePath, releaseEvidenceSha256: sha('a'),
             }, {
-                installed: { package: '@b0dea/cockpit', version: '1.4.2' },
+                installed: { package: '@b00dea/cockpit', version: '1.4.2' },
                 createReleaseEvidenceDiscovery,
             })
             expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
             expect(createReleaseEvidenceDiscovery).toHaveBeenCalledExactlyOnceWith({
                 configPath, evidencePath, expectedSha256: sha('a'), projection: { activeOverrides: [] },
-                installed: { package: '@b0dea/cockpit', version: '1.4.2' },
+                installed: { package: '@b00dea/cockpit', version: '1.4.2' },
             })
             expect(discovery).toHaveBeenCalledExactlyOnceWith({ configPath })
             expect(existsSync(join(root, 'compose.generated.yml'))).toBe(false)

@@ -190,7 +190,7 @@ describe('product-owned gates', () => {
         expect(guide.bytes).toContain('add a characterization test at the nearest public boundary')
         expect(guide.bytes).toContain('do not add a test framework unasked')
         expect(guide.bytes).toContain('Never report work as verified or passing')
-        expect(guide.bytes).toContain('`./node_modules/@b0dea/cockpit/docs/work-and-browser.md`')
+        expect(guide.bytes).toContain('`./node_modules/@b00dea/cockpit/docs/work-and-browser.md`')
         // A tier table here would send agents to run a gate that does not exist.
         expect(guide.bytes).not.toMatch(/test-run|\| Tier \|/)
         expect(guide.costs.every(cost => cost.status === 'within_cap')).toBe(true)

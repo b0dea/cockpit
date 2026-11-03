@@ -825,7 +825,7 @@ Diagnostics ([what to do](#what-to-do)): `CLAIM_CO_TENANT`, `COMPOSE_BIND_UNDECL
 | --- | --- |
 | `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `COCKPIT_LAUNCHER_UNPROVEN` | run cockpit as ./node_modules/.bin/cockpit <command> --config <your cockpit.toml> from the cockpit root, or remove what stops npx from proving it: a .npmrc in the cockpit root, a bin or directories.bin in its package.json, or a node_modules/.bin/cockpit that npm install did not link to the installed package |
-| `COCKPIT_REVISION_UNSTAMPED` | install a released @b0dea/cockpit when the resolved data must name the exact cockpit source commit |
+| `COCKPIT_REVISION_UNSTAMPED` | install a released @b00dea/cockpit when the resolved data must name the exact cockpit source commit |
 | `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `CONFIG_ENCODING_INVALID` | save the configuration as UTF-8, then retry |
 | `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |

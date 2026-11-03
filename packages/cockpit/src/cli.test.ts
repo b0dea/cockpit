@@ -47,7 +47,7 @@ describe('invocation publication', () => {
         expect(result.status).toBe(exitCode)
         const diagnostics = humanStderr(result.stderr)
         if (verb === 'help') expect(result.stdout).toContain('Usage: cockpit')
-        else if (verb === 'version') expect(result.stdout).toBe(`@b0dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
+        else if (verb === 'version') expect(result.stdout).toBe(`@b00dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
         else if (verb === 'guard-evaluate') {
             if (native) {
                 expect(result.stdout).toBe('')
@@ -569,7 +569,7 @@ describe('CLI help', () => {
         const result = run(['--version'])
 
         expect(result.status).toBe(0)
-        expect(result.stdout).toBe(`@b0dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
+        expect(result.stdout).toBe(`@b00dea/cockpit ${cockpitPackageVersion} (Node ^22.22.0 || ^24.0.0 || ^26.0.0; source development)\n`)
         expect(humanStderr(result.stderr)).toBe('')
     })
 })
@@ -657,7 +657,7 @@ describe('generated environment process contract', () => {
     )
 
     it.each([
-        ['a conflicting package pin', JSON.stringify({ devDependencies: { '@b0dea/cockpit': '9.9.9' } }), 'operator-owned\n'],
+        ['a conflicting package pin', JSON.stringify({ devDependencies: { '@b00dea/cockpit': '9.9.9' } }), 'operator-owned\n'],
         ['a dependencies package slot', JSON.stringify({ dependencies: {
             [installedPackageMetadata.name]: installedPackageMetadata.version } }), 'operator-owned\n'],
         ['an optionalDependencies package slot', JSON.stringify({ optionalDependencies: {
@@ -705,7 +705,7 @@ describe('generated environment process contract', () => {
 
     it('binds doctor freshness only after CI and NO_UPDATE_NOTIFIER transport admissions', async () => {
         const transport = vi.fn(async () => ({ status: 200, body: (async function* () {
-            yield Buffer.from(JSON.stringify({ name: '@b0dea/cockpit', version: '1.2.3' }))
+            yield Buffer.from(JSON.stringify({ name: '@b00dea/cockpit', version: '1.2.3' }))
         })() }))
         const createReleaseMetadataTransport = vi.fn(() => transport)
         for (const env of [{ CI: '0' }, { NO_UPDATE_NOTIFIER: 'false' }]) {
@@ -739,7 +739,7 @@ describe('generated environment process contract', () => {
         const freshness = {
             local: { kind: 'complete', status: 0, diagnostics: [], result: { paths: owned } },
             changes: [{ operation: 'write', path: 'compose.generated.yml' }],
-            release: { kind: 'known', package: '@b0dea/cockpit', installedVersion: '1.0.0', latestVersion: '1.2.3', currency: 'different-version' },
+            release: { kind: 'known', package: '@b00dea/cockpit', installedVersion: '1.0.0', latestVersion: '1.2.3', currency: 'different-version' },
         }
         expect(await runCli(['doctor', '--config', 'cockpit.toml'], capture.io, {
             doctor: async () => ({ status: 0,
@@ -1087,10 +1087,10 @@ describe('generated environment process contract', () => {
         const evidenceBytes = JSON.stringify({
             schema: 'cockpit-upgrade-release-evidence/v1',
             current: {
-                package: '@b0dea/cockpit', version: installedVersion, integrity: `sha256-${createHash('sha256').update('a').digest('base64')}`, originals: [],
+                package: '@b00dea/cockpit', version: installedVersion, integrity: `sha256-${createHash('sha256').update('a').digest('base64')}`, originals: [],
             },
             candidate: {
-                package: '@b0dea/cockpit', version: '1.1.0', integrity: `sha256-${createHash('sha256').update('b').digest('base64')}`, originals: [],
+                package: '@b00dea/cockpit', version: '1.1.0', integrity: `sha256-${createHash('sha256').update('b').digest('base64')}`, originals: [],
             },
         })
         writeFileSync(evidencePath, evidenceBytes)
@@ -2077,7 +2077,7 @@ describe('document process contract', () => {
         const result = run(['document', cockpitRoot])
 
         expect(result.status).not.toBe(0)
-        expect(result.stdout).toMatch(/^#:schema \.\/node_modules\/@b0dea\/cockpit\/cockpit\.schema\.json\n/)
+        expect(result.stdout).toMatch(/^#:schema \.\/node_modules\/@b00dea\/cockpit\/cockpit\.schema\.json\n/)
         expect(result.stdout).toContain('# COCKPIT DOCUMENT: INCOMPLETE DRAFT')
         expect(result.stdout).toContain('[inferred] cockpit.name')
         expect(result.stdout).toContain('sample-cockpit')
@@ -2214,7 +2214,7 @@ describe('document output execution', () => {
         expect(result.status).not.toBe(0)
         expect(result.stdout).toBe('')
         // The file is committed, so the directive names the cockpit's own install, never this machine's package path.
-        expect(readFileSync(output, 'utf8')).toMatch(/^#:schema \.\/node_modules\/@b0dea\/cockpit\/cockpit\.schema\.json\n/)
+        expect(readFileSync(output, 'utf8')).toMatch(/^#:schema \.\/node_modules\/@b00dea\/cockpit\/cockpit\.schema\.json\n/)
         expect(readFileSync(output, 'utf8')).toContain('INCOMPLETE DRAFT')
     })
 

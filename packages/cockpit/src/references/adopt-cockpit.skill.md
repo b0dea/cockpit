@@ -14,7 +14,7 @@ live checkouts.
 
 The full guide, with every situation and its completion check, ships inside the cockpit package
 under `docs/`. Once cockpit is installed (below), read
-`./node_modules/@b0dea/cockpit/docs/agent-adoption.md`. Until then, read the same page from a
+`./node_modules/@b00dea/cockpit/docs/agent-adoption.md`. Until then, read the same page from a
 package tarball (`package/docs/agent-adoption.md` inside the `.tgz`), a cockpit source checkout
 (`docs/agent-adoption.md`) or <https://github.com/b0dea/cockpit/blob/main/docs/agent-adoption.md>.
 Each step below names its guide section. Guide pages cited after the install step are in that
@@ -58,7 +58,7 @@ Done when the exact project-local executable lists the commands.
 
 4. Every `init` below takes `--target <tool>`: replace `<tool>` with the target of the agent tool
    you are running in, as the **Bootstrap** section lists. For an instructions-only tool, follow
-   the *Capability states* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
+   the *Capability states* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`.
 
 Run every command from the cockpit root through `./node_modules/.bin/cockpit`; if that file is
 absent, stop and repair the project-local install. Read flags from

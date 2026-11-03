@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 `doctor` and `init` now say what the project still lacks for cockpit to work, before the first `up` and without guessing.

@@ -1,4 +1,4 @@
-# @b0dea/cockpit
+# @b00dea/cockpit
 
 <!-- cockpit:verified version=0.0.0 -->
 

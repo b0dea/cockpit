@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The troubleshooting index and the CLI reference now repeat a fix for a diagnostic code only when every place that raises the code gives that same fix.

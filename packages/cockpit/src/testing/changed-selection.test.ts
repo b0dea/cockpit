@@ -325,7 +325,7 @@ describe('changed adjacent-owner test runner', () => {
         const fixture = withOwners({
             [source]: 'export const value = 1\n',
             'packages/cockpit/src/example.test.ts': "import { value } from './example.js'\n",
-            '.changeset/release-note.md': '---\n"@b0dea/cockpit": patch\n---\n\nBefore.\n',
+            '.changeset/release-note.md': '---\n"@b00dea/cockpit": patch\n---\n\nBefore.\n',
         })
         edit(fixture.root, source)
         edit(fixture.root, '.changeset/release-note.md')

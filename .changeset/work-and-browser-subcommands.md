@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 Work-order and browser commands are subcommands, and `cockpit --help` is grouped by stage.

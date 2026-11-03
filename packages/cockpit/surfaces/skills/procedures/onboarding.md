@@ -12,7 +12,7 @@ executable, `./node_modules/.bin/cockpit`, or through its `npx --no` form, such 
 `npx --no cockpit check --config cockpit.toml`, which runs that same binary and never downloads
 one. If the binary is absent, stop: do not use a command runner that can download a missing
 package implicitly. The user guide this procedure cites is installed with cockpit: open each page
-with a file read from `./node_modules/@b0dea/cockpit/docs/`. In Codex's sandbox only `check`,
+with a file read from `./node_modules/@b00dea/cockpit/docs/`. In Codex's sandbox only `check`,
 `sync --dry-run` and `--help` run; ask the person to approve running any other cockpit command
 outside the sandbox, or to run it in a terminal.
 
@@ -20,7 +20,7 @@ outside the sandbox, or to run it in a terminal.
 
 Replace `<tool>` below with the target of the agent tool you are running in: `claudecode` (Claude
 Code), `codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build).
-The capability matrix, `./node_modules/@b0dea/cockpit/docs/capability-matrix.md`, separates what
+The capability matrix, `./node_modules/@b00dea/cockpit/docs/capability-matrix.md`, separates what
 cockpit generates for each from what has been tested as enforced.
 Preview with `./node_modules/.bin/cockpit init . --target <tool> --json`. Supply `--registry` only
 when adopting an existing registry.
@@ -85,7 +85,7 @@ every tool call would run unguarded. An agent cannot give that trust. Ask the hu
 the name before accepting: it scopes the cockpit's Compose projects, state and generated files, so
 changing it after the first sync means bringing the stack down and syncing again. Never edit
 `cockpit.name` while the stack is up; to rename, follow the *Rename a cockpit* section of
-`./node_modules/@b0dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
+`./node_modules/@b00dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
 
 For a runnable product, `init` asks `testing` and proposes stages and gates from the test entry
 points it finds, each naming the file it came from. Confirm with the human which commands prove a
@@ -122,7 +122,7 @@ file (`dedicated` or `in-repo`); never answer it yourself. It decides where ever
 lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
 Explain the trade-off in a sentence or two from the root placement choices in
-`./node_modules/@b0dea/cockpit/docs/concepts.md`.
+`./node_modules/@b00dea/cockpit/docs/concepts.md`.
 
 After accepted initialization, and only with explicit permission to change the product's fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
@@ -230,9 +230,9 @@ block and refuses an edited or ambiguous existing block.
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
 applied silently. For a read-only release plan before installing, follow the *Review an upgrade*
-section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
+section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`.
 
-1. Run `npm install --save-dev --save-exact @b0dea/cockpit@<version>`, replacing `<version>` with the reviewed
+1. Run `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
 2. Preview the generated changes without writing:
    `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run`.
@@ -244,7 +244,7 @@ section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
    changes something you overrode reports `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your
    override before updating its recorded hash.
 5. Ask the person to commit the lockfile and the regenerated files together.
-6. Read the newly installed `./node_modules/@b0dea/cockpit/CHANGELOG.md` between the old and new
+6. Read the newly installed `./node_modules/@b00dea/cockpit/CHANGELOG.md` between the old and new
    version for lines starting `Upgrade:`. Each names a step
    that sync alone does not do. The convention is in `.changeset/README.md` in the cockpit repository.
 
@@ -316,7 +316,7 @@ contract and the independent grading, not the thinking: reuse the planning skill
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** When preparing an intent descriptor, draft contract or source audit, follow the
    examples in the *Declare work and the files it may change* section of
-   `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` so the closed formats bind the inspected
+   `./node_modules/@b00dea/cockpit/docs/work-and-browser.md` so the closed formats bind the inspected
    request without guessing fields. Inspect applicable installed
    thinking, research, specification and planning skills, and link each selected output in the source audit.
    Record an audited empty selection when none applies. Then compile them into the work-order schema with

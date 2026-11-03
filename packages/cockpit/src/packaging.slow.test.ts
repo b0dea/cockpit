@@ -142,7 +142,7 @@ function packedPackageRoot(): string {
             ],
             { env: npmEnvironment(), stdio: ['ignore', 'ignore', 'ignore'], timeout: 30_000 },
         )
-        const installedPackageRoot = join(installation, 'node_modules/@b0dea/cockpit')
+        const installedPackageRoot = join(installation, 'node_modules/@b00dea/cockpit')
         installedPackageAttempt = Object.freeze({ kind: 'complete', value: installedPackageRoot })
         return installedPackageRoot
     } catch (error) {
@@ -500,7 +500,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const imported = execFileSync(process.execPath, [
             '--input-type=module',
             '--eval',
-            'import("@b0dea/cockpit").then(module => console.log(typeof module.runCli))',
+            'import("@b00dea/cockpit").then(module => console.log(typeof module.runCli))',
         ], { cwd: dirname(dirname(dirname(installed))), encoding: 'utf8' })
         expect(imported).toBe('function\n')
     })
@@ -718,10 +718,10 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact', sourceArchive], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })
-    const installedPin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).devDependencies['@b0dea/cockpit']
+    const installedPin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).devDependencies['@b00dea/cockpit']
     expect(installedPin).toMatch(/^file:/)
     const installedLock = readFileSync(join(root, 'package-lock.json'), 'utf8')
-    const launcher = join(root, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
+    const launcher = join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     const run = (...args: string[]) => {
         const result = spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
             cwd: root, env, encoding: 'utf8', timeout: 30_000,
@@ -743,7 +743,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
         scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': 'cockpit setup --config cockpit.toml' },
-        synthetic: { retained: true }, devDependencies: { '@b0dea/cockpit': installedPin },
+        synthetic: { retained: true }, devDependencies: { '@b00dea/cockpit': installedPin },
     })
     expect(readFileSync(join(root, 'package-lock.json'), 'utf8')).toBe(installedLock)
     const check = spawnSync(process.execPath, [launcher, 'check', '--config', join(root, 'cockpit.toml'), '--json'], {
@@ -968,10 +968,10 @@ it('runs installed init for each isolated target and refuses missing roots or br
     execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact',
         join(packScratch, 'artifact', packedArtifact().filename)], { cwd: portable, env, stdio: 'ignore', timeout: 30_000 })
     const teamPackage = JSON.parse(readFileSync(join(portable, 'package.json'), 'utf8'))
-    teamPackage.devDependencies['@b0dea/cockpit'] = cockpitPackageVersion
+    teamPackage.devDependencies['@b00dea/cockpit'] = cockpitPackageVersion
     writeFileSync(join(portable, 'package.json'), `${JSON.stringify(teamPackage, null, 2)}\n`)
     const teamLock = JSON.parse(readFileSync(join(portable, 'package-lock.json'), 'utf8'))
-    teamLock.packages[''].devDependencies['@b0dea/cockpit'] = cockpitPackageVersion
+    teamLock.packages[''].devDependencies['@b00dea/cockpit'] = cockpitPackageVersion
     writeFileSync(join(portable, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
     const preparedTeam = spawnSync(process.execPath, [launcher, 'sync', '--config', join(portable, 'cockpit.toml'), '--json'], {
         cwd: portable, env, encoding: 'utf8', timeout: 30_000,
@@ -991,7 +991,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
     execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
         cwd: teammate, env: teammateEnv, stdio: 'ignore', timeout: 30_000,
     })
-    const teammateLauncher = join(teammate, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
+    const teammateLauncher = join(teammate, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs')
     for (const command of ['setup', 'sync', 'check']) {
         const result = spawnSync(process.execPath, [teammateLauncher, command, '--config', join(teammate, 'cockpit.toml'), '--json'], {
             cwd: teammate, env: teammateEnv, encoding: 'utf8', timeout: 30_000,
@@ -1059,7 +1059,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
             'cockpit:sync': 'cockpit sync --config cockpit.toml',
             'cockpit:check': 'cockpit check --config cockpit.toml',
         },
-        devDependencies: { '@b0dea/cockpit': cockpitPackageVersion },
+        devDependencies: { '@b00dea/cockpit': cockpitPackageVersion },
     })
     expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain(`dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`)
     const check = spawnSync(process.execPath, [launcher, 'check', '--config', join(root, 'cockpit.toml'), '--json'],

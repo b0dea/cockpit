@@ -247,13 +247,13 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
 export async function probeInstalledRuntime(request: Omit<RuntimeProbeRequest, 'installedModule'>): Promise<RuntimeProbeVerdict> {
     const modulePath = fileURLToPath(new URL('./runtime-probe.js', import.meta.url))
     const canonicalPath = await realpath(modulePath)
-    const installedSuffix = ['node_modules', '@b0dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js'].join(sep)
+    const installedSuffix = ['node_modules', '@b00dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js'].join(sep)
     if (!canonicalPath.endsWith(`${sep}${installedSuffix}`)) {
         return Object.freeze({
             status: 'unavailable', runtime: null, composeVersion: null, composeFloor: request.composeFloor, measuredOn: request.measuredOn,
             candidate: 'failed', brokenControl: 'inconclusive', evidence: null,
             operatorAction: Object.freeze({ required: true, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-                reason: `runtime measurement runs only from an installed @b0dea/cockpit package, and this cockpit runs from ${dirname(canonicalPath)}; install the package and use its cockpit binary` }),
+                reason: `runtime measurement runs only from an installed @b00dea/cockpit package, and this cockpit runs from ${dirname(canonicalPath)}; install the package and use its cockpit binary` }),
         })
     }
     const sha256 = createHash('sha256').update(await readFile(canonicalPath)).digest('hex')

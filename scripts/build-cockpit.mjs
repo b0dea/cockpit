@@ -30,7 +30,7 @@ async function canonicalPackageRoot(packageRoot) {
         throw new Error('[PACKAGE_ROOT_INVALID] package.json is not one owned regular file')
     }
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    if (manifest.name !== '@b0dea/cockpit') {
+    if (manifest.name !== '@b00dea/cockpit') {
         throw new Error('[PACKAGE_ROOT_INVALID] build root is not the cockpit package')
     }
     return root

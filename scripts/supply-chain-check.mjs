@@ -477,7 +477,7 @@ function releaseDiagnostics(root) {
         if (evidence?.if !== "steps.changesets.outputs.published == 'true'"
             || evidence?.env?.PUBLISHED_PACKAGES !== '${{ steps.changesets.outputs.published-packages }}'
             || !evidenceBody.includes('published.length !== 1')
-            || !evidenceBody.includes('published[0]?.name !== "@b0dea/cockpit"')
+            || !evidenceBody.includes('published[0]?.name !== "@b00dea/cockpit"')
             || !evidenceBody.includes('npm view "${package_name}@${version}" dist.integrity --json')
             || !evidenceBody.includes('packages/cockpit/libexec/release-evidence.mjs record')
             || !evidenceBody.includes('gh release view "$tag"')
@@ -575,7 +575,7 @@ export function inspectSupplyChain(root, packFiles) {
 }
 
 export function runSupplyChainCheck(root) {
-    const output = execFileSync('npm', ['pack', '--json', '--dry-run', '--workspace', '@b0dea/cockpit'], {
+    const output = execFileSync('npm', ['pack', '--json', '--dry-run', '--workspace', '@b00dea/cockpit'], {
         cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
     })
     const decoded = JSON.parse(output)
@@ -611,7 +611,7 @@ export function generateSbom(root, output) {
         }, null, 2)}\n`)
         cpSync(resolve(root, 'packages/cockpit/package.json'), resolve(temporaryRoot, 'packages/cockpit/package.json'))
         const bytes = execFileSync('npm', [
-            'sbom', '--workspace', '@b0dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
+            'sbom', '--workspace', '@b00dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
         ], { cwd: temporaryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
         mkdirSync(dirname(output), { recursive: true })
         writeFileSync(output, bytes)

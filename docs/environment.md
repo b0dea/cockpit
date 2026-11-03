@@ -490,7 +490,7 @@ process that created it, so a measure running from another worktree or terminal,
 temporary directory, is still recognised: only resources whose process is gone are removed, and
 anything that may belong to a measure still running is left and named. It refuses to probe when a
 leftover cannot be removed, naming it. The probe runs only from
-an installed `@b0dea/cockpit` package and only against a daemon that passes the
+an installed `@b00dea/cockpit` package and only against a daemon that passes the
 [local endpoint rules](#choose-the-docker-daemon).
 
 If the candidate passes and the broken file is rejected, the command records the measurement in

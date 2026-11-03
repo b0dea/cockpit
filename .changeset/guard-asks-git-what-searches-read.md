@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 The guard asks Git what an `rg` search and a Git command would print, instead of refusing too much or too little.

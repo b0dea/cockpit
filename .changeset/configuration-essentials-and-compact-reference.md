@@ -1,5 +1,5 @@
 ---
-"@b0dea/cockpit": patch
+"@b00dea/cockpit": patch
 ---
 
 A new Configuration essentials page covers the `cockpit.toml` tables a typical cockpit sets, each with a minimal snippet and a link to its full reference entry.
