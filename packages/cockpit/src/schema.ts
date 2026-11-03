@@ -148,6 +148,8 @@ export const InstallPolicy = z
         test: GuardCommandArgv.optional().describe('Test command, as an argument list, when the product owns one.'),
     })
     .strict()
+    // A row with neither admits nothing; it would only satisfy setup's lookup for the lockfile.
+    .refine(row => row.build !== undefined || row.test !== undefined, { message: 'an install policy declares a build command, a test command or both' })
 
 function hasDuplicate(values: readonly string[]): boolean {
     return new Set(values).size !== values.length

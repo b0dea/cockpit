@@ -31,8 +31,9 @@ describe('bounded exact project command declarations', () => {
     })
 
     it('bounds build and test by Unicode scalars', () => {
-        const base = { toolchain: 'node', lockfile: 'package-lock.json' }
+        const base = { toolchain: 'node', lockfile: 'package-lock.json', build: ['npm', 'run', 'build'] }
         expect(InstallPolicy.safeParse(base).success).toBe(true)
+        expect(InstallPolicy.safeParse({ toolchain: 'node', lockfile: 'package-lock.json' }).success).toBe(false)
         for (const field of ['build', 'test']) {
             for (const word of ['a'.repeat(127), 'a'.repeat(128), '😀'.repeat(128), "'".repeat(128)]) {
                 expect(InstallPolicy.safeParse({ ...base, [field]: Array(32).fill(word) }).success, `${field}: ${word.length}`).toBe(true)

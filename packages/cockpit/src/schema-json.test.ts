@@ -512,7 +512,7 @@ describe('the published cockpit schema', () => {
     })
 
     it('requires a non-none toolchain and rejects duplicate toolchain-lockfile selectors', () => {
-        const valid = { toolchain: 'node', lockfile: 'package-lock.json' }
+        const valid = { toolchain: 'node', lockfile: 'package-lock.json', build: ['npm', 'run', 'build'] }
 
         expect(InstallPolicy.safeParse(valid).success).toBe(true)
         expect(InstallPolicy.safeParse({ ...valid, toolchain: 'none' }).success).toBe(false)
@@ -522,7 +522,7 @@ describe('the published cockpit schema', () => {
         const environment = {
             install_policies: [
                 valid,
-                { ...valid, build: ['npm', 'run', 'build'] },
+                { ...valid, test: ['npm', 'test'] },
             ],
         }
         const config = { ...structuredClone(validConfig), environment }

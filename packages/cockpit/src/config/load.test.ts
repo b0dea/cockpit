@@ -300,7 +300,7 @@ cold_start_seconds = 30
             siblings: [{ slug: 'api', dir: 'api-service', environmentFiles: [{ template: '.env.example', instance: '.env' }] }],
             wipCap: 2, attemptCap: 1,
             // Unset fields take the owner's defaults; each set one is the file's.
-            policy: { grading: 'checks', gates: { accept: 'agent', amend: 'person', answer: 'person', signoff: 'agent' },
+            policy: { grading: 'checks', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' },
                 autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'agent' } },
             generatedHostPaths: browserArtifactPaths,
             browser: {
