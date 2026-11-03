@@ -360,7 +360,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `UPGRADE_SYNC_FAILED` | act on what sync reported above or put npx on PATH, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `UPGRADE_VERSION_INVALID` | give a full version such as 1.2.3, not a range or tag |
 | `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id> |
-| `WORK_GRADE_UNSATISFIED` | read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id> |
 | `WORK_PERSON_REQUIRED` | stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them |
 | `WORK_VERIFY_FAILED` | for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade |
 <!-- cockpit:diagnostic-index:end -->
