@@ -79,6 +79,11 @@ describe('Codex hook trust', () => {
         expect(JSON.stringify(reported)).not.toContain('sentinel-credential')
         expect(reported[0]!.message).toContain('at line 2')
         expect(await (await estate('{')).inspect()).toEqual(unverified)
+        // A configuration over the read bound says so, rather than "unknown error".
+        const oversized = await estate()
+        await writeFile(join(oversized.home, 'config.toml'), `# ${'x'.repeat(4 * 1024 * 1024)}\n`)
+        expect(await oversized.inspect()).toEqual([expect.objectContaining({ code: 'CODEX_HOOK_UNTRUSTED',
+            message: expect.stringContaining(`reading ${join(oversized.home, 'config.toml')} failed: ${join(oversized.home, 'config.toml')} exceeds`) })])
         expect(await (await estate({ hooks: { PreToolUse: [{ hooks: [{ type: 'prompt' }] }] } })).inspect()).toEqual(unverified)
         const homeless = await estate()
         expect(await inspectCodexHookTrust({ root: homeless.root, env: {} })).toEqual(unverified)

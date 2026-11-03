@@ -24,6 +24,8 @@ import {
 import {
     consumeRestoreExecutionAuthority,
     issueRestoreExecutionAuthority,
+    observeProcessStart,
+    processHost,
     settleRestoreExecutionAuthority,
     type RestoreExecutionLease,
 } from './claims.js'
@@ -770,6 +772,7 @@ export async function executeDataMode(
                 namespace: contract.namespace, stackId: contract.stackId, holderId: contract.holderId,
                 requesterId: contract.holderId, configPath: contract.configPath,
                 configSha256: contract.configSha256, stepSha256: restoreStepSha256,
+                observe: (pid) => observeProcessStart(pid, processHost(execute)),
             })
             if (issued.kind !== 'complete') return refuseExecution(index, issued.diagnostics[0]!)
             const consumed = await consumeRestoreExecutionAuthority({

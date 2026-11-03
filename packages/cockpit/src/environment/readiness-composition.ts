@@ -11,7 +11,7 @@ import { inspectTeamReadiness } from '../team-metadata.js'
 import { guardSearchPathRelativeEntry } from '../guards/protected-locations.js'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing } from './contract.js'
 import { resolveGitExecutable } from './executable.js'
-import { inspectTrackedSecretFiles } from './git-observation.js'
+import { gitRepositoryRefusal, inspectTrackedSecretFiles } from './git-observation.js'
 import { declaresNothingToRun } from './declaration.js'
 import type { ReadinessReport } from '../readiness.js'
 
@@ -90,16 +90,25 @@ export async function inspectProjectReadiness(
         if (!step) throw new RefusalError('the cockpit root Git probe could not be planned')
         const outcome = authenticatedExecutionOutcome(await execute(step), step)
         if (!outcome) throw new RefusalError('the cockpit root Git probe returned unauthenticated evidence')
-        // Git exits non-zero outside a working tree; any other refusal is a probe that did not run.
+        // Git exits non-zero outside a working tree and in one it refuses to read; any other refusal is a
+        // probe that did not run.
         if (outcome.kind === 'refusal' && outcome.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) {
             throw new RefusalError(`the cockpit root Git probe did not run (${outcome.code})`)
         }
-        if (outcome.kind === 'refusal') findings.push(Object.freeze({
+        const refused = outcome.kind === 'refusal' ? gitRepositoryRefusal(outcome.stderr) : undefined
+        if (refused?.kind === 'not-a-repository') findings.push(Object.freeze({
             severity: 'warning' as const,
             code: ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
             message: `${input.root} is not inside a Git working tree, so setup will refuse to run there and no teammate can clone this cockpit`,
             target: input.root,
             fix: `run git -C ${input.root} init, then commit the cockpit files once a person has reviewed them`,
+        }))
+        if (refused?.kind === 'refused') findings.push(Object.freeze({
+            severity: 'warning' as const,
+            code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            message: `whether ${input.root} is inside a Git working tree could not be checked: ${refused.reason}`,
+            target: input.root,
+            fix: refused.fix,
         }))
     }
     let repositories = input.repositories ?? []

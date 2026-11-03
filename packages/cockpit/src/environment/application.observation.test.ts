@@ -363,11 +363,19 @@ describe('observation application runners', () => {
         const cockpits = '/synthetic/state/v1/cockpits'
         const skipped = [{ path: `${cockpits}/one`, reason: 'format is not supported' }, { path: `${cockpits}/two`, reason: 'format is not supported' }]
         const result = await runDoctor({ configPath: '/synthetic/cockpit.toml' }, { load: async () => undefined, execute: vi.fn(),
-            readUnreadableState: async () => skipped })
+            readUnreadableState: async () => ({ kind: 'complete', skipped }) })
         expect(result.diagnostics.filter(row => row.code === 'STATE_RECORD_MALFORMED')).toEqual([{ severity: 'warning',
             code: 'STATE_RECORD_MALFORMED', target: cockpits,
             message: `2 state folders of other cockpits under ${cockpits} cannot be read by this cockpit version (format is not supported), so their claims and port leases were ignored`,
             fix: `ask the person who owns this machine whether any cockpit still uses them; if none does, stop any stack they started (docker compose ls lists them), then delete them: rm -rf '${cockpits}/one' '${cockpits}/two'` }])
+
+        // An inventory that cannot be read is said, not taken for one with nothing in it.
+        const locked = await runDoctor({ configPath: '/synthetic/cockpit.toml' }, { load: async () => undefined, execute: vi.fn(),
+            readUnreadableState: async () => ({ kind: 'refusal', diagnostics: [{ severity: 'error', code: 'STATE_LOCKED',
+                message: 'coordination publication is in progress', target: `${cockpits}/one`, fix: 'retry after the coordination transaction completes' }] }) })
+        expect(locked.diagnostics.filter(row => row.code === 'STATE_LOCKED')).toEqual([{ severity: 'warning', code: 'STATE_LOCKED',
+            target: `${cockpits}/one`, fix: 'retry after the coordination transaction completes',
+            message: "doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: coordination publication is in progress" }])
     })
 
     it.each(['authenticated', 'bootstrap', 'missing', 'throwing'] as const)(

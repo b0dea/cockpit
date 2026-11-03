@@ -4517,8 +4517,10 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly inspectEvaluator?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
     readonly inspectReadiness?: () => Promise<readonly EnvironmentDiagnostic[]>
-    /** Other cockpits' state namespaces this version skipped; read after load has selected this cockpit's state root. */
-    readonly readUnreadableState?: () => Promise<readonly SkippedStateNamespace[]>
+    /** Other cockpits' state namespaces this version skipped, or why the inventory could not be read; read after load has selected this cockpit's state root. */
+    readonly readUnreadableState?: () => Promise<
+        | Readonly<{ kind: 'complete'; skipped: readonly SkippedStateNamespace[] }>
+        | Readonly<{ kind: 'refusal'; diagnostics: readonly EnvironmentDiagnostic[] }>>
 }
 
 interface DoctorFreshness {
@@ -5216,9 +5218,13 @@ export async function runDoctor(
     const [outcome, guardHosts, unconfirmed, testingGate, hookTrust, evaluator, readinessWarnings] = await Promise.all([doctorHealth(input, adapters, config),
         doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), doctorTestingGateDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([]),
         adapters.inspectEvaluator?.() ?? Object.freeze([]), adapters.inspectReadiness?.() ?? Object.freeze([])])
-    const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
-    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings,
-        ...unreadableState ? [unreadableState] : []]
+    const stateInventory = await adapters.readUnreadableState?.()
+    const unreadableState = stateInventory?.kind === 'refusal'
+        // An inventory that cannot be read, such as one another command holds locked, is no clean one.
+        ? stateInventory.diagnostics.map((diagnostic) => Object.freeze({ ...diagnostic, severity: 'warning' as const,
+            message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
+        : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
+    const warnings = [...unconfirmed, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...unreadableState]
     const reported = warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero

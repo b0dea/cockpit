@@ -24,7 +24,7 @@ import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './
 export const mechanism = {
     id: 'git-observation',
     module: 'packages/cockpit/src/environment/git-observation.ts',
-    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations', 'inspectTrackedSecretFiles'],
+    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations', 'inspectTrackedSecretFiles', 'gitRepositoryRefusal'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -573,6 +573,33 @@ export function observeRunningCheckout(
     return { kind: 'complete', observation: issueObservation(observation) }
 }
 
+// Git exits 128 both outside any repository and inside one it refuses to read; only its message
+// tells them apart (git 2.54.0, 2026-11-03). Each step runs with no LANG, so Git does not translate
+// it, and a message this does not recognise is a failure, never an absent repository.
+const NOT_A_REPOSITORY = /^fatal: not a git repository\b/
+const DUBIOUS_OWNERSHIP = /^fatal: detected dubious ownership in repository at '(.+)'$/
+
+/**
+ * Why a Git step that exited non-zero failed: the directory is in no repository, or Git refused to
+ * read the repository. A refusal names the cause and its remedy; ownership is a trust decision about
+ * another user's files, so its remedy goes through a person.
+ */
+export function gitRepositoryRefusal(stderr: Buffer):
+    | Readonly<{ kind: 'not-a-repository' }>
+    | Readonly<{ kind: 'refused'; reason: string; fix: string }> {
+    // Git may warn before the line that ends it; that `fatal:` line states the cause.
+    const lines = stderr.toString('utf8').split(/\r?\n/)
+    const line = (lines.find((candidate) => candidate.startsWith('fatal: ')) ?? lines[0]!)
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').slice(0, 512)
+    if (NOT_A_REPOSITORY.test(line)) return Object.freeze({ kind: 'not-a-repository' })
+    const owned = DUBIOUS_OWNERSHIP.exec(line)?.[1]
+    if (owned !== undefined) return Object.freeze({ kind: 'refused',
+        reason: `Git refuses to read ${owned} because another user owns it (dubious ownership)`,
+        fix: `ask the person who owns this machine whether to trust ${owned}; only if they agree, run ${formatShellCommand(['git', 'config', '--global', '--add', 'safe.directory', owned])}, then rerun this command` })
+    return Object.freeze({ kind: 'refused', reason: line === '' ? 'Git failed without a message' : `Git failed: ${line}`,
+        fix: 'fix what Git reports, then rerun this command' })
+}
+
 // The names the guard denies agents from reading: `.env` and `.env.<suffix>`, except the templates
 // meant to be committed. Values are never read; only Git's index is asked which names it tracks.
 const SECRET_FILE = /^\.env(?:\.[^/]+)?$/
@@ -606,9 +633,20 @@ export async function inspectTrackedSecretFiles(input: {
         })
         if (!step) throw new RefusalError(`tracked secret inspection could not be planned for ${repository.slug}`)
         const outcome = authenticatedExecutionOutcome(await execute(step), step)
-        // Git exits non-zero in a directory that is not a repository, which tracks nothing; that gap is
-        // reported where Git state is. Any other refusal is a probe that did not run, and says so.
-        if (outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return []
+        // A directory that is not a repository tracks nothing; that gap is reported where Git state is.
+        // A repository Git refuses to read may track anything, so it is no clean result.
+        const refused = outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED
+            ? gitRepositoryRefusal(outcome.stderr) : undefined
+        if (refused?.kind === 'not-a-repository') return []
+        if (refused) {
+            return [Object.freeze({
+                severity: 'warning' as const,
+                code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+                message: `whether sibling ${repository.slug} commits secret-shaped files could not be checked: ${refused.reason}`,
+                target: `sibling:${repository.slug}`,
+                fix: refused.fix,
+            })]
+        }
         if (!outcome || outcome.kind !== 'complete') {
             return [Object.freeze({
                 severity: 'warning' as const,
