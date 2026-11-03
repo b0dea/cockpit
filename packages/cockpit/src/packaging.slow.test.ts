@@ -1013,12 +1013,14 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     expect(execFileSync('git', ['-C', teammate, 'status', '--porcelain'], { encoding: 'utf8', env: teammateEnv })).toBe('')
 }, 480_000)
 
-it('refuses init without a root or with a broken adjacent asset and writes nothing', async () => {
+it('previews a bare init of the current directory and refuses a broken adjacent asset, writing nothing', async () => {
     const { installed, launcher, env } = await installedInitEnvironment()
     const untouched = join(packScratch, 'init-missing-root')
     mkdirSync(untouched)
-    const missing = spawnSync(process.execPath, [launcher, 'init', '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })
-    expect(missing.status).toBe(2)
+    // Without a root, init previews the current directory; a preview writes nothing.
+    const bare = spawnSync(process.execPath, [launcher, 'init', '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })
+    expect(bare.status, bare.stderr).toBe(0)
+    expect(JSON.parse(bare.stdout).result.root).toBe(realpathSync(untouched))
     expect(existsSync(join(untouched, '.agents'))).toBe(false)
     const asset = join(installed, 'surfaces/skills/cockpit-setup.skill.md'), bytes = readFileSync(asset)
     try {
