@@ -9,9 +9,8 @@ const protectedPaths = new Set([
     '.github/workflows/ci.yml',
     // What decides which tests run and how their results are judged.
     'vitest.config.ts',
-    'scripts/run-tests.mjs',
     'scripts/run-changed-tests.mjs',
-    'scripts/immediate-failure-reporter.mjs',
+    'scripts/skip-allowlist-reporter.mjs',
     'package.json',
 ])
 

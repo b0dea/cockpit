@@ -2,15 +2,16 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { SLOW_TEST_PATH } from '../../../../scripts/run-changed-tests.mjs'
 
+// vitest.config.ts routes this name to the slow project.
+const SLOW_TEST_PATH = /\.slow\.test\.ts$/
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 // This file names the mechanisms in its synthetic cases.
 const SELF = relative(ROOT, fileURLToPath(import.meta.url))
 
 // Mechanisms whose cost is set by the outside world rather than by the code under test. A test
-// file that uses one belongs in the slow tier, which `npm run test:changed` defers to the full
-// suite. A file can also be slow from many short subprocesses, which no source pattern shows;
+// file that uses one belongs in the slow tier, which `npm run test:fast` skips. A file can also be
+// slow from many short subprocesses, which no source pattern shows;
 // that half of the rule is a review judgment, measured as described in docs/contributing/testing.md.
 const SLOW_MECHANISMS = [
     ['packs or installs a package with npm', /['"]npm['"],\s*\[\s*['"](?:pack|install|ci)['"](?![^\]]*['"]--dry-run['"])/],
@@ -48,7 +49,5 @@ describe('test tiers', () => {
         expect(slowMechanisms('const docker = await resolveDockerExecutable(process.env)')).toEqual(['runs the host Docker'])
         expect(slowMechanisms("execFileSync('which', ['docker'])")).toEqual(['runs the host Docker'])
         expect(slowMechanisms('await resolveDockerExecutable({ PATH: root })')).toEqual([])
-        expect(SLOW_TEST_PATH.test('packages/cockpit/src/packaging.slow.test.ts')).toBe(true)
-        expect(SLOW_TEST_PATH.test('packages/cockpit/src/slow.test.ts')).toBe(false)
     })
 })

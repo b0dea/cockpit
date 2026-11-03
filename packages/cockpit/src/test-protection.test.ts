@@ -158,14 +158,14 @@ describe('test protection diff classifier', () => {
         'packages/cockpit/src/harness-support.test.ts',
         'packages/cockpit/src/guards/evaluator.test.ts',
         ...['js', 'jsx', 'ts', 'tsx', 'cjs', 'mjs', 'cts', 'mts'].map(extension => `packages/cockpit/src/future/control.spec.${extension}`),
-        'vitest.config.ts', 'scripts/run-tests.mjs', 'scripts/run-changed-tests.mjs', 'scripts/immediate-failure-reporter.mjs',
+        'vitest.config.ts', 'scripts/run-changed-tests.mjs', 'scripts/skip-allowlist-reporter.mjs',
         'packages/cockpit/src/test-support/git-isolation.ts', 'packages/cockpit/test-support/application-fixture.ts',
     ])('protects every cockpit test or spec path and the files that decide what runs: %s', path => {
         expect(classifyTestProtection(patch(path, 'expect(result).toBe(false)')).allowed).toBe(false)
     })
 
     it('guards the root manifest test scripts but not dependency or metadata edits', () => {
-        for (const line of ['    "test": "node scripts/run-tests.mjs",', '    "test:changed": "node scripts/run-changed-tests.mjs",',
+        for (const line of ['    "test": "vitest run",', '    "test:changed": "node scripts/run-changed-tests.mjs",',
             '    "typecheck": "tsc",', '    "pretest": "npm run build",']) {
             expect(classifyTestProtection(patch('package.json', line, line.replace('run-', 'skip-'))).allowed).toBe(false)
         }

@@ -193,19 +193,11 @@ jobs:
       - if: matrix.gate == 'full'
         timeout-minutes: 65
         run: npm test
-      # The adjacent-owner selection refuses a change it cannot map to owner tests (a launcher,
-      # a libexec helper, a hook). A refusal widens this cell to the full suite rather than
-      # testing nothing; a selection error never narrows what runs.
+      # Both tiers, for the tests that own what the pull request changed. A selection error fails
+      # the cell; it never narrows what runs.
       - if: matrix.gate == 'changed'
         timeout-minutes: 65
-        run: |
-          set -euo pipefail
-          if npm run --silent test:changed -- HEAD^1 --list >/dev/null; then
-            npm run test:changed -- HEAD^1 --wide
-          else
-            echo '::notice::adjacent-owner selection refused this change (reason above); running the full suite'
-            npm test
-          fi
+        run: npm run test:changed -- HEAD^1
       - if: matrix.gate == 'compatibility'
         timeout-minutes: 15
         run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.slow.test.ts

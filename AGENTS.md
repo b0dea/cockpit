@@ -68,8 +68,9 @@ it does not get a second process runner or an independent health verdict.
 
 ```sh
 npm ci --ignore-scripts
-npm run test:changed -- <base-commit>  # fast-tier tests adjacent to your changes; --wide adds the slow tier
-npm test -- <test file>                # targeted run; bare `npm test` is the full suite
+npm run test:changed -- <base-commit>  # tests that import or read what changed, both tiers
+npm run test:fast                      # fast project only
+npm test -- <test file>                # targeted run; bare `npm test` is both projects
 npm run typecheck
 npm run lint:docs                      # cockpit:ref targets, codes, glossary links, docs indexes
 npm run lint:markdown                  # markdownlint

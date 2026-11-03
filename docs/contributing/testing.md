@@ -7,8 +7,9 @@ failure.
 ## Test tiers
 
 A test file named `*.slow.test.ts` is in the slow tier; every other file is in the fast tier.
-`npm test` runs both. `npm run test:changed -- <base-commit>` runs the fast-tier owners of a change
-and prints the slow-tier owners it left out; `--wide` runs both tiers and is what CI runs.
+They are the `slow` and `fast` projects in `vitest.config.ts`. `npm test` runs both and
+`npm run test:fast` runs the fast project. `npm run test:changed -- <base-commit>` runs the
+owners of a change in both tiers and is what CI runs on its changed-only cell.
 
 A file belongs in the slow tier when its cost is set by something other than the code under test:
 
@@ -19,7 +20,7 @@ A file belongs in the slow tier when its cost is set by something other than the
 `packages/cockpit/src/testing/test-tiers.test.ts` fails when a fast-tier file packs or installs a
 package with npm or resolves Docker from the host `PATH`. Subprocess-heavy files are a judgment no
 source pattern shows: run the file alone with `npm test -- <path>` and read its duration in
-**.vitest-reports/latest.json**. When only some cases of a file are slow, move those cases into a
+the run output. When only some cases of a file are slow, move those cases into a
 `<name>.slow.test.ts` beside it and share their setup through `packages/cockpit/test-support/`, so
 the fast cases still run for every change to the module.
 

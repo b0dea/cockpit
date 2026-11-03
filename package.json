@@ -15,7 +15,8 @@
     "lint:links": "git ls-files '*.md' | lychee --offline --include-fragments --no-progress --files-from -",
     "lint:supply-chain": "node scripts/supply-chain-check.ts",
     "references": "tsx scripts/references.ts",
-    "test": "node scripts/run-tests.mjs",
+    "test": "vitest run",
+    "test:fast": "vitest run --project fast",
     "test:changed": "node scripts/run-changed-tests.mjs",
     "typecheck": "node node_modules/typescript/bin/tsc --build --singleThreaded"
   },

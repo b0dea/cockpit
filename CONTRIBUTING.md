@@ -37,14 +37,12 @@ Run the smallest test that covers the behaviour you are changing:
 npm test -- packages/cockpit/src/tree-hygiene.test.ts
 ```
 
-- `npm test` is the only supported test entry point. It caps Vitest at four workers, takes file
-  paths and `-t '<test name>'` after `--`, and writes the latest result to
-  **.vitest-reports/latest.json**.
-- `npm run test:changed -- <base-commit>` runs the fast-tier tests adjacent to what changed since
-  that commit and prints the slow-tier tests it left out; `--wide` runs those too and matches
-  what CI runs. An unmapped path is refused rather than treated as a pass. If a run ends early,
-  it writes the unfinished files to **.vitest-reports/remaining-<id>.txt** and prints the
-  command that reruns them.
+- `npm test` runs Vitest's fast and slow projects, capped at four workers; it takes file paths
+  and `-t '<test name>'` after `--`. `npm run test:fast` runs the fast project only. A skipped or
+  todo test fails the run unless **scripts/skip-allowlist-reporter.mjs** lists it.
+- `npm run test:changed -- <base-commit>` runs, in both tiers, the tests that import what changed
+  since that commit (Vitest's `--changed`), plus the tests that read a changed file by name
+  rather than import it. It matches what CI runs on the changed-only cell.
 - `*.slow.test.ts` is the slow tier. [Test tiers](docs/contributing/testing.md#test-tiers) says
   what belongs there.
 

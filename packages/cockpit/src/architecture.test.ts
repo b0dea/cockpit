@@ -269,10 +269,8 @@ describe('clean-checkout controls', () => {
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
             { os: 'ubuntu-latest', node: '26', gate: 'compatibility' },
         ])
-        // A refused adjacent selection widens the cell to the full suite; it never runs nothing.
         expect(supportedJob).toContain("if: matrix.gate == 'changed'")
-        expect(supportedJob).toContain('if npm run --silent test:changed -- HEAD^1 --list >/dev/null; then\n            npm run test:changed -- HEAD^1 --wide\n          else')
-        expect(supportedJob).toMatch(/else\n[^\n]*\n {12}npm test\n {10}fi/)
+        expect(supportedJob).toContain('run: npm run test:changed -- HEAD^1\n')
         expect(supportedJob).toContain('fetch-depth: 2')
         expect(workflow).toContain('runtime-floor-negative:')
         expect(supportedJob).toContain('npm run build')
