@@ -2082,8 +2082,8 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 // prompt. Claude Code allows nothing in its default mode without a rule, so a headless session was
 // denied even `test-run` from its own skill. A rule only lets Claude run the command without asking:
 // the guard hook still runs first, and its ask or deny wins over the rule. Person-only commands
-// (`down`, `sync`, `work accept`, `work answer` and the rest that prompt) are left out so they keep
-// asking. Measured with Claude Code 2.1.316 on 2026-11-02 beside an unruled control: `Bash(<prefix> *)`
+// (`sync`, `work accept`, `work answer` and the rest that prompt) and the destructive `down` are left
+// out so they keep asking. Measured with Claude Code 2.1.316 on 2026-11-02 beside an unruled control: `Bash(<prefix> *)`
 // ran a matching command headless, the control and a chain with an unmatched part were denied, a hook
 // `ask` denied a matching command, and Claude ignores these rules until a person trusts the workspace.
 const AGENT_COCKPIT_COMMANDS = [

@@ -530,7 +530,7 @@ async function runInitStages(
             diagnostics: [{ ...diagnostic('INIT_ANSWER_RESET_UNAVAILABLE', `none of the files init published into ${input.root}, nor cockpit.toml, exist any more, so its recorded answers no longer apply`, address.path),
                 fix: `run ${initCommand({ root: input.root, target: input.target, args: '--json' })} without --reset-answer: init starts again from the preview` }] }
         restarted = { severity: 'info', code: 'INIT_STATE_RESTARTED', target: address.path,
-            message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated, or they were deleted), so init starts again from the preview and the answers recorded there are discarded` }
+            message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated, or they were deleted), so init starts again from the preview; the answers recorded there are discarded once the fresh preview is accepted` }
         discarded = current
         current = null
     }
