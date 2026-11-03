@@ -159,7 +159,7 @@ the same front-matter `criteria` list, and optionally `scope`, `gates` and `obje
 <!-- cockpit:ref schema=work.evaluators --> <!-- cockpit:ref schema=work.evaluator_timeout_seconds --> The grader runs headless in an agent tool from `work.evaluators`, whichever agent tool did the work,
 so `independent` grading needs one of them on `PATH` and signed in. The list is tried in order (by
 default the tools `surfaces.tools` lists that can evaluate, in that order, so a Claude Code-only cockpit
-grades with Claude Code): a tool that is missing, too old for the flags below, signed out,
+grades with Claude Code; when the command runs inside Claude Code or Codex, detected from `CLAUDECODE` or `CODEX_THREAD_ID` as measured 2026-11-03, that tool moves last so another listed tool grades first, and a list you write is used exactly as written; `--evaluator <tool>` on `work grade` or `grade --criteria` runs only that one tool for that run, with no fallback): a tool that is missing, too old for the flags below, signed out,
 rate-limited or timed out is passed over and the next is tried, and the grade record names which tool
 answered and which were passed over. An answer that fails cockpit's checks is refused rather than
 retried with another tool, and nothing falls back to the agent grading its own work. Each grade is a

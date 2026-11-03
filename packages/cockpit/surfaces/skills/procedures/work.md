@@ -53,7 +53,9 @@ not the thinking: reuse the planning skills the harness already has.
    retrying. Under `checks`, the checks decide. Under `self`, pass `--verdict met` or `unmet` and a
    `--note` saying what you checked. Anything short of passing lists each criterion's verdict and note
    under `result.criteria`, failed checks under `result.checks` and changes outside scope under
-   `result.outOfScope`: go back to step 3 for each.
+   `result.outOfScope`: go back to step 3 for each. When the person names a grader ("use Codex to grade",
+   "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or `opencode`) on every grade
+   for the rest of the session; only that tool runs, with no fallback.
 7. **Attempt cap.** Each failed check or grade counts an attempt; at `work.attempt_cap` the order is
    blocked. Record the root cause with `work note`, then report to the person, who amends the contract
    or closes the order.

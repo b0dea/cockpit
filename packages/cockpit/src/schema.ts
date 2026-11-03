@@ -466,7 +466,7 @@ export const Work = z
         // rate-limited is recorded and passed over. It never falls back to the agent grading itself.
         evaluators: z.array(z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[])).min(1).max(3)
             .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').optional()
-            .describe('Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.'),
+            .describe('Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order, with the tool running the command moved last when it is detected (Claude Code or Codex), so another tool grades first. A list given here is used exactly as written.'),
         // Consumers may lower these framework maxima, but cannot raise them.
         attempt_cap: z.number().int().min(1).max(2).default(2).describe('Failed checks or grades before an order is blocked; may be lowered but not raised.'),
         wip_cap: z.number().int().min(1).max(3).default(3).describe('Accepted orders that may be unfinished at once; may be lowered but not raised.'),

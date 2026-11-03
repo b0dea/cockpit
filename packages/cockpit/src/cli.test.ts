@@ -172,6 +172,7 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-1'], ['work', 'accept', '--work-order', 'WO-1'],
             ['work', 'check', '--work-order', 'WO-1', '--json'], ['work', 'note', '--work-order', 'WO-1', '--ask', '--text', 'Which origin is canonical?'],
             ['work', 'answer', '--work-order', 'WO-1', '--question', '2', '--text', 'The first one'],
+            ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'codexcli'], ['grade', '--criteria', 'criteria.md', '--evaluator=claudecode'],
             ['work', 'grade', '--work-order', 'WO-1'], ['work', 'grade', '--work-order', 'WO-1', '--verdict', 'met', '--note', 'ran the suite'],
             ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
             ['work', 'recover', '--work-order', 'WO-1'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
@@ -238,6 +239,7 @@ describe('closed ordinary invocation metadata', () => {
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
             ['test-run', '--gate', 'quick', '--select', 'file:--config=evil.ts'], ['test-run', '--gate', 'quick', '--select', 'src/cache.test.ts'],
             ['work', 'note', '--work-order', 'WO-1'], ['work', 'answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
+            ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'gemini'], ['work', 'status', '--evaluator', 'codexcli'],
             ['work', 'grade', '--work-order', '../WO-1'], ['grade', '--criteria', '../outside.md'], ['grade'],
             ['work', 'status', 'WO-1'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
         ]
@@ -250,7 +252,7 @@ describe('closed ordinary invocation metadata', () => {
             const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
-                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' ? '1' : 'path']
+                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' ? '1' : name === 'evaluator' ? 'codexcli' : 'path']
                 const baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
@@ -1853,13 +1855,15 @@ describe('work command routing', () => {
     })
 
     it('routes closed work browser and testing selectors through one configured application input', async () => {
-        const cases: readonly (readonly [string, readonly string[], unknown])[] = [
+        const cases: readonly (readonly [string, readonly string[], unknown, string?])[] = [
             ['work-status', [], { operation: 'work-status' }],
             ['work-status', ['--work-order', 'WO-1'], { operation: 'work-status', workOrderId: 'WO-1' }],
             ['work-check', ['--work-order', 'WO-1'], { operation: 'work-check', workOrderId: 'WO-1' }],
             ['work-note', ['--work-order', 'WO-1', '--text', 'tried the cache first'], { operation: 'work-note', workOrderId: 'WO-1', text: 'tried the cache first', question: false }],
             ['work-note', ['--work-order', 'WO-1', '--ask', '--text', 'Which origin?'], { operation: 'work-note', workOrderId: 'WO-1', text: 'Which origin?', question: true }],
             ['work-grade', ['--work-order', 'WO-1'], { operation: 'work-grade', workOrderId: 'WO-1' }],
+            ['work-grade', ['--work-order', 'WO-1', '--evaluator', 'codexcli'], { operation: 'work-grade', workOrderId: 'WO-1' }, 'codexcli'],
+            ['grade-criteria', ['--criteria', 'criteria.md', '--evaluator', 'opencode'], { operation: 'grade-criteria', criteriaFile: 'criteria.md' }, 'opencode'],
             ['work-grade', ['--work-order', 'WO-1', '--verdict', 'unmet', '--note', 'AC2 fails'], { operation: 'work-grade', workOrderId: 'WO-1', verdict: 'unmet', note: 'AC2 fails' }],
             ['work-recover', ['--work-order', 'WO-1'], { operation: 'work-recover', workOrderId: 'WO-1', apply: false }],
             ['work-recover', ['--work-order', 'WO-1', '--apply'], { operation: 'work-recover', workOrderId: 'WO-1', apply: true }],
@@ -1871,14 +1875,14 @@ describe('work command routing', () => {
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'file:src/example.ts'], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'file', value: 'src/example.ts' } }],
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'test:' + 'é'.repeat(2048)], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'test', value: 'é'.repeat(2048) } }],
         ]
-        for (const [operation, args, request] of cases) {
+        for (const [operation, args, request, evaluator] of cases) {
             let stdout = '', stderr = ''
             const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
             const handler = vi.fn(async () => ({ status: 0, result: { operation }, diagnostics: [] }))
             const verb = spelling(operation)
             const status = await runCli([...verb.split(' '), '--config', 'cockpit.toml', ...args, '--json'], io, { [operation]: handler })
             expect(status, operation).toBe(0)
-            expect(handler, operation).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request })
+            expect(handler, operation).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request, ...(evaluator ? { evaluator } : {}) })
             expect(JSON.parse(stdout)).toMatchObject({ result: { operation }, invocation: { verb, exitCode: 0 } })
             expect(stdout.split('\n')).toHaveLength(2)
             expect(stderr).toBe('')
@@ -1889,7 +1893,7 @@ describe('work command routing', () => {
         const cases = [
             ['work-check'], ['work-check', '--work-order', '../WO-1'], ['work-note', '--work-order', 'WO-1'],
             ['work-answer', '--work-order', 'WO-1', '--text', 'yes'], ['work-answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
-            ['work-grade', '--work-order', 'WO-1', '--verdict', 'maybe'], ['work-grade', '--work-order', 'WO-1', '--work-order', 'WO-2'],
+            ['work-grade', '--work-order', 'WO-1', '--verdict', 'maybe'], ['work-grade', '--work-order', 'WO-1', '--evaluator', 'gemini'], ['work-grade', '--work-order', 'WO-1', '--work-order', 'WO-2'],
             ['work-signoff', '--work-order', 'WO-1', '--partial', '--abandon'], ['work-recover'],
             ['grade-criteria'], ['grade-criteria', '--criteria', '../outside.md'], ['grade-criteria', '--criteria', '/absolute.md'],
             ['test-run', '--gate', 'unit', '--select', 'unknown:value'],

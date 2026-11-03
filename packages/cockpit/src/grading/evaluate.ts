@@ -277,6 +277,20 @@ async function probe(tool: EvaluatorTool, executable: Executable, directories: r
     return problem
 }
 
+/**
+ * The default order puts the tool running this command last, so work done in one tool is graded by
+ * another first and the same tool, in a fresh headless session, is only the fallback. Measured
+ * 2026-11-03 (Claude Code 2.1.317, Codex 0.166.0): a shell command run by Claude Code has CLAUDECODE
+ * set and one run by Codex has CODEX_THREAD_ID set. Neither or both is not guessed at; OpenCode is
+ * not detected.
+ */
+export function defaultEvaluatorOrder(tools: readonly EvaluatorTool[], env: Readonly<Record<string, string | undefined>>): readonly EvaluatorTool[] {
+    const claude = (env.CLAUDECODE ?? '') !== ''; const codex = (env.CODEX_THREAD_ID ?? '') !== ''
+    if (claude === codex) return tools
+    const runner: EvaluatorTool = claude ? 'claudecode' : 'codexcli'
+    return [...tools.filter(tool => tool !== runner), ...tools.filter(tool => tool === runner)]
+}
+
 /** Finds and probes each listed tool in order; one that is missing or too old is passed over and recorded. */
 export async function locateEvaluators(tools: readonly EvaluatorTool[], directories: readonly string[]): Promise<EvaluatorChain> {
     const located: { tool: EvaluatorTool; executable: Executable }[] = []; const skipped: EvaluationAttempt[] = []

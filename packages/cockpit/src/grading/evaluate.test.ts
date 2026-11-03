@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExecutionStep } from '../environment/contract.js'
 import type { EvaluatorTool } from '../schema.js'
-import { evaluate, findEvaluators, locateEvaluators, type EvaluationRequest } from './evaluate.js'
+import { defaultEvaluatorOrder, evaluate, findEvaluators, locateEvaluators, type EvaluationRequest } from './evaluate.js'
 
 const boundary = vi.hoisted(() => ({ steps: [] as ExecutionStep[], requests: [] as Record<string, unknown>[] }))
 vi.mock('../environment-exec/execute.js', async importOriginal => {
@@ -125,6 +125,15 @@ describe('independent evaluation', () => {
         const host = await machine([tool])
         await expect(evaluate(await host.request([tool], { mode: 'signed-out' }))).resolves.toMatchObject({ kind: 'refusal', code: 'EVALUATOR_RUN_FAILED', message,
             fix: expect.stringContaining('sign in to it'), attempts: [{ tool, code: 'EVALUATOR_RUN_FAILED', message }] })
+    })
+
+    it('moves the tool running the command last in the default order, and only when exactly one runner is detected', () => {
+        const listed: readonly EvaluatorTool[] = ['claudecode', 'codexcli', 'opencode']
+        expect(defaultEvaluatorOrder(listed, { CLAUDECODE: '1' })).toEqual(['codexcli', 'opencode', 'claudecode'])
+        expect(defaultEvaluatorOrder(listed, { CODEX_THREAD_ID: 'thread' })).toEqual(['claudecode', 'opencode', 'codexcli'])
+        expect(defaultEvaluatorOrder(listed, {})).toEqual(listed)
+        expect(defaultEvaluatorOrder(listed, { CLAUDECODE: '1', CODEX_THREAD_ID: 'thread' })).toEqual(listed)
+        expect(defaultEvaluatorOrder(['claudecode'], { CLAUDECODE: '1' })).toEqual(['claudecode'])
     })
 
     it('falls through an outdated and a signed-out evaluator in order and records each it passed over', async () => {

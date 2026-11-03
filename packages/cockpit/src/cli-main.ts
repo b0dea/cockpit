@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { EVALUATOR_COMMANDS, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { renderComposeScaffold, SCAFFOLD_BACKING_SERVICES, writeComposeScaffold, type ScaffoldBackingService } from './init/scaffold.js'
@@ -143,7 +144,7 @@ export interface CommandOutcome {
     fixContext?: FixContext
 }
 
-interface WorkCommandInput { readonly configPath: string; readonly request: WorkApplicationRequest }
+interface WorkCommandInput { readonly configPath: string; readonly request: WorkApplicationRequest; readonly evaluator?: EvaluatorTool }
 
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
     check: GeneratedEnvironmentCommandInput
@@ -506,7 +507,8 @@ function workCommandOutcome(outcome: WorkApplicationOutcome): CommandOutcome {
 async function configuredWorkApplication(input: WorkCommandInput, runtime: CliRuntime): Promise<WorkApplicationOutcome> {
     const { createConfiguredWorkApplicationComposition } = await import('./work-orders/composition.js')
     const { runWorkApplication } = await import('./work-orders/application.js')
-    const configured = await createConfiguredWorkApplicationComposition({ configPath: resolve(input.configPath), env: runtime.env ?? process.env })
+    const configured = await createConfiguredWorkApplicationComposition({ configPath: resolve(input.configPath), env: runtime.env ?? process.env },
+        input.evaluator ? { evaluator: input.evaluator } : {})
     return configured.kind === 'refusal' ? { kind: 'refusal', operation: input.request.operation, reason: configured.reason }
         : runWorkApplication(input.request, configured.composition)
 }
@@ -975,7 +977,11 @@ async function decodeRequest(
         const { captureWorkApplicationRequest } = await import('./work-orders/application.js')
         const captured = captureWorkApplicationRequest(request)
         if (!captured) return usageOutcome('CLI_USAGE_INVALID', 'work, browser and testing commands require bounded selectors of the declared kind')
-        return { handler, input: { configPath: values.config, request: captured } }
+        const evaluator = text('evaluator')
+        if (evaluator !== undefined && !Object.hasOwn(EVALUATOR_COMMANDS, evaluator)) {
+            return usageOutcome('CLI_USAGE_INVALID', `--evaluator is one of ${Object.keys(EVALUATOR_COMMANDS).join(', ')}`, '--evaluator')
+        }
+        return { handler, input: { configPath: values.config, request: captured, ...(evaluator ? { evaluator: evaluator as EvaluatorTool } : {}) } }
     }
     if (handler === 'init') {
         const [explicitRoot, ...extraRoots] = parsed.positionals

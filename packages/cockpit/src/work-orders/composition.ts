@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { type EvaluatorTool } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
 import {
     closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync, readdirSync,
@@ -9,7 +10,7 @@ import { readBoundedFile } from '../bounded-read.js'
 import { tmpdir } from 'node:os'
 import type { ConsumedWorkEnvironmentConfig } from '../config/load.js'
 import { readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
-import { evaluate, locateEvaluators, type EvaluatorChain } from '../grading/evaluate.js'
+import { defaultEvaluatorOrder, evaluate, locateEvaluators, type EvaluatorChain } from '../grading/evaluate.js'
 import { gradingDocument, gradingSchema, readGradingAnswer, type ChangedFile, type GradingSubject, type Verdict } from '../grading/grade.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
@@ -817,7 +818,10 @@ function executableDirectoriesFromEnvironment(environment: Readonly<Record<strin
 export async function createConfiguredWorkApplicationComposition(input: Readonly<{
     configPath: string
     env: Readonly<Record<string, string | undefined>>
-}>): Promise<ConfiguredWorkApplicationCompositionResult> {
+}>, options: Readonly<{
+    /** Grade with only this tool, with no fallback: the person named the grader for this run. */
+    evaluator?: EvaluatorTool
+}> = {}): Promise<ConfiguredWorkApplicationCompositionResult> {
     const captured = captureConfiguredInput(input)
     if (!captured) return { kind: 'refusal', reason: 'Configured work application requires a closed canonical config path and environment' }
     try {
@@ -837,7 +841,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
         const declaredEnvironment = declaredCommandEnvironment(captured.env)
         const resolveEvaluator = async (): Promise<EvaluatorAuthority> => ({ path: authority.evaluator.path, bytes: authority.evaluator.bytes,
             sha256: authority.evaluator.sha256, restriction: authority.evaluator.restriction, executableDirectories,
-            chain: await locateEvaluators(config.evaluators, executableDirectories), environment: captured.env })
+            chain: await locateEvaluators(options.evaluator ? [options.evaluator] : config.evaluatorsDeclared ? config.evaluators : defaultEvaluatorOrder(config.evaluators, captured.env), executableDirectories), environment: captured.env })
         const resolveBrowser = async (): Promise<BrowserAuthority> => {
             if (!config.browser) throw new RefusalError('browser application projection is unavailable')
             const current = await prepareGeneratedEnvironmentCurrentness({ configPath: captured.configPath })

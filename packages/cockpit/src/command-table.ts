@@ -1,3 +1,4 @@
+import { EVALUATOR_COMMANDS } from './schema.js'
 import { SURFACE_TARGETS } from './surfaces/contract.js'
 import type { ParseArgsConfig } from 'node:util'
 import { isAbsolute, normalize, resolve } from 'node:path'
@@ -96,6 +97,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     create: 'Create a new local sibling repository',
     criteria: 'Path to a file whose YAML front-matter lists the criteria to grade',
     dir: 'Directory for the sibling checkout',
+    evaluator: 'Grade with only this agent tool (codexcli, claudecode or opencode), with no fallback to another',
     'dry-run': 'Preview without writing or installing anything',
     follow: 'Continue collecting logs until cancelled',
     from: 'Path to an existing local repository',
@@ -140,7 +142,7 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image'
+    | 'identifier' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image' | 'evaluator-tool'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -419,7 +421,7 @@ const sources = [
     // [work] grading names checks or self.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',
         ordinary: ordinary('work-grade'),
-        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(value('label')), note: str(value('label')) } },
+        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(value('label')), note: str(value('label')), evaluator: str(value('evaluator-tool')) } },
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
         ordinary: ordinary('work-signoff', personFlag),
         flags: { ...configured, 'work-order': workOrderFlag, partial: bool(flag), abandon: bool(flag), note: str(value('label')), interactive: bool() } },
@@ -434,7 +436,7 @@ const sources = [
         flags: configured },
     { name: 'grade', handler: 'grade-criteria', stage: 'test-and-grade', summary: 'Independently grade uncommitted work against a criteria file, with no work order', visibility: 'public',
         ordinary: ordinary('grade-criteria'),
-        flags: { ...configured, criteria: str(value('confined-path', true)) } },
+        flags: { ...configured, criteria: str(value('confined-path', true)), evaluator: str(value('evaluator-tool')) } },
     // Driving signs in and captures the application, so it runs unprompted only on the data posture a
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
@@ -581,6 +583,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
             : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
+            : option.role === 'evaluator-tool' ? Object.hasOwn(EVALUATOR_COMMANDS, text)
             : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined

@@ -73,6 +73,8 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly verificationTimeoutSeconds: number
     readonly evaluatorTimeoutSeconds: number
     readonly evaluators: readonly EvaluatorTool[]
+    /** False when the order is the surfaces.tools default, which the command may reorder for the tool running it. */
+    readonly evaluatorsDeclared: boolean
     readonly generatedHostPaths: readonly string[]
     readonly browser?: ReturnType<typeof projectBrowserConfig>
     readonly testing?: ReturnType<typeof projectTestingConfig>
@@ -162,6 +164,7 @@ export function projectWorkEnvironmentConfig(
         verificationTimeoutSeconds: loaded.config.work.verification_timeout_seconds,
         evaluatorTimeoutSeconds: loaded.config.work.evaluator_timeout_seconds,
         evaluators: Object.freeze([...evaluatorTools(loaded.config)]),
+        evaluatorsDeclared: loaded.config.work.evaluators !== undefined,
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
         ...(testing === undefined ? {} : { testing }),
