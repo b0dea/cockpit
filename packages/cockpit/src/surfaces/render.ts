@@ -344,9 +344,9 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const custom = customReceipts(parsedHarnesses.data, captured.customReceipts)
     if (!custom) return refuse('SURFACE_INPUT_INVALID', 'custom capability receipt is missing or does not match its authenticated declaration')
     const browser = captured.browser === null ? null : object(captured.browser)
-        && exact(captured.browser, ['rows', 'files', 'mcp', 'probes', 'clients', 'graderBrowserAccess'])
+        && exact(captured.browser, ['rows', 'files', 'mcp', 'clients', 'graderBrowserAccess'])
         && captured.browser.graderBrowserAccess === 'retained' && Array.isArray(captured.browser.rows)
-        && Array.isArray(captured.browser.files) && Array.isArray(captured.browser.probes) && Array.isArray(captured.browser.clients)
+        && Array.isArray(captured.browser.files) && Array.isArray(captured.browser.clients)
         && object(captured.browser.mcp) ? captured.browser : undefined
     if (browser === undefined || (browser === null) !== (captured.browserReference === null)
         || captured.browserReference !== null && (typeof captured.browserReference !== 'string'

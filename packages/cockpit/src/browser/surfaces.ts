@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { z } from 'zod'
-import { errorCause, filesystemObjectIdentity, isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId, RefusalError } from '../environment/contract.js'
+import { errorCause, filesystemObjectIdentity, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId, RefusalError } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock, readState, transactState, withStateScopedLock,
@@ -14,12 +14,12 @@ import type { RenderedSurfaceFile } from '../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { collectMcpDeclarations, mcpApprovalDigest, type McpDeclaration } from '../surfaces/mcp.js'
 import { isPackageDescendant } from './package-paths.js'
-import { assertBrowserArtifactRegistration, assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
+import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
 
 export const mechanism = {
     id: 'browser-surfaces',
     module: 'packages/cockpit/src/browser/surfaces.ts',
-    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'measuredBrowserHarnessVersions', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'validateBrowserNativeReceipt', 'withBrowserProjectOperationAdmission'],
+    exports: ['authenticateBrowserProjectClient', 'executeBrowserProjectOperation', 'measuredBrowserHarnessVersions', 'observeBrowserProjectPackage', 'renderBrowserSurfaces', 'withBrowserProjectOperationAdmission'],
 } as const
 
 export type BrowserTestPackage = Readonly<{
@@ -85,32 +85,6 @@ export interface BrowserProjectOperationAdmissionInput {
     readonly state?: Readonly<{ namespace: StateNamespace; stackId: StackId; ownerId: HolderId }>
 }
 
-export interface BrowserNativeProbe {
-    readonly target: GuardSurfaceTarget
-    readonly transport: 'mcp' | 'cli'
-    readonly version: string
-    readonly status: 'human_needed'
-    readonly subjectSha256: string
-    readonly rendered: readonly Readonly<{ path: string; sha256: string }>[]
-    readonly candidate: Readonly<{ path: string; bytes: string; sha256: string }>
-    readonly brokenControl: Readonly<{ path: string; bytes: string; sha256: string }>
-    readonly versionArgv: readonly string[]
-    readonly transportVersionArgv: readonly string[] | null
-    readonly transportHelpArgv: readonly (readonly string[])[] | null
-    readonly cockpitDirectory: string
-    readonly transportIdentity: Readonly<{ kind: 'test-package'; path: string; sha256: string; version: string;
-        manifest: Readonly<{ path: string; sha256: string }>; lock: Readonly<{ path: string; sha256: string }> }>
-        | Readonly<{ kind: 'mcp-image'; image: string; endpoint: string }>
-    readonly harnessCwd: string
-    readonly resetArgv: readonly ['cockpit', 'reset', '--config', string, '--interactive']
-    readonly invocation: Readonly<{ kind: 'mcp'; tool: string; arguments: Readonly<{ url: 'about:blank' }>; declarationPath: string }>
-        | Readonly<{ kind: 'cli'; prepareArgv: readonly string[]; argv: readonly string[]; cleanupArgv: readonly string[] }>
-    readonly brokenInvocation: BrowserNativeProbe['invocation']
-    readonly bounds: Readonly<{ timeoutMs: 30_000; outputBytes: 16_384; receiptBytes: 65_536 }>
-    readonly artifactRoots: readonly string[]
-}
-
-const issuedProbes = new WeakMap<BrowserNativeProbe, BrowserRuntimeProjection>()
 const issuedClients = new WeakMap<BrowserProjectClient, BrowserRuntimeProjection>()
 const issuedOperationAuthorizations = new WeakMap<object, {
     client: BrowserProjectClient
@@ -571,45 +545,6 @@ function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonl
     return file(target, `${prefix}/skills/cockpit-browser/SKILL.md`, template.replace('{{browser}}', () => guidance))
 }
 
-function nativeProbe(row: BrowserTransportRow, files: readonly RenderedSurfaceFile[], wrappers: readonly Readonly<{ path: string; sha256: string }>[], runtime: BrowserRuntimeProjection, packageSha256: string | null, cockpitDirectory: string): BrowserNativeProbe {
-    if (runtime.connection.kind !== 'remote') throw new RefusalError('browser native transport probes require an issued remote endpoint')
-    const endpoint = runtime.connection.endpoint
-    const native = files.find(file => file.target === row.target && !file.path.endsWith('/SKILL.md'))
-    const root = runtime.generatedHostPaths[row.transport === 'mcp' ? 1 : 2]!
-    const path = `${root}/${row.target}/${row.transport === 'cli' ? 'config.json' : native!.path}`
-    const bytes = row.transport === 'cli' ? '{}\n' : native!.bytes
-    const candidate = { path, bytes, sha256: digest(bytes) }
-    const brokenBytes = row.target === 'codexcli' ? '[\n' : '{\n'
-    const brokenControl = { path: `${dirname(path)}/broken-control.${path.endsWith('.toml') ? 'toml' : 'json'}`, bytes: brokenBytes, sha256: digest(brokenBytes) }
-    const rendered = [...files.filter(file => file.target === row.target), ...wrappers].map(file => ({ path: file.path, sha256: file.sha256 }))
-    const argv = row.cli ? [...row.cli.argv, 'cli'] : []
-    const session = `--session=cockpit-${row.target}-probe`
-    const invocation: BrowserNativeProbe['invocation'] = row.transport === 'mcp'
-        ? { kind: 'mcp', tool: row.tool!, arguments: { url: 'about:blank' }, declarationPath: path }
-        : { kind: 'cli', prepareArgv: [...argv, 'attach', `--endpoint=${endpoint}`, session, `--config=${path}`],
-            argv: [...argv, session, 'goto', 'about:blank'], cleanupArgv: [...argv, session, 'close'] }
-    const brokenInvocation: BrowserNativeProbe['invocation'] = invocation.kind === 'mcp'
-        ? { ...invocation, declarationPath: brokenControl.path }
-        : { ...invocation, prepareArgv: [], argv: invocation.prepareArgv.map(arg => arg === `--config=${path}` ? `--config=${brokenControl.path}` : arg) }
-    const packageManifestPath = resolve(projectPackagePaths(cockpitDirectory, runtime).packageRoot, 'package.json')
-    const probe = snapshotJson({ target: row.target, transport: row.transport, version: row.version, status: 'human_needed',
-        subjectSha256: digest(JSON.stringify({ row, runtime, rendered, packageSha256 })), rendered, candidate, brokenControl,
-        versionArgv: [row.target === 'claudecode' ? 'claude' : row.target === 'codexcli' ? 'codex' : 'opencode', '--version'],
-        transportVersionArgv: row.transport === 'cli' ? [...row.cli!.argv, '--version'] : null,
-        transportHelpArgv: row.transport === 'cli' ? [[...row.cli!.argv, 'cli', '--help'], [...row.cli!.argv, 'cli', 'attach', '--help']] : null, cockpitDirectory,
-        transportIdentity: row.transport === 'cli'
-            ? { kind: 'test-package', path: row.cli!.argv[1], sha256: row.cli!.sha256, version: row.cli!.version,
-                manifest: { path: packageManifestPath, sha256: packageSha256! },
-                lock: { path: resolve(cockpitDirectory, runtime.runner.project.lockfile), sha256: runtime.runner.project.sha256 } }
-            : { kind: 'mcp-image', image: runtime.mcp.image, endpoint },
-        harnessCwd: `${root}/${row.target}`,
-        resetArgv: ['cockpit', 'reset', '--config', runtime.configurationPath, '--interactive'],
-        invocation, brokenInvocation, bounds: { timeoutMs: 30_000, outputBytes: 16_384, receiptBytes: 65_536 }, artifactRoots: runtime.generatedHostPaths,
-    }) as unknown as BrowserNativeProbe
-    issuedProbes.set(probe, runtime)
-    return probe
-}
-
 export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const captured = snapshotJson(input)
     if (captured === undefined) throw new RefusalError('browser surfaces require bounded plain data without accessors')
@@ -668,175 +603,12 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     const mcp = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: targets.length ? [data.mcp] : [],
         approved: targets.length ? approval : {}, targets: targets.length ? targets : data.harnesses.map(row => row.target) })
     if (mcp.kind !== 'complete') throw new RefusalError(`browser MCP collection refused: ${mcp.diagnostic.code}`)
-    const probes = rows.filter(row => row.declaration === 'instructed').map(row => nativeProbe(row, files, mcp.result.wrappers, runtime, data.testPackage?.manifest.sha256 ?? null, data.cockpitDirectory))
     const projectPackage = data.testPackage !== null && 'artifactRoot' in data.testPackage && 'module' in data.testPackage
         ? data.testPackage as z.infer<typeof ProjectPackage> : null
     const clients = projectPackage === null || cli === null ? [] : data.harnesses
         .filter(harness => harness.version === MEASURED[harness.target].version)
         .map(harness => projectClient(projectPackage, harness, runtime, data.cockpitDirectory))
-    return Object.freeze({ rows: Object.freeze(rows), files: Object.freeze(files), mcp, probes: Object.freeze(probes),
+    return Object.freeze({ rows: Object.freeze(rows), files: Object.freeze(files), mcp,
         clients: Object.freeze(clients), graderBrowserAccess: 'retained' as const })
 }
 
-const Executable = z.object({
-    path: z.string().max(4096).refine(path => isAbsolute(path) && resolve(path) === path && !/[\\\x00-\x1f\x7f]/.test(path)),
-    sha256: Sha256, version: Version,
-}).strict()
-const Timestamp = z.string().refine(isCanonicalTimestamp)
-const NativeContext = z.object({ executable: Executable, now: Timestamp }).strict()
-const CommandObservation = z.object({
-    argv: z.array(z.string().min(1).max(4096)).min(1).max(64),
-    exitCode: z.number().int().min(0).max(255), timedOut: z.literal(false), truncated: z.literal(false),
-    durationMs: z.number().int().min(0).max(30_000), stdout: z.string(), stderr: z.string(), completedAt: Timestamp,
-}).strict()
-const Output = CommandObservation.omit({ argv: true }).extend({ path: GeneratedHostPath, sha256: Sha256 }).strict()
-const Launch = z.object({
-    cwd: GeneratedHostPath, argv: z.array(z.string().min(1).max(4096)).min(1).max(64), isolatedHome: z.literal(true),
-})
-const HarnessLaunch = z.union([
-    Launch.extend({ selectedDeclaration: GeneratedHostPath, loader: z.enum(['explicit-config', 'fixed-path']),
-        loadedPath: GeneratedHostPath, loadedSha256: Sha256 }).strict(),
-    Launch.extend({ loader: z.literal('shell') }).strict(),
-])
-const Paths = z.array(GeneratedHostPath).min(1).max(1024).refine(paths => new Set(paths).size === paths.length)
-const Receipt = z.object({
-    schema: z.literal('cockpit-browser-native-receipt/v1'), subjectSha256: Sha256,
-    target: z.enum(GUARD_SURFACE_TARGETS), transport: z.enum(['mcp', 'cli']), version: Version, observedAt: Timestamp,
-    executable: Executable, harnessVersion: CommandObservation,
-    transportIdentity: z.unknown(),
-    transportVersion: CommandObservation.nullable(), transportHelp: z.array(CommandObservation).length(2).nullable(),
-    rendered: z.array(z.object({ path: GeneratedHostPath, sha256: Sha256 }).strict()).min(1).max(16),
-    candidate: Output.extend({ invocation: z.unknown(), launch: HarnessLaunch, cliPreparation: CommandObservation.nullable(), observedUrl: z.literal('about:blank') }).strict(),
-    brokenControl: Output.extend({ discoveredPath: GeneratedHostPath, invocation: z.unknown(), launch: HarnessLaunch }).strict(),
-    bounds: z.object({ timeoutMs: z.literal(30_000), outputBytes: z.literal(16_384), receiptBytes: z.literal(65_536) }).strict(),
-    cleanup: z.object({ producedPaths: Paths, removedPaths: Paths, unregisteredControl: GeneratedHostPath,
-        unregisteredControlPreserved: z.literal(true), candidateClosed: z.literal(true),
-        reset: z.object({ cwd: Input.shape.cockpitDirectory, argv: z.array(z.string()).length(5), exitCode: z.literal(0), timedOut: z.literal(false), truncated: z.literal(false),
-            stdout: z.string().max(16_384), stderr: z.string().max(16_384), completedAt: Timestamp }).strict(),
-        readback: z.array(z.object({ cwd: Input.shape.cockpitDirectory, path: GeneratedHostPath, state: z.enum(['absent', 'present']), observedAt: Timestamp }).strict()).min(1).max(2048),
-    }).strict(),
-}).strict()
-
-export type BrowserNativeReceiptResult = Readonly<{ kind: 'refusal'; reason: string }>
-    | Readonly<{ kind: 'validated'; callable: 'human_needed'; operatorAuthentication: 'required'; subjectSha256: string }>
-
-export function validateBrowserNativeReceipt(probe: BrowserNativeProbe, receipt: unknown, context: unknown): BrowserNativeReceiptResult {
-    const refuse = (reason: string): BrowserNativeReceiptResult => Object.freeze({ kind: 'refusal', reason })
-    const runtime = issuedProbes.get(probe)
-    if (!runtime) return refuse('browser receipt requires an issued current probe')
-    const captured = snapshotJson(receipt)
-    const current = NativeContext.safeParse(snapshotJson(context))
-    if (captured === undefined || Buffer.byteLength(JSON.stringify(captured)) > probe.bounds.receiptBytes || !current.success) {
-        return refuse('browser receipt or authenticated observation context exceeds its bounded data contract')
-    }
-    const parsed = Receipt.safeParse(captured)
-    if (!parsed.success) return refuse('browser receipt is malformed, incomplete, timed out or truncated')
-    const value = parsed.data
-    const age = Date.parse(current.data.now) - Date.parse(value.observedAt)
-    if (age < 0 || age > 300_000 || value.subjectSha256 !== probe.subjectSha256 || value.target !== probe.target
-        || value.transport !== probe.transport || value.version !== probe.version || value.executable.version !== probe.version
-        || value.executable.path !== current.data.executable.path || value.executable.sha256 !== current.data.executable.sha256
-        || value.executable.version !== current.data.executable.version
-        || JSON.stringify(value.transportIdentity) !== JSON.stringify(probe.transportIdentity)
-        || JSON.stringify(value.rendered) !== JSON.stringify(probe.rendered)
-        || JSON.stringify(value.candidate.invocation) !== JSON.stringify(probe.invocation)
-        || JSON.stringify(value.brokenControl.invocation) !== JSON.stringify(probe.brokenInvocation)
-        || value.candidate.path !== probe.candidate.path || value.candidate.sha256 !== probe.candidate.sha256
-        || value.brokenControl.path !== probe.brokenControl.path || value.brokenControl.sha256 !== probe.brokenControl.sha256) {
-        return refuse('browser receipt is stale or differs from the current executable, rendered bytes or invocation')
-    }
-    const boundedCommand = (observation: z.infer<typeof CommandObservation>, argv: readonly string[]) =>
-        observation.exitCode === 0 && JSON.stringify(observation.argv) === JSON.stringify(argv)
-        && Buffer.byteLength(observation.stdout) + Buffer.byteLength(observation.stderr) <= probe.bounds.outputBytes
-        && observation.stdout.trim().length + observation.stderr.trim().length > 0
-        && Date.parse(observation.completedAt) <= Date.parse(value.candidate.completedAt)
-        && Date.parse(value.observedAt) - Date.parse(observation.completedAt) <= 300_000
-    const observedVersion = (observation: z.infer<typeof CommandObservation>, version: string) =>
-        `${observation.stdout} ${observation.stderr}`.trim().split(/\s+/).includes(version)
-    if (!boundedCommand(value.harnessVersion, [value.executable.path, ...probe.versionArgv.slice(1)])
-        || !observedVersion(value.harnessVersion, probe.version)) return refuse('browser harness version command is missing or differs from the current executable')
-    const candidateLaunch = value.candidate.launch
-    const brokenLaunch = value.brokenControl.launch
-    if (candidateLaunch.cwd !== probe.harnessCwd || brokenLaunch.cwd !== probe.harnessCwd
-        || candidateLaunch.argv[0] !== value.executable.path || brokenLaunch.argv[0] !== value.executable.path) {
-        return refuse('browser paired controls require the current harness in its isolated working directory')
-    }
-    let brokenLoadedPath: string
-    if (probe.transport === 'mcp') {
-        if (candidateLaunch.loader === 'shell' || brokenLaunch.loader === 'shell'
-            || candidateLaunch.selectedDeclaration !== probe.candidate.path || brokenLaunch.selectedDeclaration !== probe.brokenControl.path
-            || candidateLaunch.loadedSha256 !== probe.candidate.sha256 || brokenLaunch.loadedSha256 !== probe.brokenControl.sha256
-            || candidateLaunch.loader !== brokenLaunch.loader || candidateLaunch.loadedPath !== probe.candidate.path
-            || (candidateLaunch.loader === 'explicit-config'
-                ? !candidateLaunch.argv.includes(probe.candidate.path) || !brokenLaunch.argv.includes(probe.brokenControl.path)
-                    || brokenLaunch.loadedPath !== probe.brokenControl.path
-                    || JSON.stringify(brokenLaunch.argv) !== JSON.stringify(candidateLaunch.argv.map(arg => arg === probe.candidate.path ? probe.brokenControl.path : arg))
-                : brokenLaunch.loadedPath !== probe.candidate.path || JSON.stringify(brokenLaunch.argv) !== JSON.stringify(candidateLaunch.argv))
-            || value.candidate.cliPreparation !== null || value.transportVersion !== null || value.transportHelp !== null) {
-            return refuse('browser MCP controls must select their declarations through the same isolated native loader')
-        }
-        brokenLoadedPath = brokenLaunch.loadedPath
-    } else {
-        if (candidateLaunch.loader !== 'shell' || brokenLaunch.loader !== 'shell'
-            || JSON.stringify(candidateLaunch.argv) !== JSON.stringify(brokenLaunch.argv)
-            || probe.invocation.kind !== 'cli' || !value.candidate.cliPreparation
-            || !boundedCommand(value.candidate.cliPreparation, probe.invocation.prepareArgv)
-            || !value.transportVersion || !value.transportHelp || !probe.transportVersionArgv || !probe.transportHelpArgv
-            || !boundedCommand(value.transportVersion, probe.transportVersionArgv)
-            || !value.transportHelp.every((observation, index) => boundedCommand(observation, probe.transportHelpArgv![index]!))
-            || probe.transportIdentity.kind !== 'test-package' || !observedVersion(value.transportVersion, probe.transportIdentity.version)
-            || !['attach', 'goto', 'close', '--endpoint', '--config'].every(word => value.transportHelp!.map(row => `${row.stdout} ${row.stderr}`).join(' ').includes(word))) {
-            return refuse('browser CLI requires harness shell execution and bounded pinned version, protocol and preparation observations')
-        }
-        brokenLoadedPath = probe.brokenControl.path
-        try {
-            if (digest(observedBytes(probe.transportIdentity.path, 65_536)) !== probe.transportIdentity.sha256
-                || digest(observedBytes(probe.transportIdentity.manifest.path, 65_536)) !== probe.transportIdentity.manifest.sha256
-                || digest(observedBytes(probe.transportIdentity.lock.path, 1_048_576)) !== probe.transportIdentity.lock.sha256) {
-                return refuse('browser pinned CLI, package manifest or lock bytes changed after projection')
-            }
-        } catch (error) { return refuse(errorCause(error)) }
-    }
-    for (const output of [value.candidate, value.brokenControl]) {
-        if (Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr) > probe.bounds.outputBytes
-            || output.stdout.trim().length + output.stderr.trim().length === 0) return refuse('browser observation is silent or exceeds its output bound')
-    }
-    if (value.candidate.exitCode !== 0 || !`${value.candidate.stdout}\n${value.candidate.stderr}`.includes('about:blank')
-        || value.brokenControl.exitCode === 0 || value.brokenControl.discoveredPath !== brokenLoadedPath
-        || !`${value.brokenControl.stdout}\n${value.brokenControl.stderr}`.includes(brokenLoadedPath)) {
-        return refuse('browser candidate did not observe the harmless page or the broken control was not discovered and rejected')
-    }
-    const expectedRemoved = new Set([...value.cleanup.producedPaths, probe.candidate.path, probe.brokenControl.path])
-    if (expectedRemoved.size !== value.cleanup.removedPaths.length || value.cleanup.removedPaths.some(path => !expectedRemoved.has(path))) {
-        return refuse('browser cleanup readback does not account for every produced artifact and paired control')
-    }
-    const reset = value.cleanup.reset
-    const resetAt = Date.parse(reset.completedAt)
-    const expectedAbsent = new Set([...expectedRemoved, ...probe.artifactRoots])
-    const readback = value.cleanup.readback
-    if (reset.cwd !== probe.cockpitDirectory || JSON.stringify(reset.argv) !== JSON.stringify(probe.resetArgv)
-        || Date.parse(value.candidate.completedAt) > resetAt || Date.parse(value.brokenControl.completedAt) > resetAt
-        || Date.parse(value.observedAt) - Date.parse(value.candidate.completedAt) > 300_000
-        || Date.parse(value.observedAt) - Date.parse(value.brokenControl.completedAt) > 300_000
-        || Buffer.byteLength(reset.stdout) + Buffer.byteLength(reset.stderr) > probe.bounds.outputBytes
-        || !`${reset.stdout}\n${reset.stderr}`.trim() || resetAt > Date.parse(value.observedAt) || Date.parse(value.observedAt) - resetAt > 300_000
-        || readback.length !== expectedAbsent.size + 1 || new Set(readback.map(row => row.path)).size !== readback.length
-        || readback.some(row => row.cwd !== probe.cockpitDirectory || Date.parse(row.observedAt) < resetAt || Date.parse(row.observedAt) > Date.parse(value.observedAt)
-            || (row.path === value.cleanup.unregisteredControl ? row.state !== 'present' : !expectedAbsent.has(row.path) || row.state !== 'absent'))) {
-        return refuse('browser cleanup requires the public reset result and complete subsequent filesystem readback')
-    }
-    try {
-        assertBrowserArtifactRegistration(runtime, value.cleanup.producedPaths)
-    } catch (error) {
-        return refuse(`browser receipt ownership refused: ${errorCause(error)}`)
-    }
-    let unregistered = false
-    try { assertBrowserArtifactRegistration(runtime, [...value.cleanup.producedPaths, value.cleanup.unregisteredControl]) }
-    catch (error) {
-        if (!(error instanceof RefusalError) || !error.message.includes('unregistered')) return refuse('browser negative registration control failed unexpectedly')
-        unregistered = true
-    }
-    if (!unregistered || expectedRemoved.has(value.cleanup.unregisteredControl)) return refuse('browser negative control is registered or was removed')
-    // Structural agreement cannot authenticate who observed it or what the native harness actually did.
-    return Object.freeze({ kind: 'validated', callable: 'human_needed', operatorAuthentication: 'required', subjectSha256: probe.subjectSha256 })
-}

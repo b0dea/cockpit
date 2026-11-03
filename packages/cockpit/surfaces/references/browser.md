@@ -52,8 +52,8 @@ bytes, the exact invocation, what you observed, the timeout and output limits, a
 cleanup. MCP records note the native config loader and the installed bytes; CLI records note that
 the harness ran a shell command and that the pinned CLI prepared its config, without inventing a
 harness config flag. Tie the reset and the filesystem readback to the cockpit directory in use, after
-both observations are done. The record validator checks only these ties; a person must establish
-where the observation came from and whether it supports the claim before anything is promoted.
+both observations are done. No cockpit command reads or checks this record, and none changes a
+transport from `human_needed`: a person keeps it and decides whether it supports the claim.
 
 Every transport root comes from the current runtime's reset inventory, including the sign-in and
 debugger roots. After recording fixture files for every root, replay the public reset and confirm the

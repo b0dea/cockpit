@@ -125,9 +125,6 @@ describe('browser transport surfaces', () => {
         expect(rendered.rows.find(row => row.cli)?.cli?.argv[1]).toBe(join(packageRoot, 'cli.js'))
         expect(rendered.clients[0]).toMatchObject({ module: { path: join(packageRoot, 'index.js') },
             manifest: { path: join(packageRoot, 'package.json') } })
-        expect(rendered.probes.find(probe => probe.transport === 'cli')?.transportIdentity).toMatchObject({
-            manifest: { path: join(packageRoot, 'package.json') },
-        })
         await expect(fixture('bypassed', true, false, true, 'serialized', '../outside.js'))
             .rejects.toThrow('module escaped its package root')
         await writeFile(join(input.cockpitDirectory, 'app/package.json'), '{}')
@@ -294,13 +291,12 @@ describe('browser transport surfaces', () => {
         expect(() => renderBrowserSurfaces({ ...input, testPackage: { ...testPackage, module: { ...testPackage.module, path: 'other.js' } } })).toThrow('module entry')
     })
 
-    it('keeps native CLI rows and probes when the optional programmatic client pair is absent', async () => {
+    it('keeps native CLI rows when the optional programmatic client pair is absent', async () => {
         const input = await fixture()
         const { artifactRoot: _artifactRoot, module: _module, ...nativePackage } = input.testPackage!
         const result = renderBrowserSurfaces({ ...input, testPackage: nativePackage })
         expect(result.clients).toEqual([])
         expect(result.rows.filter(row => row.transport === 'cli' && row.declaration === 'instructed')).toHaveLength(2)
-        expect(result.probes.filter(probe => probe.transport === 'cli')).toHaveLength(2)
         expect(() => renderBrowserSurfaces({ ...input, testPackage: { ...nativePackage, artifactRoot: '.playwright-cli' } as never })).toThrow('canonical')
         expect(() => renderBrowserSurfaces({ ...input, testPackage: { ...nativePackage, module: input.testPackage!.module } as never })).toThrow('canonical')
     })
