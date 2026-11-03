@@ -577,17 +577,8 @@ export function encodeOwnershipManifest(prepared: OwnershipManifestInput): Reado
 }
 
 function ownRecord(value: unknown): Record<string, unknown> | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || isProxy(value)
-            || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        if (Object.getOwnPropertySymbols(value).length > 0
-            || Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set || !descriptor.enumerable)) return undefined
-        return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    } catch {
-        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
-        return undefined
-    }
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        && [Object.prototype, null].includes(Object.getPrototypeOf(value)) ? value as Record<string, unknown> : undefined
 }
 
 // Renaming `cockpit.name` changes the publication identity the ledger and every owner marker carry.

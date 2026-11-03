@@ -47,15 +47,10 @@ interface BrowserRuntimeBinding {
 const issuedRuntimes = new WeakMap<object, BrowserRuntimeBinding>()
 
 function storageIdentity(path: string): string {
-    let metadata
-    try {
-        metadata = lstatSync(path)
-        if (metadata.isFile() && !metadata.isSymbolicLink() && metadata.nlink === 1
-            && (metadata.mode & 0o7777) === 0o600 && realpathSync(path) === path) {
-            return JSON.stringify([metadata.dev, metadata.ino, metadata.mode, metadata.size, metadata.mtimeMs, metadata.ctimeMs])
-        }
-    } catch {
-        throw new RefusalError('browser seeded storage state metadata is unavailable')
+    const metadata = lstatSync(path)
+    if (metadata.isFile() && !metadata.isSymbolicLink() && metadata.nlink === 1
+        && (metadata.mode & 0o7777) === 0o600 && realpathSync(path) === path) {
+        return JSON.stringify([metadata.dev, metadata.ino, metadata.mode, metadata.size, metadata.mtimeMs, metadata.ctimeMs])
     }
     throw new RefusalError('browser seeded storage state must be a confined mode-600 regular file')
 }

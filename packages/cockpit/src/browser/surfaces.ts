@@ -137,13 +137,12 @@ const Manifest = z.object({ name: z.literal('@playwright/test'), version: Versio
 const digest = (bytes: string | Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 const MAX_SCREENSHOT_BYTES = 8_388_608
 const COMMAND_TIMEOUT_MS = 30_000
+// A filesystem error names the file itself; only the checks here need their own refusal.
 function observedFile(path: string, maxBytes: number): Buffer {
-    try {
-        if (realpathSync(path) !== path || lstatSync(path).nlink !== 1) throw new RefusalError('noncanonical path')
-        const read = readBoundedFile(path, maxBytes)
-        if (read.kind !== 'complete') throw new RefusalError('unbounded file')
-        return read.bytes
-    } catch { throw new RefusalError('browser test package file is missing, changed, noncanonical or exceeds its read bound') }
+    if (realpathSync(path) !== path || lstatSync(path).nlink !== 1) throw new RefusalError(`browser file ${path} is not a canonical single-link path`)
+    const read = readBoundedFile(path, maxBytes)
+    if (read.kind !== 'complete') throw new RefusalError(`browser file ${path} exceeds its ${maxBytes}-byte read bound`)
+    return read.bytes
 }
 
 function observedBytes(path: string, maxBytes: number): string {
