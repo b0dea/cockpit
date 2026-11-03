@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { observeConfigSource } from './config/load.js'
+import { loadAutonomyPolicy, observeConfigSource } from './config/load.js'
+import { writeRecordedPolicy } from './autonomy.js'
 import { executeProbe } from './environment-exec/execute.js'
 import { applyGeneratedEnvironmentRepair, checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness, syncGeneratedEnvironment } from './environment/generated-application.js'
 import * as transaction from './generated-environment/transaction.js'
@@ -45,6 +46,28 @@ async function addService(root: string, name: string) {
 // publication helpers, Git and runtime probes), so its wall time scales with machine load rather
 // than with the work under test. The budget is sized for four concurrent workers on a busy host.
 describe('canonical mechanical repair', { timeout: 180_000 }, () => {
+    it('reports a cockpit.toml policy weaker than the recorded one as unconfirmed, and passes once it is reverted', async () => {
+        const { root, configPath } = await consumer()
+        expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
+        // What an operator sync records; this fixture syncs below the operator, which does not.
+        const loaded = await loadAutonomyPolicy(configPath)
+        if (!('current' in loaded)) throw new Error('Synthetic policy fixture failed to load')
+        await writeRecordedPolicy(root, loaded.current)
+        const original = await readFile(configPath, 'utf8')
+        const check = async () => {
+            let stdout = ''
+            const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } } as CliIo
+            const status = await runCli(['check', '--config', configPath, '--json'], io, {}, { env: { CI: '1' } })
+            return { status, diagnostics: JSON.parse(stdout).diagnostics as { code: string }[] }
+        }
+        await writeFile(configPath, `${original}\n[autonomy]\nreset = "agent"\n`)
+        const weakened = await check()
+        expect(weakened.status).toBe(2)
+        expect(weakened.diagnostics[0]).toMatchObject({ code: 'POLICY_WEAKENING_UNCONFIRMED', message: expect.stringContaining('autonomy.reset: person -> agent') })
+        await writeFile(configPath, original)
+        expect((await check()).diagnostics.map(row => row.code)).not.toContain('POLICY_WEAKENING_UNCONFIRMED')
+    })
+
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {
         const { root, configPath } = await consumer()
         expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })

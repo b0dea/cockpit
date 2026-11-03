@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { parse as parseToml, TomlError } from 'smol-toml'
 
 import { type BoundedRead, readBoundedFile } from './bounded-read.js'
-import { hasErrorCode, RefusalError } from './environment/contract.js'
+import { type EnvironmentDiagnostic, type ENVIRONMENT_CODES, hasErrorCode, RefusalError } from './environment/contract.js'
 import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
 
 export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff'
@@ -71,6 +71,15 @@ export function policyWeakening(recorded: EffectivePolicy, current: EffectivePol
         }
     }
     return rows
+}
+
+/** The error `check` reports while cockpit.toml sits weaker than the recorded policy; sync would refuse the same change. */
+export function policyWeakeningDiagnostic(weakened: readonly PolicyWeakening[]): EnvironmentDiagnostic {
+    const shown = weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`).join('; ')
+    return { severity: 'error' as const, target: 'autonomy',
+        code: 'POLICY_WEAKENING_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.POLICY_WEAKENING_UNCONFIRMED,
+        message: `cockpit.toml weakens the policy the last sync recorded (${shown})`,
+        fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reads the weakening it shows and types its digest, or the change is reverted' }
 }
 
 /** The digest a person types to accept exactly these weakenings of exactly this recorded policy. */
