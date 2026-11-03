@@ -10,6 +10,7 @@ import {
     removeExactCoordinationHolder,
     releaseClaim,
     readRootPortInventory,
+    type CoordinationRecord,
     type HolderProcess,
     type PortLeaseRecord,
 } from './claims.js'
@@ -58,6 +59,8 @@ const issuedLeaseResults = new WeakMap<object, {
     readonly compensation?: Readonly<{
         readonly address: ReturnType<StateNamespace['paths']['coordination']>
         readonly recordBody: string
+        // The coordination value the acquisition replaced, which compensation restores.
+        readonly replaced: CoordinationRecord
     }>
 }>()
 const availableCompensations = new WeakSet<object>()
@@ -210,16 +213,18 @@ function issueLeaseResult(
     holderIds: readonly HolderId[],
     namespace: StateNamespace,
     record: StateRecord,
+    replaced?: CoordinationRecord,
 ): LeasePortFamilyResult {
     const snapshot = Object.freeze({
         ...result,
         lease: Object.freeze({ ...result.lease, ports: Object.freeze({ ...result.lease.ports }) }),
     })
     const address = Object.freeze({ ...namespace.paths.coordination(result.lease.stackId) })
-    const compensation = result.change === 'acquired'
+    const compensation = result.change === 'acquired' && replaced
         ? Object.freeze({
               address,
               recordBody: JSON.stringify(record),
+              replaced,
           })
         : undefined
     issuedLeaseResults.set(snapshot, {
@@ -1116,6 +1121,7 @@ export async function leasePortFamily(supplied: {
         holderIds: readonly HolderId[]
         record: StateRecord
     }>
+    let replaced: CoordinationRecord | undefined
     const allocateFamily = () => transactLease<PortRefusal | LeaseTransactionComplete>(input.namespace, input.stackId, input.holderId, async (current) => {
         const currentValue = decodeCoordinationRecord(current, input.stackId)
         if (!currentValue) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
@@ -1202,6 +1208,7 @@ export async function leasePortFamily(supplied: {
                     record: current!,
                 }))
             }
+            replaced = currentValue
             return coordinationStateRecord(input.namespace, input.stackId, current, input.now, { ...added.value, lease: value })
         }
         return abortStateTransaction(refuse(
@@ -1222,7 +1229,7 @@ export async function leasePortFamily(supplied: {
     if (transaction.kind !== 'complete') return stateRefusal(transaction)
     const value = decodeCoordinationRecord(transaction.value, input.stackId)
     if (!value?.lease) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'published coordination record is malformed', transaction.value.subjectId)
-    return issueLeaseResult({ kind: 'complete', change: 'acquired', holderId: input.holderId, recordRevision: transaction.value.revision, lease: { stackId: input.stackId, offset: value.lease.offset, ports: value.lease.ports }, observation: 'resolved-listener-evidence-accepted' }, input.now, value.holders.map(({ holderId }) => holderId), input.namespace, transaction.value)
+    return issueLeaseResult({ kind: 'complete', change: 'acquired', holderId: input.holderId, recordRevision: transaction.value.revision, lease: { stackId: input.stackId, offset: value.lease.offset, ports: value.lease.ports }, observation: 'resolved-listener-evidence-accepted' }, input.now, value.holders.map(({ holderId }) => holderId), input.namespace, transaction.value, replaced)
 }
 
 export type CompensateAcquiredPortHolderResult =
@@ -1300,15 +1307,17 @@ export async function compensateAcquiredPortHolder(input: {
                     leaseResult.lease.stackId,
                 ))
             }
-            const reduced = removeExactCoordinationHolder(value, leaseResult.holderId)
-            if (!reduced) {
+            if (!removeExactCoordinationHolder(value, leaseResult.holderId)) {
                 return abortStateTransaction(refuse(
                     ENVIRONMENT_CODES.CLAIM_CO_TENANT,
                     'acquired holder compensation requires the exact current holder',
                     leaseResult.holderId,
                 ))
             }
-            return coordinationStateRecord(namespace!, leaseResult.lease.stackId, current, now!, reduced)
+            // The record is exactly what the acquisition wrote, so the value it replaced is the exact
+            // inverse. Dropping only the holder left a lease no holder retains, which kept the family
+            // reserved and made the next up after a [ports] edit refuse a stack nothing was running.
+            return coordinationStateRecord(namespace!, leaseResult.lease.stackId, current, now!, compensation.replaced)
         },
     )
     if ('diagnostics' in transaction) {

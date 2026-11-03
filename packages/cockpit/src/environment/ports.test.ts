@@ -357,7 +357,7 @@ describe('independent cockpits sharing a state root', () => {
         })
     })
 
-    it('retains compensated foreign reservations and reuses only released families', async () => {
+    it('refuses a foreign compensation and frees the family only its own compensation gives back', async () => {
         const { left, right } = await independentNamespaces()
         const first = await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })
@@ -378,18 +378,11 @@ describe('independent cockpits sharing a state root', () => {
             kind: 'complete', change: 'compensated', remainingHolderIds: [],
         })
         expect(await readState(left.paths.coordination(stackA))).toMatchObject({
-            kind: 'complete', value: { value: { holders: [], lease: { offset: 0, released: false } } },
+            kind: 'complete', value: { value: { holders: [], lease: null } },
         })
         expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', change: 'unchanged', lease: { offset: 100 } })
         expect(await readFile(right.paths.coordination(stackA).path)).toEqual(before)
-        expect(await leasePortFamily({ namespace: left, stackId: stackB, holderId: holderA, checkoutId, config, now,
-            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', lease: { offset: 200 } })
-        expect(await transactState(left, left.paths.coordination(stackA), { ownerId: holderA }, (current) => {
-            const value = decodeCoordinationRecord(current, stackA)
-            if (!value?.lease || value.holders.length !== 0) throw new Error('expected an unheld retained reservation fixture')
-            return coordinationStateRecord(left, stackA, current, now, { ...value, lease: { ...value.lease, released: true } })
-        })).toMatchObject({ kind: 'complete' })
         expect(await leasePortFamily({ namespace: right, stackId: stackB, holderId: holderB, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
         expect(await readFile(right.paths.coordination(stackA).path)).toEqual(before)
@@ -1585,8 +1578,21 @@ describe('retained port-family projection', () => {
 })
 
 describe('acquired port-holder compensation', () => {
-    it('removes a sole acquired holder, retains its lease, and reattaches on retry', async () => {
+    // A stopped stack's record keeps its released lease; compensating a fresh holder on it must
+    // leave exactly that, not a lease no holder retains that still reserves the family.
+    it('restores the stopped record a sole acquired holder replaced, and acquires afresh on retry', async () => {
         const state = await namespace()
+        const first = await leasePortFamily({
+            namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners,
+        })
+        if (first.kind !== 'complete') throw new Error('expected first lease')
+        const stopped = await transactState(state, state.paths.coordination(stackA), { ownerId: holderB }, (current) => {
+            const value = decodeCoordinationRecord(current, stackA)
+            if (!value?.lease) throw new Error('expected a leased fixture')
+            return coordinationStateRecord(state, stackA, current, now, { ...value, holders: [], lastReleasedHolder: holderB, lease: { ...value.lease, released: true } })
+        })
+        if (stopped.kind !== 'complete') throw new Error('expected a stopped fixture')
         const acquired = await leasePortFamily({
             namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners,
@@ -1597,16 +1603,14 @@ describe('acquired port-holder compensation', () => {
             namespace: state, leaseResult: acquired, now: '2026-09-07T12:00:01.000Z',
         })
         expect(compensated).toEqual({
-            kind: 'complete', change: 'compensated', recordRevision: 1, remainingHolderIds: [],
+            kind: 'complete', change: 'compensated', recordRevision: 3, remainingHolderIds: [],
         })
         expect(Object.isFrozen(compensated)).toBe(true)
         if (compensated.kind !== 'complete') throw new Error('expected compensated holder')
         expect(Object.isFrozen(compensated.remainingHolderIds)).toBe(true)
-        expect(await readState(state.paths.coordination(stackA))).toMatchObject({
-            kind: 'complete', value: { value: {
-                holders: [], lease: { offset: 0, released: false }, lastReleasedHolder: holderA,
-            } },
-        })
+        const restored = await readState(state.paths.coordination(stackA))
+        if (restored.kind !== 'complete') throw new Error('expected a restored record')
+        expect(restored.value.value).toEqual(stopped.value.value)
 
         const retry = await leasePortFamily({
             namespace: state, stackId: stackA, holderId: holderA, checkoutId, config,
@@ -1617,7 +1621,7 @@ describe('acquired port-holder compensation', () => {
         })
         expect(retry).toMatchObject({ kind: 'complete', change: 'acquired', lease: { offset: 0 } })
         expect(await readState(state.paths.coordination(stackA))).toMatchObject({
-            kind: 'complete', value: { value: { holders: [{ holderId: holderA }], lastReleasedHolder: null } },
+            kind: 'complete', value: { value: { holders: [{ holderId: holderA }], lastReleasedHolder: holderB } },
         })
     })
 
@@ -1643,7 +1647,7 @@ describe('acquired port-holder compensation', () => {
         })
         expect(await readState(state.paths.coordination(stackA))).toMatchObject({
             kind: 'complete', value: { value: {
-                holders: [{ holderId: holderA }], lease: { released: false }, lastReleasedHolder: holderB,
+                holders: [{ holderId: holderA }], lease: { released: false }, lastReleasedHolder: null,
             } },
         })
     })

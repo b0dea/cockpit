@@ -45,6 +45,7 @@ import {
 import { readState } from './state.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycle-stage.js'
 import type { RuntimeMeasurementProbeAuthority } from './runtime.js'
+import type { LeasePortFamilyResult } from './ports.js'
 
 export const mechanism = {
     id: 'destructive-adapter-composition',
@@ -443,6 +444,7 @@ export function createDestructiveCommandAdapters(
             if (reaped.kind === 'refusal') return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics })
             // A restore released above leaves data that may be half applied; the warning rides on
             // whatever this load returns.
+            let claim: LeasePortFamilyResult | undefined
             const outcome = await (async (): Promise<EnvironmentCommandOutcome<DestructiveRunContext>> => {
                 let inventory = await readActiveStackInventory(context.namespace)
                 if (inventory.kind !== 'complete') return refusal(context.stackId)
@@ -468,12 +470,13 @@ export function createDestructiveCommandAdapters(
                     // `sleep` and an ended `session` release the final holder and stop the runtime,
                     // but its containers, networks and images remain. Claiming the stack here, as
                     // `up` would without starting anything, gives down the holder authority to retire
-                    // them; refusing sent the operator to start a stack only to remove it.
+                    // them; refusing sent the operator to start a stack only to remove it. The
+                    // application gives the claim back when the run reserves no drain.
                     let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
-                    const claimed = await lifecycle.withAcquiredPorts(context, async () => true,
+                    claim = await lifecycle.withAcquiredPorts(context, async ({ leaseResult }) => leaseResult,
                         (diagnostics) => { claimRefusal = diagnostics; return undefined })
                     if (claimRefusal) return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal })
-                    if (!claimed) return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
+                    if (claim?.kind !== 'complete' || claim.change !== 'acquired') return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
                     inventory = await readActiveStackInventory(context.namespace)
                     if (inventory.kind !== 'complete') return refusal(context.stackId)
                 }
@@ -487,6 +490,7 @@ export function createDestructiveCommandAdapters(
                         launcher: current,
                         claimInventory,
                     }),
+                    ...claim ? { claim } : {},
                 })
                 if (destructive.kind === 'complete') issued.set(destructive.result, context)
                 return destructive

@@ -258,8 +258,10 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         }] })
         // The holder this up added is given back; nothing started, so nothing holds the stack.
         const coordination = await readState(loaded.result.namespace.paths.coordination(loaded.result.stackId))
-        expect(coordination.kind === 'complete' && decodeCoordinationRecord(coordination.value, loaded.result.stackId)?.holders).toEqual([])
-        // With nothing holding the stack, sleep has nothing to stop; it says so instead of blaming a co-tenant.
+        expect(coordination.kind === 'complete' && decodeCoordinationRecord(coordination.value, loaded.result.stackId))
+            .toMatchObject({ holders: [], lease: null })
+        // The refused up leaves the record as it found it, so no family stays reserved either: sleep
+        // says the stack is already asleep instead of blaming a co-tenant or naming a reservation.
         const slept = await runSleep({ configPath: candidate.configPath }, createLifecycleCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
@@ -267,7 +269,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             timeoutMs: 5_000,
         }, executeProbe))
         expect(slept).toMatchObject({ kind: 'complete', status: 0, result: { change: 'unchanged' }, diagnostics: [{
-            severity: 'warning', code: 'STACK_NOT_RUNNING', message: expect.stringContaining('port family stays reserved'),
+            severity: 'warning', code: 'STACK_NOT_RUNNING', message: expect.stringContaining('the stack is already asleep'),
         }] })
 
         const teardown = createLifecycleCommandAdapters({
@@ -749,6 +751,36 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const retired = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
         if (retired.kind !== 'complete') throw new Error(JSON.stringify(retired))
         expect(decodeLifecycleRecord(retired.value, first.context)?.value).toMatchObject({ teardownComplete: true, completedServices: [] })
+        // A reset preview of the stopped stack claims it only to read it, and gives the claim and
+        // its lease back; the claim it kept made the next up refuse on every retry.
+        const coordination = async () => {
+            const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+            if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+            return stored.value.value
+        }
+        const beforePreview = await coordination()
+        const preview = await runReset({ configPath: input.configPath }, createDestructiveCommandAdapters({
+            ...input, dockerContext: 'default',
+        }, executeProbe))
+        expect(preview, JSON.stringify(preview)).toMatchObject({ kind: 'preview', status: 0 })
+        expect(await coordination()).toEqual(beforePreview)
+        const declined = await beginOperatorReset({ configPath: input.configPath }, createDestructiveCommandAdapters({
+            ...input, dockerContext: 'default',
+        }, executeProbe))
+        if (!('decide' in declined)) throw new Error(JSON.stringify(declined))
+        expect(await declined.decide('decline')).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH' }] })
+        expect(await coordination()).toEqual(beforePreview)
+        // A claim an earlier command left on the stopped stack, as the preview's own once did: up
+        // names down as the way out, since rerunning up meets the same claim.
+        const leftover = createLifecycleCommandAdapters(input, executeProbe)
+        const leftoverLoad = await leftover.load({ configPath: input.configPath })
+        if (leftoverLoad.kind !== 'complete') throw new Error(JSON.stringify(leftoverLoad))
+        expect(await leftover.withAcquiredPorts(leftoverLoad.result, async () => true)).toBe(true)
+        const held = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
+        expect(held).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED',
+            fix: 'run npx --no cockpit down --config <your cockpit.toml> to release the claim, then npx --no cockpit up --config <your cockpit.toml>' }] })
+        const released = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
+        expect(released, JSON.stringify(released)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
         await editCompose(first.candidate.checkout)
         const steps: ExecutionStep[] = []
         const adapters = createLifecycleCommandAdapters(input, async step => { steps.push(step); return executeProbe(step) })

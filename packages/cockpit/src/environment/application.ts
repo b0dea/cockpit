@@ -1014,6 +1014,8 @@ export interface OperatorResetSession {
 export interface DestructiveRunContextInput {
     readonly lifecycle: LifecycleRunContext
     readonly instance: SelectDestructiveInstanceInput
+    /** The holder claim the load took on a stack no session held, so this run could read it. */
+    readonly claim?: LeasePortFamilyResult
 }
 
 export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
@@ -1063,6 +1065,7 @@ function withLifecycleRunNotices<Result extends { readonly diagnostics: readonly
 }
 const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: SourceProvenance; siblingsRoot: string }>>()
 const issuedDestructiveRuns = new WeakSet<object>()
+const provisionalClaims = new WeakMap<DestructiveRunContext, LeasePortFamilyResult>()
 
 type EffectiveConfigurationResult =
     | Readonly<{ kind: 'complete'; source: SourceProvenance; runtimeSha256: string; config: CockpitConfig }>
@@ -1086,10 +1089,12 @@ export function issueDestructiveRunContext(input: DestructiveRunContextInput): E
     try {
         if (!input || typeof input !== 'object' || Array.isArray(input)) return lifecycleContextRefusal()
         const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 2
-            || !('value' in descriptors.lifecycle!) || !('value' in descriptors.instance!)) return lifecycleContextRefusal()
+        if (Reflect.ownKeys(descriptors).length !== (descriptors.claim ? 3 : 2)
+            || !('value' in descriptors.lifecycle!) || !('value' in descriptors.instance!)
+            || descriptors.claim && !('value' in descriptors.claim)) return lifecycleContextRefusal()
         const lifecycle = descriptors.lifecycle!.value as LifecycleRunContext
         const instance = descriptors.instance!.value as SelectDestructiveInstanceInput
+        const claim = descriptors.claim?.value as LeasePortFamilyResult | undefined
         const namespace = authenticateStateNamespace(lifecycle?.namespace)
         const selected = selectDestructiveInstance(instance)
         if (!namespace || selected.kind !== 'selected' || selected.stackId !== lifecycle.stackId
@@ -1098,6 +1103,7 @@ export function issueDestructiveRunContext(input: DestructiveRunContextInput): E
         }
         const context = Object.freeze({ ...lifecycle, namespace, instance })
         issuedDestructiveRuns.add(context)
+        if (claim) provisionalClaims.set(context, claim)
         return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })
     } catch (error) {
         return lifecycleContextRefusal(`destructive run authority could not be read: ${errorCause(error)}`)
@@ -2719,6 +2725,15 @@ async function executeUpRound(
                 && await revalidatePortLeaseProjection({ projection: acquisition, namespace: context.namespace })
             const sourceCurrent = await withLifecycleConfiguration(context, async () => true)
             const currentProgress = await readLifecycleRecord(context)
+            // This checkout already held the torn-down stack before this up claimed anything: a claim an
+            // interrupted command left. Rerunning up meets the same claim, so only down releases it.
+            const leftClaim = acquisition === undefined && ports.leaseResult.kind === 'complete' && ports.leaseResult.change !== 'acquired'
+                && ports.projection.ownership.holderCount === 1 && ports.projection.ownership.holderIds[0] === context.holderId
+            if (leftClaim) {
+                return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+                    `this checkout still holds a claim on the stack down removed, left by an earlier command, so up cannot start it afresh; run \`${lifecycleSuggestion(context, 'down')}\` to release the claim, then \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
+                    'run npx --no cockpit down --config <your cockpit.toml> to release the claim, then npx --no cockpit up --config <your cockpit.toml>') }
+            }
             if (!freshSoleHolder || !sourceCurrent || !currentProgress || 'status' in currentProgress
                 || !isDeepStrictEqual(currentProgress.record, stored.record)
                 || !await revalidatePortLeaseProjection({ projection: ports.projection, namespace: context.namespace })) {
@@ -3610,6 +3625,22 @@ function destructiveRepairRequired(context: DestructiveRunContext): Extract<Down
     )
 }
 
+// A stack no session holds is claimed only so down or reset can read it, and the claim belongs to
+// the drain the run reserves, which releases it. A run that reserves no drain (a preview, a decline,
+// a refusal before the drain) gives it back, or the next up meets a holder it did not take and
+// refuses on every retry.
+async function settleProvisionalClaim<Outcome extends Readonly<{ kind: string; diagnostics: readonly EnvironmentDiagnostic[] }>>(
+    context: DestructiveRunContext,
+    outcome: Outcome,
+): Promise<Outcome | Extract<DownCommandResult, { kind: 'refusal' }>> {
+    const claim = provisionalClaims.get(context)
+    if (!claim) return outcome
+    provisionalClaims.delete(context)
+    const released = await compensateAcquiredPortHolder({ namespace: context.namespace, leaseResult: claim, now: new Date().toISOString() })
+    if (released.kind === 'complete') return outcome
+    return destructiveRefusal(uniqueDiagnostics([...outcome.kind === 'refusal' ? outcome.diagnostics : [], ...released.diagnostics]))
+}
+
 async function loadDestructiveContext(
     input: DownCommandInput | ResetCommandInput,
     adapters: DestructiveCommandAdapters,
@@ -3764,6 +3795,8 @@ async function executeDestructivePlan(
         return destructiveRepairRequired(context)
     }
     const request = recoveredRequest ?? lifecyclePlan.request
+    // From here the drain owns the stack's claim: it releases it on completion, and keeps it for repair.
+    provisionalClaims.delete(context)
     const reserved = recoveredReservation ?? await reserveDrain({ namespace: context.namespace, request })
     if (reserved.kind !== 'complete') return destructiveRefusal(reserved.diagnostics)
     let availableReservation = reserved.reservation.completedActionCount === 0 ? undefined : reserved
@@ -3947,7 +3980,7 @@ export async function runDown(
 ): Promise<DownCommandResult> {
     const loaded = await loadDestructiveContext(input, adapters)
     if (loaded.kind !== 'complete') return loaded as DownCommandResult
-    return withLifecycleRunNotices(loaded.result, await downWithContext(loaded.result, adapters))
+    return withLifecycleRunNotices(loaded.result, await settleProvisionalClaim(loaded.result, await downWithContext(loaded.result, adapters)))
 }
 
 async function downWithContext(context: DestructiveRunContext, adapters: DownCommandAdapters): Promise<DownCommandResult> {
@@ -4029,7 +4062,8 @@ export async function runReset(
     const loaded = await loadDestructiveContext(input, adapters)
     if (loaded.kind !== 'complete') return loaded as ResetCommandResult
     const preview = await resetPreview(loaded.result, adapters)
-    return withLifecycleRunNotices(loaded.result, 'status' in preview ? preview : publicResetPreview(loaded.result, preview))
+    return withLifecycleRunNotices(loaded.result,
+        await settleProvisionalClaim(loaded.result, 'status' in preview ? preview : publicResetPreview(loaded.result, preview)))
 }
 
 export async function beginOperatorReset(
@@ -4040,7 +4074,7 @@ export async function beginOperatorReset(
     if (loaded.kind !== 'complete') return loaded as Extract<ResetCommandResult, { kind: 'refusal' }>
     const context = loaded.result
     const preview = await resetPreview(context, adapters)
-    if ('status' in preview) return withLifecycleRunNotices(context, preview)
+    if ('status' in preview) return withLifecycleRunNotices(context, await settleProvisionalClaim(context, preview))
     const token = Object.freeze({})
     privateResetSessions.set(token, Object.freeze({ context, adapters, preview }))
     const session = Object.freeze({
@@ -4053,10 +4087,15 @@ export async function beginOperatorReset(
 async function continueOperatorReset(token: object, decision: 'approve' | 'decline'): Promise<OperatorResetResult> {
     const session = privateResetSessions.get(token)
     privateResetSessions.delete(token)
-    if (!session || decision !== 'approve') return destructiveRefusal(Object.freeze([Object.freeze({
+    const unapproved = destructiveRefusal(Object.freeze([Object.freeze({
         severity: 'error', code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
         message: decision === 'decline' ? 'reset was declined' : 'reset operator session is unavailable', target: 'reset',
     })]))
+    if (!session) return unapproved
+    return settleProvisionalClaim(session.context, decision === 'approve' ? await approveOperatorReset(session) : unapproved)
+}
+
+async function approveOperatorReset(session: PrivateResetSession): Promise<OperatorResetResult> {
     const inspection = await inspectDestructiveRecoveryWithRepair(session.context, 'reset')
     if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
     if (inspection.kind === 'repairable') return destructiveRepairRequired(session.context)
