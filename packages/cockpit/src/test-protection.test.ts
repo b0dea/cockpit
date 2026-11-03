@@ -102,9 +102,25 @@ describe('test protection diff classifier', () => {
         expect(classifyTestProtection(patch(GUARD, '', line)).allowed).toBe(false)
     })
 
-    it('permits additive controls and unrelated product changes', () => {
-        expect(classifyTestProtection(patch(GUARD, '', 'expect(result).toBe(false)')).allowed).toBe(true)
-        expect(classifyTestProtection(patch('packages/cockpit/src/guards/evaluator.ts', 'return false', 'return true')).allowed).toBe(true)
+    it.each([
+        [GUARD, '', 'expect(result).toBe(false)'],
+        [GUARD, '', 'return result'],
+        [GUARD, '', '  return result'],
+        [GUARD, '', '  return result; // helper value'],
+        [GUARD, '', '  returnValue()'],
+        [GUARD, '', '  // return;'],
+        [GUARD, '', '  /* return; */'],
+        [GUARD, '', "  const text = 'return;'"],
+        [GUARD, '', '  const text = "return"'],
+        [GUARD, '', '  const text = `return;`'],
+        [GUARD, '', '// if (true) return;'],
+        [GUARD, '', '/* process.exit(0) */'],
+        [GUARD, '', 'const text = "if (false) {"'],
+        [GUARD, '', 'const text = "process.exit()"'],
+        ['packages/cockpit/src/guards/evaluator.ts', 'return false', 'return true'],
+        ['packages/cockpit/src/production.ts', '', 'process.exit(0)'],
+    ])('permits additive expectations, helper returns, commented or quoted bypass forms and product edits: %s %j -> %j', (path, removed, added) => {
+        expect(classifyTestProtection(patch(path, removed, added))).toEqual({ allowed: true, acknowledged: false, findings: [] })
     })
 
     it.each(['return', 'return;', '    return;', '\treturn // stop here', '  return; // stop here'])('refuses a potential additive control-flow bypass: %s', (line) => {
@@ -118,22 +134,6 @@ describe('test protection diff classifier', () => {
         expect(accepted.allowed).toBe(true)
         expect(accepted.acknowledged).toBe(true)
         expect(accepted.findings).toEqual(refused.findings)
-    })
-
-    it('permits additive expectations, helper return values and comment or string mentions of return', () => {
-        for (const line of [
-            'expect(result).toBe(false)',
-            '  return result',
-            '  return result; // helper value',
-            '  returnValue()',
-            '  // return;',
-            '  /* return; */',
-            "  const text = 'return;'",
-            '  const text = "return"',
-            '  const text = `return;`',
-        ]) expect(classifyTestProtection(patch(GUARD, '', line))).toEqual({
-            allowed: true, acknowledged: false, findings: [],
-        })
     })
 
     it.each([
@@ -173,15 +173,6 @@ describe('test protection diff classifier', () => {
             expect(classifyTestProtection(patch('package.json', line, line.replace('5.0.4', '5.0.5'))).allowed).toBe(true)
         }
         expect(classifyTestProtection(`diff --git a/package.json b/package.json\ndeleted file mode 100644\n`).allowed).toBe(false)
-    })
-
-    it('keeps explicit bypass comments, strings and unrelated production edits allowed', () => {
-        for (const line of ['// if (true) return;', '/* process.exit(0) */',
-            'const text = "if (false) {"', 'const text = "process.exit()"',
-            'expect(result).toBe(false)', 'return result']) {
-            expect(classifyTestProtection(patch(GUARD, '', line))).toEqual({ allowed: true, acknowledged: false, findings: [] })
-        }
-        expect(classifyTestProtection(patch('packages/cockpit/src/production.ts', '', 'process.exit(0)')).allowed).toBe(true)
     })
 
     it('detects deletion, pure rename and quoted Git paths', () => {
