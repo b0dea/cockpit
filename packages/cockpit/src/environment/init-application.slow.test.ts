@@ -223,6 +223,16 @@ it.each([
         diagnostics: [{ code: 'CONFIG_SCHEMA_INVALID' }, { code: 'INIT_VERIFICATION_INCOMPLETE' }] })
     vi.stubEnv('HOME', f.input.home)
     vi.stubEnv('XDG_STATE_HOME', f.input.xdgStateHome)
+    // A setup file that no longer holds what init published cannot be adopted; the refusal names the
+    // unfinished init and how to resume it rather than only calling the file unrecorded.
+    const setupSkill = ['.agents/skills/cockpit-setup/SKILL.md', '.claude/skills/cockpit-setup/SKILL.md'].find(path => existsSync(join(f.root, path)))!
+    const setupBytes = await readFile(join(f.root, setupSkill), 'utf8')
+    await writeFile(join(f.root, setupSkill), `${setupBytes}hand edit\n`)
+    const unadopted = await syncTeamGeneratedEnvironment({ configPath: f.destination })
+    expect(unadopted).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SURFACE_STATE_CONFLICT', target: setupSkill,
+        message: expect.stringContaining(`an unfinished init for this root (--target ${f.input.target}) published it`),
+        fix: expect.stringContaining(`resume that init with ${initCommand({ root: f.root, target: f.input.target })} and the options you started it with`) }] })
+    await writeFile(join(f.root, setupSkill), setupBytes)
     const plainSync = await syncTeamGeneratedEnvironment({ configPath: f.destination }).finally(() => vi.unstubAllEnvs())
     expect(plainSync, JSON.stringify(plainSync.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
     // A run that stops after the draft still names what no person confirmed, and which prerequisites

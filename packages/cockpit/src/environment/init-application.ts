@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
 import { readinessReport, type ReadinessReport } from '../readiness.js'
-import { cockpitCommand, initCommand } from '../fix-catalogue.js'
+import { cockpitCommand, initCommand, formatShellCommand } from '../fix-catalogue.js'
 import {
     isAnswerProvenance,
     plannedGreenfieldQuestions,
@@ -505,9 +505,12 @@ async function runInitStages(
         const other = await selectBootstrapStateRoot({ platform: input.platform, home: input.home,
             xdgStateHome: input.xdgStateHome, checkoutRoot: input.root, target, uid: input.uid })
         if (other.kind !== 'complete') return stateFailure(other)
-        const prior = await readState(other.value.paths.bootstrap(target))
+        const priorAddress = other.value.paths.bootstrap(target)
+        const prior = await readState(priorAddress)
         if (prior.kind === 'complete') {
-            return refused('INIT_TARGET_CHANGED', `bootstrap state is already bound to ${target}`, input.root)
+            return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null, diagnostics: [{
+                ...diagnostic('INIT_TARGET_CHANGED', `bootstrap state is already bound to ${target}`, input.root),
+                fix: `to resume the init started for ${target}, run ${initCommand({ root: input.root, target })} with the options you started it with (a root that was removed and recreated starts again from the preview); to use --target ${input.target} instead, ask the person who owns this machine before you delete ${formatShellCommand([priorAddress.path])}, which holds only that init's progress, then run ${initCommand({ root: input.root, target: input.target })}` }] }
         }
         if (prior.kind === 'refusal') return stateFailure(prior)
     }
