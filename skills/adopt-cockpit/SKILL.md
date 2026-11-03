@@ -144,9 +144,11 @@ named gaps. Where a runtime is declared, preflight needs a completed first bring
 stops with `STATE_UNSEEDED` (exit 2, stage `draft-observed`); that is the expected stop, and the
 diagnostics beside it name every other gap found without a running stack. Preflight also passes
 only once the cockpit repository is committed and clean, so a new one reports `GIT_STATE_UNHEALTHY`
-(no commits yet) with the commands that commit the generated files. The person commits, not you:
-the first commit stages the guard's own files, which the guard does not let an agent stage. Show
-them `git status --short` and hand them that fix to run in a terminal. Then bring the
+(no commits yet) with the commands that commit the generated files. A person approves or runs
+the staging and the commit, not you: the guard asks on `git add <paths>`, denies a broad `git add -A`
+that covers a secrets directory, and the first commit stages the guard's own files. Show them
+`git status --short` and hand them that fix to run in a terminal. If you must run Git in another
+directory, use `git -C <dir>` or `cd ./<dir> && <command>`; a bare `cd <dir>` is refused. Then bring the
 stack up (step 6 of **Create a local setup**) and re-run the same command. The step is done when
 the result reports `environment-verified`; a cockpit that declares no runtime reports it, with
 `ENVIRONMENT_NOT_DECLARED` as information, without a bring-up. Native discovery, a real interview
