@@ -283,7 +283,7 @@ describe('runtime logs', () => {
     it('constructs an immutable bounded runtime-native step for the authenticated container', () => {
         const result = planLogs(input)
         expect(result.kind).toBe('planned')
-        if (result.kind !== 'planned') return
+        if (result.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(result)}`)
         expect(result.step.argv).toEqual([runtimePath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', '100', '--follow', input.containerId])
         expect(Object.isFrozen(result.step.argv)).toBe(true)
         expect(result.step).toEqual(expect.objectContaining({ timeoutMs: 7_200_000, stdoutLimitBytes: 4096, outputOverflow: 'retain-tail' }))
@@ -351,7 +351,7 @@ describe('runtime logs', () => {
         const result = planLogs({ ...input, containerId: authenticatedContainerId })
 
         expect(result.kind).toBe('planned')
-        if (result.kind !== 'planned') return
+        if (result.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(result)}`)
         expect(result.step.argv.at(-1)).toBe(authenticatedContainerId)
         expect(result.step.argv).not.toContain(input.service)
         expect(result.step.labels.containerId).toBe(authenticatedContainerId)
@@ -412,7 +412,7 @@ describe('runtime logs', () => {
     })
 
     it('normalizes records, redacts values, and forwards cancellation', async () => {
-        const plan = planWithOutput('2026-09-07T00:00:01Z password=hunter2 restarted\n'); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T00:00:01Z password=hunter2 restarted\n'); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const signal = new AbortController().signal
         const execute = vi.fn(executeProbe)
         const result = await collectLogs(plan, execute, signal)
@@ -424,7 +424,7 @@ describe('runtime logs', () => {
     it('preserves native container stdout and stderr attribution', async () => {
         const plan = planWithOutput('2026-09-07T00:00:01Z stdout\n', {
             env: { ...input.env, COCKPIT_TEST_ERROR_OUTPUT: '2026-09-07T00:00:02Z stderr\n' },
-        }); if (plan.kind !== 'planned') return
+        }); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
 
         const result = await collectLogs(plan, executeProbe)
 
@@ -435,7 +435,7 @@ describe('runtime logs', () => {
     })
 
     it('cancels a bounded follow through the execution owner', async () => {
-        const plan = planWithMode('hang'); if (plan.kind !== 'planned') return
+        const plan = planWithMode('hang'); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const controller = new AbortController()
         queueMicrotask(() => controller.abort())
 
@@ -483,7 +483,7 @@ describe('runtime logs', () => {
     })
 
     it.each(['{"token":"canary"}', '{"nested":{"credential":"canary"}}', '{"nested":{"private_key":"canary"}}', '{"Authorization":"Bearer canary"}', '{"PASSWD":"canary"}', 'private-key=canary', '{"message":"token=canary"}', '"token=canary"', 'secret="two words"', 'Authorization: Bearer canary', 'passwd=canary'])('redacts structured and scalar secret form %s', async (message) => {
-        const plan = planWithOutput(`2026-09-07T00:00:01Z ${message}\n`); if (plan.kind !== 'planned') return
+        const plan = planWithOutput(`2026-09-07T00:00:01Z ${message}\n`); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const result = await collectLogs(plan, executeProbe)
         expect(JSON.stringify(result)).not.toContain('canary')
         expect(JSON.stringify(result)).not.toContain('two words')
@@ -496,7 +496,7 @@ describe('runtime logs', () => {
         ['secret=semi-alpha;semi-beta', ['semi-alpha', 'semi-beta']],
         ['credential=multi-alpha multi-beta,multi-gamma;multi-delta', ['multi-alpha', 'multi-beta', 'multi-gamma', 'multi-delta']],
     ])('redacts the full unstructured secret-bearing remainder: %s', async (message, canaries) => {
-        const plan = planWithOutput(`2026-09-07T00:00:01Z ${message}\n`); if (plan.kind !== 'planned') return
+        const plan = planWithOutput(`2026-09-07T00:00:01Z ${message}\n`); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
 
         const rendered = JSON.stringify(await collectLogs(plan, executeProbe))
 
@@ -505,7 +505,7 @@ describe('runtime logs', () => {
     })
 
     it('refuses accessor-backed log authority without reading it', async () => {
-        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const outcome = await executeProbe(plan.step)
         let reads = 0
         const volatile = { ...plan }
@@ -535,7 +535,7 @@ describe('runtime logs', () => {
 
     it('fails closed when a valid structured record exceeds the redaction nesting bound', async () => {
         const message = `${'['.repeat(100)}{"token":"deep-canary"}${']'.repeat(100)}`
-        const plan = planWithOutput(`2026-09-07T00:00:01Z ${message}\n`); if (plan.kind !== 'planned') return
+        const plan = planWithOutput(`2026-09-07T00:00:01Z ${message}\n`); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const result = await collectLogs(plan, executeProbe)
         expect(result.kind).toBe('unavailable')
         expect(JSON.stringify(result)).not.toContain('deep-canary')
@@ -559,20 +559,20 @@ describe('runtime logs', () => {
     })
 
     it('enforces the exact execution cohort', async () => {
-        const original = planWithOutput(''); if (original.kind !== 'planned') return
+        const original = planWithOutput(''); if (original.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(original)}`)
         const outcome = await executeProbe(original.step)
-        const relabelled = planLogs({ ...input, batchId: sha('stale') }); if (relabelled.kind !== 'planned') return
+        const relabelled = planLogs({ ...input, batchId: sha('stale') }); if (relabelled.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(relabelled)}`)
         expect((await collectLogs(relabelled, async () => outcome)).kind).toBe('unavailable')
     })
 
     it('does not accept caller-authored success provenance', async () => {
-        const plan = planLogs(input); if (plan.kind !== 'planned') return
+        const plan = planLogs(input); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const forged = { kind: 'complete', stdout: Buffer.from('2026-09-07T00:00:01Z forged\n') }
         expect((await collectLogs(plan, async () => forged as never)).kind).toBe('unavailable')
     })
 
     it.each(['null', 'revoked', 'extra complete', 'forged refusal', 'extra refusal'])('rejects a hostile callback outcome: %s', async (kind) => {
-        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const complete = await executeProbe(plan.step)
         const aborted = new AbortController()
         aborted.abort()
@@ -591,7 +591,7 @@ describe('runtime logs', () => {
     })
 
     it('contains rejected, unreadable, and unrelated callback outcomes', async () => {
-        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n'); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         await expect(collectLogs(plan, async () => { throw new Error('executor rejected') })).resolves.toEqual(expect.objectContaining({ kind: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
         const unreadable = { kind: 'complete' }
         Object.defineProperty(unreadable, 'execution', { enumerable: true, get: () => { throw new Error('unreadable') } })
@@ -601,7 +601,7 @@ describe('runtime logs', () => {
     })
 
     it('rejects a genuine outcome from a caller-authored log command', async () => {
-        const planned = planWithOutput(''); if (planned.kind !== 'planned') return
+        const planned = planWithOutput(''); if (planned.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(planned)}`)
         const forgedStep = {
             ...planned.step,
             argv: [process.execPath, '-e', "process.stdout.write('2026-09-07T00:00:01Z forged\\n')"] as [string, ...string[]],
@@ -612,20 +612,20 @@ describe('runtime logs', () => {
     })
 
     it('rejects impossible calendar timestamps and unexpected compose prefixes', async () => {
-        const impossible = planWithOutput('2026-02-30T00:00:01Z invalid\n'); if (impossible.kind !== 'planned') return
-        const prefixed = planWithOutput('different-api-1 | 2026-09-07T00:00:01Z wrong\n'); if (prefixed.kind !== 'planned') return
+        const impossible = planWithOutput('2026-02-30T00:00:01Z invalid\n'); if (impossible.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(impossible)}`)
+        const prefixed = planWithOutput('different-api-1 | 2026-09-07T00:00:01Z wrong\n'); if (prefixed.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(prefixed)}`)
         expect((await collectLogs(impossible, executeProbe)).kind).toBe('unavailable')
         expect((await collectLogs(prefixed, executeProbe)).kind).toBe('unavailable')
     })
 
     it('orders accepted offset timestamps by their actual instant', async () => {
-        const plan = planWithOutput('2026-09-07T02:00:02+02:00 later\n2026-09-07T00:00:01Z earlier\n'); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T02:00:02+02:00 later\n2026-09-07T00:00:01Z earlier\n'); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const result = await collectLogs(plan, executeProbe)
         expect(result.kind === 'complete' && result.records.map(({ message }) => message)).toEqual(['earlier', 'later'])
     })
 
     it('collects a plan using the accepted relative since form', async () => {
-        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n', { since: '30s' }); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T00:00:01Z safe\n', { since: '30s' }); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         expect((await collectLogs(plan, executeProbe)).kind).toBe('complete')
     })
 
@@ -633,7 +633,7 @@ describe('runtime logs', () => {
         const beforeBatch = sha('before')
         const afterBatch = sha('after')
         const before = await evidence(beforeBatch, '777 12345')
-        const plan = planWithOutput('2026-09-07T00:00:01Z producer says restart 99\n', { restartBatches: [beforeBatch, afterBatch] }); if (plan.kind !== 'planned') return
+        const plan = planWithOutput('2026-09-07T00:00:01Z producer says restart 99\n', { restartBatches: [beforeBatch, afterBatch] }); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const logOutcome = await executeProbe(plan.step)
         const after = await evidence(afterBatch, '888 54321')
         const execute = async () => logOutcome
@@ -643,19 +643,19 @@ describe('runtime logs', () => {
         expect((await collectLogs(plan, execute, undefined, { before, after: { ...after, configSha256: sha('other') } })).kind).toBe('unavailable')
         expect((await collectLogs(plan, execute)).kind).toBe('unavailable')
         const unrelatedPlan = planLogs({ ...input, restartBatches: [sha('other-before'), sha('other-after')] })
-        if (unrelatedPlan.kind !== 'planned') return
+        if (unrelatedPlan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(unrelatedPlan)}`)
         expect((await collectLogs(unrelatedPlan, execute, undefined, { before, after })).kind).toBe('unavailable')
     })
 
     it.each([null, 7, {}, { before: {}, after: {}, extra: true }])('rejects malformed restart authority %#', async (restart) => {
-        const plan = planWithOutput(''); if (plan.kind !== 'planned') return
+        const plan = planWithOutput(''); if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         await expect(collectLogs(plan, executeProbe, undefined, restart as never)).resolves.toEqual(expect.objectContaining({ kind: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
     })
 
     it('keeps malformed, invalid UTF-8, and failed capture explicitly unavailable', async () => {
-        const malformed = planWithOutput('garbage'); if (malformed.kind !== 'planned') return
-        const invalid = planWithMode('invalid'); if (invalid.kind !== 'planned') return
-        const failed = planWithMode('fail'); if (failed.kind !== 'planned') return
+        const malformed = planWithOutput('garbage'); if (malformed.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(malformed)}`)
+        const invalid = planWithMode('invalid'); if (invalid.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(invalid)}`)
+        const failed = planWithMode('fail'); if (failed.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(failed)}`)
         expect((await collectLogs(malformed, executeProbe)).kind).toBe('unavailable')
         expect((await collectLogs(invalid, executeProbe)).kind).toBe('unavailable')
         expect((await collectLogs(failed, executeProbe)).code).toBe('EXECUTION_STEP_FAILED')
@@ -679,7 +679,7 @@ describe('authenticated failure logs', () => {
         const evidence = await failureEvidence()
         const plan = planFailureLogs({ evidence, ...bounds })
         expect(plan.kind).toBe('planned')
-        if (plan.kind !== 'planned') return
+        if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         expect(plan.step.argv).toEqual([
             plan.step.argv[0],
             'container',
@@ -717,7 +717,7 @@ describe('authenticated failure logs', () => {
         const evidence = await earlyFailureEvidence(`${timestamp} startup failed\n`, 0, composeFiles)
         const plan = planFailureLogs({ evidence, ...bounds })
         expect(plan.kind).toBe('planned')
-        if (plan.kind !== 'planned') return
+        if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         expect(plan.step.argv).toEqual([
             plan.step.argv[0],
             'compose',
@@ -769,7 +769,7 @@ describe('authenticated failure logs', () => {
             { ownComposeFiles: true, cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: '/tmp/main' }), stackId: stack })
         const productPlan = planFailureLogs({ evidence: product, ...bounds })
         expect(productPlan.kind).toBe('planned')
-        if (productPlan.kind !== 'planned') return
+        if (productPlan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(productPlan)}`)
         expect(productPlan.step.argv.slice(2, 4)).toEqual(['--project-directory', join(runtimeDirectory, 'shop')])
     })
 
@@ -888,7 +888,7 @@ describe('authenticated failure logs', () => {
         })
         expect(plan.kind).toBe('planned')
         expect(reads).toEqual({ evidence: 1, tail: 1, timeout: 1, output: 1 })
-        if (plan.kind !== 'planned') return
+        if (plan.kind !== 'planned') throw new Error(`expected a log plan: ${JSON.stringify(plan)}`)
         const outcome = await executeProbe(plan.step)
         let planReads = 0
         let outcomeReads = 0
