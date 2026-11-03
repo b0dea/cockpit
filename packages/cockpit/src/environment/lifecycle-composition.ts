@@ -34,6 +34,7 @@ import {
 import {
     decodeLifecycleRecord,
     issueLifecycleRunContext,
+    noticeLifecycleRun,
     withLifecycleConfiguration,
     type LifecycleRunContext,
     type ReadinessRefusal,
@@ -1227,6 +1228,7 @@ export function createLifecycleCommandAdapters(
             now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
         })
         if (reaped.kind === 'refusal') return refuse?.(reaped.diagnostics)
+        if (reaped.interruptedRestore) noticeLifecycleRun(context, reaped.interruptedRestore)
         const now = new Date().toISOString()
         const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
         const acquired = await acquirePortProjection({

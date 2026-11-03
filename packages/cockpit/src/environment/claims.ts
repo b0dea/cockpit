@@ -772,8 +772,8 @@ export type ReleaseDeadSessionHoldersResult =
     | {
           readonly kind: 'complete'
           readonly released: readonly ClaimHolder[]
-          // Present when a restore whose process is gone was released first.
-          readonly abandonedRestore?: { readonly pid: number; readonly reservedAt: string }
+          // A warning, present when a restore whose process is gone was released first.
+          readonly interruptedRestore?: EnvironmentDiagnostic
       }
     | ClaimMutationRefusal
 
@@ -804,7 +804,7 @@ export async function releaseDeadSessionHolders(input: {
     let value = decodeCoordinationRecord(stored.value, input.stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
     if (isDrainActive(value)) return { kind: 'complete', released: [] }
-    let abandonedRestore: { readonly pid: number; readonly reservedAt: string } | undefined
+    let interruptedRestore: EnvironmentDiagnostic | undefined
     if (value.restore) {
         const restore = value.restore
         // A running restore, or one whose process cannot be proven gone, keeps the stack; the
@@ -825,9 +825,16 @@ export async function releaseDeadSessionHolders(input: {
         if (result.kind !== 'complete') return result.kind === 'missing'
             ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
         value = latest!
-        abandonedRestore = Object.freeze({ pid: restore.pid, reservedAt: restore.reservedAt })
+        interruptedRestore = Object.freeze({
+            severity: 'warning' as const,
+            // Code and fix are literals, so the diagnostic inventory captures the fix beside the code.
+            code: 'RESTORE_INTERRUPTED' satisfies typeof ENVIRONMENT_CODES.RESTORE_INTERRUPTED,
+            message: `a restore of this stack's data by process ${restore.pid}, reserved at ${restore.reservedAt}, ended before it finished; cockpit released its reservation, and the stack's data may be partially restored`,
+            target: input.stackId,
+            fix: 'run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again',
+        })
     }
-    const restoreOutcome = abandonedRestore ? { abandonedRestore } : {}
+    const restoreOutcome = interruptedRestore ? { interruptedRestore } : {}
     const candidates = value.holders.filter((holder) => holder.holderId !== input.successor.holderId && holder.pid !== undefined)
     // Indexed slots keep the verdicts in holder order whatever order the probes finish in.
     const observed: ProcessStartObservation[] = new Array(candidates.length)

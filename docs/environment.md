@@ -300,8 +300,10 @@ A `restored` data mode reserves the stack for the command that runs the restore 
 command's process the same way. If the command dies mid-restore, the next `up`, `sleep`, `down` or
 `reset` sees that the process is gone and releases the reservation. While that process runs, or
 when cockpit cannot confirm it is gone, they refuse with `CLAIM_CO_TENANT` and name its process ID.
-An interrupted restore is not recorded as applied, and the product-data volume may hold part of it,
-so run `reset` before the next `up` restores it again.
+Releasing it warns with `RESTORE_INTERRUPTED`, naming the process and when the restore began: the
+restore is not recorded as applied, and the product-data volume may hold part of it. Run `reset`,
+which only previews what it deletes until a person confirms it with `--interactive`, and then `up`
+to restore the data again.
 
 The wrapper passes its process ID and start identity to its command in `COCKPIT_SESSION_PROCESS`, so
 a hold that a `sleep` and then an `up` inside the session drop and re-add is still tied to the

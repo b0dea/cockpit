@@ -256,7 +256,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/application.ts',
     exports: [
         'setupEnvironment', 'issueSetupRunContext', 'runSetup',
-        'issueLifecycleRunContext', 'withLifecycleConfiguration', 'decodeLifecycleRecord', 'revalidateService', 'runUp', 'runSession', 'runSleep',
+        'issueLifecycleRunContext', 'noticeLifecycleRun', 'withLifecycleConfiguration', 'decodeLifecycleRecord', 'revalidateService', 'runUp', 'runSession', 'runSleep',
         'issueDestructiveRunContext', 'runDown', 'runReset', 'beginOperatorReset',
         'runPreflight', 'runDoctor', 'runLogs', 'runBaselineRecord', 'beginOperatorBaselineRecord',
         'prepareGuardEvaluationPolicy',
@@ -1009,6 +1009,25 @@ export type SessionCommandResult =
     | Readonly<{ kind: 'refusal'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
 
 const issuedLifecycleRuns = new WeakSet<object>()
+// Warnings an owner raised while a run held its context, such as an interrupted restore released
+// with its data possibly half applied. The command's result carries them whatever its outcome:
+// dropping one left a person working on partial data with nobody told.
+const lifecycleRunNotices = new WeakMap<object, EnvironmentDiagnostic[]>()
+
+export function noticeLifecycleRun(context: LifecycleRunContext, diagnostic: EnvironmentDiagnostic): void {
+    const notices = lifecycleRunNotices.get(context) ?? []
+    notices.push(Object.freeze({ ...diagnostic }))
+    lifecycleRunNotices.set(context, notices)
+}
+
+function withLifecycleRunNotices<Result extends { readonly diagnostics: readonly EnvironmentDiagnostic[] }>(
+    context: LifecycleRunContext,
+    result: Result,
+): Result {
+    const notices = lifecycleRunNotices.get(context)
+    lifecycleRunNotices.delete(context)
+    return notices ? Object.freeze({ ...result, diagnostics: Object.freeze([...result.diagnostics, ...notices]) }) : result
+}
 const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: SourceProvenance; siblingsRoot: string }>>()
 const issuedDestructiveRuns = new WeakSet<object>()
 
@@ -3312,7 +3331,7 @@ export async function runUp(
         )
     }
     const context = loaded.result
-    return upWithContext(context, adapters)
+    return withLifecycleRunNotices(context, await upWithContext(context, adapters))
 }
 
 async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters): Promise<UpCommandResult> {
@@ -3546,7 +3565,7 @@ export async function runSleep(
         )
     }
     const context = loaded.result
-    return sleepWithContext(context, adapters)
+    return withLifecycleRunNotices(context, await sleepWithContext(context, adapters))
 }
 
 async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCommandAdapters): Promise<SleepCommandResult> {
@@ -3583,6 +3602,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(adapters.execute)),
         })
         if (reaped.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: reaped.diagnostics }
+        if (reaped.interruptedRestore) noticeLifecycleRun(context, reaped.interruptedRestore)
     }
     const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
     if (unheld) return unheld
@@ -4215,7 +4235,10 @@ export async function runDown(
 ): Promise<DownCommandResult> {
     const loaded = await loadDestructiveContext(input, adapters)
     if (loaded.kind !== 'complete') return loaded as DownCommandResult
-    const context = loaded.result
+    return withLifecycleRunNotices(loaded.result, await downWithContext(loaded.result, adapters))
+}
+
+async function downWithContext(context: DestructiveRunContext, adapters: DownCommandAdapters): Promise<DownCommandResult> {
     const inspection = await inspectDestructiveRecoveryWithRepair(context, 'down')
     if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
     if (inspection.kind === 'repairable') return destructiveRepairRequired(context)
@@ -4294,7 +4317,7 @@ export async function runReset(
     const loaded = await loadDestructiveContext(input, adapters)
     if (loaded.kind !== 'complete') return loaded as ResetCommandResult
     const preview = await resetPreview(loaded.result, adapters)
-    return 'status' in preview ? preview : publicResetPreview(loaded.result, preview)
+    return withLifecycleRunNotices(loaded.result, 'status' in preview ? preview : publicResetPreview(loaded.result, preview))
 }
 
 export async function beginOperatorReset(
@@ -4305,11 +4328,11 @@ export async function beginOperatorReset(
     if (loaded.kind !== 'complete') return loaded as Extract<ResetCommandResult, { kind: 'refusal' }>
     const context = loaded.result
     const preview = await resetPreview(context, adapters)
-    if ('status' in preview) return preview
+    if ('status' in preview) return withLifecycleRunNotices(context, preview)
     const token = Object.freeze({})
     privateResetSessions.set(token, Object.freeze({ context, adapters, preview }))
     const session = Object.freeze({
-        preview: publicResetPreview(context, preview),
+        preview: withLifecycleRunNotices(context, publicResetPreview(context, preview)),
         decide: (decision: 'approve' | 'decline') => continueOperatorReset(token, decision),
     })
     return session

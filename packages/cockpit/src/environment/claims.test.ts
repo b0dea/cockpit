@@ -328,7 +328,8 @@ describe('restore execution authority', () => {
                 fix: expect.stringContaining('then rerun this command, which releases a restore whose process has ended'),
             }] })
         }
-        expect(await reap({ state: 'absent' })).toEqual({ kind: 'complete', released: [], abandonedRestore: { pid: process.pid, reservedAt: expect.any(String) } })
+        expect(await reap({ state: 'absent' })).toEqual({ kind: 'complete', released: [], interruptedRestore: expect.objectContaining({
+            severity: 'warning', code: 'RESTORE_INTERRUPTED', message: expect.stringContaining(`by process ${process.pid}, reserved at `) }) })
         await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
     })
 
