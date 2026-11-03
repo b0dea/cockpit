@@ -170,16 +170,13 @@ vi.mock('./state.js', async (importOriginal) => ({
 
 vi.mock('./runtime.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('./runtime.js')>(),
-    createRuntimeServiceRevalidationPlan: vi.fn(({ service, expectedContainerId }) => {
+    revalidateRuntimeService: vi.fn(async ({ service, expectedContainerId, execute }) => {
         controls.revalidatedServices.push(service)
-        return controls.unavailableService === service
-            ? { kind: 'unavailable' }
-            : { kind: 'planned', service, expectedContainerId, status: { id: `status:${service}` }, identity: { id: `identity:${service}` } }
+        if (controls.unavailableService === service) return { kind: 'failure' }
+        for (const id of [`status:${service}`, `identity:${service}`, `inspect:${service}`]) await execute({ id })
+        return { kind: 'observed', observation: { service, containerId: expectedContainerId } }
     }),
-    admitRuntimeServiceRevalidationStatus: vi.fn(() => ({ kind: 'admitted' })),
-    admitRuntimeServiceRevalidation: vi.fn(({ plan }) => ({ kind: 'planned', plan: { kind: 'planned', service: plan.service, expectedContainerId: plan.expectedContainerId, step: { id: `inspect:${plan.service}` } } })),
-    admitRuntimeServiceObservation: vi.fn(({ plan }) => ({ kind: 'complete', observation: { service: plan.service, containerId: plan.expectedContainerId } })),
-    admitRuntimeServiceHealth: vi.fn(({ observation }) => ({ kind: 'complete', evidence: { containerId: observation.containerId } })),
+    admitRuntimeServiceHealth: vi.fn((observation) => ({ containerId: observation.containerId })),
 }))
 
 vi.mock('./evidence.js', async (importOriginal) => {

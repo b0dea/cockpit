@@ -150,14 +150,8 @@ import {
 } from './lifecycle.js'
 import {
     admitRuntimeServiceHealth,
-    admitRuntimeServiceInspectFailure,
-    admitRuntimeServiceObservation,
-    admitRuntimeServiceStageOutcome,
-    admitRuntimeServiceRevalidationStatus,
-    admitRuntimeServiceRevalidation,
-    createRuntimeServiceHealthPlan,
-    createRuntimeServicePlan,
-    createRuntimeServiceRevalidationPlan,
+    revalidateRuntimeService,
+    startRuntimeService,
     observeRuntimeServiceColdStart,
     resolveRuntimeServiceOrder,
     stopRuntime,
@@ -165,8 +159,7 @@ import {
     type RuntimeAdapterAuthority,
     type RuntimeServiceEvidence,
     type RuntimeServiceFailureEvidence,
-    type RuntimeServiceHealthPlan,
-    type RuntimeServicePlan,
+    type RuntimeServiceOutcome,
     type RuntimeServiceObservation,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
@@ -2487,19 +2480,11 @@ type ServiceStart = Exclude<ServiceAdmission, { readonly kind: 'failure' }>
     /** `stop` is present once Compose was asked to start the service. */
     | (Extract<ServiceAdmission, { readonly kind: 'failure' }> & { readonly stop?: ExecutionStep })
 
-async function inspectService(
-    healthPlan: Extract<RuntimeServiceHealthPlan, { kind: 'planned' }>,
-    adapters: Pick<UpCommandAdapters, 'execute'>,
-): Promise<ServiceAdmission> {
-    const inspectOutcome = await adapters.execute(healthPlan.step)
-    const failure = admitRuntimeServiceInspectFailure({ plan: healthPlan, outcome: inspectOutcome })
-    if (failure.kind === 'complete') return { kind: 'failure', logs: failure.evidence }
-    const observation = admitRuntimeServiceObservation({ plan: healthPlan, outcome: inspectOutcome })
-    if (observation.kind !== 'complete') return { kind: 'failure' }
-    const health = admitRuntimeServiceHealth({ observation: observation.observation })
-    return health.kind === 'complete'
-        ? { kind: 'complete', evidence: health.evidence }
-        : { kind: 'failure', logs: observation.observation }
+function serviceAdmission(outcome: RuntimeServiceOutcome): ServiceStart {
+    if (outcome.kind !== 'observed') return outcome
+    const evidence = admitRuntimeServiceHealth(outcome.observation)
+    return evidence ? { kind: 'complete', evidence }
+        : { kind: 'failure', logs: outcome.observation, ...outcome.stop ? { stop: outcome.stop } : {} }
 }
 
 export async function revalidateService(
@@ -2507,20 +2492,10 @@ export async function revalidateService(
     completed: LifecycleProgress['completedServices'][number],
     adapters: Pick<UpCommandAdapters, 'execute'>,
 ): Promise<ServiceAdmission> {
-    const plan = createRuntimeServiceRevalidationPlan({
-        topology,
-        service: completed.service,
-        expectedContainerId: completed.containerId,
-    })
-    if (plan.kind !== 'planned') return { kind: 'failure' }
-    const status = await adapters.execute(plan.status)
-    const statusAdmission = admitRuntimeServiceRevalidationStatus({ plan, outcome: status })
-    if (statusAdmission.kind === 'stale') return { kind: 'stale' }
-    if (statusAdmission.kind !== 'admitted') return { kind: 'failure' }
-    const identity = await adapters.execute(plan.identity)
-    const admitted = admitRuntimeServiceRevalidation({ plan, outcome: status, identityOutcome: identity })
-    if (admitted.kind === 'stale') return { kind: 'stale' }
-    return admitted.kind === 'planned' ? inspectService(admitted.plan, adapters) : { kind: 'failure' }
+    return serviceAdmission(await revalidateRuntimeService({
+        topology, service: completed.service, expectedContainerId: completed.containerId,
+        execute: (step) => adapters.execute(step),
+    }))
 }
 
 async function startService(
@@ -2528,32 +2503,7 @@ async function startService(
     service: string,
     adapters: UpCommandAdapters,
 ): Promise<ServiceStart> {
-    const plan = createRuntimeServicePlan({ topology, service })
-    if (plan.kind !== 'planned') return { kind: 'failure' }
-    const started = await startPlannedService(plan, adapters)
-    return started.kind === 'failure' ? { ...started, stop: plan.stop } : started
-}
-
-async function startPlannedService(
-    plan: Extract<RuntimeServicePlan, { kind: 'planned' }>,
-    adapters: UpCommandAdapters,
-): Promise<ServiceAdmission> {
-    const start = await adapters.execute(plan.start)
-    const startAdmission = admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: start })
-    if (startAdmission.kind === 'failure') return { kind: 'failure', logs: startAdmission.evidence }
-    if (startAdmission.kind !== 'admitted') return { kind: 'failure' }
-    const status = await adapters.execute(plan.status)
-    const statusAdmission = admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: status, startOutcome: start })
-    if (statusAdmission.kind === 'failure') return { kind: 'failure', logs: statusAdmission.evidence }
-    if (statusAdmission.kind !== 'admitted') return { kind: 'failure' }
-    const identity = await adapters.execute(plan.identity)
-    const identityAdmission = admitRuntimeServiceStageOutcome({
-        plan, stage: 'identity', outcome: identity, startOutcome: start, statusOutcome: status,
-    })
-    if (identityAdmission.kind === 'failure') return { kind: 'failure', logs: identityAdmission.evidence }
-    if (identityAdmission.kind !== 'admitted') return { kind: 'failure' }
-    const healthPlan = createRuntimeServiceHealthPlan({ plan, startOutcome: start, outcome: status, identityOutcome: identity })
-    return healthPlan.kind === 'planned' ? inspectService(healthPlan, adapters) : { kind: 'failure' }
+    return serviceAdmission(await startRuntimeService({ topology, service, execute: (step) => adapters.execute(step) }))
 }
 
 // Failure evidence for a service that did not become healthy: its bounded logs as one diagnostic,

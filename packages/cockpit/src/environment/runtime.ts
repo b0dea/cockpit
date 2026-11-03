@@ -1839,25 +1839,6 @@ function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ inde
     })
 }
 
-export type RuntimeServicePlan =
-    | { readonly kind: 'planned'; readonly service: string; readonly start: ExecutionStep; readonly status: ExecutionStep; readonly identity: ExecutionStep
-        /** Stops, without removing, the service this plan started when it did not become healthy. */
-        readonly stop: ExecutionStep }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
-export type RuntimeServiceHealthPlan =
-    | { readonly kind: 'planned'; readonly service: string; readonly step: ExecutionStep }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
-export type RuntimeServiceRevalidationPlan =
-    | { readonly kind: 'planned'; readonly service: string; readonly expectedContainerId: string; readonly status: ExecutionStep; readonly identity: ExecutionStep }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
-export type RuntimeServiceRevalidationResult =
-    | { readonly kind: 'planned'; readonly service: string; readonly expectedContainerId: string; readonly plan: Extract<RuntimeServiceHealthPlan, { readonly kind: 'planned' }> }
-    | { readonly kind: 'stale'; readonly service: string; readonly expectedContainerId: string }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
 declare const runtimeServiceFailureEvidenceBrand: unique symbol
 export interface RuntimeServiceFailureEvidence {
     readonly [runtimeServiceFailureEvidenceBrand]: true
@@ -1907,31 +1888,20 @@ interface RuntimeServiceHealthPlanContract extends RuntimeServicePlanContract {
     readonly identityFinishedAt: string
 }
 
-interface RuntimeServiceRevalidationPlanContract extends RuntimeServicePlanContract {
-    readonly expectedContainerId: string
-}
-
-const issuedRuntimeServicePlans = new WeakMap<object, RuntimeServicePlanContract>()
-const consumedRuntimeServicePlans = new WeakSet<object>()
-const admittedRuntimeServiceStages = new WeakMap<object, {
-    readonly startOutcome: object
-    readonly statusOutcome?: object
-    readonly identityOutcome?: object
-}>()
-const issuedRuntimeServiceRevalidationPlans = new WeakMap<object, RuntimeServiceRevalidationPlanContract>()
-const consumedRuntimeServiceRevalidationPlans = new WeakSet<object>()
-const admittedRuntimeServiceRevalidationStatuses = new WeakMap<object, object>()
-const issuedRuntimeServiceHealthPlans = new WeakMap<object, RuntimeServiceHealthPlanContract>()
-const consumedRuntimeServiceHealthPlans = new WeakSet<object>()
+// Observations, evidence and failures a service step produced, which failure logs, the lifecycle
+// planner and the health readers take back by identity.
 const issuedRuntimeServiceObservations = new WeakMap<object, RuntimeServiceEvidenceContract>()
-const consumedRuntimeServiceHealthObservations = new WeakSet<object>()
 const consumedRuntimeServiceFailureObservations = new WeakSet<object>()
 const issuedRuntimeServiceEvidence = new WeakMap<object, RuntimeServiceEvidenceContract>()
 const issuedRuntimeServiceFailures = new WeakMap<object, RuntimeServiceFailureLogContext>()
 
-function unavailableRuntimeService(service: unknown, error?: unknown): RuntimeServicePlan {
-    return { kind: 'unavailable', service: typeof service === 'string' ? service : '', reason: unavailableReason('runtime service is unavailable', error) }
-}
+/** What a service start or revalidation observed; `stop` stops, without removing, a service this run started. */
+export type RuntimeServiceOutcome =
+    | { readonly kind: 'observed'; readonly observation: RuntimeServiceObservation; readonly stop?: ExecutionStep }
+    | { readonly kind: 'stale' }
+    | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence; readonly stop?: ExecutionStep }
+
+type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
 interface RuntimeServiceInitialSteps {
     readonly start: ExecutionStep
@@ -2017,55 +1987,14 @@ function runtimeServiceInitialSteps(
     return start && stop && lookup ? { start, stop, ...lookup } : undefined
 }
 
-export function createRuntimeServicePlan(input: { readonly topology: RuntimeTopologyEvidence; readonly service: string }): RuntimeServicePlan {
-    try {
-        const captured = captureOwnValues(input, ['topology', 'service'])
-        const topology = captured?.topology as RuntimeTopologyEvidence | undefined
-        const serviceId = captured?.service
-        const topologyContract = topology && typeof topology === 'object' ? issuedTopologyEvidence.get(topology) : undefined
-        const service = typeof serviceId === 'string' ? topologyContract?.services.get(serviceId) : undefined
-        if (!topology || !topologyContract || !service || typeof serviceId !== 'string' || !SERVICE_ID.test(serviceId)
-            || Date.now() < Date.parse(topologyContract.observationWindow.startedAt)
-            || Date.now() > Date.parse(topologyContract.observationWindow.expiresAt)) return unavailableRuntimeService(serviceId)
-        const issuanceId = randomBytes(32).toString('hex')
-        const steps = runtimeServiceInitialSteps(topologyContract, service, issuanceId)
-        if (!steps) return unavailableRuntimeService(serviceId)
-        const plan = { kind: 'planned' as const, service: serviceId, ...steps }
-        issuedRuntimeServicePlans.set(plan, Object.freeze({ topology, topologyContract, service }))
-        return plan
-    } catch (error) {
-        return unavailableRuntimeService('', error)
-    }
-}
-
-export function createRuntimeServiceRevalidationPlan(input: {
-    readonly topology: RuntimeTopologyEvidence
-    readonly service: string
-    readonly expectedContainerId: string
-}): RuntimeServiceRevalidationPlan {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['topology', 'service', 'expectedContainerId'])
-        const topology = captured?.topology as RuntimeTopologyEvidence | undefined
-        const serviceId = captured?.service
-        const expectedContainerId = captured?.expectedContainerId
-        if (typeof serviceId === 'string') serviceName = serviceId
-        const topologyContract = topology && typeof topology === 'object' ? issuedTopologyEvidence.get(topology) : undefined
-        const service = typeof serviceId === 'string' ? topologyContract?.services.get(serviceId) : undefined
-        const now = Date.now()
-        if (!topology || !topologyContract || !service || typeof serviceId !== 'string' || !SERVICE_ID.test(serviceId)
-            || typeof expectedContainerId !== 'string' || !CONTAINER_ID.test(expectedContainerId)
-            || now < Date.parse(topologyContract.observationWindow.startedAt)
-            || now > Date.parse(topologyContract.observationWindow.expiresAt)) return unavailable()
-        const steps = runtimeServiceLookupSteps(topologyContract, service, randomBytes(32).toString('hex'))
-        if (!steps) return unavailable()
-        const plan = { kind: 'planned' as const, service: serviceId, expectedContainerId, ...steps }
-        issuedRuntimeServiceRevalidationPlans.set(plan, Object.freeze({ topology, topologyContract, service, expectedContainerId }))
-        return plan
-    } catch (error) {
-        return unavailable(error)
-    }
+function runtimeServiceContract(topology: RuntimeTopologyEvidence, serviceId: string): RuntimeServicePlanContract | undefined {
+    const topologyContract = issuedTopologyEvidence.get(topology)
+    const service = topologyContract?.services.get(serviceId)
+    const now = Date.now()
+    return topologyContract && service && SERVICE_ID.test(serviceId)
+        && now >= Date.parse(topologyContract.observationWindow.startedAt)
+        && now <= Date.parse(topologyContract.observationWindow.expiresAt)
+        ? { topology, topologyContract, service } : undefined
 }
 
 type RuntimeServiceOutput<Value> =
@@ -2116,23 +2045,6 @@ function parseContainerIdentity(stdout: Buffer, shortId: string): string | undef
     return result.kind === 'valid' ? result.value : undefined
 }
 
-function classifyRuntimeServiceStageEvidence(
-    outcome: ExecuteProbeOutcome,
-    stage: 'start' | 'status' | 'identity',
-    projectName: string,
-    service: string,
-    shortId?: string,
-): 'clean' | 'failure' | 'unavailable' {
-    if (outcome.kind === 'refusal' || outcome.stderr.byteLength !== 0) return 'failure'
-    if (stage === 'start') return 'clean'
-    const parsed = stage === 'status'
-        ? classifyComposeStatus(outcome.stdout, projectName, service)
-        : shortId === undefined
-            ? { kind: 'malformed' as const }
-            : classifyContainerIdentity(outcome.stdout, shortId)
-    return parsed.kind === 'valid' ? 'clean' : parsed.kind === 'empty' ? 'failure' : 'unavailable'
-}
-
 type RuntimeServiceLookupObservation =
     | { readonly kind: 'missing' }
     | { readonly kind: 'present'; readonly shortId: string; readonly containerId: string }
@@ -2159,79 +2071,6 @@ function receiptWithinWindow(outcome: Extract<ExecuteProbeOutcome, { kind: 'comp
     return isCanonicalTimestamp(startedAt) && isCanonicalTimestamp(finishedAt)
         && windowStart <= receiptStart && receiptStart <= receiptEnd && receiptEnd <= now
         && receiptEnd <= windowEnd && windowStart <= now && now <= windowEnd
-}
-
-export function admitRuntimeServiceRevalidation(input: {
-    readonly plan: RuntimeServiceRevalidationPlan
-    readonly outcome: ExecuteProbeOutcome
-    readonly identityOutcome: ExecuteProbeOutcome
-}): RuntimeServiceRevalidationResult {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome', 'identityOutcome'])
-        const plan = captured?.plan as RuntimeServiceRevalidationPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        const suppliedIdentityOutcome = captured?.identityOutcome as ExecuteProbeOutcome | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServiceRevalidationPlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServiceRevalidationPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.status) : undefined
-        const identityOutcome = contract && suppliedIdentityOutcome ? authenticatedExecutionOutcome(suppliedIdentityOutcome, plan.identity) : undefined
-        const admittedStatus = admittedRuntimeServiceRevalidationStatuses.get(plan)
-        if (!contract || !outcome || !identityOutcome || admittedStatus !== suppliedOutcome) {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            admittedRuntimeServiceRevalidationStatuses.delete(plan)
-            return unavailable()
-        }
-        consumedRuntimeServiceRevalidationPlans.add(plan)
-        admittedRuntimeServiceRevalidationStatuses.delete(plan)
-        const now = Date.now()
-        if (outcome.kind !== 'complete' || identityOutcome.kind !== 'complete'
-            || outcome.stderr.byteLength !== 0 || identityOutcome.stderr.byteLength !== 0
-            || !receiptWithinWindow(outcome, contract.topologyContract.observationWindow, now)
-            || !receiptWithinWindow(identityOutcome, contract.topologyContract.observationWindow, now)
-            || Date.parse(outcome.receipt.finishedAt) > Date.parse(identityOutcome.receipt.startedAt)) return unavailable()
-        const observed = parseRuntimeServiceLookup(
-            outcome.stdout,
-            identityOutcome.stdout,
-            contract.topologyContract.runtime.projectName,
-            contract.service.id,
-        )
-        if (!observed) return unavailable()
-        if (observed.kind === 'missing' || observed.containerId !== contract.expectedContainerId) {
-            return {
-                kind: 'stale' as const,
-                service: contract.service.id,
-                expectedContainerId: contract.expectedContainerId,
-            }
-        }
-        const step = runtimeServiceInspectStep(
-            contract.topologyContract,
-            contract.service,
-            observed.containerId,
-            randomBytes(32).toString('hex'),
-            Math.min(
-                contract.topologyContract.step.timeoutMs,
-                Math.max(1, Date.parse(contract.topologyContract.observationWindow.expiresAt) - now),
-            ),
-        )
-        if (!step) return unavailable()
-        const healthPlan = { kind: 'planned' as const, service: contract.service.id, step }
-        issuedRuntimeServiceHealthPlans.set(healthPlan, Object.freeze({
-            ...contract,
-            containerId: observed.containerId,
-            identityFinishedAt: identityOutcome.receipt.finishedAt,
-        }))
-        return {
-            kind: 'planned' as const,
-            service: contract.service.id,
-            expectedContainerId: contract.expectedContainerId,
-            plan: healthPlan,
-        }
-    } catch (error) {
-        return unavailable(error)
-    }
 }
 
 // `.Id` is a key of the inspect JSON, not of Docker's typed result, so Docker runs this template on
@@ -2369,70 +2208,6 @@ export function consumeRuntimeLifecycleProjection(projection: RuntimeLifecyclePr
     }
 }
 
-export function createRuntimeServiceHealthPlan(input: {
-    readonly plan: RuntimeServicePlan
-    readonly startOutcome: ExecuteProbeOutcome
-    readonly outcome: ExecuteProbeOutcome
-    readonly identityOutcome: ExecuteProbeOutcome
-}): RuntimeServiceHealthPlan {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service health is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['plan', 'startOutcome', 'outcome', 'identityOutcome'])
-        const plan = captured?.plan as RuntimeServicePlan | undefined
-        const suppliedStartOutcome = captured?.startOutcome as ExecuteProbeOutcome | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        const suppliedIdentityOutcome = captured?.identityOutcome as ExecuteProbeOutcome | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServicePlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServicePlans.get(plan)
-        const startOutcome = contract && suppliedStartOutcome ? authenticatedExecutionOutcome(suppliedStartOutcome, plan.start) : undefined
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.status) : undefined
-        const identityOutcome = contract && suppliedIdentityOutcome ? authenticatedExecutionOutcome(suppliedIdentityOutcome, plan.identity) : undefined
-        const admittedStages = admittedRuntimeServiceStages.get(plan)
-        if (!contract || !startOutcome || !outcome || !identityOutcome) return unavailable()
-        if (!admittedStages || admittedStages.startOutcome !== suppliedStartOutcome
-            || admittedStages.statusOutcome !== suppliedOutcome
-            || admittedStages.identityOutcome !== suppliedIdentityOutcome) {
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            return unavailable()
-        }
-        consumedRuntimeServicePlans.add(plan)
-        admittedRuntimeServiceStages.delete(plan)
-        if (startOutcome.kind !== 'complete' || outcome.kind !== 'complete' || identityOutcome.kind !== 'complete'
-            || startOutcome.stderr.byteLength !== 0 || outcome.stderr.byteLength !== 0 || identityOutcome.stderr.byteLength !== 0) return unavailable()
-        const windowEnd = Date.parse(contract.topologyContract.observationWindow.expiresAt)
-        const now = Date.now()
-        if (!receiptWithinWindow(startOutcome, contract.topologyContract.observationWindow, now)
-            || !receiptWithinWindow(outcome, contract.topologyContract.observationWindow, now)
-            || !receiptWithinWindow(identityOutcome, contract.topologyContract.observationWindow, now)
-            || Date.parse(startOutcome.receipt.finishedAt) > Date.parse(outcome.receipt.startedAt)
-            || Date.parse(outcome.receipt.finishedAt) > Date.parse(identityOutcome.receipt.startedAt)) return unavailable()
-        const shortId = parseComposeStatus(outcome.stdout, contract.topologyContract.runtime.projectName, contract.service.id)
-        const containerId = shortId ? parseContainerIdentity(identityOutcome.stdout, shortId) : undefined
-        if (!shortId || !containerId) return unavailable()
-        const step = runtimeServiceInspectStep(
-            contract.topologyContract,
-            contract.service,
-            containerId,
-            randomBytes(32).toString('hex'),
-            Math.min(contract.topologyContract.step.timeoutMs, Math.max(1, windowEnd - now)),
-        )
-        if (!step) return unavailable()
-        const healthPlan = { kind: 'planned' as const, service: contract.service.id, step }
-        issuedRuntimeServiceHealthPlans.set(healthPlan, Object.freeze({
-            ...contract,
-            containerId,
-            startStartedAt: startOutcome.receipt.startedAt,
-            identityFinishedAt: identityOutcome.receipt.finishedAt,
-        }))
-        return healthPlan
-    } catch (error) {
-        return unavailable(error)
-    }
-}
-
 const CONTAINER_STATES = new Set(['created', 'running', 'restarting', 'paused', 'exited', 'dead', 'removing'])
 const CONTAINER_HEALTH = new Set(['', 'healthy', 'starting', 'unhealthy'])
 
@@ -2527,94 +2302,152 @@ function parseRuntimeServiceInspection(stdout: Buffer, contract: RuntimeServiceH
     }
 }
 
-export function admitRuntimeServiceObservation(input: {
-    readonly plan: RuntimeServiceHealthPlan
-    readonly outcome: ExecuteProbeOutcome
-}): { readonly kind: 'complete'; readonly observation: RuntimeServiceObservation } | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string } {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service observation is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = captured?.plan as RuntimeServiceHealthPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServiceHealthPlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServiceHealthPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.step) : undefined
-        if (!contract || !outcome) return unavailable()
-        consumedRuntimeServiceHealthPlans.add(plan)
-        if (outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0 || !outcome.receipt) return unavailable()
-        const observedAt = outcome.receipt.finishedAt
-        const windowStart = Date.parse(contract.topologyContract.observationWindow.startedAt)
-        const windowEnd = Date.parse(contract.topologyContract.observationWindow.expiresAt)
-        const receiptStart = Date.parse(outcome.receipt.startedAt)
-        const receiptEnd = Date.parse(observedAt)
-        const now = Date.now()
-        if (!isCanonicalTimestamp(outcome.receipt.startedAt) || !isCanonicalTimestamp(observedAt)
-            || windowStart > receiptStart || receiptStart > receiptEnd || receiptEnd > now
-            || Date.parse(contract.identityFinishedAt) > receiptStart
-            || receiptEnd > windowEnd || now < windowStart || now > windowEnd) return unavailable()
-        const value = parseRuntimeServiceInspection(outcome.stdout, contract)
-        if (!value) return unavailable()
-        const observation = {
-            stackId: contract.topologyContract.stackId,
-            configSha256: contract.topologyContract.configSha256,
-            batchId: contract.topologyContract.batchId,
-            runtimeVersion: contract.topologyContract.runtime.runtimeVersion,
-            composeVersion: contract.topologyContract.runtime.composeVersion,
-            executableSha256: contract.topologyContract.runtime.runtimeExecutable.sha256,
-            projectName: contract.topologyContract.runtime.projectName,
-            service: contract.service.id,
-            containerId: value.containerId,
-            state: value.state,
-            health: value.health,
-            observedAt,
-            observationWindow: contract.topologyContract.observationWindow,
-        }
-        issuedRuntimeServiceObservations.set(observation, Object.freeze({ ...contract, inspection: value }))
-        return { kind: 'complete', observation }
-    } catch (error) {
-        return unavailable(error)
+async function inspectRuntimeService(contract: RuntimeServiceHealthPlanContract, execute: Execute): Promise<RuntimeServiceOutcome> {
+    const window = contract.topologyContract.observationWindow
+    const step = runtimeServiceInspectStep(
+        contract.topologyContract,
+        contract.service,
+        contract.containerId,
+        randomBytes(32).toString('hex'),
+        Math.min(contract.topologyContract.step.timeoutMs, Math.max(1, Date.parse(window.expiresAt) - Date.now())),
+    )
+    if (!step) return { kind: 'failure' }
+    const outcome = await execute(step)
+    const value = outcome.kind === 'complete' && outcome.stderr.byteLength === 0
+        ? parseRuntimeServiceInspection(outcome.stdout, contract) : undefined
+    if (!value) return runtimeServiceFailure(contract, 'inspect', outcome, contract.identityFinishedAt, contract.containerId)
+    if (!receiptWithinWindow(outcome as Extract<ExecuteProbeOutcome, { kind: 'complete' }>, window, Date.now())
+        || Date.parse(contract.identityFinishedAt) > Date.parse(outcome.receipt!.startedAt)) return { kind: 'failure' }
+    const observation = {
+        stackId: contract.topologyContract.stackId,
+        configSha256: contract.topologyContract.configSha256,
+        batchId: contract.topologyContract.batchId,
+        runtimeVersion: contract.topologyContract.runtime.runtimeVersion,
+        composeVersion: contract.topologyContract.runtime.composeVersion,
+        executableSha256: contract.topologyContract.runtime.runtimeExecutable.sha256,
+        projectName: contract.topologyContract.runtime.projectName,
+        service: contract.service.id,
+        containerId: value.containerId,
+        state: value.state,
+        health: value.health,
+        observedAt: outcome.receipt!.finishedAt,
+        observationWindow: window,
     }
+    issuedRuntimeServiceObservations.set(observation, { ...contract, inspection: value })
+    return { kind: 'observed', observation }
 }
 
-export function admitRuntimeServiceHealth(input: {
-    readonly observation: RuntimeServiceObservation
-}): { readonly kind: 'complete'; readonly evidence: RuntimeServiceEvidence } | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string } {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service health is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['observation'])
-        const observation = captured?.observation as RuntimeServiceObservation | undefined
-        if (observation && typeof observation === 'object' && typeof observation.service === 'string') serviceName = observation.service
-        const contract = observation && typeof observation === 'object' ? issuedRuntimeServiceObservations.get(observation) : undefined
-        if (!contract || !observation || consumedRuntimeServiceHealthObservations.has(observation)) return unavailable()
-        consumedRuntimeServiceHealthObservations.add(observation)
-        const now = Date.now()
-        if (now < Date.parse(contract.topologyContract.observationWindow.startedAt)
-            || now > Date.parse(contract.topologyContract.observationWindow.expiresAt)
-            || observation.state !== 'running'
-            || (contract.service.healthcheck ? observation.health !== 'healthy' : observation.health !== null)) return unavailable()
-        const evidence = {
-            stackId: observation.stackId,
-            configSha256: observation.configSha256,
-            batchId: observation.batchId,
-            runtimeVersion: observation.runtimeVersion,
-            composeVersion: observation.composeVersion,
-            executableSha256: observation.executableSha256,
-            projectName: observation.projectName,
-            service: observation.service,
-            containerId: observation.containerId,
-            state: 'running' as const,
-            health: observation.health === 'healthy' ? 'healthy' as const : null,
-            observedAt: observation.observedAt,
-            observationWindow: observation.observationWindow,
-        }
-        issuedRuntimeServiceEvidence.set(evidence, contract)
-        return { kind: 'complete', evidence }
-    } catch (error) {
-        return unavailable(error)
+/** The step's failure as log evidence, or a failure without logs when its timing cannot be placed. */
+function runtimeServiceFailure(
+    contract: RuntimeServicePlanContract,
+    stage: RuntimeServiceFailureLogContext['stage'],
+    outcome: ExecuteProbeOutcome,
+    previousFinishedAt: string | undefined,
+    containerId: string | null,
+    stop?: ExecutionStep,
+): RuntimeServiceOutcome {
+    const observedAt = failedBoundaryObservedAt(outcome, contract.topologyContract.observationWindow, previousFinishedAt)
+    const context = observedAt ? runtimeServiceFailureContext(contract, stage, observedAt, containerId) : undefined
+    if (!context) return { kind: 'failure', ...stop ? { stop } : {} }
+    const logs = {} as RuntimeServiceFailureEvidence
+    issuedRuntimeServiceFailures.set(logs, context)
+    return { kind: 'failure', logs, ...stop ? { stop } : {} }
+}
+
+/**
+ * Starts one service with `up --wait`, finds its container through Compose and inspects it. Each
+ * step must finish inside the topology's observation window and after the one before it.
+ */
+export async function startRuntimeService(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly service: string
+    readonly execute: Execute
+}): Promise<RuntimeServiceOutcome> {
+    const contract = runtimeServiceContract(input.topology, input.service)
+    const steps = contract && runtimeServiceInitialSteps(contract.topologyContract, contract.service, randomBytes(32).toString('hex'))
+    if (!contract || !steps) return { kind: 'failure' }
+    const { projectName } = contract.topologyContract.runtime
+    const window = contract.topologyContract.observationWindow
+    const clean = (outcome: ExecuteProbeOutcome, after?: string): outcome is Extract<ExecuteProbeOutcome, { kind: 'complete' }> =>
+        outcome.kind === 'complete' && outcome.stderr.byteLength === 0 && receiptWithinWindow(outcome, window, Date.now())
+        && (after === undefined || Date.parse(after) <= Date.parse(outcome.receipt.startedAt))
+    const failed = (stage: 'start' | 'status' | 'identity', outcome: ExecuteProbeOutcome, after?: string) =>
+        runtimeServiceFailure(contract, stage, outcome, after, null, steps.stop)
+    const start = await input.execute(steps.start)
+    if (start.kind === 'refusal' || start.stderr.byteLength !== 0) return failed('start', start)
+    if (!clean(start)) return { kind: 'failure', stop: steps.stop }
+    const status = await input.execute(steps.status)
+    const shortId = status.kind === 'complete' && status.stderr.byteLength === 0
+        ? classifyComposeStatus(status.stdout, projectName, contract.service.id) : { kind: 'empty' as const }
+    if (shortId.kind === 'empty') return failed('status', status, start.receipt.finishedAt)
+    if (shortId.kind === 'malformed' || !clean(status, start.receipt.finishedAt)) return { kind: 'failure', stop: steps.stop }
+    const identity = await input.execute(steps.identity)
+    const containerId = identity.kind === 'complete' && identity.stderr.byteLength === 0
+        ? classifyContainerIdentity(identity.stdout, shortId.value) : { kind: 'empty' as const }
+    if (containerId.kind === 'empty') return failed('identity', identity, status.receipt.finishedAt)
+    if (containerId.kind === 'malformed' || !clean(identity, status.receipt.finishedAt)) return { kind: 'failure', stop: steps.stop }
+    const inspected = await inspectRuntimeService({
+        ...contract, containerId: containerId.value,
+        startStartedAt: start.receipt.startedAt, identityFinishedAt: identity.receipt.finishedAt,
+    }, input.execute)
+    return inspected.kind === 'stale' ? inspected : { ...inspected, stop: steps.stop }
+}
+
+/**
+ * Re-reads a service an earlier run started: stale when Compose no longer has the recorded
+ * container, otherwise the container's current inspection.
+ */
+export async function revalidateRuntimeService(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly service: string
+    readonly expectedContainerId: string
+    readonly execute: Execute
+}): Promise<RuntimeServiceOutcome> {
+    const contract = runtimeServiceContract(input.topology, input.service)
+    const steps = contract && CONTAINER_ID.test(input.expectedContainerId)
+        ? runtimeServiceLookupSteps(contract.topologyContract, contract.service, randomBytes(32).toString('hex')) : undefined
+    if (!contract || !steps) return { kind: 'failure' }
+    const { projectName } = contract.topologyContract.runtime
+    const window = contract.topologyContract.observationWindow
+    const status = await input.execute(steps.status)
+    if (status.kind !== 'complete' || status.stderr.byteLength !== 0 || !receiptWithinWindow(status, window, Date.now())) return { kind: 'failure' }
+    const shortId = classifyComposeStatus(status.stdout, projectName, contract.service.id)
+    if (shortId.kind === 'malformed') return { kind: 'failure' }
+    if (shortId.kind === 'empty' || !input.expectedContainerId.startsWith(shortId.value)) return { kind: 'stale' }
+    const identity = await input.execute(steps.identity)
+    if (identity.kind !== 'complete' || identity.stderr.byteLength !== 0 || !receiptWithinWindow(identity, window, Date.now())
+        || Date.parse(status.receipt.finishedAt) > Date.parse(identity.receipt.startedAt)) return { kind: 'failure' }
+    const observed = parseRuntimeServiceLookup(status.stdout, identity.stdout, projectName, contract.service.id)
+    if (!observed) return { kind: 'failure' }
+    if (observed.kind === 'missing' || observed.containerId !== input.expectedContainerId) return { kind: 'stale' }
+    return inspectRuntimeService({ ...contract, containerId: observed.containerId, identityFinishedAt: identity.receipt.finishedAt }, input.execute)
+}
+
+/** The observation as healthy-service evidence, or undefined when the service is not running healthy. */
+export function admitRuntimeServiceHealth(observation: RuntimeServiceObservation): RuntimeServiceEvidence | undefined {
+    const contract = issuedRuntimeServiceObservations.get(observation)
+    const now = Date.now()
+    if (!contract || now < Date.parse(contract.topologyContract.observationWindow.startedAt)
+        || now > Date.parse(contract.topologyContract.observationWindow.expiresAt)
+        || observation.state !== 'running'
+        || (contract.service.healthcheck ? observation.health !== 'healthy' : observation.health !== null)) return undefined
+    const evidence = {
+        stackId: observation.stackId,
+        configSha256: observation.configSha256,
+        batchId: observation.batchId,
+        runtimeVersion: observation.runtimeVersion,
+        composeVersion: observation.composeVersion,
+        executableSha256: observation.executableSha256,
+        projectName: observation.projectName,
+        service: observation.service,
+        containerId: observation.containerId,
+        state: 'running' as const,
+        health: observation.health === 'healthy' ? 'healthy' as const : null,
+        observedAt: observation.observedAt,
+        observationWindow: observation.observationWindow,
     }
+    issuedRuntimeServiceEvidence.set(evidence, contract)
+    return evidence
 }
 
 export function isRuntimeServiceEvidence(value: unknown): value is RuntimeServiceEvidence {
@@ -2917,20 +2750,6 @@ export interface RuntimeServiceFailureLogContext {
     readonly filesystemChecks: ExecutionStep['filesystemChecks']
 }
 
-type RuntimeServiceFailureResult =
-    | { readonly kind: 'complete'; readonly evidence: RuntimeServiceFailureEvidence }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
-export type RuntimeServiceStageOutcomeAdmission =
-    | { readonly kind: 'admitted'; readonly service: string }
-    | { readonly kind: 'failure'; readonly service: string; readonly evidence: RuntimeServiceFailureEvidence }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
-export type RuntimeServiceRevalidationStatusAdmission =
-    | { readonly kind: 'admitted'; readonly service: string; readonly expectedContainerId: string }
-    | { readonly kind: 'stale'; readonly service: string; readonly expectedContainerId: string }
-    | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
-
 function runtimeServiceFailureContext(
     contract: RuntimeServicePlanContract,
     stage: RuntimeServiceFailureLogContext['stage'],
@@ -2987,305 +2806,6 @@ function failedBoundaryObservedAt(
         || Date.parse(finishedAt) > now || Date.parse(finishedAt) > windowEnd
         || previousFinishedAt && Date.parse(previousFinishedAt) > Date.parse(startedAt)) return undefined
     return finishedAt
-}
-
-function issueRuntimeServiceFailure(context: RuntimeServiceFailureLogContext): RuntimeServiceFailureResult {
-    const evidence = {} as RuntimeServiceFailureEvidence
-    issuedRuntimeServiceFailures.set(evidence, context)
-    return { kind: 'complete', evidence }
-}
-
-export function admitRuntimeServiceStageOutcome(input: {
-    readonly plan: RuntimeServicePlan
-    readonly stage: 'start' | 'status' | 'identity'
-    readonly outcome: ExecuteProbeOutcome
-    readonly startOutcome?: ExecuteProbeOutcome
-    readonly statusOutcome?: ExecuteProbeOutcome
-}): RuntimeServiceStageOutcomeAdmission {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service stage evidence is unavailable', error) })
-    try {
-        const planDescriptor = input !== null && typeof input === 'object'
-            ? Object.getOwnPropertyDescriptor(input, 'plan')
-            : undefined
-        const suppliedPlan = planDescriptor && 'value' in planDescriptor
-            ? planDescriptor.value as RuntimeServicePlan
-            : undefined
-        if (suppliedPlan && typeof suppliedPlan === 'object' && typeof suppliedPlan.service === 'string') serviceName = suppliedPlan.service
-        const stage = input !== null && typeof input === 'object'
-            ? Object.getOwnPropertyDescriptor(input, 'stage')?.value as unknown
-            : undefined
-        if (stage !== 'start' && stage !== 'status' && stage !== 'identity') {
-            if (suppliedPlan?.kind === 'planned' && issuedRuntimeServicePlans.has(suppliedPlan)) consumedRuntimeServicePlans.add(suppliedPlan)
-            return unavailable()
-        }
-        const keys = stage === 'start' ? ['plan', 'stage', 'outcome']
-            : stage === 'status' ? ['plan', 'stage', 'outcome', 'startOutcome']
-                : ['plan', 'stage', 'outcome', 'startOutcome', 'statusOutcome']
-        const captured = captureOwnValues(input, keys)
-        const plan = (captured?.plan ?? suppliedPlan) as RuntimeServicePlan | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServicePlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServicePlans.get(plan)
-        if (!contract) return unavailable()
-        if (!captured) {
-            consumedRuntimeServicePlans.add(plan)
-            return unavailable()
-        }
-        const progress = admittedRuntimeServiceStages.get(plan)
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        const step = stage === 'start' ? plan.start : stage === 'status' ? plan.status : plan.identity
-        const outcome = suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, step) : undefined
-        const suppliedStart = captured?.startOutcome as ExecuteProbeOutcome | undefined
-        const suppliedStatus = captured?.statusOutcome as ExecuteProbeOutcome | undefined
-        const start = stage === 'start' ? undefined
-            : suppliedStart ? authenticatedExecutionOutcome(suppliedStart, plan.start) : undefined
-        const status = stage === 'identity' && suppliedStatus
-            ? authenticatedExecutionOutcome(suppliedStatus, plan.status)
-            : undefined
-        const stageExpected = stage === 'start' ? progress === undefined
-            : stage === 'status'
-                ? progress !== undefined && progress.startOutcome === suppliedStart && progress.statusOutcome === undefined
-                : progress !== undefined && progress.startOutcome === suppliedStart && progress.statusOutcome === suppliedStatus
-        if (!outcome || !stageExpected
-            || stage !== 'start' && (!start || start.kind !== 'complete' || start.stderr.byteLength !== 0)
-            || stage === 'identity' && (!status || status.kind !== 'complete' || status.stderr.byteLength !== 0)) {
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            return unavailable()
-        }
-        const admittedStart = start?.kind === 'complete' ? start : undefined
-        const admittedStatus = status?.kind === 'complete' ? status : undefined
-        const now = Date.now()
-        const window = contract.topologyContract.observationWindow
-        if (stage !== 'start' && admittedStart && !receiptWithinWindow(admittedStart, window, now)
-            || stage === 'identity' && admittedStatus && (!receiptWithinWindow(admittedStatus, window, now)
-                || admittedStart && Date.parse(admittedStart.receipt.finishedAt) > Date.parse(admittedStatus.receipt.startedAt))) {
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            return unavailable()
-        }
-        const priorStatus = stage === 'identity' && admittedStatus
-            ? classifyComposeStatus(admittedStatus.stdout, contract.topologyContract.runtime.projectName, contract.service.id)
-            : undefined
-        if (priorStatus && priorStatus.kind !== 'valid') {
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            return unavailable()
-        }
-        const disposition = classifyRuntimeServiceStageEvidence(
-            outcome,
-            stage,
-            contract.topologyContract.runtime.projectName,
-            contract.service.id,
-            priorStatus?.kind === 'valid' ? priorStatus.value : undefined,
-        )
-        if (disposition === 'unavailable') {
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            return unavailable()
-        }
-        if (disposition === 'failure') {
-            const previousFinishedAt = stage === 'start' ? undefined
-                : stage === 'status' ? admittedStart?.receipt.finishedAt
-                    : admittedStatus?.receipt.finishedAt
-            const observedAt = failedBoundaryObservedAt(outcome, window, previousFinishedAt)
-            const context = observedAt ? runtimeServiceFailureContext(contract, stage, observedAt, null) : undefined
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            if (!context) return unavailable()
-            const failure = issueRuntimeServiceFailure(context)
-            return failure.kind === 'complete'
-                ? { kind: 'failure' as const, service: contract.service.id, evidence: failure.evidence }
-                : unavailable()
-        }
-        if (outcome.kind !== 'complete' || !receiptWithinWindow(outcome, window, now)
-            || stage === 'status' && admittedStart && Date.parse(admittedStart.receipt.finishedAt) > Date.parse(outcome.receipt.startedAt)
-            || stage === 'identity' && admittedStatus && Date.parse(admittedStatus.receipt.finishedAt) > Date.parse(outcome.receipt.startedAt)) {
-            consumedRuntimeServicePlans.add(plan)
-            admittedRuntimeServiceStages.delete(plan)
-            return unavailable()
-        }
-        admittedRuntimeServiceStages.set(plan, stage === 'start'
-            ? Object.freeze({ startOutcome: suppliedOutcome as object })
-            : stage === 'status'
-                ? Object.freeze({ startOutcome: suppliedStart as object, statusOutcome: suppliedOutcome as object })
-                : Object.freeze({ ...progress!, identityOutcome: suppliedOutcome as object }))
-        return { kind: 'admitted' as const, service: contract.service.id }
-    } catch (error) {
-        return unavailable(error)
-    }
-}
-
-export function admitRuntimeServiceRevalidationStatus(input: {
-    readonly plan: RuntimeServiceRevalidationPlan
-    readonly outcome: ExecuteProbeOutcome
-}): RuntimeServiceRevalidationStatusAdmission {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service revalidation status is unavailable', error) })
-    try {
-        const planDescriptor = input !== null && typeof input === 'object'
-            ? Object.getOwnPropertyDescriptor(input, 'plan')
-            : undefined
-        const suppliedPlan = planDescriptor && 'value' in planDescriptor
-            ? planDescriptor.value as RuntimeServiceRevalidationPlan
-            : undefined
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = (captured?.plan ?? suppliedPlan) as RuntimeServiceRevalidationPlan | undefined
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServiceRevalidationPlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServiceRevalidationPlans.get(plan)
-        if (!contract) return unavailable()
-        if (admittedRuntimeServiceRevalidationStatuses.has(plan)) {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            admittedRuntimeServiceRevalidationStatuses.delete(plan)
-            return unavailable()
-        }
-        if (!captured) {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            return unavailable()
-        }
-        const outcome = suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.status) : undefined
-        const now = Date.now()
-        if (!outcome || outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0
-            || !receiptWithinWindow(outcome, contract.topologyContract.observationWindow, now)) {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            return unavailable()
-        }
-        const status = classifyComposeStatus(outcome.stdout, contract.topologyContract.runtime.projectName, contract.service.id)
-        if (status.kind === 'empty') {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            return { kind: 'stale' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId }
-        }
-        if (status.kind === 'malformed') {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            return unavailable()
-        }
-        if (!contract.expectedContainerId.startsWith(status.value)) {
-            consumedRuntimeServiceRevalidationPlans.add(plan)
-            return { kind: 'stale' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId }
-        }
-        admittedRuntimeServiceRevalidationStatuses.set(plan, suppliedOutcome as object)
-        return { kind: 'admitted' as const, service: contract.service.id, expectedContainerId: contract.expectedContainerId }
-    } catch (error) {
-        return unavailable(error)
-    }
-}
-
-export function admitRuntimeServicePlanFailure(input: {
-    readonly plan: RuntimeServicePlan
-    readonly stage: 'start' | 'status' | 'identity'
-    readonly outcome: ExecuteProbeOutcome
-    readonly startOutcome?: ExecuteProbeOutcome
-    readonly statusOutcome?: ExecuteProbeOutcome
-}): RuntimeServiceFailureResult {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service failure evidence is unavailable', error) })
-    try {
-        const planDescriptor = input !== null && typeof input === 'object'
-            ? Object.getOwnPropertyDescriptor(input, 'plan')
-            : undefined
-        const suppliedPlan = planDescriptor && 'value' in planDescriptor
-            ? planDescriptor.value as RuntimeServicePlan
-            : undefined
-        if (suppliedPlan && typeof suppliedPlan === 'object' && typeof suppliedPlan.service === 'string') serviceName = suppliedPlan.service
-        const stage = input !== null && typeof input === 'object'
-            ? Object.getOwnPropertyDescriptor(input, 'stage')?.value as unknown
-            : undefined
-        if (stage !== 'start' && stage !== 'status' && stage !== 'identity') {
-            if (suppliedPlan?.kind === 'planned' && issuedRuntimeServicePlans.has(suppliedPlan)) consumedRuntimeServicePlans.add(suppliedPlan)
-            return unavailable()
-        }
-        const keys = stage === 'start' ? ['plan', 'stage', 'outcome']
-            : stage === 'status' ? ['plan', 'stage', 'outcome', 'startOutcome']
-                : ['plan', 'stage', 'outcome', 'startOutcome', 'statusOutcome']
-        const captured = captureOwnValues(input, keys)
-        const plan = (captured?.plan ?? suppliedPlan) as RuntimeServicePlan | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServicePlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServicePlans.get(plan)
-        if (!contract) return unavailable()
-        if (!captured) {
-            consumedRuntimeServicePlans.add(plan)
-            return unavailable()
-        }
-        const failedStep = stage === 'start' ? plan.start : stage === 'status' ? plan.status : stage === 'identity' ? plan.identity : undefined
-        const suppliedFailure = captured?.outcome as ExecuteProbeOutcome | undefined
-        const failure = failedStep && suppliedFailure ? authenticatedExecutionOutcome(suppliedFailure, failedStep) : undefined
-        if (!failure) return unavailable()
-        const now = Date.now()
-        const window = contract.topologyContract.observationWindow
-        let previousFinishedAt: string | undefined
-        let shortId: string | undefined
-        if (stage === 'status' || stage === 'identity') {
-            const suppliedStart = captured?.startOutcome as ExecuteProbeOutcome | undefined
-            const start = suppliedStart ? authenticatedExecutionOutcome(suppliedStart, plan.start) : undefined
-            if (!start || start.kind !== 'complete' || start.stderr.byteLength !== 0 || !receiptWithinWindow(start, window, now)) return unavailable()
-            previousFinishedAt = start.receipt.finishedAt
-        }
-        if (stage === 'identity') {
-            const suppliedStatus = captured?.statusOutcome as ExecuteProbeOutcome | undefined
-            const status = suppliedStatus ? authenticatedExecutionOutcome(suppliedStatus, plan.status) : undefined
-            const statusValue = status?.kind === 'complete' && status.stderr.byteLength === 0
-                ? classifyComposeStatus(status.stdout, contract.topologyContract.runtime.projectName, contract.service.id)
-                : undefined
-            if (!status || status.kind !== 'complete' || status.stderr.byteLength !== 0 || !receiptWithinWindow(status, window, now)
-                || previousFinishedAt && Date.parse(previousFinishedAt) > Date.parse(status.receipt.startedAt)
-                || statusValue?.kind !== 'valid') return unavailable()
-            shortId = statusValue.value
-            previousFinishedAt = status.receipt.finishedAt
-        }
-        const disposition = classifyRuntimeServiceStageEvidence(
-            failure,
-            stage,
-            contract.topologyContract.runtime.projectName,
-            contract.service.id,
-            shortId,
-        )
-        if (disposition === 'clean') return unavailable()
-        if (disposition === 'unavailable') {
-            consumedRuntimeServicePlans.add(plan)
-            return unavailable()
-        }
-        const observedAt = failedBoundaryObservedAt(failure, window, previousFinishedAt)
-        if (!observedAt) return unavailable()
-        const context = runtimeServiceFailureContext(contract, stage, observedAt, null)
-        if (!context) return unavailable()
-        consumedRuntimeServicePlans.add(plan)
-        return issueRuntimeServiceFailure(context)
-    } catch (error) {
-        return unavailable(error)
-    }
-}
-
-export function admitRuntimeServiceInspectFailure(input: {
-    readonly plan: RuntimeServiceHealthPlan
-    readonly outcome: ExecuteProbeOutcome
-}): RuntimeServiceFailureResult {
-    let serviceName = ''
-    const unavailable = (error?: unknown) => ({ kind: 'unavailable' as const, service: serviceName, reason: unavailableReason('runtime service failure evidence is unavailable', error) })
-    try {
-        const captured = captureOwnValues(input, ['plan', 'outcome'])
-        const plan = captured?.plan as RuntimeServiceHealthPlan | undefined
-        if (plan && typeof plan === 'object' && typeof plan.service === 'string') serviceName = plan.service
-        if (!plan || plan.kind !== 'planned' || consumedRuntimeServiceHealthPlans.has(plan)) return unavailable()
-        const contract = issuedRuntimeServiceHealthPlans.get(plan)
-        const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, plan.step) : undefined
-        if (!contract || !outcome) return unavailable()
-        const semanticFailure = outcome.kind === 'refusal' || outcome.stderr.byteLength !== 0
-            || !parseRuntimeServiceInspection(outcome.stdout, contract)
-        if (!semanticFailure) return unavailable()
-        const observedAt = failedBoundaryObservedAt(outcome, contract.topologyContract.observationWindow, contract.identityFinishedAt)
-        if (!observedAt) return unavailable()
-        const context = runtimeServiceFailureContext(contract, 'inspect', observedAt, contract.containerId)
-        if (!context) return unavailable()
-        consumedRuntimeServiceHealthPlans.add(plan)
-        return issueRuntimeServiceFailure(context)
-    } catch (error) {
-        return unavailable(error)
-    }
 }
 
 export function consumeRuntimeServiceFailureForLogs(evidence: RuntimeServiceFailureEvidence): RuntimeServiceFailureLogContext | undefined {

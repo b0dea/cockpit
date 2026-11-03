@@ -13,7 +13,7 @@ const executionFence = (id: string) => {
 }
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp' | 'planSleep'>>,
-    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'admitRuntimeServiceInspectFailure' | 'admitRuntimeServiceObservation' | 'admitRuntimeServiceRevalidation' | 'admitRuntimeServiceRevalidationStatus' | 'admitRuntimeServiceStageOutcome' | 'createRuntimeServiceHealthPlan' | 'createRuntimeServicePlan' | 'createRuntimeServiceRevalidationPlan' | 'stopRuntime' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder'>>,
+    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder' | 'revalidateRuntimeService' | 'startRuntimeService' | 'stopRuntime'>>,
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'admitFailureLogs' | 'planFailureLogs'>>,
     claims: {} as Partial<Pick<typeof import('./claims.js'), 'finalizeDrainOutcome' | 'inspectSleepDrainRecovery' | 'prepareDrainOutcomePublication' | 'recoverSleepDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder' | 'deriveEntrypoints' | 'observeRetainedPortFamily' | 'projectRetainedPortFamilyResult' | 'releasePortFamily'>>,
@@ -33,15 +33,9 @@ vi.mock('./runtime.js', async (importOriginal) => {
     return {
         ...actual,
         admitRuntimeServiceHealth: (...args: Parameters<typeof actual.admitRuntimeServiceHealth>) => applicationOwners.runtime.admitRuntimeServiceHealth?.(...args) ?? actual.admitRuntimeServiceHealth(...args),
-        admitRuntimeServiceInspectFailure: (...args: Parameters<typeof actual.admitRuntimeServiceInspectFailure>) => applicationOwners.runtime.admitRuntimeServiceInspectFailure?.(...args) ?? actual.admitRuntimeServiceInspectFailure(...args),
-        admitRuntimeServiceObservation: (...args: Parameters<typeof actual.admitRuntimeServiceObservation>) => applicationOwners.runtime.admitRuntimeServiceObservation?.(...args) ?? actual.admitRuntimeServiceObservation(...args),
-        admitRuntimeServiceRevalidation: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidation>) => applicationOwners.runtime.admitRuntimeServiceRevalidation?.(...args) ?? actual.admitRuntimeServiceRevalidation(...args),
-        admitRuntimeServiceRevalidationStatus: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidationStatus>) => applicationOwners.runtime.admitRuntimeServiceRevalidationStatus?.(...args) ?? actual.admitRuntimeServiceRevalidationStatus(...args),
-        admitRuntimeServiceStageOutcome: (...args: Parameters<typeof actual.admitRuntimeServiceStageOutcome>) => applicationOwners.runtime.admitRuntimeServiceStageOutcome?.(...args) ?? actual.admitRuntimeServiceStageOutcome(...args),
+        revalidateRuntimeService: (...args: Parameters<typeof actual.revalidateRuntimeService>) => applicationOwners.runtime.revalidateRuntimeService?.(...args) ?? actual.revalidateRuntimeService(...args),
+        startRuntimeService: (...args: Parameters<typeof actual.startRuntimeService>) => applicationOwners.runtime.startRuntimeService?.(...args) ?? actual.startRuntimeService(...args),
         stopRuntime: (...args: Parameters<typeof actual.stopRuntime>) => applicationOwners.runtime.stopRuntime?.(...args) ?? actual.stopRuntime(...args),
-        createRuntimeServiceHealthPlan: (...args: Parameters<typeof actual.createRuntimeServiceHealthPlan>) => applicationOwners.runtime.createRuntimeServiceHealthPlan?.(...args) ?? actual.createRuntimeServiceHealthPlan(...args),
-        createRuntimeServicePlan: (...args: Parameters<typeof actual.createRuntimeServicePlan>) => applicationOwners.runtime.createRuntimeServicePlan?.(...args) ?? actual.createRuntimeServicePlan(...args),
-        createRuntimeServiceRevalidationPlan: (...args: Parameters<typeof actual.createRuntimeServiceRevalidationPlan>) => applicationOwners.runtime.createRuntimeServiceRevalidationPlan?.(...args) ?? actual.createRuntimeServiceRevalidationPlan(...args),
         observeRuntimeServiceColdStart: (...args: Parameters<typeof actual.observeRuntimeServiceColdStart>) => applicationOwners.runtime.observeRuntimeServiceColdStart?.(...args) ?? actual.observeRuntimeServiceColdStart(...args),
         resolveRuntimeServiceOrder: (...args: Parameters<typeof actual.resolveRuntimeServiceOrder>) => applicationOwners.runtime.resolveRuntimeServiceOrder?.(...args) ?? actual.resolveRuntimeServiceOrder(...args),
     }
@@ -216,10 +210,10 @@ describe('lifecycle application contracts', () => {
         }))
         const topology = Object.freeze({ services: Object.freeze([{ id: 'api' }]) })
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
-        applicationOwners.runtime.createRuntimeServiceRevalidationPlan = () => ({
-            kind: 'planned', status: { id: 'api:status' }, identity: { id: 'api:identity' },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceRevalidationStatus = () => ({ kind: 'stale' } as never)
+        applicationOwners.runtime.revalidateRuntimeService = async ({ execute }) => {
+            await execute({ id: 'api:status' } as never)
+            return { kind: 'stale' } as never
+        }
         const readinessCounts = { runtime: 0, stage: 0, ports: 0 }
         const executed: string[] = []
 
@@ -397,22 +391,16 @@ describe('lifecycle application contracts', () => {
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
             portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
         } as never)
-        applicationOwners.runtime.createRuntimeServiceRevalidationPlan = () => {
+        applicationOwners.runtime.revalidateRuntimeService = async () => {
             events.push('revalidate')
-            return { kind: 'unavailable' } as never
+            return { kind: 'failure' } as never
         }
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({
-            kind: 'planned', service: 'api',
-            start: { id: 'start' }, status: { id: 'status' }, identity: { id: 'identity' },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => ({ kind: 'admitted' } as never)
-        applicationOwners.runtime.createRuntimeServiceHealthPlan = () => ({ kind: 'planned', service: 'api', step: { id: 'inspect' } } as never)
-        applicationOwners.runtime.admitRuntimeServiceInspectFailure = () => ({ kind: 'unavailable' } as never)
-        applicationOwners.runtime.admitRuntimeServiceObservation = () => ({
-            kind: 'complete', observation: { service: 'api', containerId: 'e'.repeat(64) },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceHealth = ({ observation }) => ({ kind: 'complete', evidence: observation } as never)
+        applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
+            for (const id of ['start', 'status', 'identity', 'inspect']) await execute({ id } as never)
+            return { kind: 'observed', observation: { service: 'api', containerId: 'e'.repeat(64) } } as never
+        }
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => observation as never
         stubColdStart(context.stackId)
 
         await runUp({ configPath }, {
@@ -531,36 +519,18 @@ describe('lifecycle application contracts', () => {
             portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
         } as never)
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api', 'web']
-        applicationOwners.runtime.createRuntimeServiceRevalidationPlan = () => {
+        applicationOwners.runtime.revalidateRuntimeService = async ({ execute }) => {
             events.push('revalidate')
-            return { kind: 'planned', status: { id: 'api:status' }, identity: { id: 'api:identity' } } as never
+            for (const id of ['api:status', 'api:identity', 'api:inspect']) await execute({ id } as never)
+            return { kind: 'observed', observation: { service: 'api', containerId: completedContainerId } } as never
         }
-        applicationOwners.runtime.admitRuntimeServiceRevalidationStatus = () => {
-            executed.push('api:status-admitted')
-            return { kind: 'admitted' } as never
+        applicationOwners.runtime.startRuntimeService = async ({ service, execute }) => {
+            for (const stage of ['start', 'status', 'identity', 'inspect']) await execute({ id: `${service}:${stage}` } as never)
+            return { kind: 'observed', observation: { service, containerId: 'd'.repeat(64) } } as never
         }
-        applicationOwners.runtime.admitRuntimeServiceRevalidation = () => ({
-            kind: 'planned', plan: { kind: 'planned', service: 'api', step: { id: 'api:inspect' } },
-        } as never)
-        applicationOwners.runtime.createRuntimeServicePlan = ({ service }) => ({
-            kind: 'planned', service,
-            start: { id: `${service}:start` }, status: { id: `${service}:status` }, identity: { id: `${service}:identity` },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => ({ kind: 'admitted' } as never)
-        applicationOwners.runtime.createRuntimeServiceHealthPlan = ({ plan: servicePlan }) => ({
-            kind: 'planned', service: servicePlan.service, step: { id: `${servicePlan.service}:inspect` },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceInspectFailure = () => ({ kind: 'unavailable' } as never)
-        applicationOwners.runtime.admitRuntimeServiceObservation = ({ plan: healthPlan }) => ({
-            kind: 'complete',
-            observation: {
-                service: healthPlan.service,
-                containerId: healthPlan.service === 'api' ? completedContainerId : 'd'.repeat(64),
-            },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceHealth = ({ observation }) => {
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => {
             if (observation.service === 'api') revalidated = observation
-            return { kind: 'complete', evidence: observation } as never
+            return observation as never
         }
         stubColdStart(context.stackId)
         const executed: string[] = []
@@ -596,7 +566,7 @@ describe('lifecycle application contracts', () => {
         expect(readinessCounts).toEqual({ runtime: 1, stage: 1, ports: 1 })
         expect(result).toMatchObject({ kind: 'complete', result: { change: 'resumed' } })
         expect(executed).toEqual([
-            'api:status', 'api:status-admitted', 'api:identity', 'api:inspect',
+            'api:status', 'api:identity', 'api:inspect',
             'web:start', 'web:status', 'web:identity', 'web:inspect',
         ])
     })
@@ -623,8 +593,10 @@ describe('lifecycle application contracts', () => {
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
             portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
         } as never)
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({ kind: 'planned', ...servicePlan } as never)
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => ({ kind: 'failure', evidence: failureEvidence } as never)
+        applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
+            await execute(servicePlan.start as never)
+            return { kind: 'failure', logs: failureEvidence } as never
+        }
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
         applicationOwners.logs.planFailureLogs = () => logPlan as never
         applicationOwners.logs.admitFailureLogs = () => ({ kind: 'unavailable', code: 'EXECUTION_TIMEOUT', service: 'api', records: [] }) as never
@@ -668,9 +640,10 @@ describe('lifecycle application contracts', () => {
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
             portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
         } as never)
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({ kind: 'planned', service: 'api',
-            start: { id: 'start' }, stop: { id: 'stop' } } as never)
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => ({ kind: 'failure', evidence: { service: 'api' } } as never)
+        applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
+            await execute({ id: 'start' } as never)
+            return { kind: 'failure', logs: { service: 'api' }, stop: { id: 'stop' } } as never
+        }
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
         applicationOwners.logs.planFailureLogs = () => ({ kind: 'planned', step: { id: 'logs' } } as never)
         const records = Array.from({ length: 69 }, (_, index) => ({ service: 'api',
@@ -755,20 +728,16 @@ describe('lifecycle application contracts', () => {
             portOwnership: { holderId: firstContext.holderId }, drainRequest: null, reclaim: null,
         } as never)
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({
-            kind: 'planned', service: 'api',
-            start: { id: 'start' }, status: { id: 'status' }, identity: { id: 'identity' },
-        } as never)
         let failing = true
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => failing
-            ? ({ kind: 'failure', evidence: { service: 'api' } } as never)
-            : ({ kind: 'admitted' } as never)
-        applicationOwners.runtime.createRuntimeServiceHealthPlan = () => ({ kind: 'planned', service: 'api', step: { id: 'inspect' } } as never)
-        applicationOwners.runtime.admitRuntimeServiceInspectFailure = () => ({ kind: 'unavailable' } as never)
-        applicationOwners.runtime.admitRuntimeServiceObservation = () => ({
-            kind: 'complete', observation: { service: 'api', containerId: 'e'.repeat(64) },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceHealth = ({ observation }) => ({ kind: 'complete', evidence: observation } as never)
+        applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
+            if (failing) {
+                await execute({ id: 'start' } as never)
+                return { kind: 'failure', logs: { service: 'api' } } as never
+            }
+            for (const id of ['start', 'status', 'identity', 'inspect']) await execute({ id } as never)
+            return { kind: 'observed', observation: { service: 'api', containerId: 'e'.repeat(64) } } as never
+        }
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => observation as never
         stubColdStart(firstContext.stackId)
         applicationOwners.logs.planFailureLogs = () => ({ kind: 'unavailable', code: 'LOG_EVIDENCE_INVALID', service: 'api' } as never)
         const compensate = vi.fn(async ({ leaseResult }) => {

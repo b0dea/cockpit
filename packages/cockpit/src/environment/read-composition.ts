@@ -16,10 +16,7 @@ import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type 
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
-    admitRuntimeServiceObservation,
-    admitRuntimeServiceRevalidation,
-    admitRuntimeServiceRevalidationStatus,
-    createRuntimeServiceRevalidationPlan,
+    revalidateRuntimeService,
     type ComposeArtifact,
     type RuntimeServiceEvidence,
     type RuntimeTopologyEvidence,
@@ -195,20 +192,11 @@ async function authenticateService(
     execute: Executor,
     signal?: AbortSignal,
 ): Promise<RuntimeServiceEvidence | undefined> {
-    const plan = createRuntimeServiceRevalidationPlan({ topology, service, expectedContainerId: containerId })
-    if (plan.kind !== 'planned') return undefined
-    const status = await execute(plan.status, signal ? { signal } : undefined)
-    if (admitRuntimeServiceRevalidationStatus({ plan, outcome: status }).kind !== 'admitted') return undefined
-    const identity = await execute(plan.identity, signal ? { signal } : undefined)
-    const revalidated = admitRuntimeServiceRevalidation({ plan, outcome: status, identityOutcome: identity })
-    if (revalidated.kind !== 'planned') return undefined
-    const inspected = admitRuntimeServiceObservation({
-        plan: revalidated.plan,
-        outcome: await execute(revalidated.plan.step, signal ? { signal } : undefined),
+    const revalidated = await revalidateRuntimeService({
+        topology, service, expectedContainerId: containerId,
+        execute: (step) => execute(step, signal ? { signal } : undefined),
     })
-    if (inspected.kind !== 'complete') return undefined
-    const healthy = admitRuntimeServiceHealth({ observation: inspected.observation })
-    return healthy.kind === 'complete' ? healthy.evidence : undefined
+    return revalidated.kind === 'observed' ? admitRuntimeServiceHealth(revalidated.observation) : undefined
 }
 
 function exactCompletedTopology(context: StableReadContext): boolean {

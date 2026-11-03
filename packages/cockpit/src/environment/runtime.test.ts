@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join, normalize } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { parse } from 'smol-toml'
-import { executeProbe } from '../environment-exec/execute.js'
+import { executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { CockpitConfig } from '../schema.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { cockpitId, checkoutId, stackId } from './identity.js'
@@ -18,20 +18,15 @@ import {
     collectMachineFloorEvidence,
     createRuntimeAdapter,
     admitRuntimeServiceHealth,
-    admitRuntimeServiceInspectFailure,
-    admitRuntimeServiceObservation,
-    admitRuntimeServicePlanFailure,
-    admitRuntimeServiceRevalidation,
-    admitRuntimeServiceRevalidationStatus,
-    admitRuntimeServiceStageOutcome,
     admitRuntimeTopology,
     admitRuntimeMeasurement,
     runtimeIdentity,
-    createRuntimeServiceHealthPlan,
-    createRuntimeServicePlan,
-    createRuntimeServiceRevalidationPlan,
     createRuntimeTopologyPlan,
     stopRuntime,
+    startRuntimeService,
+    revalidateRuntimeService,
+    type RuntimeServiceOutcome,
+    type RuntimeTopologyEvidence,
     isRuntimeServiceEvidence,
     isRuntimeObservation,
     isRuntimeTopologyEvidence,
@@ -61,22 +56,6 @@ const sha = (value: string | Buffer) => createHash('sha256').update(value).diges
 const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
     ({ kind: 'read', path: '/synthetic/state/machine/runtime-measurements.json', rows })
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
-
-async function admitCleanStartup(plan: Extract<ReturnType<typeof createRuntimeServicePlan>, { kind: 'planned' }>) {
-    const startOutcome = await executeProbe(plan.start)
-    if (admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind !== 'admitted') {
-        throw new Error('start admission fixture failed')
-    }
-    const outcome = await executeProbe(plan.status)
-    if (admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome, startOutcome }).kind !== 'admitted') {
-        throw new Error('status admission fixture failed')
-    }
-    const identityOutcome = await executeProbe(plan.identity)
-    if (admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome: outcome }).kind !== 'admitted') {
-        throw new Error('identity admission fixture failed')
-    }
-    return { startOutcome, outcome, identityOutcome }
-}
 
 const executableSha = sha('synthetic executable')
 const artifact = (reference: string, source = 'services: {}\n') => ({
@@ -1130,6 +1109,54 @@ fi
         return { steps, execute: async (step: ExecutionStep) => { steps.push(step); return executeProbe(step) } }
     }
 
+
+    const running = (controls: Record<string, unknown> = {}) => ({
+        ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
+    })
+
+    async function admittedTopology(...args: Parameters<typeof topologyEvidence>): Promise<RuntimeTopologyEvidence> {
+        const result = await topologyEvidence(...args)
+        if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
+        return result.admitted.topology
+    }
+
+    type Alter = (step: ExecutionStep, outcome: ExecuteProbeOutcome) => ExecuteProbeOutcome
+
+    /** Starts (or, given expectedContainerId, revalidates) one service against the fixture runtime. */
+    async function serviceRun(topology: RuntimeTopologyEvidence, options: { service?: string; expectedContainerId?: string; alter?: Alter } = {}) {
+        const steps: ExecutionStep[] = []
+        const execute = async (step: ExecutionStep) => {
+            steps.push(step)
+            const outcome = await executeProbe(step)
+            return options.alter ? options.alter(step, outcome) : outcome
+        }
+        const service = options.service ?? 'api'
+        const outcome = options.expectedContainerId === undefined
+            ? await startRuntimeService({ topology, service, execute })
+            : await revalidateRuntimeService({ topology, service, expectedContainerId: options.expectedContainerId, execute })
+        // Step ids read runtime:<tool>:<stage>:<service>.
+        return { steps, outcome, stages: steps.map((step) => step.id.split(':')[2]) }
+    }
+
+    async function healthyEvidence(topology: RuntimeTopologyEvidence, options: { service?: string; expectedContainerId?: string } = {}) {
+        const { outcome } = await serviceRun(topology, options)
+        if (outcome.kind !== 'observed') throw new Error(`runtime service fixture ${outcome.kind}`)
+        const evidence = admitRuntimeServiceHealth(outcome.observation)
+        if (!evidence) throw new Error('runtime service fixture is not healthy')
+        return evidence
+    }
+
+    function failureContext(outcome: RuntimeServiceOutcome) {
+        return outcome.kind === 'failure' && outcome.logs ? consumeRuntimeServiceFailureForLogs(outcome.logs) : undefined
+    }
+
+    /** Moves one step's receipt, so a test can place it before or after its neighbours. */
+    function shiftReceipt(stage: string, field: 'startedAt' | 'finishedAt', to: (receipt: NonNullable<ExecuteProbeOutcome['receipt']>) => string): Alter {
+        return (step, outcome) => step.id.split(':')[2] === stage && outcome.receipt
+            ? { ...outcome, receipt: { ...outcome.receipt, [field]: to(outcome.receipt) } } as ExecuteProbeOutcome
+            : outcome
+    }
+
     it('settles the drain as stopped only after the fenced stop and a fresh negative observation', async () => {
         const topology = await topologyEvidence({ services: { api: {} } })
         if (topology.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
@@ -1273,9 +1300,7 @@ fi
         // killed a first `up` moments before its container became healthy.
         const pinnedEvidence = (await topologyEvidence(topology, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
         if (pinnedEvidence.kind !== 'complete') throw new Error(pinnedEvidence.reason)
-        const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
-        if (pinnedStart.kind !== 'planned') throw new Error('pinned service plan unavailable')
-        expect(pinnedStart.start.timeoutMs).toBe(70_000)
+        expect((await serviceRun(pinnedEvidence.topology)).steps[0]!.timeoutMs).toBe(70_000)
         const built = { services: { api: {
             build: { context: directory, dockerfile: 'Dockerfile' },
             labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
@@ -1283,16 +1308,12 @@ fi
         } } }
         const builtEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
         if (builtEvidence.kind !== 'complete') throw new Error(builtEvidence.reason)
-        const builtStart = createRuntimeServicePlan({ topology: builtEvidence.topology, service: 'api' })
-        if (builtStart.kind !== 'planned') throw new Error('built service plan unavailable')
-        expect(builtStart.start.timeoutMs).toBe(70_000)
+        expect((await serviceRun(builtEvidence.topology)).steps[0]!.timeoutMs).toBe(70_000)
         // A declared budget beyond five minutes is honoured, not cut to a fixed window: a service
         // healthy after 330s of a 600s budget was killed at 300s and reported unhealthy.
         const longEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 600_000 })).admitted
         if (longEvidence.kind !== 'complete') throw new Error(longEvidence.reason)
-        const longStart = createRuntimeServicePlan({ topology: longEvidence.topology, service: 'api' })
-        if (longStart.kind !== 'planned') throw new Error('long cold-start service plan unavailable')
-        expect(longStart.start.timeoutMs).toBe(610_000)
+        expect((await serviceRun(longEvidence.topology)).steps[0]!.timeoutMs).toBe(610_000)
     })
 
     it('projects only the exact authenticated runtime environment used for topology admission', async () => {
@@ -1410,7 +1431,7 @@ fi
         const result = await topologyEvidence({ services: { api: { labels } } })
         expect(result.admitted.kind).toBe('unavailable')
         if (result.admitted.kind === 'complete') {
-            expect(createRuntimeServicePlan({ topology: result.admitted.topology, service: 'api' }).kind).toBe('unavailable')
+            expect((await serviceRun(result.admitted.topology)).steps).toEqual([])
         }
     })
 
@@ -1431,7 +1452,7 @@ fi
         const copy = structuredClone(base.admitted.topology)
         expect(isRuntimeTopologyEvidence(copy)).toBe(false)
         expect(resolveRuntimeServiceOrder(copy as never)).toEqual([])
-        expect(createRuntimeServicePlan({ topology: copy as never, service: 'api' }).kind).toBe('unavailable')
+        expect(await serviceRun(copy as never)).toMatchObject({ outcome: { kind: 'failure' }, steps: [] })
 
         for (const window of [
             observationWindow(-120_000, -60_000),
@@ -1463,58 +1484,31 @@ fi
         try {
             expect(isRuntimeTopologyEvidence(base.admitted.topology)).toBe(false)
             expect(resolveRuntimeServiceOrder(base.admitted.topology)).toEqual([])
-            expect(createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' }).kind).toBe('unavailable')
+            expect(await serviceRun(base.admitted.topology)).toMatchObject({ outcome: { kind: 'failure' }, steps: [] })
         } finally {
             vi.useRealTimers()
         }
     })
 
-    it('plans exact per-service start and health steps and admits one matching healthy container', async () => {
-        const container = {
-            ID: containerId,
-            Name: 'synthetic-api-1',
-            Project: 'synthetic',
-            Service: 'api',
-            State: 'running',
-            Health: 'healthy',
-            ExitCode: 0,
-            Labels: `com.docker.compose.project=synthetic,com.docker.compose.service=api,dev.b0dea.cockpit.config-sha256=${configSha256},dev.b0dea.cockpit.stack-id=${stack}`,
-        }
-        const { admitted } = await topologyEvidence({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, [container])
-        expect(admitted.kind).toBe('complete')
-        if (admitted.kind !== 'complete') return
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        expect(plan.kind).toBe('planned')
-        if (plan.kind !== 'planned') return
-        expect(plan.start.argv.slice(-7)).toEqual(['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', 'api'])
-        expect(plan.start.labels.operation).toBe('up')
-        expect(plan.status.argv.slice(-5)).toEqual(['ps', '--format', 'json', '--all', 'api'])
-        expect(plan.identity.argv.slice(-4)).toEqual(['ps', '--quiet', '--all', 'api'])
-        const startOutcome = await executeProbe(plan.start)
-        const statusOutcome = await executeProbe(plan.status)
-        expect(statusOutcome.kind === 'complete' && statusOutcome.stdout.toString()).toContain(containerId.slice(0, 12))
-        expect(statusOutcome.kind === 'complete' && statusOutcome.stdout.toString()).not.toContain(containerId)
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-        const identityOutcome = await executeProbe(plan.identity)
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome }).kind).toBe('admitted')
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome })
-        expect(healthPlan.kind).toBe('planned')
-        if (healthPlan.kind !== 'planned') return
-        expect(healthPlan.step.argv.slice(-4)).toEqual(['inspect', '--format', expect.any(String), containerId])
-        const outcome = await executeProbe(healthPlan.step)
-        const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome })
-        expect(observed.kind).toBe('complete')
-        if (observed.kind !== 'complete') return
-        const health = admitRuntimeServiceHealth({ observation: observed.observation })
-        expect(health.kind).toBe('complete')
-        if (health.kind !== 'complete') return
-        expect(health.evidence).toEqual(expect.objectContaining({
+    it('starts one service through exact Compose steps and admits its healthy container', async () => {
+        const topology = await admittedTopology({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, [
+            running({ Name: 'synthetic-api-1', Health: 'healthy', Labels: `com.docker.compose.project=synthetic,com.docker.compose.service=api,dev.b0dea.cockpit.config-sha256=${configSha256},dev.b0dea.cockpit.stack-id=${stack}` }),
+        ])
+        const { steps, stages, outcome } = await serviceRun(topology)
+        expect(stages).toEqual(['start', 'status', 'identity', 'health'])
+        expect(steps[0]!.argv.slice(-7)).toEqual(['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', 'api'])
+        expect(steps[0]!.labels.operation).toBe('up')
+        expect(steps[1]!.argv.slice(-5)).toEqual(['ps', '--format', 'json', '--all', 'api'])
+        expect(steps[2]!.argv.slice(-4)).toEqual(['ps', '--quiet', '--all', 'api'])
+        expect(steps[3]!.argv.slice(-4)).toEqual(['inspect', '--format', expect.any(String), containerId])
+        if (outcome.kind !== 'observed') throw new Error(outcome.kind)
+        expect(outcome.stop?.argv.slice(-2)).toEqual(['stop', 'api'])
+        const evidence = admitRuntimeServiceHealth(outcome.observation)
+        expect(evidence).toEqual(expect.objectContaining({
             stackId: stack, configSha256, batchId, service: 'api', containerId, state: 'running', health: 'healthy',
         }))
-        expect(isRuntimeServiceEvidence(health.evidence)).toBe(true)
-        expect(isRuntimeServiceEvidence({ ...health.evidence })).toBe(false)
-        expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('unavailable')
+        expect(isRuntimeServiceEvidence(evidence)).toBe(true)
+        expect(isRuntimeServiceEvidence({ ...evidence })).toBe(false)
     })
 
     it('issues mount materialization only from exact current container mounts', async () => {
@@ -1539,14 +1533,7 @@ fi
         }])
         if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
         const topology = result.admitted.topology
-        const plan = createRuntimeServicePlan({ topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-        const observedService = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-        if (observedService.kind !== 'complete') throw new Error(observedService.reason)
-        const service = admitRuntimeServiceHealth({ observation: observedService.observation })
-        if (service.kind !== 'complete') throw new Error(service.reason)
+        const service = { evidence: await healthyEvidence(topology) }
 
         expect(observeRuntimeMountMaterialization({
             topology,
@@ -1588,14 +1575,9 @@ fi
             InspectOutput: JSON.stringify(inspected),
         }])
         if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: result.admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-
-        const outcome = await executeProbe(healthPlan.step)
-        expect(outcome.kind).toBe('complete')
-        expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('unavailable')
+        const { stages, outcome } = await serviceRun(result.admitted.topology)
+        expect(stages.at(-1)).toBe('health')
+        expect(outcome).toMatchObject({ kind: 'failure' })
     })
 
     // A runtime that publishes 0.0.0.0 and :: but forwards only IPv4 loopback leaves the IPv6
@@ -1653,30 +1635,7 @@ fi
                 portLeaseProjection: projection } })
             if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
             const topology = result.admitted.topology
-            const observeService = async (revalidate: boolean) => {
-                if (revalidate) {
-                    const plan = createRuntimeServiceRevalidationPlan({ topology, service: 'api', expectedContainerId: containerId })
-                    if (plan.kind !== 'planned') throw new Error(plan.reason)
-                    const status = await executeProbe(plan.status)
-                    if (admitRuntimeServiceRevalidationStatus({ plan, outcome: status }).kind !== 'admitted') throw new Error('status unavailable')
-                    const health = admitRuntimeServiceRevalidation({ plan, outcome: status, identityOutcome: await executeProbe(plan.identity) })
-                    if (health.kind !== 'planned') throw new Error(health.kind === 'unavailable' ? health.reason : 'runtime service became stale')
-                    const observation = admitRuntimeServiceObservation({ plan: health.plan, outcome: await executeProbe(health.plan.step) })
-                    if (observation.kind !== 'complete') throw new Error(observation.reason)
-                    const service = admitRuntimeServiceHealth({ observation: observation.observation })
-                    if (service.kind !== 'complete') throw new Error(service.reason)
-                    return service.evidence
-                }
-                const plan = createRuntimeServicePlan({ topology, service: 'api' })
-                if (plan.kind !== 'planned') throw new Error(plan.reason)
-                const health = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-                if (health.kind !== 'planned') throw new Error(health.reason)
-                const observation = admitRuntimeServiceObservation({ plan: health, outcome: await executeProbe(health.step) })
-                if (observation.kind !== 'complete') throw new Error(observation.reason)
-                const service = admitRuntimeServiceHealth({ observation: observation.observation })
-                if (service.kind !== 'complete') throw new Error(service.reason)
-                return service.evidence
-            }
+            const observeService = (revalidate: boolean) => healthyEvidence(topology, revalidate ? { expectedContainerId: containerId } : {})
             const service = await observeService(false)
             await expect(observeRuntimePortFamily({ topology: { ...topology } as never, services: [service],
                 namespace: namespace.value, listenerTimeoutMs: 1_000, revalidate: async () => [service] })).rejects.toThrow(
@@ -1733,22 +1692,9 @@ fi
         }
         const current = await topologyEvidence({ services: { api: {} } }, [container], { coldStartLimitMillis })
         if (current.admitted.kind !== 'complete') throw new Error(current.admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: current.admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const startOutcome = await executeProbe(plan.start)
-        const statusOutcome = await executeProbe(plan.status)
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-        const identityOutcome = await executeProbe(plan.identity)
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome }).kind).toBe('admitted')
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-        const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-        if (observed.kind !== 'complete') throw new Error(observed.reason)
-        const admitted = admitRuntimeServiceHealth({ observation: observed.observation })
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
+        const evidence = await healthyEvidence(current.admitted.topology)
 
-        const observation = observeRuntimeServiceColdStart({ services: [admitted.evidence] })
+        const observation = observeRuntimeServiceColdStart({ services: [evidence] })
         expect(observation).toMatchObject({
             code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED,
             source: 'api', observed: { state: 'available' },
@@ -1771,8 +1717,8 @@ fi
         expect(admitted.kind).toBe('complete')
         if (admitted.kind !== 'complete') return
         expect(admitted.topology.services).toEqual([expect.objectContaining({ id: 'api' })])
-        expect(createRuntimeServicePlan({ topology: admitted.topology, service: 'api' }).kind).toBe('planned')
-        expect(createRuntimeServicePlan({ topology: admitted.topology, service: 'dormant' }).kind).toBe('unavailable')
+        expect((await serviceRun(admitted.topology)).outcome.kind).toBe('observed')
+        expect(await serviceRun(admitted.topology, { service: 'dormant' })).toMatchObject({ outcome: { kind: 'failure' }, steps: [] })
     })
 
     it('includes services selected by an authenticated active Compose profile', async () => {
@@ -1790,7 +1736,7 @@ fi
         if (admitted.kind !== 'complete' || planned.kind !== 'planned') return
         expect(planned.step.argv).toContain('runtime_probe')
         expect(admitted.topology.services.map(({ id }) => id)).toEqual(['api', 'profiled'])
-        expect(createRuntimeServicePlan({ topology: admitted.topology, service: 'profiled' }).kind).toBe('planned')
+        expect((await serviceRun(admitted.topology, { service: 'profiled' })).stages[0]).toBe('start')
     })
 
     it('rejects non-local bind sources before service start', async () => {
@@ -1842,14 +1788,7 @@ fi
         const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }
         const { admitted } = await topologyEvidence({ services: { api: {} } }, [container])
         if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-        const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-        if (observed.kind !== 'complete') throw new Error(observed.reason)
-        const health = admitRuntimeServiceHealth({ observation: observed.observation })
-        if (health.kind !== 'complete') throw new Error(health.reason)
+        const health = { evidence: await healthyEvidence(admitted.topology) }
 
         vi.useFakeTimers()
         vi.setSystemTime(Date.parse(health.evidence.observationWindow.startedAt) - 1)
@@ -1888,49 +1827,19 @@ fi
         const { admitted } = await topologyEvidence({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, containers)
         expect(admitted.kind).toBe('complete')
         if (admitted.kind !== 'complete') return
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        expect(plan.kind).toBe('planned')
-        if (plan.kind !== 'planned') return
-        const startOutcome = await executeProbe(plan.start)
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-        const statusOutcome = await executeProbe(plan.status)
-        const statusAdmission = admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome })
-        if (['missing', 'duplicate', 'swapped service', 'swapped project'].includes(_label)) {
-            expect(statusAdmission.kind).toBe(_label === 'missing' ? 'failure' : 'unavailable')
-            return
-        }
-        expect(statusAdmission.kind).toBe('admitted')
-        const identityOutcome = await executeProbe(plan.identity)
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome }).kind).toBe('admitted')
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome })
-        if (healthPlan.kind !== 'planned') {
-            expect(healthPlan).toEqual(expect.objectContaining({ kind: 'unavailable', service: 'api' }))
-            return
-        }
-        const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-        if (['starting', 'unhealthy', 'restarting', 'paused', 'dead', 'removing', 'exited failure', 'exited success'].includes(_label)) {
-            expect(observed.kind).toBe('complete')
-            if (observed.kind === 'complete') expect(admitRuntimeServiceHealth({ observation: observed.observation })).toEqual(expect.objectContaining({ kind: 'unavailable', service: 'api' }))
-        } else {
-            expect(observed).toEqual(expect.objectContaining({ kind: 'unavailable', service: 'api' }))
-        }
+        const { outcome } = await serviceRun(admitted.topology)
+        expect(outcome.kind === 'observed' && admitRuntimeServiceHealth(outcome.observation)).toBeFalsy()
+        // A container Compose reports in a non-healthy state is observed, so its logs can be read; one
+        // that is absent, duplicated or owned by another service, project, stack or configuration is not.
+        expect(outcome.kind).toBe(['starting', 'unhealthy', 'restarting', 'paused', 'dead', 'removing', 'exited failure', 'exited success'].includes(_label)
+            ? 'observed' : 'failure')
     })
 
     it('admits an unchecked running service only when the runtime reports no health state', async () => {
-        for (const [health, expected] of [['', 'complete'], ['healthy', 'unavailable']] as const) {
+        for (const [health, healthy] of [['', true], ['healthy', false]] as const) {
             const containers = [{ ID: containerId, Name: 'synthetic-api-1', Project: 'synthetic', Service: 'api', State: 'running', Health: health, ExitCode: 0 }]
-            const { admitted } = await topologyEvidence({ services: { api: {} } }, containers)
-            if (admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
-            const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-            if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-            const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-            if (observed.kind !== 'complete') {
-                expect(expected).toBe('unavailable')
-                continue
-            }
-            expect(admitRuntimeServiceHealth({ observation: observed.observation }).kind).toBe(expected)
+            const { outcome } = await serviceRun(await admittedTopology({ services: { api: {} } }, containers))
+            expect(outcome.kind === 'observed' && admitRuntimeServiceHealth(outcome.observation) !== undefined).toBe(healthy)
         }
     })
 
@@ -1942,13 +1851,7 @@ fi
         const { admitted } = await topologyEvidence({ services: { api: { healthcheck } } }, containers)
         if (admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
         expect(admitted.topology.services[0].healthcheck).toBe(false)
-        const servicePlan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (servicePlan.kind !== 'planned') throw new Error(servicePlan.reason)
-        const healthPlan = createRuntimeServiceHealthPlan({ plan: servicePlan, ...await admitCleanStartup(servicePlan) })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-        const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-        if (observed.kind !== 'complete') throw new Error(observed.reason)
-        expect(admitRuntimeServiceHealth({ observation: observed.observation }).kind).toBe('complete')
+        await expect(healthyEvidence(admitted.topology)).resolves.toMatchObject({ health: null })
     })
 
     it('accepts bounded scalar healthcheck argv from normalized Compose JSON', async () => {
@@ -1979,108 +1882,46 @@ fi
         expect(admitRuntimeTopology({ plan: topologyA, outcome: topologyOutcomeA }).kind).toBe('complete')
         expect(admitRuntimeTopology({ plan: topologyB, outcome: await executeProbe(topologyB.step) }).kind).toBe('complete')
 
-        const serviceA = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        const serviceB = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (serviceA.kind !== 'planned' || serviceB.kind !== 'planned') throw new Error('service plan unavailable')
-        expect(serviceA.status.labels.issuanceId).not.toBe(serviceB.status.labels.issuanceId)
-        const startOutcomeA = await executeProbe(serviceA.start)
-        const statusOutcomeA = await executeProbe(serviceA.status)
-        const identityOutcomeA = await executeProbe(serviceA.identity)
-        expect(createRuntimeServiceHealthPlan({ plan: serviceB, startOutcome: startOutcomeA, outcome: statusOutcomeA, identityOutcome: identityOutcomeA }).kind).toBe('unavailable')
-        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'start', outcome: startOutcomeA })).toMatchObject({ kind: 'admitted', service: 'api' })
-        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'status', outcome: statusOutcomeA, startOutcome: startOutcomeA })).toMatchObject({ kind: 'admitted', service: 'api' })
-        expect(admitRuntimeServiceStageOutcome({ plan: serviceA, stage: 'identity', outcome: identityOutcomeA, startOutcome: startOutcomeA, statusOutcome: statusOutcomeA })).toMatchObject({ kind: 'admitted', service: 'api' })
-        expect(createRuntimeServiceHealthPlan({ plan: serviceA, startOutcome: startOutcomeA, outcome: statusOutcomeA, identityOutcome: identityOutcomeA }).kind).toBe('planned')
-        const serviceC = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (serviceC.kind !== 'planned') throw new Error(serviceC.reason)
-        expect(createRuntimeServiceHealthPlan({ plan: serviceC, ...await admitCleanStartup(serviceC) }).kind).toBe('planned')
+        const first = await serviceRun(base.admitted.topology)
+        const second = await serviceRun(base.admitted.topology)
+        expect(first.outcome.kind).toBe('observed')
+        expect(first.steps[1]!.labels.issuanceId).not.toBe(second.steps[1]!.labels.issuanceId)
     })
 
-    it('requires one successful ordered start outcome before service observation', async () => {
-        const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }
-        const base = await topologyEvidence({ services: { api: {} } }, [container])
-        if (base.admitted.kind !== 'complete') throw new Error(base.admitted.reason)
-
-        const omitted = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (omitted.kind !== 'planned') throw new Error(omitted.reason)
-        expect(createRuntimeServiceHealthPlan({ plan: omitted, outcome: await executeProbe(omitted.status), identityOutcome: await executeProbe(omitted.identity) } as never).kind).toBe('unavailable')
-
-        const swapped = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (swapped.kind !== 'planned') throw new Error(swapped.reason)
-        const swappedStatus = await executeProbe(swapped.status)
-        expect(createRuntimeServiceHealthPlan({ plan: swapped, startOutcome: swappedStatus, outcome: swappedStatus, identityOutcome: await executeProbe(swapped.identity) }).kind).toBe('unavailable')
-
-        const reversed = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (reversed.kind !== 'planned') throw new Error(reversed.reason)
-        const reversedStatus = await executeProbe(reversed.status)
-        const reversedStart = await executeProbe(reversed.start)
-        expect(createRuntimeServiceHealthPlan({ plan: reversed, startOutcome: reversedStart, outcome: reversedStatus, identityOutcome: await executeProbe(reversed.identity) }).kind).toBe('unavailable')
-
-        const replay = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (replay.kind !== 'planned') throw new Error(replay.reason)
-        const outcomes = { plan: replay, ...await admitCleanStartup(replay) }
-        expect(createRuntimeServiceHealthPlan(outcomes).kind).toBe('planned')
-        expect(createRuntimeServiceHealthPlan(outcomes).kind).toBe('unavailable')
-    })
-
-    it('rejects overlapping start and status receipts', async () => {
-        const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartDelayMs: 300 }
-        const { admitted } = await topologyEvidence({ services: { api: {} } }, [container])
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const [startOutcome, outcome, identityOutcome] = await Promise.all([executeProbe(plan.start), executeProbe(plan.status), executeProbe(plan.identity)])
-        expect(createRuntimeServiceHealthPlan({ plan, startOutcome, outcome, identityOutcome }).kind).toBe('unavailable')
+    it('rejects a status receipt that starts before the start finished', async () => {
+        const topology = await admittedTopology({ services: { api: {} } }, [running()])
+        let startFinishedAt = ''
+        const { outcome, stages } = await serviceRun(topology, { alter: (step, result) => {
+            if (step.id.split(':')[2] === 'start' && result.receipt) startFinishedAt = result.receipt.finishedAt
+            return shiftReceipt('status', 'startedAt', () => new Date(Date.parse(startFinishedAt) - 1).toISOString())(step, result)
+        } })
+        expect(stages).toEqual(['start', 'status'])
+        expect(outcome).toMatchObject({ kind: 'failure' })
+        expect(outcome).not.toHaveProperty('logs')
     })
 
     it('rejects an inspect receipt that starts before container identity completes', async () => {
-        const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }
-        const { admitted } = await topologyEvidence({ services: { api: {} } }, [container])
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const startOutcome = await executeProbe(plan.start)
-        const statusOutcome = await executeProbe(plan.status)
-        const identityOutcome = await executeProbe(plan.identity)
-        if (identityOutcome.kind !== 'complete') throw new Error('identity fixture failed')
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-        expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome }).kind).toBe('admitted')
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-
-        vi.useFakeTimers()
-        vi.setSystemTime(Date.parse(identityOutcome.receipt.finishedAt) - 1)
-        try {
-            const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-            expect(observed.kind).toBe('unavailable')
-            expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) }).kind).toBe('unavailable')
-        } finally {
-            vi.useRealTimers()
-        }
+        const topology = await admittedTopology({ services: { api: {} } }, [running()])
+        let identityFinishedAt = ''
+        const { outcome, stages } = await serviceRun(topology, { alter: (step, result) => {
+            if (step.id.split(':')[2] === 'identity' && result.receipt) identityFinishedAt = result.receipt.finishedAt
+            return shiftReceipt('health', 'startedAt', () => new Date(Date.parse(identityFinishedAt) - 1).toISOString())(step, result)
+        } })
+        expect(stages).toEqual(['start', 'status', 'identity', 'health'])
+        expect(outcome).toMatchObject({ kind: 'failure' })
     })
 
-    it('rejects an authenticated failed start outcome', async () => {
-        const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartExitCode: 9 }
-        const { admitted } = await topologyEvidence({ services: { api: {} } }, [container])
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        expect(createRuntimeServiceHealthPlan({ plan, startOutcome: await executeProbe(plan.start), outcome: await executeProbe(plan.status), identityOutcome: await executeProbe(plan.identity) }).kind).toBe('unavailable')
+    it('stops at a failed start and offers its logs and the stop of the started service', async () => {
+        const { outcome, stages } = await serviceRun(await admittedTopology({ services: { api: {} } }, [running({ StartExitCode: 9 })]))
+        expect(stages).toEqual(['start'])
+        expect(outcome).toMatchObject({ kind: 'failure', stop: { argv: expect.arrayContaining(['stop', 'api']) } })
+        expect(failureContext(outcome)).toMatchObject({ stage: 'start', service: 'api', containerId: null })
     })
 
     it('rejects start stderr even when quiet progress was requested', async () => {
-        const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartStderr: 'unexpected progress' }
-        const { admitted } = await topologyEvidence({ services: { api: {} } }, [container])
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        expect(createRuntimeServiceHealthPlan({
-            plan,
-            startOutcome: await executeProbe(plan.start),
-            outcome: await executeProbe(plan.status),
-            identityOutcome: await executeProbe(plan.identity),
-        }).kind).toBe('unavailable')
+        const { outcome, stages } = await serviceRun(await admittedTopology({ services: { api: {} } }, [running({ StartStderr: 'unexpected progress' })]))
+        expect(stages).toEqual(['start'])
+        expect(failureContext(outcome)).toMatchObject({ stage: 'start' })
     })
 
     it('rejects accessor and revoked caller envelopes without invoking them', async () => {
@@ -2103,14 +1944,7 @@ fi
         revoked.revoke()
         expect(() => createRuntimeTopologyPlan(revoked.proxy as never)).not.toThrow()
         expect(createRuntimeTopologyPlan(revoked.proxy as never).kind).toBe('unavailable')
-        if (base.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
-        let serviceReads = 0
-        const serviceInput = {
-            topology: base.admitted.topology,
-            get service() { serviceReads++; return serviceReads === 1 ? 'api' : 'worker' },
-        }
-        expect(createRuntimeServicePlan(serviceInput).kind).toBe('unavailable')
-        expect(serviceReads).toBe(0)
+
     })
 
     it('rejects topology and health receipts completed in the future', async () => {
@@ -2126,202 +1960,95 @@ fi
             vi.useRealTimers()
         }
         if (base.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
-        const servicePlan = createRuntimeServicePlan({ topology: base.admitted.topology, service: 'api' })
-        if (servicePlan.kind !== 'planned') throw new Error(servicePlan.reason)
-        const healthPlan = createRuntimeServiceHealthPlan({ plan: servicePlan, ...await admitCleanStartup(servicePlan) })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-        const healthOutcome = await executeProbe(healthPlan.step)
-        vi.useFakeTimers()
-        vi.setSystemTime(Date.now() - 5_000)
-        try {
-            expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome: healthOutcome }).kind).toBe('unavailable')
-        } finally {
-            vi.useRealTimers()
-        }
+        const future = await serviceRun(base.admitted.topology, { alter: shiftReceipt('health', 'finishedAt', () => new Date(Date.now() + 5_000).toISOString()) })
+        expect(future.stages.at(-1)).toBe('health')
+        expect(future.outcome).toMatchObject({ kind: 'failure' })
     })
 
     it.each(['API', '--api', 'àpi', 'api service'])('rejects non-exact ASCII service selector %s', async (service) => {
         const { admitted } = await topologyEvidence({ services: { api: {} } })
         if (admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
-        expect(createRuntimeServicePlan({ topology: admitted.topology, service }).kind).toBe('unavailable')
+        expect(await serviceRun(admitted.topology, { service })).toMatchObject({ outcome: { kind: 'failure' }, steps: [] })
     })
 
-    it('keeps health and failure-log observation purposes independent and single-use', async () => {
+    it('keeps an unhealthy observation for failure logs without admitting it as health', async () => {
         const containers = [{ ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: 'unhealthy', ExitCode: 1 }]
-        const { admitted } = await topologyEvidence({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, containers)
-        if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: admitted.topology, service: 'api' })
-        if (plan.kind !== 'planned') throw new Error(plan.reason)
-        const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-        const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-        expect(observed.kind).toBe('complete')
-        if (observed.kind !== 'complete') return
-        expect(admitRuntimeServiceHealth({ observation: observed.observation }).kind).toBe('unavailable')
-        expect(admitRuntimeServiceHealth({ observation: observed.observation }).kind).toBe('unavailable')
-        expect(admitRuntimeServiceHealth({ observation: { ...observed.observation } as never }).kind).toBe('unavailable')
+        const { outcome } = await serviceRun(await admittedTopology({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, containers))
+        if (outcome.kind !== 'observed') throw new Error(outcome.kind)
+        expect(admitRuntimeServiceHealth(outcome.observation)).toBeUndefined()
+        expect(admitRuntimeServiceHealth({ ...outcome.observation })).toBeUndefined()
     })
 
     describe('service revalidation and early failure evidence', () => {
         it('revalidates an exact persisted container without issuing another start', async () => {
-            const container = { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }
-            const { admitted } = await topologyEvidence({ services: { api: {} } }, [container])
-            if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-
-            const plan = createRuntimeServiceRevalidationPlan({
-                topology: admitted.topology, service: 'api', expectedContainerId: containerId,
-            })
-            expect(plan.kind).toBe('planned')
-            if (plan.kind !== 'planned') return
-            expect(JSON.stringify(plan)).not.toContain('"up"')
-            expect(plan.status.argv.slice(-5)).toEqual(['ps', '--format', 'json', '--all', 'api'])
-            expect(plan.identity.argv.slice(-4)).toEqual(['ps', '--quiet', '--all', 'api'])
-
-            const statusOutcome = await executeProbe(plan.status)
-            expect(admitRuntimeServiceRevalidationStatus({ plan, outcome: statusOutcome }).kind).toBe('admitted')
-            const result = admitRuntimeServiceRevalidation({
-                plan, outcome: statusOutcome, identityOutcome: await executeProbe(plan.identity),
-            })
-            expect(result.kind).toBe('planned')
-            if (result.kind !== 'planned') return
-            expect(result.plan.step.argv.at(-1)).toBe(containerId)
-            const observed = admitRuntimeServiceObservation({ plan: result.plan, outcome: await executeProbe(result.plan.step) })
-            if (observed.kind !== 'complete') throw new Error(observed.reason)
-            expect(admitRuntimeServiceHealth({ observation: observed.observation }).kind).toBe('complete')
-            expect(admitRuntimeServiceRevalidation({
-                plan, outcome: await executeProbe(plan.status), identityOutcome: await executeProbe(plan.identity),
-            }).kind).toBe('unavailable')
+            const topology = await admittedTopology({ services: { api: {} } }, [running()])
+            const { steps, stages, outcome } = await serviceRun(topology, { expectedContainerId: containerId })
+            expect(stages).toEqual(['status', 'identity', 'health'])
+            expect(JSON.stringify(steps)).not.toContain('"up"')
+            expect(steps[0]!.argv.slice(-5)).toEqual(['ps', '--format', 'json', '--all', 'api'])
+            expect(steps[1]!.argv.slice(-4)).toEqual(['ps', '--quiet', '--all', 'api'])
+            expect(steps[2]!.argv.at(-1)).toBe(containerId)
+            if (outcome.kind !== 'observed') throw new Error(outcome.kind)
+            expect(outcome).not.toHaveProperty('stop')
+            expect(admitRuntimeServiceHealth(outcome.observation)).toBeDefined()
         })
 
         it.each([
-            ['missing', []],
-            ['replacement', [{ ID: sha('replacement container'), Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }]],
-        ])('authenticates a %s completed-container record as stale', async (_label, containers) => {
-            const { admitted } = await topologyEvidence({ services: { api: {} } }, containers)
-            if (admitted.kind !== 'complete') throw new Error(admitted.reason)
-            const plan = createRuntimeServiceRevalidationPlan({ topology: admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const result = admitRuntimeServiceRevalidationStatus({ plan, outcome: await executeProbe(plan.status) })
-            expect(result).toMatchObject({ kind: 'stale', service: 'api', expectedContainerId: containerId })
+            ['missing', [], 'stale', ['status']],
+            ['replacement', [running({ ID: sha('replacement container') })], 'stale', ['status']],
+            ['malformed', [running({ StatusOutput: '{' })], 'failure', ['status']],
+            ['refused', [running({ StatusExitCode: 9 })], 'failure', ['status']],
+        ])('classifies a %s completed-container record from its status', async (_label, containers, expected, stages) => {
+            const run = await serviceRun(await admittedTopology({ services: { api: {} } }, containers), { expectedContainerId: containerId })
+            expect(run.outcome.kind).toBe(expected)
+            expect(run.stages).toEqual(stages)
         })
 
-        it('keeps malformed, copied, reordered, and non-exact revalidation unavailable', async () => {
-            const replacement = sha('replacement container')
-            const malformed = await topologyEvidence({ services: { api: {} } }, [
-                { ID: replacement.toUpperCase(), Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 },
-            ])
-            if (malformed.admitted.kind !== 'complete') throw new Error(malformed.admitted.reason)
-            expect(createRuntimeServiceRevalidationPlan({
-                topology: malformed.admitted.topology, service: 'api', expectedContainerId: containerId.toUpperCase(),
-            }).kind).toBe('unavailable')
-
-            const current = await topologyEvidence({ services: { api: {} } }, [
-                { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 },
-            ])
-            if (current.admitted.kind !== 'complete') throw new Error(current.admitted.reason)
-            const plan = createRuntimeServiceRevalidationPlan({ topology: current.admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const status = await executeProbe(plan.status)
-            const identity = await executeProbe(plan.identity)
-            expect(admitRuntimeServiceRevalidation({ plan: { ...plan } as never, outcome: status, identityOutcome: identity }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceRevalidationStatus({ plan, outcome: status }).kind).toBe('admitted')
-            expect(admitRuntimeServiceRevalidation({ plan, outcome: identity, identityOutcome: status }).kind).toBe('unavailable')
-        })
-
-        it('requires ordered current receipts and consumes an expired revalidation attempt', async () => {
-            const current = await topologyEvidence({ services: { api: {} } }, [
-                { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 },
-            ])
-            if (current.admitted.kind !== 'complete') throw new Error(current.admitted.reason)
-            const reversed = createRuntimeServiceRevalidationPlan({ topology: current.admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (reversed.kind !== 'planned') throw new Error(reversed.reason)
-            const identity = await executeProbe(reversed.identity)
-            const status = await executeProbe(reversed.status)
-            expect(admitRuntimeServiceRevalidationStatus({ plan: reversed, outcome: status }).kind).toBe('admitted')
-            expect(admitRuntimeServiceRevalidation({ plan: reversed, outcome: status, identityOutcome: identity }).kind).toBe('unavailable')
-
-            const expiring = createRuntimeServiceRevalidationPlan({ topology: current.admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (expiring.kind !== 'planned') throw new Error(expiring.reason)
-            const outcomes = { plan: expiring, outcome: await executeProbe(expiring.status), identityOutcome: await executeProbe(expiring.identity) }
-            expect(admitRuntimeServiceRevalidationStatus({ plan: expiring, outcome: outcomes.outcome }).kind).toBe('admitted')
+        it('runs nothing for a non-exact container id or an expired topology window', async () => {
+            const topology = await admittedTopology({ services: { api: {} } }, [running()])
+            expect(await serviceRun(topology, { expectedContainerId: containerId.toUpperCase() })).toMatchObject({ outcome: { kind: 'failure' }, steps: [] })
             vi.useFakeTimers()
-            vi.setSystemTime(Date.parse(current.admitted.topology.observationWindow.expiresAt) + 1)
+            vi.setSystemTime(Date.parse(topology.observationWindow.expiresAt) + 1)
             try {
-                expect(admitRuntimeServiceRevalidation(outcomes).kind).toBe('unavailable')
-                expect(admitRuntimeServiceRevalidation(outcomes).kind).toBe('unavailable')
+                expect(await serviceRun(topology, { expectedContainerId: containerId })).toMatchObject({ outcome: { kind: 'failure' }, steps: [] })
             } finally {
                 vi.useRealTimers()
             }
         })
 
-        it.each(['start', 'status', 'identity'] as const)('issues one log context for an authentic %s failure', async (stage) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [
-                {
-                    ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-                    [`${stage[0].toUpperCase()}${stage.slice(1)}ExitCode`]: 9,
-                },
-            ])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = stage === 'start' ? undefined : await executeProbe(plan.start)
-            const statusOutcome = stage === 'identity' ? await executeProbe(plan.status) : undefined
-            const failedOutcome = await executeProbe(plan[stage])
-            expect(failedOutcome).toMatchObject({
-                kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-                execution: { started: true, exitCode: 9, signal: null },
-            })
-            const admittedFailure = admitRuntimeServicePlanFailure({
-                plan, stage, outcome: failedOutcome,
-                ...(startOutcome ? { startOutcome } : {}),
-                ...(statusOutcome ? { statusOutcome } : {}),
-            })
-            expect(admittedFailure.kind).toBe('complete')
-            if (admittedFailure.kind !== 'complete') return
-            expect(consumeRuntimeServiceFailureForLogs({ ...admittedFailure.evidence } as never)).toBeUndefined()
-            expect(consumeRuntimeServiceFailureForLogs(admittedFailure.evidence)).toMatchObject({
-                stage, projectName: 'synthetic', service: 'api', containerId: null,
-            })
-            expect(consumeRuntimeServiceFailureForLogs(admittedFailure.evidence)).toBeUndefined()
+        it('requires the identity receipt to follow the status receipt', async () => {
+            const topology = await admittedTopology({ services: { api: {} } }, [running()])
+            let statusFinishedAt = ''
+            const { outcome, stages } = await serviceRun(topology, { expectedContainerId: containerId, alter: (step, result) => {
+                if (step.id.split(':')[2] === 'status' && result.receipt) statusFinishedAt = result.receipt.finishedAt
+                return shiftReceipt('identity', 'startedAt', () => new Date(Date.parse(statusFinishedAt) - 1).toISOString())(step, result)
+            } })
+            expect(stages).toEqual(['status', 'identity'])
+            expect(outcome).toEqual({ kind: 'failure' })
         })
 
-        it('admits complete start stderr as failure but leaves clean start evidence available', async () => {
-            for (const [stderr, expected] of [['unexpected progress', 'complete'], ['', 'unavailable']] as const) {
-                const topology = await topologyEvidence({ services: { api: {} } }, [
-                    { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartStderr: stderr },
-                ])
-                if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-                const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-                if (plan.kind !== 'planned') throw new Error(plan.reason)
-                const startOutcome = await executeProbe(plan.start)
-                expect(startOutcome.kind).toBe('complete')
-                expect(admitRuntimeServicePlanFailure({ plan, stage: 'start', outcome: startOutcome }).kind).toBe(expected)
-                if (expected === 'unavailable') {
-                    expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-                    const statusOutcome = await executeProbe(plan.status)
-                    expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-                    const identityOutcome = await executeProbe(plan.identity)
-                    expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome }).kind).toBe('admitted')
-                    expect(createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome }).kind).toBe('planned')
-                }
-            }
+        it.each(['start', 'status', 'identity'] as const)('issues one log context for a %s that exits non-zero', async (stage) => {
+            const { outcome, stages } = await serviceRun(await admittedTopology({ services: { api: {} } }, [
+                running({ [`${stage[0].toUpperCase()}${stage.slice(1)}ExitCode`]: 9 }),
+            ]))
+            expect(stages.at(-1)).toBe(stage)
+            if (outcome.kind !== 'failure' || !outcome.logs) throw new Error('no failure evidence')
+            expect(consumeRuntimeServiceFailureForLogs({ ...outcome.logs } as never)).toBeUndefined()
+            expect(consumeRuntimeServiceFailureForLogs(outcome.logs)).toMatchObject({
+                stage, projectName: 'synthetic', service: 'api', containerId: null,
+            })
+            expect(consumeRuntimeServiceFailureForLogs(outcome.logs)).toBeUndefined()
         })
 
         it('preserves the authenticated Compose prefix and file bindings for early logs', async () => {
             const secondPath = join(directory, 'compose.override.yml')
             writeFileSync(secondPath, 'services: {}\n')
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartStderr: 'failure',
-            }], { composeFiles: [
+            const topology = await topologyEvidence({ services: { api: {} } }, [running({ StartStderr: 'failure' })], { composeFiles: [
                 { reference: '编排.yml', canonicalPath: composePath, source: 'services: {}\n', sha256: sha('services: {}\n') },
                 { reference: 'compose.override.yml', canonicalPath: secondPath, source: 'services: {}\n', sha256: sha('services: {}\n') },
             ] })
             if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const failure = admitRuntimeServicePlanFailure({ plan, stage: 'start', outcome: await executeProbe(plan.start) })
-            if (failure.kind !== 'complete') throw new Error(failure.reason)
-            const context = consumeRuntimeServiceFailureForLogs(failure.evidence)
+            const context = failureContext((await serviceRun(topology.admitted.topology)).outcome)
             expect(context?.composeArgvPrefix).toEqual([
                 'compose', '--project-directory', directory,
                 '--file', composePath,
@@ -2338,126 +2065,42 @@ fi
             expect(context?.filesystemChecks).toEqual([])
         })
 
-        it('does not expose early-log context from a structurally altered service plan', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartStderr: 'failure',
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const outcome = await executeProbe(plan.start)
-            const malformed = { ...plan, start: { ...plan.start, argv: [plan.start.argv[0], 'compose', 'up', 'api'] } }
-            const failure = admitRuntimeServicePlanFailure({ plan: malformed as never, stage: 'start', outcome })
-            expect(failure.kind).toBe('unavailable')
-            expect(failure.kind === 'complete' && consumeRuntimeServiceFailureForLogs(failure.evidence)).toBe(false)
-        })
-
+        // Absence, a process failure or stderr is the runtime's own account and earns a log read;
+        // output that cannot be read as the one expected row is not, and stops the start there.
         it.each([
-            ['stderr', { StatusStderr: 'runtime diagnostic' }, 'complete'],
-            ['malformed', { StatusOutput: '{' }, 'unavailable'],
-            ['empty', { StatusOutput: '' }, 'complete'],
-            ['wrong project', { Project: 'other' }, 'unavailable'],
-        ])('classifies complete but invalid %s status after a clean start', async (_label, controls, expected) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            const outcome = await executeProbe(plan.status)
-            expect(outcome.kind).toBe('complete')
-            expect(admitRuntimeServicePlanFailure({ plan, stage: 'status', startOutcome, outcome }).kind).toBe(expected)
+            ['status stderr', { StatusStderr: 'runtime diagnostic' }, 'status', true],
+            ['empty status', { StatusOutput: '' }, 'status', true],
+            ['status for another project', { Project: 'other' }, 'status', false],
+            ['two status rows', { Duplicate: true }, 'status', false],
+            ['status that is not UTF-8', { StatusInvalidUtf8: true }, 'status', false],
+            ['status that is not JSON', { StatusOutput: '{' }, 'status', false],
+            ['status of another shape', { StatusOutput: '[]' }, 'status', false],
+            ['status with an invalid id', { StatusOutput: JSON.stringify({ ID: 'not-an-id', Project: 'synthetic', Service: 'api' }) }, 'status', false],
+            ['identity stderr', { IdentityStderr: 'runtime diagnostic' }, 'identity', true],
+            ['empty identity', { IdentityOutput: '' }, 'identity', true],
+            ['identity that exits non-zero', { IdentityExitCode: 9 }, 'identity', true],
+            ['identity that is not UTF-8', { IdentityInvalidUtf8: true }, 'identity', false],
+            ['identity that is not a container id', { IdentityOutput: 'not-a-container-id\n' }, 'identity', false],
+            ['identity of another container', { IdentityOutput: `${sha('replacement container')}\n` }, 'identity', false],
+        ] as const)('stops at %s', async (_label, controls, stage, logs) => {
+            const containers = 'Duplicate' in controls ? [running(), running({ ID: sha('duplicate container') })] : [running(controls)]
+            const { outcome, stages } = await serviceRun(await admittedTopology({ services: { api: {} } }, containers))
+            expect(stages.at(-1)).toBe(stage)
+            expect(outcome).toMatchObject({ kind: 'failure', stop: expect.anything() })
+            expect(failureContext(outcome)?.stage).toBe(logs ? stage : undefined)
         })
 
-        it('admits multiple status rows as failure and does not skip a failed start', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [
-                { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 },
-                { ID: sha('duplicate container'), Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 },
-            ])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            const outcome = await executeProbe(plan.status)
-            expect(admitRuntimeServicePlanFailure({ plan, stage: 'status', startOutcome, outcome }).kind).toBe('unavailable')
-
-            const failedStart = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StartStderr: 'first failure', StatusOutput: '{',
-            }])
-            if (failedStart.admitted.kind !== 'complete') throw new Error(failedStart.admitted.reason)
-            const failedStartPlan = createRuntimeServicePlan({ topology: failedStart.admitted.topology, service: 'api' })
-            if (failedStartPlan.kind !== 'planned') throw new Error(failedStartPlan.reason)
-            expect(admitRuntimeServicePlanFailure({
-                plan: failedStartPlan,
-                stage: 'status',
-                startOutcome: await executeProbe(failedStartPlan.start),
-                outcome: await executeProbe(failedStartPlan.status),
-            }).kind).toBe('unavailable')
-        })
-
-        it.each([
-            ['stderr', { IdentityStderr: 'runtime diagnostic' }, 'complete'],
-            ['malformed', { IdentityOutput: 'not-a-container-id\n' }, 'unavailable'],
-            ['empty', { IdentityOutput: '' }, 'complete'],
-            ['mismatched', { IdentityOutput: `${sha('replacement container')}\n` }, 'unavailable'],
-        ])('classifies complete but invalid %s identity after valid prior evidence', async (_label, controls, expected) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            expect(admitRuntimeServicePlanFailure({
-                plan,
-                stage: 'identity',
-                startOutcome: await executeProbe(plan.start),
-                statusOutcome: await executeProbe(plan.status),
-                outcome: await executeProbe(plan.identity),
-            }).kind).toBe(expected)
-        })
-
-        it('does not turn clean status or identity evidence into failure authority', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            const statusOutcome = await executeProbe(plan.status)
-            const identityOutcome = await executeProbe(plan.identity)
-            expect(admitRuntimeServicePlanFailure({ plan, stage: 'status', startOutcome, outcome: statusOutcome }).kind).toBe('unavailable')
-            expect(admitRuntimeServicePlanFailure({
-                plan, stage: 'identity', startOutcome, statusOutcome, outcome: identityOutcome,
-            }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome }).kind).toBe('admitted')
-            expect(createRuntimeServiceHealthPlan({ plan, startOutcome, outcome: statusOutcome, identityOutcome }).kind).toBe('planned')
+        it('reports a failed start rather than the unreadable status after it', async () => {
+            const { outcome, stages } = await serviceRun(await admittedTopology({ services: { api: {} } }, [
+                running({ StartStderr: 'first failure', StatusOutput: '{' }),
+            ]))
+            expect(stages).toEqual(['start'])
+            expect(failureContext(outcome)).toMatchObject({ stage: 'start' })
         })
 
         it('issues inspect-failure evidence with the authenticated full container identity', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [
-                { ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, InspectExitCode: 9 },
-            ])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-            if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-            const failedOutcome = await executeProbe(healthPlan.step)
-            expect(failedOutcome).toMatchObject({
-                kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-                execution: { started: true, exitCode: 9, signal: null },
-            })
-            const failure = admitRuntimeServiceInspectFailure({ plan: healthPlan, outcome: failedOutcome })
-            expect(failure.kind).toBe('complete')
-            if (failure.kind !== 'complete') return
-            expect(consumeRuntimeServiceFailureForLogs(failure.evidence)).toMatchObject({
-                stage: 'inspect', projectName: 'synthetic', service: 'api', containerId,
-            })
-            expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) }).kind).toBe('unavailable')
+            const { outcome } = await serviceRun(await admittedTopology({ services: { api: {} } }, [running({ InspectExitCode: 9 })]))
+            expect(failureContext(outcome)).toMatchObject({ stage: 'inspect', projectName: 'synthetic', service: 'api', containerId })
         })
 
         it.each([
@@ -2466,226 +2109,29 @@ fi
             ['wrong identity', { InspectOutput: JSON.stringify({ ID: sha('replacement container'), State: 'running', Health: '', Labels: {} }) }],
             ['wrong labels', { InspectOutput: JSON.stringify({ ID: containerId, State: 'running', Health: '', Labels: { 'com.docker.compose.project': 'other' } }) }],
             ['unknown state', { State: 'unknown' }],
-        ])('admits complete but structurally invalid %s inspect output as failure', async (_label, controls) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-            if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-            const outcome = await executeProbe(healthPlan.step)
-            expect(outcome.kind).toBe('complete')
-            expect(admitRuntimeServiceInspectFailure({ plan: healthPlan, outcome }).kind).toBe('complete')
-            expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('unavailable')
+        ])('treats complete but structurally invalid %s inspect output as an inspect failure', async (_label, controls) => {
+            const { outcome } = await serviceRun(await admittedTopology({ services: { api: {} } }, [running(controls)]))
+            expect(failureContext(outcome)).toMatchObject({ stage: 'inspect' })
         })
 
         it.each([
             ['healthy', 'healthy'],
             ['unhealthy', 'unhealthy'],
-        ])('leaves structurally valid %s inspect evidence to observation admission', async (_label, health) => {
-            const topology = await topologyEvidence({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: health, ExitCode: health === 'healthy' ? 0 : 1,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-            if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-            const outcome = await executeProbe(healthPlan.step)
-            expect(admitRuntimeServiceInspectFailure({ plan: healthPlan, outcome }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('complete')
-        })
-    })
-
-    describe('runtime service stage admission boundaries', () => {
-        it.each([
-            ['nonzero', { StartExitCode: 9 }],
-            ['stderr', { StartStderr: 'runtime diagnostic' }],
-        ])('turns an authentic %s start failure into one-shot log evidence', async (_label, controls) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const admitted = admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: await executeProbe(plan.start) })
-            expect(admitted.kind).toBe('failure')
-            if (admitted.kind !== 'failure') return
-            expect(consumeRuntimeServiceFailureForLogs(admitted.evidence)).toMatchObject({ stage: 'start', service: 'api' })
-            expect(consumeRuntimeServiceFailureForLogs(admitted.evidence)).toBeUndefined()
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: await executeProbe(plan.start) }).kind).toBe('unavailable')
+        ])('observes structurally valid %s inspect output', async (_label, health) => {
+            const { outcome } = await serviceRun(await admittedTopology({ services: { api: { healthcheck: { test: ['CMD', 'true'] } } } }, [
+                running({ Health: health, ExitCode: health === 'healthy' ? 0 : 1 }),
+            ]))
+            expect(outcome).toMatchObject({ kind: 'observed', observation: { health } })
         })
 
-        it('burns an authentic plan when start evidence is forged, copied, replayed, or read through a getter', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const copiedPlan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            const source = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (copiedPlan.kind !== 'planned' || source.kind !== 'planned') throw new Error('service fixture unavailable')
-            const sourceOutcome = await executeProbe(source.start)
-            const copiedOutcome = await executeProbe(copiedPlan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan: { ...copiedPlan } as never, stage: 'start', outcome: copiedOutcome }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan: copiedPlan, stage: 'start', outcome: copiedOutcome }).kind).toBe('admitted')
-            expect(admitRuntimeServiceStageOutcome({ plan: source, stage: 'start', outcome: { ...sourceOutcome } as never }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan: source, stage: 'start', outcome: sourceOutcome }).kind).toBe('unavailable')
-
-            const getterPlan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (getterPlan.kind !== 'planned') throw new Error(getterPlan.reason)
-            expect(admitRuntimeServiceStageOutcome(Object.defineProperty({ stage: 'start', outcome: await executeProbe(getterPlan.start) }, 'plan', {
-                enumerable: true, get: () => getterPlan,
-            }) as never).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan: getterPlan, stage: 'start', outcome: await executeProbe(getterPlan.start) }).kind).toBe('admitted')
-
-            const invalidStagePlan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (invalidStagePlan.kind !== 'planned') throw new Error(invalidStagePlan.reason)
-            const invalidStageOutcome = await executeProbe(invalidStagePlan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan: invalidStagePlan, stage: 'inspect', outcome: invalidStageOutcome } as never).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan: invalidStagePlan, stage: 'start', outcome: invalidStageOutcome }).kind).toBe('unavailable')
-        })
-
-        it('requires affirmative clean start and status admission before later startup stages', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const statusPlan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            const identityPlan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (statusPlan.kind !== 'planned' || identityPlan.kind !== 'planned') throw new Error('service fixture unavailable')
-            const statusStart = await executeProbe(statusPlan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan: statusPlan, stage: 'status', outcome: await executeProbe(statusPlan.status), startOutcome: statusStart }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan: statusPlan, stage: 'start', outcome: statusStart }).kind).toBe('unavailable')
-
-            const identityStart = await executeProbe(identityPlan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan: identityPlan, stage: 'start', outcome: identityStart }).kind).toBe('admitted')
-            const identityStatus = await executeProbe(identityPlan.status)
-            expect(admitRuntimeServiceStageOutcome({ plan: identityPlan, stage: 'identity', outcome: await executeProbe(identityPlan.identity), startOutcome: identityStart, statusOutcome: identityStatus }).kind).toBe('unavailable')
-            expect(admitRuntimeServiceStageOutcome({ plan: identityPlan, stage: 'status', outcome: identityStatus, startOutcome: identityStart }).kind).toBe('unavailable')
-        })
-
-        it('rejects expired start evidence', async () => {
-            const fresh = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            }])
-            if (fresh.admitted.kind !== 'complete') throw new Error(fresh.admitted.reason)
-            const expiredPlan = createRuntimeServicePlan({ topology: fresh.admitted.topology, service: 'api' })
-            if (expiredPlan.kind !== 'planned') throw new Error(expiredPlan.reason)
-            const expiredOutcome = await executeProbe(expiredPlan.start)
-            vi.useFakeTimers()
-            vi.setSystemTime(Date.parse(fresh.admitted.topology.observationWindow.expiresAt) + 1)
-            try {
-                expect(admitRuntimeServiceStageOutcome({ plan: expiredPlan, stage: 'start', outcome: expiredOutcome }).kind).toBe('unavailable')
-            } finally {
-                vi.useRealTimers()
-            }
-            expect(admitRuntimeServiceStageOutcome({ plan: expiredPlan, stage: 'start', outcome: expiredOutcome }).kind).toBe('unavailable')
-        })
-
-        it.each([
-            ['invalid UTF-8', { StatusInvalidUtf8: true }],
-            ['invalid JSON', { StatusOutput: '{' }],
-            ['invalid shape', { StatusOutput: '[]' }],
-            ['invalid ID', { StatusOutput: JSON.stringify({ ID: 'not-an-id', Project: 'synthetic', Service: 'api' }) }],
-        ])('burns non-empty %s status evidence without issuing log authority', async (_label, controls) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-            const result = admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: await executeProbe(plan.status), startOutcome })
-            expect(result.kind).toBe('unavailable')
-            expect(result).not.toHaveProperty('evidence')
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: await executeProbe(plan.status), startOutcome }).kind).toBe('unavailable')
-        })
-
-        it.each([
-            ['invalid UTF-8', { IdentityInvalidUtf8: true }],
-            ['invalid shape', { IdentityOutput: 'not-a-container-id\n' }],
-            ['wrong ID', { IdentityOutput: `${sha('replacement container')}\n` }],
-        ])('burns non-empty %s identity evidence without issuing log authority', async (_label, controls) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-            const statusOutcome = await executeProbe(plan.status)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-            const result = admitRuntimeServiceStageOutcome({ plan, stage: 'identity', outcome: await executeProbe(plan.identity), startOutcome, statusOutcome })
-            expect(result.kind).toBe('unavailable')
-            expect(result).not.toHaveProperty('evidence')
-        })
-
-        it.each([
-            ['status', { StatusOutput: '' }],
-            ['status', { StatusStderr: 'runtime diagnostic' }],
-            ['identity', { IdentityOutput: '' }],
-            ['identity', { IdentityExitCode: 9 }],
-        ] as const)('keeps authentic %s absence or process failure eligible for one-shot logs', async (stage, controls) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, ...controls,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServicePlan({ topology: topology.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const startOutcome = await executeProbe(plan.start)
-            expect(admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: startOutcome }).kind).toBe('admitted')
-            const statusOutcome = await executeProbe(plan.status)
-            if (stage === 'identity') {
-                expect(admitRuntimeServiceStageOutcome({ plan, stage: 'status', outcome: statusOutcome, startOutcome }).kind).toBe('admitted')
-            }
-            const result = stage === 'status'
-                ? admitRuntimeServiceStageOutcome({ plan, stage, outcome: statusOutcome, startOutcome })
-                : admitRuntimeServiceStageOutcome({ plan, stage, outcome: await executeProbe(plan.identity), startOutcome, statusOutcome })
-            expect(result.kind).toBe('failure')
-            if (result.kind === 'failure') {
-                expect(consumeRuntimeServiceFailureForLogs(result.evidence)).toMatchObject({ stage, service: 'api' })
-                expect(consumeRuntimeServiceFailureForLogs(result.evidence)).toBeUndefined()
-            }
-        })
-
-        it.each([
-            ['missing', [], 'stale'],
-            ['replacement', [{ ID: sha('replacement container'), Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0 }], 'stale'],
-            ['malformed', [{ ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StatusOutput: '{' }], 'unavailable'],
-            ['refused', [{ ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0, StatusExitCode: 9 }], 'unavailable'],
-        ])('classifies an authentic %s revalidation status before identity', async (_label, containers, expected) => {
-            const topology = await topologyEvidence({ services: { api: {} } }, containers)
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const plan = createRuntimeServiceRevalidationPlan({ topology: topology.admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const result = admitRuntimeServiceRevalidationStatus({ plan, outcome: await executeProbe(plan.status) })
-            expect(result.kind).toBe(expected)
-        })
-
-        it('requires one admitted status before identity and inspection', async () => {
-            const topology = await topologyEvidence({ services: { api: {} } }, [{
-                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            }])
-            if (topology.admitted.kind !== 'complete') throw new Error(topology.admitted.reason)
-            const bypassed = createRuntimeServiceRevalidationPlan({ topology: topology.admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (bypassed.kind !== 'planned') throw new Error(bypassed.reason)
-            expect(admitRuntimeServiceRevalidation({
-                plan: bypassed,
-                outcome: await executeProbe(bypassed.status),
-                identityOutcome: await executeProbe(bypassed.identity),
-            }).kind).toBe('unavailable')
-
-            const plan = createRuntimeServiceRevalidationPlan({ topology: topology.admitted.topology, service: 'api', expectedContainerId: containerId })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
-            const outcome = await executeProbe(plan.status)
-            expect(admitRuntimeServiceRevalidationStatus({ plan, outcome })).toMatchObject({ kind: 'admitted', service: 'api' })
-            const identityOutcome = await executeProbe(plan.identity)
-            expect(admitRuntimeServiceRevalidation({ plan, outcome, identityOutcome }).kind).toBe('planned')
-            expect(admitRuntimeServiceRevalidationStatus({ plan, outcome }).kind).toBe('unavailable')
+        it('rejects start evidence whose receipt falls outside the observation window', async () => {
+            const topology = await admittedTopology({ services: { api: {} } }, [running()])
+            const { outcome, stages } = await serviceRun(topology, {
+                alter: shiftReceipt('start', 'finishedAt', () => new Date(Date.parse(topology.observationWindow.expiresAt) + 1).toISOString()),
+            })
+            expect(stages).toEqual(['start'])
+            expect(outcome).toMatchObject({ kind: 'failure' })
+            expect(outcome).not.toHaveProperty('logs')
         })
     })
 
@@ -2789,12 +2235,11 @@ fi
             expect(JSON.stringify(envelope.semantics)).not.toContain('spawnNotAfter')
             expect(JSON.stringify(envelope.semantics)).not.toContain('observedAt')
 
-            const plan = createRuntimeServicePlan({ topology: result.admitted.topology, service: 'api' })
-            if (plan.kind !== 'planned') throw new Error(plan.reason)
+            const { steps } = await serviceRun(result.admitted.topology)
             for (const [projected, live] of [
-                [service.start, plan.start],
-                [service.status, plan.status],
-                [service.identity, plan.identity],
+                [service.start, steps[0]!],
+                [service.status, steps[1]!],
+                [service.identity, steps[2]!],
             ] as const) {
                 expect(projected).toEqual({
                     argv: live.argv,
@@ -2812,12 +2257,10 @@ fi
                     compensation: live.compensation,
                 })
             }
-            const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
-            if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
             const substituted = service.inspect.argv.map((part) => typeof part === 'string' ? part : containerId)
-            expect(healthPlan.step.argv).toEqual(substituted)
+            expect(steps[3]!.argv).toEqual(substituted)
             expect(service.inspect.timeoutCeilingMs).toBe(result.runtime.plan.steps[0]?.timeoutMs)
-            expect(healthPlan.step.timeoutMs).toBeLessThanOrEqual(service.inspect.timeoutCeilingMs)
+            expect(steps[3]!.timeoutMs).toBeLessThanOrEqual(service.inspect.timeoutCeilingMs)
             for (const execution of [service.start, service.status, service.identity, service.inspect]) {
                 expect(execution.consumedFiles[0]).toEqual(expect.objectContaining({
                     executable: true,

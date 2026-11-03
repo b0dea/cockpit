@@ -10,13 +10,9 @@ import { authenticateStabilityCapture, captureRuntimeEvidence, createStabilityCa
 import { admitFailureLogs, collectLogs, failureLogExcerpt, planFailureLogs, planLogs, type FailureLogRecord, type LogRequest } from './logs.js'
 import {
     admitRuntimeServiceHealth,
-    admitRuntimeServicePlanFailure,
-    admitRuntimeServiceObservation,
-    admitRuntimeServiceStageOutcome,
     admitRuntimeTopology,
+    startRuntimeService,
     createRuntimeAdapter,
-    createRuntimeServiceHealthPlan,
-    createRuntimeServicePlan,
     createRuntimeTopologyPlan,
     type RuntimeAdapterAuthority,
     type RuntimeObservationWindow,
@@ -151,24 +147,8 @@ fi
     if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
     const topologyResult = admitRuntimeTopology({ plan: topologyPlan, outcome: await executeProbe(topologyPlan.step) })
     if (topologyResult.kind !== 'complete') throw new Error(topologyResult.reason)
-    const servicePlan = createRuntimeServicePlan({ topology: topologyResult.topology, service: 'api' })
-    if (servicePlan.kind !== 'planned') throw new Error(servicePlan.reason)
-    const startOutcome = await executeProbe(servicePlan.start)
-    if (admitRuntimeServiceStageOutcome({ plan: servicePlan, stage: 'start', outcome: startOutcome }).kind !== 'admitted') {
-        throw new Error('failure log fixture start admission failed')
-    }
-    const outcome = await executeProbe(servicePlan.status)
-    if (admitRuntimeServiceStageOutcome({ plan: servicePlan, stage: 'status', outcome, startOutcome }).kind !== 'admitted') {
-        throw new Error('failure log fixture status admission failed')
-    }
-    const identityOutcome = await executeProbe(servicePlan.identity)
-    if (admitRuntimeServiceStageOutcome({ plan: servicePlan, stage: 'identity', outcome: identityOutcome, startOutcome, statusOutcome: outcome }).kind !== 'admitted') {
-        throw new Error('failure log fixture identity admission failed')
-    }
-    const healthPlan = createRuntimeServiceHealthPlan({ plan: servicePlan, startOutcome, outcome, identityOutcome })
-    if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
-    const observed = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
-    if (observed.kind !== 'complete') throw new Error(observed.reason)
+    const observed = await startRuntimeService({ topology: topologyResult.topology, service: 'api', execute: executeProbe })
+    if (observed.kind !== 'observed') throw new Error('failure log fixture service observation failed')
     return observed.observation
 }
 
@@ -229,11 +209,9 @@ fi
     if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
     const topologyResult = admitRuntimeTopology({ plan: topologyPlan, outcome: await executeProbe(topologyPlan.step) })
     if (topologyResult.kind !== 'complete') throw new Error(topologyResult.reason)
-    const servicePlan = createRuntimeServicePlan({ topology: topologyResult.topology, service: 'api' })
-    if (servicePlan.kind !== 'planned') throw new Error(servicePlan.reason)
-    const failure = admitRuntimeServicePlanFailure({ plan: servicePlan, stage: 'start', outcome: await executeProbe(servicePlan.start) })
-    if (failure.kind !== 'complete') throw new Error(failure.reason)
-    return failure.evidence
+    const failure = await startRuntimeService({ topology: topologyResult.topology, service: 'api', execute: executeProbe })
+    if (failure.kind !== 'failure' || !failure.logs) throw new Error('failure log fixture start failure has no evidence')
+    return failure.logs
 }
 
 async function evidence(batchId: string, process: string): Promise<CapturedRuntimeEvidence> {
@@ -980,13 +958,13 @@ describe('authenticated failure logs', () => {
     it('does not accept copied or health-only evidence for the failure-log purpose', async () => {
         const observation = await failureEvidence()
         expect(planFailureLogs({ evidence: { ...observation } as never, ...bounds }).kind).toBe('unavailable')
-        const health = admitRuntimeServiceHealth({ observation })
-        expect(health.kind).toBe('complete')
-        if (health.kind === 'complete') expect(planFailureLogs({ evidence: health.evidence as never, ...bounds }).kind).toBe('unavailable')
+        const health = admitRuntimeServiceHealth(observation)
+        expect(health).toBeDefined()
+        expect(planFailureLogs({ evidence: health as never, ...bounds }).kind).toBe('unavailable')
         expect(planFailureLogs({ evidence: observation, ...bounds }).kind).toBe('planned')
 
         const reverseOrder = await failureEvidence()
         expect(planFailureLogs({ evidence: reverseOrder, ...bounds }).kind).toBe('planned')
-        expect(admitRuntimeServiceHealth({ observation: reverseOrder }).kind).toBe('complete')
+        expect(admitRuntimeServiceHealth(reverseOrder)).toBeDefined()
     })
 })

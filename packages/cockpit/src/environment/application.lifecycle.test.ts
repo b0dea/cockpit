@@ -9,7 +9,7 @@ import { resolveExecutable } from './executable.js'
 import type { StackId } from './contract.js'
 const applicationOwners = vi.hoisted(() => ({
     lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp'>>,
-    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'admitRuntimeServiceInspectFailure' | 'admitRuntimeServiceObservation' | 'admitRuntimeServiceStageOutcome' | 'createRuntimeServiceHealthPlan' | 'createRuntimeServicePlan' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder'>>,
+    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder' | 'revalidateRuntimeService' | 'startRuntimeService'>>,
     ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
@@ -26,11 +26,8 @@ vi.mock('./runtime.js', async (importOriginal) => {
     return {
         ...actual,
         admitRuntimeServiceHealth: (...args: Parameters<typeof actual.admitRuntimeServiceHealth>) => applicationOwners.runtime.admitRuntimeServiceHealth?.(...args) ?? actual.admitRuntimeServiceHealth(...args),
-        admitRuntimeServiceInspectFailure: (...args: Parameters<typeof actual.admitRuntimeServiceInspectFailure>) => applicationOwners.runtime.admitRuntimeServiceInspectFailure?.(...args) ?? actual.admitRuntimeServiceInspectFailure(...args),
-        admitRuntimeServiceObservation: (...args: Parameters<typeof actual.admitRuntimeServiceObservation>) => applicationOwners.runtime.admitRuntimeServiceObservation?.(...args) ?? actual.admitRuntimeServiceObservation(...args),
-        admitRuntimeServiceStageOutcome: (...args: Parameters<typeof actual.admitRuntimeServiceStageOutcome>) => applicationOwners.runtime.admitRuntimeServiceStageOutcome?.(...args) ?? actual.admitRuntimeServiceStageOutcome(...args),
-        createRuntimeServiceHealthPlan: (...args: Parameters<typeof actual.createRuntimeServiceHealthPlan>) => applicationOwners.runtime.createRuntimeServiceHealthPlan?.(...args) ?? actual.createRuntimeServiceHealthPlan(...args),
-        createRuntimeServicePlan: (...args: Parameters<typeof actual.createRuntimeServicePlan>) => applicationOwners.runtime.createRuntimeServicePlan?.(...args) ?? actual.createRuntimeServicePlan(...args),
+        revalidateRuntimeService: (...args: Parameters<typeof actual.revalidateRuntimeService>) => applicationOwners.runtime.revalidateRuntimeService?.(...args) ?? actual.revalidateRuntimeService(...args),
+        startRuntimeService: (...args: Parameters<typeof actual.startRuntimeService>) => applicationOwners.runtime.startRuntimeService?.(...args) ?? actual.startRuntimeService(...args),
         observeRuntimeServiceColdStart: (...args: Parameters<typeof actual.observeRuntimeServiceColdStart>) => applicationOwners.runtime.observeRuntimeServiceColdStart?.(...args) ?? actual.observeRuntimeServiceColdStart(...args),
         resolveRuntimeServiceOrder: (...args: Parameters<typeof actual.resolveRuntimeServiceOrder>) => applicationOwners.runtime.resolveRuntimeServiceOrder?.(...args) ?? actual.resolveRuntimeServiceOrder(...args),
     }
@@ -571,16 +568,11 @@ describe('lifecycle application contracts', () => {
         const evidence = Object.freeze({ service: 'api', containerId })
         stubUpPlanner(() => ({ kind: 'execute', mode: 'start', plan } as never))
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({ topology, firstIncompleteServiceIndex: 0, portOwnership: {}, drainRequest: null, reclaim: null } as never)
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({ kind: 'planned', service: 'api', start: steps.start, status: steps.status, identity: steps.identity } as never)
-        const admittedStages: string[] = []
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = ({ stage }) => {
-            admittedStages.push(stage)
-            return { kind: 'admitted', service: 'api' } as never
+        applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
+            for (const step of [steps.start, steps.status, steps.identity, steps.inspect]) await execute(step as never)
+            return { kind: 'observed', observation } as never
         }
-        applicationOwners.runtime.createRuntimeServiceHealthPlan = () => ({ kind: 'planned', service: 'api', step: steps.inspect } as never)
-        applicationOwners.runtime.admitRuntimeServiceInspectFailure = () => ({ kind: 'unavailable', service: 'api', reason: 'healthy' } as never)
-        applicationOwners.runtime.admitRuntimeServiceObservation = () => ({ kind: 'complete', observation } as never)
-        applicationOwners.runtime.admitRuntimeServiceHealth = () => ({ kind: 'complete', evidence } as never)
+        applicationOwners.runtime.admitRuntimeServiceHealth = () => evidence as never
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
         stubColdStart(context.stackId, measuredMillis, limitMillis)
         const executed: string[] = []
@@ -620,62 +612,12 @@ describe('lifecycle application contracts', () => {
                 message: 'the runtime took 30.049 s to start its services, over the 30 s that environment.machine.cold_start_seconds allows',
                 fix: expect.stringContaining('raise environment.machine.cold_start_seconds') }] })
         expect(executed).toEqual(['start', 'status', 'identity', 'inspect'])
-        expect(admittedStages).toEqual(['start', 'status', 'identity'])
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
             kind: 'complete', value: { value: { holderId: context.holderId, completedServices: [{ service: 'api', containerId }] } },
         })
         // Only a successful first up seeds durable history; a refused cold start remains bootstrap.
         expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))
             .toMatchObject({ kind: 'complete', authority: { stage: expectedKind === 'complete' ? 'steady' : 'bootstrap' } })
-    })
-
-    it.each([
-        ['start', ['start']],
-        ['status', ['start', 'status']],
-        ['identity', ['start', 'status', 'identity']],
-    ] as const)('stops startup after unavailable %s admission', async (blockedStage, expectedSteps) => {
-        const { configPath, context } = await lifecycleContextFixture()
-        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
-        const topology = Object.freeze({ services: Object.freeze([{ id: 'api' }]) })
-        stubUpPlanner((input) => ({
-            kind: 'execute', mode: 'start',
-            plan: { progress: { workBasisSha256: '3'.repeat(64), operationGeneration: input.operationGeneration, completedServices: [] }, diagnostics: [] },
-        } as never))
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
-        } as never)
-        applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
-        applicationOwners.runtime.createRuntimeServicePlan = () => ({
-            kind: 'planned', service: 'api',
-            start: { id: 'start' }, status: { id: 'status' }, identity: { id: 'identity' },
-        } as never)
-        applicationOwners.runtime.admitRuntimeServiceStageOutcome = ({ stage }) => stage === blockedStage
-            ? ({ kind: 'unavailable', service: 'api' } as never)
-            : ({ kind: 'admitted', service: 'api' } as never)
-        const executed: string[] = []
-
-        const result = await runUp({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS } as never),
-            withLifecycleStage: async (_context, use) => use({} as never),
-            withAcquiredPorts: async (_context, use) => use({
-                retainOnFailure: vi.fn(),
-                leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2, lease },
-                projection: {
-                    lease,
-                    ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 2, holderCount: 1, holderIds: [context.holderId] },
-                    entrypoints: [],
-                },
-            } as never),
-            execute: async (step) => {
-                executed.push(step.id)
-                return {} as never
-            },
-        })
-
-        expect(result).toMatchObject({ kind: 'refusal' })
-        expect(executed).toEqual(expectedSteps)
     })
 
     it.each(['stack', 'holder'] as const)('rejects an acquired lease paired with another %s', async (mismatch) => {
