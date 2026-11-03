@@ -313,6 +313,18 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringMatching(/Claude Code \(claude\) is not on PATH .*; OpenCode \(opencode\) is not on PATH/) }))
         await writeFile(join(candidate.root, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
+
+        // Left unset, the evaluators are the listed tools: a Claude Code team is not sent to install Codex.
+        const claudeTeam = await fixture({ configuredRuntime: true, unseeded: true })
+        await mkdir(join(claudeTeam.checkout, 'workorders'))
+        await writeFile(join(claudeTeam.root, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+        await writeFile(claudeTeam.configPath, `${await readFile(claudeTeam.configPath, 'utf8')}\n[surfaces]\ntools = ["claudecode"]\n`)
+        const claudeDoctor = await runDoctor({ configPath: claudeTeam.configPath }, createHealthCommandAdapters({
+            configPath: claudeTeam.configPath, env: { PATH: `${claudeTeam.root}:/usr/bin:/bin`, HOME: claudeTeam.home }, timeoutMs: 5_000,
+        }, executeProbe))
+        const unavailable = claudeDoctor.diagnostics.find(row => row.code === 'EVALUATOR_UNAVAILABLE')
+        expect(unavailable?.message).toMatch(/Claude Code \(claude\) is not on PATH/)
+        expect(unavailable?.message).not.toMatch(/Codex|OpenCode/)
     })
 
     it('preserves a lifecycle owner refusal before observing Docker', async () => {

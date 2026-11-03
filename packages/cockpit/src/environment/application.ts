@@ -117,6 +117,7 @@ import {
 } from './setup-observation.js'
 import {
     loadCockpitConfig,
+    evaluatorTools,
     consumeLoadedConfigProjection,
     type LoadedConfigProjection,
 } from '../config/load.js'
@@ -4706,7 +4707,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
 // a docs-only cockpit has no product to test and stays quiet.
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(loaded.result.config.workorders.evaluators) : Object.freeze([])
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(evaluatorTools(loaded.result.config)) : Object.freeze([])
 }
 
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {

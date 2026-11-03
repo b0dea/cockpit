@@ -863,8 +863,8 @@ export const Workorders = z
         // An ordered fallback list: the first that runs answers, and one that is missing, signed out or
         // rate-limited is recorded and passed over. It never falls back to the agent grading itself.
         evaluators: z.array(z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[])).min(1).max(3)
-            .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').default(['codexcli', 'claudecode', 'opencode'])
-            .describe('Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode.'),
+            .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').optional()
+            .describe('Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.'),
     })
     .strict()
 

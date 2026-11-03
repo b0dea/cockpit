@@ -14,14 +14,14 @@ import {
     snapshotJson,
 } from '../environment/contract.js'
 import { validateWorkOrderPolicy, WORK_ORDER_WIP_MAXIMA, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
-import { CockpitConfig, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
+import { CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 import { deriveRegistry } from '../registry-derivation.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'configuration-loading',
     module: 'packages/cockpit/src/config/load.ts',
-    exports: ['loadCockpitConfig', 'unboundHostOperation', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
+    exports: ['loadCockpitConfig', 'evaluatorTools', 'unboundHostOperation', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
 } as const
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
@@ -211,7 +211,7 @@ export function projectWorkEnvironmentConfig(
         workOrderPolicy: policy.policy,
         verificationTimeoutSeconds: loaded.config.workorders.verification_timeout_seconds,
         evaluatorTimeoutSeconds: loaded.config.workorders.evaluator_timeout_seconds,
-        evaluators: Object.freeze([...loaded.config.workorders.evaluators]),
+        evaluators: Object.freeze([...evaluatorTools(loaded.config)]),
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
         ...(testing === undefined ? {} : { testing }),
@@ -538,4 +538,12 @@ export async function loadCockpitConfig(
         diagnostics: [],
         result,
     }
+}
+
+/**
+ * The evaluators work review and work grade try, in order. Left unset, they are the listed agent
+ * tools that can evaluate, so a team on one tool is never told to install another to grade.
+ */
+export function evaluatorTools(config: Pick<CockpitConfig, 'workorders' | 'surfaces'>): readonly EvaluatorTool[] {
+    return config.workorders.evaluators ?? config.surfaces.tools.filter((tool): tool is EvaluatorTool => Object.hasOwn(EVALUATOR_COMMANDS, tool))
 }
