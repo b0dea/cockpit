@@ -45,56 +45,6 @@ for whoever performs the upgrade: what changed, the observable failure or diagno
 replacement, and any rollback boundary. When the edit is mechanical, the release includes a codemod
 or script rather than prose.
 
-Every GitHub release attaches one `release-evidence.json` record and its SHA-256 file. The record
-names that exact npm package version and registry integrity, and hashes the core surface
-declarations with the same constructor `sync` uses. To review an upgrade, download the installed
-and candidate records from their exact tags, review both SHA-256 files, pair the records with the
-shipped offline assembler, and only then plan and apply:
-
-```sh
-CURRENT_VERSION="$(node -p "require('./node_modules/@b00dea/cockpit/package.json').version")"
-TARGET_VERSION="1.2.3"
-mkdir -p .cockpit/releases/current .cockpit/releases/candidate
-gh release download "@b00dea/cockpit@${CURRENT_VERSION}" \
-  --pattern release-evidence.json.sha256 \
-  --dir .cockpit/releases/current
-gh release download "@b00dea/cockpit@${TARGET_VERSION}" \
-  --pattern release-evidence.json.sha256 \
-  --dir .cockpit/releases/candidate
-cat .cockpit/releases/current/release-evidence.json.sha256
-cat .cockpit/releases/candidate/release-evidence.json.sha256
-CURRENT_RECORD_SHA256="REVIEWED_CURRENT_RECORD_SHA256"
-CANDIDATE_RECORD_SHA256="REVIEWED_CANDIDATE_RECORD_SHA256"
-gh release download "@b00dea/cockpit@${CURRENT_VERSION}" \
-  --pattern release-evidence.json --dir .cockpit/releases/current
-gh release download "@b00dea/cockpit@${TARGET_VERSION}" \
-  --pattern release-evidence.json --dir .cockpit/releases/candidate
-node ./node_modules/@b00dea/cockpit/libexec/release-evidence.mjs assemble \
-  --current .cockpit/releases/current/release-evidence.json \
-  --current-sha256 "$CURRENT_RECORD_SHA256" \
-  --candidate .cockpit/releases/candidate/release-evidence.json \
-  --candidate-sha256 "$CANDIDATE_RECORD_SHA256" \
-  --output .cockpit/releases/release-evidence-pair.json
-./node_modules/.bin/cockpit upgrade --config ./cockpit.toml \
-  --release-evidence .cockpit/releases/release-evidence-pair.json \
-  --release-evidence-sha256 "$(awk 'NR == 1 { print $1 }' .cockpit/releases/release-evidence-pair.json.sha256)"
-./node_modules/.bin/cockpit sync --config ./cockpit.toml --dry-run
-./node_modules/.bin/cockpit sync --config ./cockpit.toml
-./node_modules/.bin/cockpit preflight --config ./cockpit.toml
-```
-
-`upgrade` is experimental. It is a read-only plan, and it accepts only the paired file the
-assembler writes; a record for a single release is not enough. Before `sync`, review the changed
-overlays, ownership, capability states and any manual steps it lists;
-[Review an upgrade](harness-surfaces.md#review-an-upgrade) explains what the plan reports.
-
-The assembler refuses changed bytes, linked or special-file inputs, mismatched packages, invalid
-records, and an existing output instead of replacing it. Combining the installed record directly
-with the candidate means skipping intermediate versions does not weaken the comparison. The first
-public release carries only its own record; there is no earlier `current` release to pair it with.
-
-Cockpit reads the release-evidence file only if it is a regular file, not changing, and within the
-size limit set in [the release-evidence code](../packages/cockpit/src/upgrade/release-evidence.ts);
-pipes and other special files are refused without waiting for a writer. Integrity values must be
-canonical base64 SHA-256, SHA-384 or SHA-512 digests of the matching length. Hexadecimal digests
-and truncated placeholders are refused even when the file holding them has the expected hash.
+To upgrade, move the exact pin with `npm install --save-dev --save-exact @b00dea/cockpit@<version>`,
+then preview and apply the regenerated files with `sync`, as
+[Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) describes.

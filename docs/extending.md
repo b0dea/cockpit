@@ -34,7 +34,7 @@ The [extended example](../examples/extended/README.md) shows this pattern.
 
 Generated ownership is the upgrade boundary. A later `sync` may replace files cockpit generated,
 and reports a changed overridden core declaration, but it never adopts or overwrites the files
-beside them. Review `cockpit upgrade` before changing the installed version.
+beside them. Preview `cockpit sync --dry-run` after changing the installed version.
 
 Give generated outputs portable relative names, so one committed checkout works on every
 filesystem. Avoid reserved device names, stream syntax, trailing dots or spaces, and directory names

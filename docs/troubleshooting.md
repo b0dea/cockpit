@@ -162,7 +162,7 @@ files do not match the skill contract. `SKILL_STANDING_COST_EXCEEDED` means the 
 skill entry points are too large. Shrink them; moving decision logic into another always-loaded
 file is not a repair.
 
-### Selftest and upgrade
+### Selftest and override inspection
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
 digest, generated-manifest digest or specification size failed its check, or the file still has a
@@ -189,16 +189,6 @@ first, then each executable path and SHA-256. Approval lasts only for that run.
 `SURFACE_OVERRIDE_INSPECTION_INVALID`, and `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` mean
 `doctor` could not produce its read-only override view. They do not mean there are no overrides;
 inspect the named generated source or configuration path before relying on that view.
-
-None of the upgrade codes is a reason to install a package or edit a manifest by hand.
-
-| Diagnostic | Meaning |
-| --- | --- |
-| `UPGRADE_SOURCE_INVALID` | The configuration path was not accepted. |
-| `UPGRADE_NETWORK_FAILED`, `UPGRADE_AUTH_FAILED` | cockpit could not look up the release; repair that source and retry. `UPGRADE_AUTH_FAILED` also covers a missing or mismatched release-evidence file, SHA-256 or installed package identity: take the expected digest from the release attestation, not from the suspect file. |
-| `UPGRADE_VERSION_AMBIGUOUS` | Discovery did not establish one compatible current and candidate package identity, version and integrity. This is the expected fail-closed result when no release evidence is supplied or the candidate is not strictly newer. |
-| `UPGRADE_DISCOVERY_INVALID` | The discovery result or affected override list was malformed. |
-| `UPGRADE_REPAIR_UNVERIFIED` | The source cannot establish that an earlier repair completed. |
 
 ## Clear cockpit state
 

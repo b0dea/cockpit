@@ -608,10 +608,9 @@ transaction plans its helper steps before staging and keeps time in reserve to r
 work reaches its deadline. If cockpit cannot confirm that writing or rollback finished, it keeps the
 recovery inputs and refuses to report success.
 
-Capability states, overlay rules, MCP approval, sibling guide copies, the skill contract, `selftest`
-and `upgrade` for the generated harness surfaces are in [Harness surfaces](harness-surfaces.md);
-see [Review an upgrade](harness-surfaces.md#review-an-upgrade) before changing the installed
-version.
+Capability states, overlay rules, MCP approval, sibling guide copies, the skill contract and
+`selftest` for the generated harness surfaces are in [Harness surfaces](harness-surfaces.md);
+see [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) before changing the installed version.
 
 ### Services and dependencies
 

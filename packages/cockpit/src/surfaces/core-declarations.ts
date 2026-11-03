@@ -1,13 +1,13 @@
 // Owns the canonical core declarations whose hashes bind consumer overlays to shipped surface
-// bytes. Runtime rendering and release evidence must call this same constructor; neither may
-// independently reinterpret the skill collection or choose a different declaration shape.
+// bytes. Every renderer calls this same constructor, so none may independently reinterpret the
+// skill collection or choose a different declaration shape.
 import type { SurfaceDeclaration } from '../schema.js'
 import { tryParseJson } from '../environment/contract.js'
 
 export const mechanism = {
     id: 'core-surface-declarations',
     module: 'packages/cockpit/src/surfaces/core-declarations.ts',
-    exports: ['CORE_EVALUATOR_ASSET', 'CORE_SKILL_ASSETS', 'CORE_SURFACE_ASSET_PATHS', 'shippedSkillNames', 'coreSurfaceDeclarations'],
+    exports: ['CORE_EVALUATOR_ASSET', 'CORE_SKILL_ASSETS', 'shippedSkillNames', 'coreSurfaceDeclarations'],
 } as const
 
 export const CORE_EVALUATOR_ASSET = 'agents/evaluator.agent.md' as const
@@ -19,7 +19,6 @@ export const CORE_SKILL_ASSETS = Object.freeze([
     'skills/cockpit-work.skill.md',
     'skills/procedures/onboarding.md',
 ] as const)
-export const CORE_SURFACE_ASSET_PATHS = Object.freeze([CORE_EVALUATOR_ASSET, ...CORE_SKILL_ASSETS] as const)
 
 type CoreAsset = Readonly<{ bytes: string }>
 

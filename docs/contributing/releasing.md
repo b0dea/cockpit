@@ -18,8 +18,8 @@ Releases are automated with Changesets and GitHub Actions.
    as described in [Merging the Version Packages pull request](#merging-the-version-packages-pull-request).
 4. **Merging the Version Packages pull request publishes.** The workflow's `publish` job
    publishes to npm through Trusted Publishing (OIDC, with provenance, no stored token), stamps
-   the source commit into the package's `cockpitSourceRevision`, creates the GitHub release, and
-   uploads the release record that `cockpit upgrade` reads. Only that job runs in the `npm`
+   the source commit into the package's `cockpitSourceRevision`, and creates the GitHub release.
+   Only that job runs in the `npm`
    deployment environment the trusted publisher names, so no other job or branch can publish.
 
 After the [first publication](#first-publication), nobody runs `npm publish` by hand.
@@ -52,7 +52,7 @@ to exist on the registry before a trusted publisher can be configured. Until the
 workflow stops before publishing and names this section.
 
 The bootstrap publishes a deprecated placeholder that contains no code, so the real first release
-still goes through the workflow with provenance, a tag, a GitHub release and its release record.
+still goes through the workflow with provenance, a tag and a GitHub release.
 Do it once, when the repository is public, the package manifest is no longer private, and the
 Version Packages pull request is open but not merged:
 
@@ -86,7 +86,7 @@ Version Packages pull request is open but not merged:
 3. Within two days, merge the Version Packages pull request as described above. An unused trusted
    publisher configuration expires after two days.
 4. When the release run finishes, check that `npm view @b00dea/cockpit dist-tags` shows the new
-   version as `latest`, and that the GitHub release has `release-evidence.json` attached.
+   version as `latest`, and that the GitHub release exists.
 5. Under the package's **Settings**, **Publishing access**, choose **Require two-factor
    authentication and disallow tokens**, so trusted publishing is the only way to publish.
 

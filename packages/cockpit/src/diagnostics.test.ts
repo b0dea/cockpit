@@ -103,7 +103,7 @@ describe('diagnostic envelope', () => {
         const rendered = renderHumanDiagnostics([diagnostic])
         expect(rendered.slice(0, -1)).not.toMatch(unsafe)
         expect(rendered).toContain('CODE\\u001b\\n\\r\\u0000\\u0085\\u202e\\u2028\\u2066')
-        for (const command of ['doctor', 'selftest', 'upgrade', 'sync', 'init']) {
+        for (const command of ['doctor', 'selftest', 'sync', 'init']) {
             const review = renderHumanDiagnostics([], { command, outcome: { status: 0,
                 result: { path: hostile, dryRun: true, changes: [{ operation: 'write', path: hostile }] } } })
             expect(review).toContain('\\u202e')

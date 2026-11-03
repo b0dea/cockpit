@@ -125,7 +125,7 @@ describe('executable remedy catalogue', () => {
 // install, every configured command refuses without --config, and down and reset refuse until the
 // Docker daemon is named.
 describe('printed cockpit commands', () => {
-    const VERBS = 'sibling add|sibling remove|runtime measure|baseline-record|setup|sync|check|selftest|upgrade|up|sleep|session|down|reset|preflight|doctor|logs'
+    const VERBS = 'sibling add|sibling remove|runtime measure|baseline-record|setup|sync|check|selftest|up|sleep|session|down|reset|preflight|doctor|logs'
     // Every work, browser and test command reads --config too; they are spelled through their own owners, not cockpitCommand.
     const SCANNED = `${VERBS}|test-run|${commandGroups.map(group => `${group.name} [a-z][a-z-]*`).join('|')}`
     const runnable = new RegExp(`(?:npx --no |\\./node_modules/\\.bin/)cockpit (${SCANNED})(?![\\w-])`, 'g')
@@ -315,11 +315,8 @@ describe('printed cockpit commands', () => {
         const placeholder: Readonly<Record<string, string>> = { kind: 'spec', target: 'codexcli', tool: 'codexcli', root: '.', command: 'true', 'agent command': 'true' }
         const substitute = (command: string) => command.replace(/<([^<>]+)>/g, (_, name: string) => placeholder[name]
             ?? (/sha256$/i.test(name) ? 'a'.repeat(64) : `synthetic-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`))
-        // The files a reader has written by the time they run the command: the init answers it reads
-        // and the downloaded evidence an upgrade example takes its digest from.
+        // The file a reader has written by the time they run the command: the init answers it reads.
         await writeFile(join(root, 'answers.toml'), '')
-        await mkdir(join(root, '.cockpit/releases'), { recursive: true })
-        await writeFile(join(root, '.cockpit/releases/release-evidence-pair.json.sha256'), `${'a'.repeat(64)}  release-evidence-pair.json\n`)
         const env = { PATH: process.env.PATH ?? '', HOME: root }
         const io = { confirmInit: async () => undefined, answerInitQuestion: async () => undefined, confirmReset: async () => false,
             confirmBaseline: async () => false, confirmWorkOrder: async () => undefined, confirmSelftestExecutable: async () => undefined,

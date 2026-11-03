@@ -374,26 +374,19 @@ parsing them; the [validator](../packages/cockpit/libexec/validate-harness-evide
 current limits. It refuses changed files and files that are not regular. These records keep their
 original capability strength; passing the validator does not promote a native capability.
 
-## Review an upgrade
+## Upgrade cockpit
 
-`upgrade` is a read-only plan: it does not query a floating package tag, install anything or
-modify the checkout. Without release evidence it fails with `UPGRADE_VERSION_AMBIGUOUS`. To inspect
-a candidate, pass an exact release-evidence file with `--release-evidence` and its separately
-obtained SHA-256 with `--release-evidence-sha256`;
-[Migration](release-policy.md#migration) shows how to get and pair both. Cockpit checks the file's
-bytes before parsing, compares its package name and version with the installed package, and
-requires a strictly newer candidate. It reports the release's integrity value, checks the installed
-integrity when that is available, and lists the originals your active overrides replace. A digest
-computed from an untrusted file alone does not show who published the release; take it from the
-approved release attestation.
+An upgrade replaces the generated files that guard and instruct every agent, so a person reads
+what `sync` would change before it writes.
 
-To apply the upgrade:
-
-1. Review the reported versions, integrity and every affected override. Do not accept a changed
-   override original until its replacement has been reviewed against the new core bytes.
-2. Upgrade the dependency through the repository's lockfile workflow.
-3. In a terminal outside the agent, run the reported sequence with the quoted configuration path
-   from the plan: `cockpit sync --config <path> --dry-run`, `cockpit sync --config <path>`, then
-   `cockpit preflight --config <path>`. Until `sync` runs, the guard holds every agent tool call,
-   because it trusts only the cockpit it was generated for.
-4. Commit the regenerated files.
+1. Move the pin with `npm install --save-dev --save-exact @b00dea/cockpit@<version>`; `npm update`
+   does not move an exact pin.
+2. Read the newly installed `./node_modules/@b00dea/cockpit/CHANGELOG.md` between the old and new
+   version. A line starting `Upgrade:` names a step `sync` does not do.
+3. Preview the generated changes with `npx --no cockpit sync --config cockpit.toml --dry-run`.
+4. In a terminal outside the agent, run `npx --no cockpit sync --config cockpit.toml`. Until it
+   runs, the guard holds every agent tool call, because it trusts only the cockpit it was generated
+   for. A built-in that one of your overlays replaces and that the new release changed is reported
+   as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override before updating its
+   recorded hash.
+5. Commit the lockfile and the regenerated files together.

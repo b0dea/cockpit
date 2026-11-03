@@ -41,7 +41,6 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'sleep'
     | 'sync'
     | 'up'
-    | 'upgrade'
 
 export type CommandStage = 'set-up' | 'generate-and-verify' | 'run-the-stack' | 'diagnose' | 'test-and-grade'
 
@@ -123,8 +122,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     purpose: 'Short purpose of the sibling repository',
     registry: 'Path to the legacy registry input',
     'reset-answer': 'Preview clearing one recorded init answer field',
-    'release-evidence': "Path to the target version's release-evidence file",
-    'release-evidence-sha256': 'Expected SHA-256 of that file',
     remote: 'Repository remote URL recorded for the sibling',
     role: 'Declared browser role',
     select: 'Optional subset of the gate to run',
@@ -163,8 +160,8 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     options: Readonly<Record<string, OrdinaryOption>>
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
-    forbidden: Readonly<{ presence: readonly string[]; values: readonly { option: string; predicate: 'not-lowercase-sha256' }[] }>
-    selection?: 'root-xor-registry' | 'release-evidence-pair' | 'intent-xor-work-order'
+    forbidden: Readonly<{ presence: readonly string[] }>
+    selection?: 'root-xor-registry' | 'intent-xor-work-order'
     // Admitted only where cockpit.toml sets browser.request_preapproval, which the schema grants only
     // on isolated data that cannot reach production.
     requires?: 'browser-preapproval'
@@ -180,7 +177,7 @@ function ordinary(command: HandlerIdentifier, options: Readonly<Record<string, O
     return Object.freeze({ availability: 'available', executableRole: 'installed-cockpit', command,
         positional: Object.freeze({ min: 0, max: 0, roles: Object.freeze([] as const) }), options: Object.freeze(options),
         cwdRole: 'canonical-root', configuration: 'resolved',
-        forbidden: Object.freeze({ presence: Object.freeze([]), values: Object.freeze([]) }), ...extra })
+        forbidden: Object.freeze({ presence: Object.freeze([]) }), ...extra })
 }
 function unavailable(reason: string): OrdinaryCommandMetadata { return Object.freeze({ availability: 'unavailable', reason }) }
 
@@ -207,7 +204,7 @@ export const commands: readonly CommandDefinition[] = [
             'reset-answer': value('field'), 'accept-reset': value('sha256'), json: flag }, {
             configuration: 'none',
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
-            forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']), values: Object.freeze([]) }),
+            forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']) }),
         }),
         options: { target: { type: 'string' }, registry: { type: 'string' },
             interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
@@ -223,7 +220,7 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         ordinary: ordinary('document', { registry: value('confined-path'), json: flag }, {
             configuration: 'none', positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['confined-root'] as const) }),
-            selection: 'root-xor-registry', forbidden: Object.freeze({ presence: Object.freeze(['output']), values: Object.freeze([]) }),
+            selection: 'root-xor-registry', forbidden: Object.freeze({ presence: Object.freeze(['output']) }),
         }),
         options: {
             registry: { type: 'string' },
@@ -237,7 +234,7 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        ordinary: ordinary('setup', configured, { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']), values: Object.freeze([]) }) }),
+        ordinary: ordinary('setup', configured, { forbidden: Object.freeze({ presence: Object.freeze(['write-instruction-pointers', 'write-instruction-files']) }) }),
         options: {
             config: { type: 'string' },
             'write-instruction-pointers': { type: 'boolean', default: false },
@@ -281,23 +278,6 @@ export const commands: readonly CommandDefinition[] = [
         },
     },
     {
-        name: 'upgrade',
-        stage: 'set-up',
-        summary: 'Show the steps to upgrade cockpit without applying them',
-        handler: 'upgrade',
-        visibility: 'public',
-        experimental: true,
-        ordinary: ordinary('upgrade', { ...configured, 'release-evidence': value('confined-path'), 'release-evidence-sha256': value('sha256') }, {
-            selection: 'release-evidence-pair', forbidden: Object.freeze({ presence: Object.freeze([]), values: Object.freeze([{ option: 'release-evidence-sha256', predicate: 'not-lowercase-sha256' as const }]) }),
-        }),
-        options: {
-            config: { type: 'string' },
-            'release-evidence': { type: 'string' },
-            'release-evidence-sha256': { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
-    },
-    {
         name: 'sync',
         stage: 'generate-and-verify',
         summary: 'Write the generated stack and agent files from cockpit.toml',
@@ -305,7 +285,7 @@ export const commands: readonly CommandDefinition[] = [
         visibility: 'public',
         // Adoption rewrites cockpit.toml and moves a team's harness settings, and a real sync rewrites
         // the guard's own files, so only the dry run is an ordinary agent invocation.
-        ordinary: ordinary('sync', { ...configured, 'dry-run': Object.freeze({ ...flag, required: true as const }) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']), values: Object.freeze([]) }) }),
+        ordinary: ordinary('sync', { ...configured, 'dry-run': Object.freeze({ ...flag, required: true as const }) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }) }),
         options: {
             config: { type: 'string' },
             'dry-run': { type: 'boolean', default: false },
@@ -332,7 +312,7 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Test whether agent tools enforce the generated controls',
         handler: 'selftest',
         visibility: 'public',
-        ordinary: ordinary('selftest', { ...configured, 'probe-specifications': value('confined-path', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive']), values: Object.freeze([]) }) }),
+        ordinary: ordinary('selftest', { ...configured, 'probe-specifications': value('confined-path', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) }),
         options: {
             config: { type: 'string' },
             'probe-specifications': { type: 'string' },
@@ -502,7 +482,7 @@ export const commands: readonly CommandDefinition[] = [
     // dead, and that probe sees only this machine's process table: a holder running in a container or
     // on another host that shares the checkout looks dead to it, so a person confirms it is gone.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public',
-        ordinary: ordinary('work-recover', { ...configured, lock: value('work-lock', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['apply']), values: Object.freeze([]) }) }),
+        ordinary: ordinary('work-recover', { ...configured, lock: value('work-lock', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
         options: { ...workOptions, lock: { type: 'string' }, apply: { type: 'boolean', default: false } } },
     // Execute runs the verification command of a step in an order a person accepted; the approach is a
     // label it records and selects nothing it runs.
@@ -522,7 +502,7 @@ export const commands: readonly CommandDefinition[] = [
     // The preview is a report. Parking or un-parking an order changes which orders count against the
     // work-in-progress cap a person set, so applying a sweep and reversing one stay with a person.
     { name: 'work sweep', handler: 'work-sweep', stage: 'test-and-grade', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public',
-        ordinary: ordinary('work-sweep', configured, { forbidden: Object.freeze({ presence: Object.freeze(['apply']), values: Object.freeze([]) }) }),
+        ordinary: ordinary('work-sweep', configured, { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
         options: { ...workOptions, ...{ apply: { type: 'boolean', default: false } } } },
     { name: 'work reverse', handler: 'work-reverse', stage: 'test-and-grade', summary: 'Reverse a recorded work-order sweep', visibility: 'public',
         ordinary: unavailable('reversing a sweep un-parks an order, which changes the orders that count against the work-in-progress cap a person set'),
@@ -531,7 +511,7 @@ export const commands: readonly CommandDefinition[] = [
     // programme ledger to the draft for good, so only the report is an agent's to run.
     { name: 'work programme-mint', handler: 'work-programme-mint', stage: 'test-and-grade', summary: 'Mint the next declared programme work order', visibility: 'public',
         ordinary: ordinary('work-programme-mint', { ...configured, programme: value('identifier', true), item: value('identifier') },
-            { forbidden: Object.freeze({ presence: Object.freeze(['candidate']), values: Object.freeze([]) }) }),
+            { forbidden: Object.freeze({ presence: Object.freeze(['candidate']) }) }),
         options: { ...workOptions, ...{ programme: { type: 'string' }, item: { type: 'string' }, candidate: { type: 'string' } } } },
     { name: 'work metrics', handler: 'work-metrics', stage: 'test-and-grade', summary: 'Report work-order metrics', visibility: 'public',
         ordinary: ordinary('work-metrics'),
@@ -693,10 +673,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         || grammar.selection === 'root-xor-registry' && (positionals.length === 1) === options.has('registry')
-        || grammar.selection === 'release-evidence-pair' && options.has('release-evidence') !== options.has('release-evidence-sha256')
         || grammar.selection === 'intent-xor-work-order' && (options.has('intent') === options.has('work-order') || options.has('candidate') && !options.has('intent'))
-        || grammar.forbidden.values.some(predicate => options.has(predicate.option)
-            && predicate.predicate === 'not-lowercase-sha256' && !/^[a-f0-9]{64}$/.test(String(options.get(predicate.option))))
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
     return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]),
         ...(reads.length ? { reads: Object.freeze(reads) } : {}) })

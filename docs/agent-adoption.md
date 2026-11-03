@@ -549,5 +549,5 @@ what changed and the command to run. The upgrade sequence:
 3. Review and commit the regenerated files.
 
 Each clone keeps its own machine-local guard identity in `.cockpit/local/`, which Git ignores, so
-teammates run step 2 after pulling and commit nothing extra. To inspect a release before
-installing it, see [Review an upgrade](harness-surfaces.md#review-an-upgrade).
+teammates run step 2 after pulling and commit nothing extra. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit)
+covers the preview and an overridden built-in that changed.

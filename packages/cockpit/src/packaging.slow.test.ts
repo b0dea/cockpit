@@ -306,7 +306,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'dist/environment-exec/execute.js',
                 'dist/generated-environment/command.js',
                 'dist/surfaces/selftest.js',
-                'dist/upgrade/command.js',
                 'dist/setup/command.js',
                 'cockpit.schema.json',
                 'libexec/browser-operation.cjs',
@@ -317,7 +316,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'libexec/generated-filesystem.cjs',
                 'libexec/host-input-probe.cjs',
                 'libexec/install-filesystem.cjs',
-                'libexec/release-evidence.mjs',
                 'libexec/rulesync-generator.cjs',
                 'libexec/rulesync-generator.NOTICE.md',
                 'libexec/surface-generator-worker.cjs',
@@ -346,7 +344,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             'libexec/generated-filesystem.cjs',
             'libexec/host-input-probe.cjs',
             'libexec/install-filesystem.cjs',
-            'libexec/release-evidence.mjs',
             'libexec/rulesync-generator.cjs',
             'libexec/rulesync-generator.NOTICE.md',
             'libexec/surface-generator-worker.cjs',
@@ -438,7 +435,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(help).toContain('sync              Write the generated stack and agent files from cockpit.toml')
         expect(help).toContain('check             Report generated files that no longer match cockpit.toml')
         expect(help).toContain('selftest')
-        expect(help).toContain('upgrade')
         const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
         expect(execFileSync(process.execPath, [launcher, '--version'], options)).toBe(
             `${metadata.name} ${metadata.version} (Node ${metadata.engines.node}; source ${metadata.cockpitSourceRevision})\n`,
@@ -461,7 +457,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(malformed.stdout).toBe('')
         expect(malformed.stderr).toContain('REGISTRY_ROW_SKIPPED')
 
-        for (const command of ['sync', 'check', 'selftest', 'upgrade', 'work intake', 'work status', 'work accept', 'work renew', 'work resume', 'work execute', 'work record', 'work review', 'work sweep', 'work reverse', 'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot', 'browser debugger', 'test-run']) {
+        for (const command of ['sync', 'check', 'selftest', 'work intake', 'work status', 'work accept', 'work renew', 'work resume', 'work execute', 'work record', 'work review', 'work sweep', 'work reverse', 'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot', 'browser debugger', 'test-run']) {
             const invalid = spawnSync(process.execPath, [launcher, ...command.split(' '), '--json'], options)
             expect(invalid.status).toBe(2)
             expect(invalid.stderr).toBe('')

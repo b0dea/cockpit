@@ -155,7 +155,7 @@ describe('closed ordinary invocation metadata', () => {
                 expect(parsed && { type: parsed.type, multiple: parsed.multiple === true }, `${row.name} --${name}`)
                     .toEqual({ type: option.kind === 'flag' ? 'boolean' : 'string', multiple: false })
             }
-            for (const name of [...forbidden.presence, ...forbidden.values.map(({ option }) => option)]) {
+            for (const name of forbidden.presence) {
                 expect(Object.keys(row.options), `${row.name} forbidden --${name}`).toContain(name)
             }
         }
@@ -166,8 +166,7 @@ describe('closed ordinary invocation metadata', () => {
             ['document', '.'], ['document', '--registry', 'registry.sh', '--json'],
             ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '/workspace/app', '--adoption', 'adoption.toml'],
             ['setup'], ['sync', '--dry-run'], ['check'],
-            ['selftest', '--probe-specifications', 'probes.json'], ['upgrade'],
-            ['upgrade', '--release-evidence', 'release.json', '--release-evidence-sha256', 'a'.repeat(64)],
+            ['selftest', '--probe-specifications', 'probes.json'],
             ['up'], ['sleep'], ['down'], ['preflight'], ['doctor'],
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
             ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
@@ -200,7 +199,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
             'test-run', 'work intake', 'work status', 'work resume', 'work recover', 'work execute', 'work record', 'work review', 'work sweep',
             'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot'])
         for (const row of rows) {
@@ -225,9 +224,6 @@ describe('closed ordinary invocation metadata', () => {
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
             ['sync', '--interactive'], ['sync', '--interactive=false'], ['sync', '--adopt', '.claude/settings.json'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
-            ['upgrade', '--release-evidence', 'release'], ['upgrade', '--release-evidence-sha256', 'a'.repeat(64)],
-            ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'A'.repeat(64)],
-            ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'a'.repeat(63)],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
             ['sync'], ['reset'], ['baseline-record'], ['guard-evaluate', '--harness', 'claudecode'],
@@ -257,11 +253,9 @@ describe('closed ordinary invocation metadata', () => {
             const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
-                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name.endsWith('sha256') || name === 'accept-reset' ? 'a'.repeat(64) : 'path']
+                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : 'path']
                 let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
                 if (row.name === 'document' && name === 'registry' || row.name === 'work intake' && name === 'work-order') baseline = baseline.filter(arg => !['.', '--intent', 'intents/task.json'].includes(arg))
-                if (name === 'release-evidence') baseline.push('--release-evidence-sha256', 'a'.repeat(64))
-                if (name === 'release-evidence-sha256') baseline.push('--release-evidence', 'path')
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
             }
@@ -359,7 +353,7 @@ describe('CLI help', () => {
     })
 
     it('labels experimental command-specific help without labeling stable commands', async () => {
-        const experimental = await runInProcess(['upgrade', '--help'])
+        const experimental = await runInProcess(['baseline-record', '--help'])
         expect(experimental.stdout).toContain('Status: experimental. This interface may change before a stable release.')
         for (const args of [['check'], ['work', 'grade'], ['browser', 'drive']]) {
             expect((await runInProcess([...args, '--help'])).stdout, args.join(' ')).not.toContain('Status: experimental.')
@@ -487,8 +481,7 @@ describe('CLI help', () => {
             '  document          Draft cockpit.toml from an existing cockpit, marking every inferred value\n' +
             '  setup             Clone or locate the declared sibling repositories and link them\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
-            '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
-            '  upgrade           Show the steps to upgrade cockpit without applying them (experimental)\n\n' +
+            '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n\n' +
             'Generate and verify:\n' +
             '  sync              Write the generated stack and agent files from cockpit.toml\n' +
             '  check             Report generated files that no longer match cockpit.toml\n' +
@@ -708,7 +701,7 @@ describe('generated environment process contract', () => {
         }
         expect(createReleaseMetadataTransport).not.toHaveBeenCalled()
         expect(transport).not.toHaveBeenCalled()
-        for (const command of ['check', 'sync', 'selftest', 'upgrade', 'up', 'sleep', 'down', 'reset', 'preflight', 'logs', 'setup']) {
+        for (const command of ['check', 'sync', 'selftest', 'up', 'sleep', 'down', 'reset', 'preflight', 'logs', 'setup']) {
             const capture = captureIo()
             await runCli([command, '--config', '/synthetic/missing.toml', '--json'], capture.io, {}, { env: {}, createReleaseMetadataTransport })
         }
@@ -943,9 +936,8 @@ describe('generated environment process contract', () => {
         expect(calls).toBe(2)
     })
 
-    it('requires a measured selftest artifact and routes upgrade without implicit mutation', async () => {
+    it('requires a measured selftest artifact', async () => {
         const selftestCalls: unknown[] = []
-        const upgradeCalls: unknown[] = []
         const selftest = captureIo()
         expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--json'], selftest.io, {
             selftest: async (input) => {
@@ -975,14 +967,6 @@ describe('generated environment process contract', () => {
             { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' },
             { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json', previousProbeSpecificationsPath: 'earlier.json' },
         ])
-        const upgrade = captureIo()
-        expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--json'], upgrade.io, {
-            upgrade: async (input) => {
-                upgradeCalls.push(input)
-                return { status: 0, diagnostics: [], result: { commands: ['cockpit sync --dry-run', 'cockpit sync', 'cockpit preflight'] } }
-            },
-        })).toBe(0)
-        expect(upgradeCalls).toEqual([{ configPath: 'cockpit.toml' }])
     })
 
     it('preserves only the selftest search path, the non-secret tool variables and undefined own values for injected handlers', async () => {
@@ -1023,94 +1007,6 @@ describe('generated environment process contract', () => {
         expect(capture.output().stdout).toContain('CLI_USAGE_INVALID')
         expect(selected).not.toHaveBeenCalled()
         expect(selftest).not.toHaveBeenCalled()
-    })
-
-    it('requires paired authenticated release-evidence inputs before upgrade dispatch', async () => {
-        let calls = 0
-        const upgrade = async () => {
-            calls += 1
-            return { status: 0, diagnostics: [], result: null }
-        }
-        for (const args of [
-            ['upgrade', '--config', 'cockpit.toml', '--release-evidence', 'release.json'],
-            ['upgrade', '--config', 'cockpit.toml', '--release-evidence-sha256', 'a'.repeat(64)],
-            ['upgrade', '--config', 'cockpit.toml', '--release-evidence', 'release.json', '--release-evidence-sha256', 'not-a-digest'],
-        ]) {
-            const capture = captureIo()
-            expect(await runCli(args, capture.io, { upgrade })).toBe(2)
-            expect(capture.output().stderr).toContain('CLI_USAGE_INVALID')
-        }
-        expect(calls).toBe(0)
-    })
-
-    it('forwards exact authenticated release-evidence inputs to upgrade without applying sync', async () => {
-        const calls: unknown[] = []
-        const capture = captureIo()
-        expect(await runCli([
-            'upgrade', '--config', 'cockpit.toml', '--release-evidence', 'release.json',
-            '--release-evidence-sha256', 'a'.repeat(64), '--json',
-        ], capture.io, {
-            upgrade: async (input) => {
-                calls.push(input)
-                return { status: 0, diagnostics: [], result: { commands: [] } }
-            },
-            sync: async () => {
-                throw new Error('upgrade handler overrides must not invoke sync')
-            },
-        })).toBe(0)
-        expect(calls).toEqual([{
-            configPath: 'cockpit.toml',
-            releaseEvidencePath: 'release.json',
-            releaseEvidenceSha256: 'a'.repeat(64),
-        }])
-    })
-
-    it('authenticates explicit release evidence against a read-only generated projection', async () => {
-        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-upgrade-cli-')))
-        scratch.push(directory)
-        const configPath = join(directory, 'cockpit.toml')
-        const declaration = readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
-            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
-        writeFileSync(configPath, declaration)
-        mkdirSync(join(directory, 'app'))
-        mkdirSync(join(directory, 'fixtures'))
-        writeFileSync(join(directory, 'fixtures/personas.json'), '[{"id":"first"}]\n')
-        const evidencePath = join(directory, 'release-evidence.json')
-        const installedVersion = JSON.parse(readFileSync(join(root, 'packages/cockpit/package.json'), 'utf8')).version as string
-        const evidenceBytes = JSON.stringify({
-            schema: 'cockpit-upgrade-release-evidence/v1',
-            current: {
-                package: '@b00dea/cockpit', version: installedVersion, integrity: `sha256-${createHash('sha256').update('a').digest('base64')}`, originals: [],
-            },
-            candidate: {
-                package: '@b00dea/cockpit', version: '1.1.0', integrity: `sha256-${createHash('sha256').update('b').digest('base64')}`, originals: [],
-            },
-        })
-        writeFileSync(evidencePath, evidenceBytes)
-        const evidenceSha256 = createHash('sha256').update(evidenceBytes).digest('hex')
-        const capture = captureIo()
-
-        const status = await runCli([
-            'upgrade', '--config', configPath, '--release-evidence', evidencePath,
-            '--release-evidence-sha256', evidenceSha256, '--json',
-        ], capture.io)
-        expect(status, JSON.stringify(capture.output())).toBe(0)
-        expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            result: { current: { version: installedVersion }, candidate: { version: '1.1.0' } },
-        })
-        expect(existsSync(join(directory, 'compose.generated.yml'))).toBe(false)
-        expect(existsSync(join(directory, '.cockpit'))).toBe(false)
-
-        const forged = captureIo()
-        expect(await runCli([
-            'upgrade', '--config', configPath, '--release-evidence', evidencePath,
-            '--release-evidence-sha256', '0'.repeat(64), '--json',
-        ], forged.io)).toBe(2)
-        expect(JSON.parse(forged.output().stdout)).toMatchObject({
-            diagnostics: [{ code: 'UPGRADE_AUTH_FAILED' }], result: null,
-        })
-        expect(existsSync(join(directory, 'compose.generated.yml'))).toBe(false)
-        expect(existsSync(join(directory, '.cockpit'))).toBe(false)
     })
 
     it('adds probe and executable authority only through interactive exact-digest operator decisions', async () => {
@@ -1167,18 +1063,7 @@ describe('generated environment process contract', () => {
         expect(calls).toBe(0)
     })
 
-    it('exposes the unavailable release source as a named upgrade refusal', async () => {
-        const capture = captureIo()
-        expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--json'], capture.io)).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toEqual({
-            invocation: jsonInvocation(capture.output().stdout, 2, 'upgrade', resolve('cockpit.toml')),
-            result: null,
-            diagnostics: [expect.objectContaining({ code: 'UPGRADE_VERSION_AMBIGUOUS', severity: 'error' })],
-        })
-        expect(capture.output().stderr).toBe('')
-    })
-
-    it('shows preview changes and review evidence in human mode', async () => {
+    it('shows preview changes and selftest evidence in human mode', async () => {
         const preview = captureIo()
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--dry-run'], preview.io, {
             sync: async () => ({ status: 0, diagnostics: [], result: {
@@ -1186,13 +1071,6 @@ describe('generated environment process contract', () => {
             } }),
         })).toBe(0)
         expect(preview.output().stdout).toContain('write ".agents/skills/cockpit-fix/SKILL.md"')
-
-        const upgrade = captureIo()
-        expect(await runCli(['upgrade', '--config', 'cockpit.toml'], upgrade.io, {
-            upgrade: async () => ({ status: 0, diagnostics: [], result: { commands: ['cockpit sync --dry-run'] } }),
-        })).toBe(0)
-        expect(upgrade.output().stdout).toContain('cockpit sync --dry-run')
-        expect(upgrade.output().stdout).not.toContain('{')
 
         const selftest = captureIo()
         expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json'], selftest.io, {

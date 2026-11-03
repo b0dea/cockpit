@@ -251,8 +251,7 @@ you read for the human to approve. Never delete a team's instruction file yourse
 ## After upgrading cockpit
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
-applied silently. For a read-only release plan before installing, follow the *Review an upgrade*
-section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`.
+applied silently. `npm update` does not move the exact pin, so install the new release by version.
 
 1. Run `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.

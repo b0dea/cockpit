@@ -106,8 +106,6 @@ import type {
     GeneratedStaleRemovalApprovalRequest,
 } from './environment/generated-application.js'
 import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
-import { runConfiguredUpgradeCommand } from './upgrade/command.js'
-import { createReleaseEvidenceDiscovery } from './upgrade/release-evidence.js'
 import {
     runConfiguredSurfaceSelftestOutcome,
     runSelftestOperatorCommand,
@@ -202,11 +200,6 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
         ) => Promise<GeneratedStaleRemovalApproval | undefined>
     }>
     up: UpCommandInput
-    upgrade: Readonly<{
-        configPath: string
-        releaseEvidencePath?: string
-        releaseEvidenceSha256?: string
-    }>
 }
 
 export type CommandHandlers = {
@@ -639,10 +632,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 : outcome.result }
         },
         selftest: runConfiguredSurfaceSelftestOutcome,
-        upgrade: (input) => runConfiguredUpgradeCommand(input, {
-            createReleaseEvidenceDiscovery,
-            installed: { package: installedPackageMetadata.name, version: installedPackageMetadata.version },
-        }),
         up: async (input) => {
             const sessionId = ordinarySessionId
             if (sessionId === null) return usageOutcome(
@@ -1073,44 +1062,6 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env: Object.freeze(env) } }
     }
 
-    if (handler === 'upgrade') {
-        const values = parsed.values as {
-            config?: string
-            'release-evidence'?: string
-            'release-evidence-sha256'?: string
-        }
-        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'upgrade accepts named inputs only')
-        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
-        const evidencePath = values['release-evidence']
-        const evidenceSha256 = values['release-evidence-sha256']
-        if ((evidencePath === undefined) !== (evidenceSha256 === undefined)) {
-            return usageOutcome(
-                'CLI_USAGE_INVALID',
-                '--release-evidence and --release-evidence-sha256 must be supplied together',
-                '--release-evidence',
-            )
-        }
-        if (evidencePath !== undefined && evidencePath.length === 0) {
-            return usageOutcome('CLI_USAGE_INVALID', '--release-evidence requires a non-empty path', '--release-evidence')
-        }
-        if (evidenceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(evidenceSha256)) {
-            return usageOutcome(
-                'CLI_USAGE_INVALID',
-                '--release-evidence-sha256 requires one lowercase SHA-256 digest',
-                '--release-evidence-sha256',
-            )
-        }
-        return {
-            handler,
-            input: {
-                configPath: values.config,
-                ...(evidencePath && evidenceSha256
-                    ? { releaseEvidencePath: evidencePath, releaseEvidenceSha256: evidenceSha256 }
-                    : {}),
-            },
-        }
-    }
-
     if (handler === 'session') {
         const values = parsed.values as { config?: string }
         const [command, ...argv] = parsed.positionals
@@ -1336,7 +1287,6 @@ async function dispatchHandler(
         return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)
             : runSelftestOperatorCommand(request.input, options, io, selftest)
     }
-    if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
     if (request.handler === 'session') return handlers.session?.(request.input) ?? unavailable()

@@ -44,7 +44,6 @@ Every module below is under `packages/cockpit/src/`. All process dispatch goes t
 | Repair and recovery | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
 | Selftest | [surfaces/selftest.ts](../../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.slow.test.ts`, `packages/cockpit/src/selftest/command.native-execution.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.test.ts` |
 | Human approval prompts | [environment/operator-application.ts](../../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
-| Upgrade plan | [environment/upgrade-application.ts](../../packages/cockpit/src/environment/upgrade-application.ts) | `packages/cockpit/src/upgrade/command.test.ts` |
 
 Repository tests check source behavior; they do not replace a selftest of the real tool.
 
@@ -65,7 +64,6 @@ synthetic data; they do not exercise a real harness. See
 | Sibling guides/grants | `npm test -- packages/cockpit/src/surfaces/projection.test.ts` |
 | Skill contracts/budgets | `npm test -- packages/cockpit/src/surfaces/skill-contract.test.ts` |
 | Selftest checks and approval | `npm test -- packages/cockpit/src/selftest/command.configured-artifact.slow.test.ts packages/cockpit/src/selftest/command.native-execution.test.ts packages/cockpit/src/selftest/command.custom-operator.test.ts` |
-| Upgrade plan and override inspection | `npm test -- packages/cockpit/src/upgrade/command.test.ts packages/cockpit/src/upgrade/release-evidence.test.ts` |
 
 Publication recovery lives in `packages/cockpit/src/environment/generated-application.ts`. This
 test checks that recovery data is kept when cleanup cannot be confirmed:

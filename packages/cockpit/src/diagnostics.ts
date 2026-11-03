@@ -323,7 +323,7 @@ export function renderHumanDiagnostics(
         if (command === 'doctor') {
             return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
         }
-        if (command === 'selftest' || command === 'upgrade' || command === 'init') {
+        if (command === 'selftest' || command === 'init') {
             return renderHumanValue(outcome.result)
         }
         return command === undefined ? '' : lifecycleSummary(command, outcome.result as Readonly<Record<string, unknown>>)

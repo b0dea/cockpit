@@ -316,11 +316,9 @@ describe('shipped skill contract', () => {
         const setup = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-setup/SKILL.md')
         expect(setup?.bytes).toContain('references/test-data-and-personas.md')
         expect(setup?.bytes).toContain('adopt-cockpit')
-        const upgradeReview = setup?.bytes.indexOf('*Review an upgrade* section of `./node_modules/@b00dea/cockpit/docs/harness-surfaces.md`') ?? -1
-        const exactInstall = setup?.bytes.indexOf('install that exact release') ?? -1
+        const exactInstall = setup?.bytes.indexOf('npm install --save-dev --save-exact @b00dea/cockpit@<version>') ?? -1
         const humanSync = setup?.bytes.indexOf('ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`') ?? -1
-        expect(upgradeReview).toBeGreaterThan(-1)
-        expect(exactInstall).toBeGreaterThan(upgradeReview)
+        expect(exactInstall).toBeGreaterThan(-1)
         expect(humanSync).toBeGreaterThan(exactInstall)
         expect(explain?.bytes).toContain('This skill changes nothing.')
         expect(fix?.bytes).toContain('direct-fix door')
@@ -376,7 +374,7 @@ describe('shipped skill contract', () => {
         ['copied registry logic', (bytes: string) => `${bytes}Parse the registry before continuing.\n`],
         ['copied policy table', (bytes: string) => `${bytes}| Tier | Verdict |\n| --- | --- |\n`],
         ['misspelled command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [innit,')],
-        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, document, setup, sync, check, doctor, up, preflight, upgrade, sibling]\n', '')],
+        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, document, setup, sync, check, doctor, up, preflight, sibling]\n', '')],
         ['stale command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [bootstrap,')],
         ['unadmitted command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [publish,')],
         ['undeclared command', (bytes: string) => `${bytes}Run \`cockpit invent\`.\n`],
