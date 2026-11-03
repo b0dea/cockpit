@@ -36,7 +36,7 @@ const base = { authority, manifest, declarations }
 const referenceAuthority = { commands: new Set(['sync']), diagnostics: new Set(['SYNTHETIC_FAILURE']), identifiers: new Set(['DOCKER_CONTEXT']), flags: new Set(['--json']) }
 
 describe('typed named reference resolution', () => {
-    it('allows only exact declared applicable generated absence across the four A08 controls', () => {
+    it('allows only exact declared applicable generated absence across the four generated-absence controls', () => {
         expect(resolveNamedPath({ ...base, path: entry.path, exists: false })).toMatchObject({ kind: 'declared-before-sync', producer: 'generated-environment' })
         expect(resolveNamedPath({ ...base, path: 'compose.genereted.yml', exists: false })).toMatchObject({ kind: 'refusal' })
         expect(resolveNamedPath({ ...base, declarations: [{ producer: 'generated-environment', applicability: 'sibling-unavailable', path: entry.path }], path: entry.path, exists: false })).toMatchObject({ kind: 'unavailable' })
