@@ -25,7 +25,7 @@ const baseSibling = {
 } satisfies Omit<Sibling, 'toolchain'>
 
 const policy = (patch: Partial<InstallPolicy> = {}): InstallPolicy => ({
-    toolchain: 'node', lockfile: 'package-lock.json', ...patch,
+    toolchain: 'node', lockfile: 'package-lock.json', test: ['npm', 'test'], ...patch,
 })
 
 async function checkout(lockfiles: readonly string[]): Promise<string> {

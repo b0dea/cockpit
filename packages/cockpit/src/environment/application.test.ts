@@ -614,7 +614,7 @@ describe('guard policy construction', () => {
         for (const change of ['absent', 'missing', 'ambiguous', 'symlink'] as const) {
             const { root, configPath } = await observedPolicy()
             const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
-            if (change === 'absent') { delete config.environment.install_policies[0]!.build; delete config.environment.install_policies[0]!.test }
+            if (change === 'absent') delete config.environment.install_policies[0]!.build
             if (change === 'missing') rmSync(join(root, 'app/package-lock.json'))
             if (change === 'symlink') { rmSync(join(root, 'app/package-lock.json')); symlinkSync(configPath, join(root, 'app/package-lock.json')) }
             if (change === 'ambiguous') {
@@ -626,7 +626,8 @@ describe('guard policy construction', () => {
             if (loaded.kind !== 'complete') throw new Error('project command fixture did not load')
             const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name, observedAt: new Date().toISOString(), env: {}, gitExecutable })
             const result = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
-            if (change === 'absent') expect(result).toMatchObject({ kind: 'complete', result: { policy: { projectCommands: [] } } })
+            // Only the declared test command becomes a project command; the undeclared build is not inferred.
+            if (change === 'absent') expect(result).toMatchObject({ kind: 'complete', result: { policy: { projectCommands: [expect.objectContaining({ kind: 'test', executable: 'npm' })] } } })
             else expect(result, change).toMatchObject({ kind: 'refusal', status: 2, result: null })
         }
     })

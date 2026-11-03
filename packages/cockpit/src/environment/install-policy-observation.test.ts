@@ -16,7 +16,7 @@ import {
 const scratch: string[] = []
 const source = { path: '/synthetic/cockpit.toml', byteLength: 17, sha256: 'a'.repeat(64) }
 const policies: readonly InstallPolicy[] = [{
-    toolchain: 'node', lockfile: 'package-lock.json',
+    toolchain: 'node', lockfile: 'package-lock.json', test: ['npm', 'test'],
 }]
 
 async function checkout(): Promise<string> {
