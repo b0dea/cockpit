@@ -295,7 +295,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('an empty entry is the working directory') }))
     })
 
-    it('warns from doctor when the cockpit has work orders but no evaluator workorders.evaluators lists is on PATH', async () => {
+    it('warns from doctor when the cockpit has work orders but no evaluator work.evaluators lists is on PATH, and says how each order closed', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
             configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
@@ -308,7 +308,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         await writeFile(join(candidate.root, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
         // Codex on PATH says nothing about a cockpit whose list names only Claude Code and OpenCode.
-        await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[workorders]\nevaluators = ["claudecode", "opencode"]\n`)
+        await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[work]\nevaluators = ["claudecode", "opencode"]\n`)
         expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ code: 'EVALUATOR_UNAVAILABLE',
             message: expect.stringMatching(/Claude Code \(claude\) is not on PATH .*; OpenCode \(opencode\) is not on PATH/) }))
         await writeFile(join(candidate.root, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
@@ -325,6 +325,15 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         const unavailable = claudeDoctor.diagnostics.find(row => row.code === 'EVALUATOR_UNAVAILABLE')
         expect(unavailable?.message).toMatch(/Claude Code \(claude\) is not on PATH/)
         expect(unavailable?.message).not.toMatch(/Codex|OpenCode/)
+
+        const at = '2026-11-03T10:00:00.000Z', digest = 'a'.repeat(64)
+        await mkdir(join(candidate.checkout, '.cockpit/work-orders'), { recursive: true })
+        await writeFile(join(candidate.checkout, '.cockpit/work-orders/WO-1.json'), JSON.stringify({ format: 'cockpit-work-order/v1', id: 'WO-1', state: 'done',
+            accepted: { at, by: 'agent', digest, sources: {}, base: { '.': 'b'.repeat(40) },
+                order: { id: 'WO-1', objective: 'One outcome.', scope: ['src/'], depends_on: [], gates: [], criteria: [{ id: 'AC1', text: 'It holds.' }], non_goals: [] } },
+            amendments: [], attempts: 0, notes: [], closure: { at, by: 'agent', how: 'checks-passed' } }))
+        expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'WORK_ORDER_CLOSED',
+            target: 'workorders/WO-1.md', message: 'WO-1 closed as checks-passed, signed off by agent' }))
     })
 
     it('preserves a lifecycle owner refusal before observing Docker', async () => {

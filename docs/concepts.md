@@ -59,15 +59,17 @@ only when none remain, so one agent cannot stop another's environment.
 
 ### Work order
 
-A Markdown contract for one piece of agent work: its source, the paths it may change, acceptance
-criteria, the commands that verify them, and ordered steps. cockpit validates it before work starts
-and grades the result against it; the [work-order parser](../packages/cockpit/src/work-orders/contract.ts)
-sets its size limits.
+A file, `workorders/<id>.md`, whose YAML front-matter is the contract for one piece of agent work: its
+objective, the paths it may change, acceptance criteria with the checks that show them, and what it
+leaves alone. cockpit records who accepted it, runs its checks, grades the result against it and
+records how it closed; the [work-order contract](../packages/cockpit/src/work-orders/contract.ts)
+holds its schema and limits.
 
 ### Evaluator
 
-The grader for a finished work order. It reruns the declared verification commands and grades each
-acceptance criterion from their output. It never edits code and is never the agent that did the work.
+The grader for a finished work order. It grades each acceptance criterion against the checks cockpit
+ran and the change since the order was accepted. It never edits code and is never the agent that did
+the work.
 
 ### Persona
 

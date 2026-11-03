@@ -13,7 +13,7 @@ cockpit:
   non-goals: [editing configuration, starting services, repairing drift]
   procedure: procedures/explain.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
-  entry-point-lines: 11
+  entry-point-lines: 12
 claudecode:
   allowed-tools: [Bash]
 codexcli:
@@ -32,3 +32,4 @@ Read the generated [procedures/explain.md](procedures/explain.md) beside this sk
 Choose only the question-relevant read-only command: `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, or `npx --no cockpit preflight --config cockpit.toml`.
 
 This skill changes nothing.
+When `check` names drift, explain it and the fix *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, gives.

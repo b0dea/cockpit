@@ -52,7 +52,11 @@ export const mechanism = {
         'Ports',
         'Guards',
         'Mcp',
-        'Workorders',
+        'Work',
+        'WorkGates',
+        'Autonomy',
+        'DECIDERS',
+        'WORK_GRADING',
         'Browser',
         'Testing',
         'TESTING_STAGE_TIMEOUT_MAX_SECONDS',
@@ -842,29 +846,60 @@ export const Mcp = z
 // a hung stage so a gate always returns a verdict. Work-order verification runs the same suites.
 const TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS = 1_800
 export const TESTING_STAGE_TIMEOUT_MAX_SECONDS = 7_200
-// One independent review or grading run of the evaluator reads the change and reruns checks; minutes
-// are normal, and each of the four runs gets its own budget rather than sharing one.
+// One independent grading run of the evaluator reads the change and its check output; minutes are normal.
 const EVALUATOR_TIMEOUT_DEFAULT_SECONDS = 900
 // The agent tools that can run headless with a read-only mechanism of their own and return output a
 // schema constrains, named as the harness registry names them, each with the command it runs as.
 export const EVALUATOR_COMMANDS = Object.freeze({ codexcli: 'codex', claudecode: 'claude', opencode: 'opencode' } as const)
 export type EvaluatorTool = keyof typeof EVALUATOR_COMMANDS
 
-export const Workorders = z
+// Who may pass a decision point: the agent itself, a person typing the digest cockpit shows in a
+// terminal, or cockpit running in CI, where the required `work verify` job behind a protected
+// environment's reviewers is the gate. A local person gate is best-effort: cockpit cannot tell a
+// person from a program driving a terminal.
+export const DECIDERS = ['agent', 'person', 'ci'] as const
+export type Decider = typeof DECIDERS[number]
+const Decider = z.enum(DECIDERS)
+export const WORK_GRADING = ['independent', 'checks', 'self'] as const
+export type WorkGrading = typeof WORK_GRADING[number]
+
+export const WorkGates = z
     .object({
-        // Consumers may lower the repeated-failure limit, never raise it.
-        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Repeated failures allowed before a work order stops; may be lowered but not raised.'),
-        // Consumer values may lower these framework maxima, but cannot raise them.
-        wip_cap: z.number().int().min(1).max(3).default(3).describe('Work orders that may be in progress at once; may be lowered but not raised.'),
-        verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
-            .describe('Seconds one declared work-order verification command may run before it is stopped and reported as not run.'),
-        evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
-            .describe('Seconds one independent review or grading run of the evaluator may take before it is stopped.'),
+        accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default person, or agent under [autonomy] preset = "agent".'),
+        amend: Decider.optional().describe('Who accepts a changed contract. Default person. Removing or rewriting an accepted criterion always needs a person or ci.'),
+        answer: Decider.optional().describe('Who answers an open question on an order. Default person.'),
+        signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
+    })
+    .strict()
+
+export const Work = z
+    .object({
+        grading: z.enum(WORK_GRADING).default('independent')
+            .describe("How an order earns done: independent (an evaluator grades it), checks (cockpit ran every criterion's check and all passed) or self (the agent reports met or unmet with a note)."),
         // An ordered fallback list: the first that runs answers, and one that is missing, signed out or
         // rate-limited is recorded and passed over. It never falls back to the agent grading itself.
         evaluators: z.array(z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[])).min(1).max(3)
             .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').optional()
-            .describe('Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.'),
+            .describe('Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.'),
+        // Consumers may lower these framework maxima, but cannot raise them.
+        attempt_cap: z.number().int().min(1).max(2).default(2).describe('Failed checks or grades before an order is blocked; may be lowered but not raised.'),
+        wip_cap: z.number().int().min(1).max(3).default(3).describe('Accepted orders that may be unfinished at once; may be lowered but not raised.'),
+        verification_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
+            .describe("Seconds one criterion's check command may run before it is stopped and reported as not run."),
+        evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
+            .describe('Seconds one independent grading run may take before it is stopped.'),
+        gates: WorkGates.prefault({}).describe('Who passes each work-order decision.'),
+    })
+    .strict()
+
+export const Autonomy = z
+    .object({
+        preset: z.enum(['agent']).optional().describe('agent: every decision this table and [work.gates] leave unset defaults to agent.'),
+        sync: Decider.optional().describe('Who may run a sync that writes: agent, person or ci. Default agent.'),
+        stale_delete: Decider.optional().describe('Who approves sync deleting files cockpit generated before and no longer generates. Default agent.'),
+        reset: Decider.optional().describe('Who may apply a reset, which deletes stack data. Default person.'),
+        // CI adds nothing here: an approval is a digest in [mcp.approved], which only a person edits.
+        mcp_approve: z.enum(['agent', 'person']).optional().describe('Who approves a declared MCP server: agent lets sync enable every declared server; person records each digest in [mcp.approved]. Default agent.'),
     })
     .strict()
 
@@ -1231,7 +1266,8 @@ export function configurationDefaults() {
         },
         guards: Guards.parse({}),
         mcp: Mcp.parse({}),
-        workorders: Workorders.parse({}),
+        work: Work.parse({}),
+        autonomy: Autonomy.parse({}),
         environment: Environment.parse({}),
         surfaces: Surfaces.parse({}),
     }
@@ -1256,7 +1292,8 @@ export const CockpitConfig = z
         ports: Ports.describe('Port leasing for running stacks side by side.'),
         guards: Guards.prefault({}).describe('Rules that restrict what agents may run.'),
         mcp: Mcp.prefault({}).describe('Approval of MCP servers.'),
-        workorders: Workorders.prefault({}).describe('Limits for work orders.'),
+        work: Work.prefault({}).describe('How work orders are accepted, graded and closed.'),
+        autonomy: Autonomy.prefault({}).describe('Which decisions an agent may take without a person.'),
         browser: Browser.optional().describe('Browser automation for the stack.'),
         testing: Testing.optional().describe('Test stages and gates.'),
         environment: Environment.prefault({}).describe('How the stack is reached, signed in to, built and kept.'),

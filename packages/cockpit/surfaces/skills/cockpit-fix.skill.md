@@ -13,7 +13,7 @@ cockpit:
   non-goals: [scaffolding a cockpit, creating programme ceremony, copying environment policy]
   procedure: procedures/fix.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
-  entry-point-lines: 14
+  entry-point-lines: 15
 claudecode:
   allowed-tools: [Bash]
 codexcli:
@@ -37,3 +37,4 @@ This is the direct-fix door. It changes only the repository that owns a reproduc
 It does not scaffold a cockpit or copy the environment, tier, or proof decisions that the CLI makes.
 
 If a second person must certify this, use cockpit-work instead.
+If `check` or the session-start report names drift, follow *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, first.

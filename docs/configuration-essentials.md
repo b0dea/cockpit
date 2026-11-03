@@ -180,7 +180,8 @@ reference also lists the [defaults](configuration-reference.md#defaults) and the
 | Vendors | [`[[environment.generated.vendors]]`](configuration-reference.md#environmentgeneratedvendors) | [Data, vendors and decisions](environment.md#data-vendors-and-decisions) |
 | Decisions | [`[environment.generated.decisions]`](configuration-reference.md#environmentgenerateddecisions) | [Where the decisions live](environment.md#where-the-decisions-live) |
 | Browser checks | [`[browser]`](configuration-reference.md#browser) | [Browser evidence](work-and-browser.md#browser-evidence) |
-| Work orders | [`[workorders]`](configuration-reference.md#workorders) | [Work and browser workflows](work-and-browser.md) |
+| Work orders | [`[work]`](configuration-reference.md#work) | [Work and browser workflows](work-and-browser.md) |
+| Who decides | [`[autonomy]`](configuration-reference.md#autonomy) | [Who decides](safety-and-autonomy.md#who-decides) |
 | Guard rules | [`[[guards.allow]]`](configuration-reference.md#guardsallow), the `deny` row of [`[guards]`](configuration-reference.md#guards) | [Safety and autonomy](safety-and-autonomy.md) |
 | MCP approvals | [`[mcp]`](configuration-reference.md#mcp) | [MCP servers and restrictions](harness-surfaces.md#mcp-servers-and-restrictions) |
 | Surface overlays | [`[[surfaces.overlays]]`](configuration-reference.md#surfacesoverlays) | [Ownership and extension](harness-surfaces.md#ownership-and-extension) |

@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline/promises'
 import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
 import type { PortLeaseProjection } from '../environment/ports.js'
-import { runSyncOperatorApplication } from '../environment/operator-application.js'
+import { loadOperatorPolicy, runSyncOperatorApplication } from '../environment/operator-application.js'
 import { runSyncAdoption, type SyncAdoptionInput, type SyncAdoptionOutcome } from './adopt.js'
 import {
     checkGeneratedEnvironment as check,
@@ -130,6 +130,7 @@ export interface GeneratedEnvironmentOperatorIo {
     readonly stderr: Pick<NodeJS.WriteStream, 'write'>
     readonly stdin?: NodeJS.ReadStream
     readonly confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
+    readonly confirmPolicyWeakening?: (request: Readonly<{ weakened: readonly Readonly<{ field: string; from: string; to: string }>[]; digest: string }>) => Promise<string | undefined>
 }
 
 export interface GeneratedEnvironmentOperatorOptions {
@@ -159,6 +160,7 @@ export async function runSyncOperatorCommand(
     options: GeneratedEnvironmentOperatorOptions,
     io: GeneratedEnvironmentOperatorIo,
     handler: GeneratedEnvironmentSyncHandler,
+    policy: typeof loadOperatorPolicy = loadOperatorPolicy,
 ): Promise<GeneratedEnvironmentDispatchOutcome> {
     return runSyncOperatorApplication(input, {
         ...options,
@@ -166,5 +168,13 @@ export async function runSyncOperatorCommand(
     }, {
         synchronize: handler,
         confirmStaleRemoval: (request) => confirmStaleRemoval(io, request),
+        policy,
+        confirmPolicyWeakening: async (request) => {
+            if (io.confirmPolicyWeakening) return io.confirmPolicyWeakening(request)
+            if (!io.stdin) return undefined
+            io.stderr.write(renderHumanValue({ weakens: request.weakened.map(row => `${row.field}: ${row.from} -> ${row.to}`), digest: request.digest }))
+            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+            try { return (await prompt.question('Type the digest to accept this weaker policy: ')).trim() } finally { prompt.close() }
+        },
     })
 }

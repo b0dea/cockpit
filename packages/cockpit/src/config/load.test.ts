@@ -1,4 +1,4 @@
-import { isValidatedWorkOrderPolicy } from '../work-orders/intake.js'
+
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -47,9 +47,16 @@ const workEnvironmentConfig = `${validConfig.replace(
     'purpose = "Synthetic API"',
     'purpose = "Synthetic API"\nenvironment_files = [{ template = ".env.example", instance = ".env" }]',
 )}
-[workorders]
+[work]
 attempt_cap = 1
 wip_cap = 2
+grading = "checks"
+
+[work.gates]
+accept = "agent"
+
+[autonomy]
+reset = "ci"
 
 [environment]
 addressing = "port"
@@ -315,7 +322,10 @@ cold_start_seconds = 30
             siblingsRoot: 'siblings',
             source: loaded.result.source,
             siblings: [{ slug: 'api', dir: 'api-service', environmentFiles: [{ template: '.env.example', instance: '.env' }] }],
-            workOrderPolicy: { cockpitCap: 2, programmeCap: 1, attemptCap: 1 },
+            wipCap: 2, attemptCap: 1,
+            // Unset fields take the owner's defaults; each set one is the file's.
+            policy: { grading: 'checks', gates: { accept: 'agent', amend: 'person', answer: 'person', signoff: 'agent' },
+                autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'agent' } },
             generatedHostPaths: browserArtifactPaths,
             browser: {
                 harnesses: [{ target: 'codexcli', version: '0.149.0' }],
@@ -327,13 +337,11 @@ cold_start_seconds = 30
             },
             testing: { nativeHookInstall: 'inspect', declarations: { stages: [{ id: 'unit', command: ['npm', 'test'], requiresStack: false }] } },
         })
-        expect(isValidatedWorkOrderPolicy(consumed?.workOrderPolicy)).toBe(true)
-        expect(isValidatedWorkOrderPolicy({ ...consumed?.workOrderPolicy })).toBe(false)
+
         expect(Object.isFrozen(consumed?.testing?.declarations)).toBe(true)
         expect(Object.isFrozen(consumed?.testing?.declarations.stages)).toBe(true)
         expect(Object.isFrozen(consumed?.testing?.declarations.stages[0]?.command)).toBe(true)
         expect(Object.isFrozen(consumed?.testing?.declarations.gates)).toBe(true)
-        expect(consumed).not.toHaveProperty('attemptCap')
         expect(consumed).not.toHaveProperty('staleParkDays')
         expect(consumeWorkEnvironmentConfigProjection(projection!)).toBeUndefined()
         expect(consumeLoadedConfigProjection(loaded.result)).toBeDefined()

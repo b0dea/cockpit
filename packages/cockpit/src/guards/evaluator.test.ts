@@ -322,9 +322,9 @@ describe('resolved guard evaluation', () => {
             '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
             '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json',
             '.cockpit/mcp/server.sh', '.cockpit/mcp/added.sh',
-            // An unkeyed work-order record written by an agent would be accepted as the operator's.
-            '.cockpit/work-orders/WO-001/current.json', '.cockpit/work-orders/WO-001/generation-00000001/completion.json',
-            '.cockpit/transactions/pending.json', '.cockpit/actors/operator.json',
+            // An unkeyed work-order record written by an agent would read as a person's, and a rewritten
+            // policy record would present the agent's weakening as one a person accepted.
+            '.cockpit/work-orders/WO-1.json', '.cockpit/work-orders/WO-1.lock', '.cockpit/policy.json',
             'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
@@ -547,7 +547,7 @@ describe('built-in read-only profile', () => {
             candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script])] })
         const decideLaunched = (command: string, configured = launched(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
         for (const command of ['cockpit check', 'npx --no cockpit doctor --config cockpit.toml', 'npx --no cockpit check --json', 'npx --no -- cockpit --help',
-            'npx --no -- cockpit --version', 'npx --no cockpit session --help', 'npx --no cockpit work intake --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`]) {
+            'npx --no -- cockpit --version', 'npx --no cockpit session --help', 'npx --no cockpit work grade --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`]) {
             expect(decideLaunched(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
             expect(decideLaunched(command, { ...launched(), cockpitLaunchers: [] }).decision, command).toBe('ask')
         }
@@ -585,11 +585,11 @@ describe('built-in read-only profile', () => {
         // A command that parses a named file can quote it back, so the file is checked as a read.
         const reading = (file: string) => {
             const configured = launched()
-            const profile = { ...candidate('npx', ['--no', 'cockpit', 'work', 'intake', '--config', 'cockpit.toml', '--intent', file]), reads: [`${root}/${file}`] }
+            const profile = { ...candidate('npx', ['--no', 'cockpit', 'grade', '--config', 'cockpit.toml', '--criteria', file]), reads: [`${root}/${file}`] }
             configured.cockpitInvocations.push(profile)
-            return decideLaunched(`npx --no cockpit work intake --config cockpit.toml --intent ${file}`, configured).decision
+            return decideLaunched(`npx --no cockpit grade --config cockpit.toml --criteria ${file}`, configured).decision
         }
-        expect(reading('intents/task.json')).toBe('allow')
+        expect(reading('criteria/task.yaml')).toBe('allow')
         expect(reading('.env')).toBe('ask')
         expect(reading('config/active.instance')).toBe('deny')
         expect(reading('env/.secrets/token')).toBe('deny')

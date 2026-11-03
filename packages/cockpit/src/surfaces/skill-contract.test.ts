@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { effectivePolicy } from '../autonomy.js'
 import { runCli } from '../cli.js'
+import { Autonomy, Work } from '../schema.js'
 import { commands } from '../command-table.js'
 
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
@@ -156,7 +158,7 @@ describe('shipped skill contract', () => {
             metric: 'frontmatter_bytes', caps: generousCaps,
             procedures: procedureAssets.map(asset => ({ path: asset.path, sha256: authenticated(asset).sha256, loading: 'pull', budget: 'uncapped' })) })
         expect(result.collection.entrypoints).toEqual(['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].map(name => ({
-            path: `skills/${name}/SKILL.md`, cap: ({ 'cockpit-setup': 11, 'cockpit-explain': 11, 'cockpit-fix': 14, 'cockpit-work': 10 } as Record<string, number>)[name]!, metric: 'lines', displacement: `skills/${PROCEDURES[name]}`,
+            path: `skills/${name}/SKILL.md`, cap: ({ 'cockpit-setup': 12, 'cockpit-explain': 12, 'cockpit-fix': 15, 'cockpit-work': 11 } as Record<string, number>)[name]!, metric: 'lines', displacement: `skills/${PROCEDURES[name]}`,
         })))
         expect(SURFACE_TARGETS.map(target => result.files.filter(file => file.target === target).length)).toEqual([8, 12, 8, 8, 8])
         expect(result.files.some(file => file.path.includes('collection'))).toBe(false)
@@ -306,18 +308,18 @@ describe('shipped skill contract', () => {
         expect(body).toContain('lines starting `Upgrade:`')
         expect(body).toContain('If a second person must certify this, use cockpit-work instead.')
         expect(body).toContain('Is this a work order?')
-        expect(body).toContain('A missing counter is not zero')
-        expect(body).toContain('cockpit work accept --config cockpit.toml --work-order WO-001 --interactive')
-        expect(body).toContain('result.orders[0].state.attempts')
+        expect(body).toContain('Never type the digest yourself.')
+        expect(body).toContain('cockpit work accept --config cockpit.toml --work-order WO-001')
+        expect(body).toContain('## On drift')
+        expect(body).toContain('commit it together with the guide change')
         expect(body).toContain('cockpit test-run --config cockpit.toml --gate declared-gate-id')
         const work = body.slice(body.indexOf('## Work'))
-        expect(work).toContain('examples in the *Declare work and the files it may change* section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md`')
-        expect(work).toContain('Inspect applicable installed thinking, research, specification and planning skills')
-        expect(work).toContain('Record an audited empty selection when none applies')
+        expect(work).toContain('as the *Write a work order* section of `./node_modules/@b00dea/cockpit/docs/work-and-browser.md` shows')
+        expect(work).toContain('reuse the planning skills the harness already has')
         expect(work).not.toContain("Run the harness's installed brainstorming and planning skills")
         const installedReview = work.indexOf("Run the harness's installed simplification and code-review skills")
         expect(installedReview).toBeGreaterThan(-1)
-        expect(work.indexOf('cockpit work review')).toBeGreaterThan(installedReview)
+        expect(work.indexOf('cockpit work grade')).toBeGreaterThan(installedReview)
         expect(body).toContain('npm install --save-dev --save-exact @b00dea/cockpit@<version>')
         expect(body).not.toContain('`npm update` moves the pinned')
         expect(body).toContain('cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json')
@@ -400,7 +402,7 @@ describe('shipped skill contract', () => {
         ['unadmitted command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [publish,')],
         ['undeclared command', (bytes: string) => `${bytes}Run \`cockpit invent\`.\n`],
         ['misleading completion', (bytes: string) => `${bytes}Report complete without proof.\n`],
-        ['excess entry-point cap', (bytes: string) => bytes.replace('  entry-point-lines: 11\n', '  entry-point-lines: 1\n')],
+        ['excess entry-point cap', (bytes: string) => bytes.replace('  entry-point-lines: 12\n', '  entry-point-lines: 1\n')],
     ])('refuses hostile entry point: %s', async (_label, transform) => {
         const sources = await shippedSources()
         const result = await inspectSkillSet(input(changeEntry(sources, transform)))
@@ -480,8 +482,10 @@ describe('shipped procedure commands', () => {
             const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256,
                 confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
-                beginOperatorWorkApplication: async () => ({ digest: 'a'.repeat(64), prompt: 'Confirm the documented work-order command.',
-                    decide: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } } }),
+                // The documented work commands are the agent's; a gate the policy gives an agent needs no binding.
+                beginOperatorWorkApplication: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
+                // The policy sync decides by, in place of a cockpit.toml on disk.
+                loadPolicy: async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({}) }), record: async () => {} }),
                 ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),
                 sync: async input => { invoked = true; return { status: 0, diagnostics: [], result: {
                     action: 'sync' as const, dryRun: input.dryRun === true, changes: [],

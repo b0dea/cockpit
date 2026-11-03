@@ -297,7 +297,7 @@ root, every declared repository present and, for a teammate's clone, recorded wi
 reachable and measured container runtime, the declared machine floor, a valid `.env.schema`
 wherever a repository has one, declared guard hosts and test gates, no secret files committed in a
 repository, a trusted Codex hook where you use Codex, and an evaluator tool from
-`workorders.evaluators` once you have work orders. Every `init` stop and `cockpit doctor` show them as a readiness
+`work.evaluators` once you have work orders. Every `init` stop and `cockpit doctor` show them as a readiness
 section, one line per gap with why cockpit needs it:
 
 ```sh

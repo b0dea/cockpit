@@ -134,7 +134,7 @@ function replaceRegion(document: string, bytes: string): string {
 
 // --- Capability matrix ------------------------------------------------------------------------
 
-const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills']] as const
+const CAPABILITY_COLUMNS = [['guard-firing', 'Guard firing'], ['instruction-loading', 'Instruction loading'], ['skill-parity', 'Skills'], ['session-start', 'Session-start check']] as const
 interface CapabilityCell {
     readonly target: SurfaceTarget
     readonly capability: typeof CAPABILITY_COLUMNS[number][0]
@@ -201,6 +201,11 @@ async function capabilityCells(sources: ReferenceSources) {
             ? { target, capability: 'skill-parity', state: native.state, evidence: 'pending_evidence', provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location }
             : { target, capability: 'skill-parity', state: native.state, evidence: 'human_needed', provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location })
     }
+    for (const target of SURFACE_TARGETS) {
+        const start = harnessFact(target).sessionStart
+        cells.push({ target, capability: 'session-start', state: start.state, evidence: start.evidence, provenance: start.provenance,
+            measuredOn: start.state === 'unavailable' ? NEVER_PROBED : start.measuredOn, measuredVersion: start.measuredVersion, location: null })
+    }
     // The rendered skill digests stay out of the table but in the manifest, so editing a skill
     // still changes the page.
     const manifest = digest(JSON.stringify({ cells, renderedSkills: skills.files.map(file => [file.target, file.path, file.sha256]),
@@ -244,7 +249,7 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         + `<!-- Source manifest: ${manifestSha256} -->\n\n`
         + 'This generated page is for users checking what cockpit actually enforces in each agent tool. ' + MATRIX_STATES
         + `Written says whether \`sync\` writes the tool's files for a cockpit.toml that lists no tools: the tools whose guard firing is measured are the default \`[surfaces] tools\`, and any other tool is written only once listed (\`npx --no cockpit tool add <tool> --config <your cockpit.toml>\`).\n\n`
-        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}.\n\n`
+        + `Guard firing is the generated hook refusing a protected operation. Instruction loading is the tool reading the guidance cockpit writes for it, including the guides of sibling repositories. Skills are the tool loading the skills cockpit renders: ${listed(skills.map(code))}. The session-start check is the tool running \`cockpit check\` as a session starts and showing its drift report to the agent.\n\n`
         + grid
         + '\n## Measurements\n\nEach line gives the date and tool version of the run and what it showed.\n\n' + measured.join('')
         + '\n## Without a measurement\n\n' + unmeasured.join('')

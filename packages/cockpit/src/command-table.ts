@@ -1,7 +1,7 @@
 import { SURFACE_TARGETS } from './surfaces/contract.js'
 import type { ParseArgsConfig } from 'node:util'
 import { isAbsolute, normalize, resolve } from 'node:path'
-import { WORK_ORDER_ID, WORK_ORDER_LOCKS } from './work-orders/contract.js'
+import { WORK_ORDER_ID } from './work-orders/contract.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from './environment/contract.js'
 import type { GuardInvocationProfile } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
@@ -18,8 +18,7 @@ export function isRecordedAnswerField(value: string): boolean {
 }
 
 export type WorkHandlerIdentifier =
-    | 'work-intake' | 'work-status' | 'work-accept' | 'work-renew' | 'work-resume'
-    | 'work-recover' | 'work-execute' | 'work-record' | 'work-answer' | 'work-review' | 'work-sweep' | 'work-reverse' | 'work-programme-mint' | 'work-metrics' | 'work-grade'
+    | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-answer' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
     | 'browser-drive' | 'browser-screenshot' | 'browser-debugger' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
@@ -59,7 +58,7 @@ export const commandStages: readonly Readonly<{ id: CommandStage; title: string 
  * ignored by another.
  */
 export const commandGroups: readonly Readonly<{ name: string; summary: string }>[] = Object.freeze([
-    { name: 'work', summary: 'Prepare, accept, execute, review and grade work orders' },
+    { name: 'work', summary: 'Accept, check, grade and close work orders' },
     { name: 'browser', summary: 'Drive, inspect and capture the declared application in a browser' },
 ])
 
@@ -92,32 +91,31 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'accept-defaults': 'Accept the displayed defaults with their exact SHA-256 digest',
     'accept-preview': 'Accept the displayed init preview with its exact SHA-256 digest',
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
+    abandon: 'Close the order as abandoned; --note says why',
     adopt: 'Move one existing harness settings path under cockpit ownership',
     adoption: 'Path to the legacy adoption shell data',
     answers: 'Path to the init answers file',
+    ask: 'Record the note as an open question, which blocks the order until it is answered',
     apply: 'Apply the displayed reversible operation',
-    approach: 'Record the selected work approach',
-    candidate: 'Relative path to the candidate source',
     config: 'Path to cockpit.toml',
     create: 'Create a new local sibling repository',
+    criteria: 'Path to a file whose YAML front-matter lists the criteria to grade',
     dir: 'Directory for the sibling checkout',
     'dry-run': 'Preview without writing or installing anything',
-    'event-file': 'Path to the work event file',
     follow: 'Continue collecting logs until cancelled',
     from: 'Path to an existing local repository',
     gate: 'Declared product gate to run',
     image: 'Local container image the runtime measurement probe runs; it is never pulled',
-    intent: 'Relative path to the closed JSON intent descriptor; see the Intent descriptor section of ./node_modules/@b00dea/cockpit/docs/work-and-browser.md',
     'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
     interactive: 'Ask for explicit approval in a terminal',
-    item: 'Declared programme item key',
     json: 'Emit one machine-readable JSON response',
-    lock: 'Interrupted work lock identifier',
     mode: 'Declared gate execution mode',
     mount: 'How the stack uses the sibling: always, none or profile:<name>',
+    note: 'What was checked, or what was and was not done',
+    partial: 'Close the order as partly done; --note says what is left',
     'probe-specifications': 'Path to the harness probe specifications; with --write-probe-specifications, the earlier file whose filled rows for unchanged cells carry forward',
-    programme: 'Declared programme identifier',
     purpose: 'Short purpose of the sibling repository',
+    question: 'Number of the open question to answer, as work status lists it',
     registry: 'Path to the legacy registry input',
     'reset-answer': 'Preview clearing one recorded init answer field',
     remote: 'Repository remote URL recorded for the sibling',
@@ -128,7 +126,9 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     since: 'Collect logs no older than this duration',
     tail: 'Maximum number of log records to collect',
     target: 'Agent tool to set up; comma-separate several (claudecode,opencode)',
+    text: 'Text of the note or answer',
     var: 'Environment variable mapping for the sibling',
+    verdict: 'Under [work] grading = "self": met or unmet',
     'work-order': 'Work-order identifier',
     'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, with the probe fields left for you',
     'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
@@ -142,7 +142,7 @@ export function describePublicOption(name: string): string {
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'work-lock' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image'
+    | 'identifier' | 'label' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -159,10 +159,9 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[] }>
-    selection?: 'intent-xor-work-order'
-    // Admitted only where cockpit.toml sets browser.request_preapproval, which the schema grants only
-    // on isolated data that cannot reach production.
-    requires?: 'browser-preapproval'
+    // Admitted only where cockpit.toml grants it: browser.request_preapproval, which the schema allows
+    // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
+    requires?: OrdinaryGrant
 }>
 
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -185,10 +184,12 @@ const workOrderOption = { 'work-order': { type: 'string' } } as const
 const workOrderOptions = Object.freeze({ ...configured, 'work-order': value('identifier', true) })
 const browserOptions = Object.freeze({ ...configured, role: value('identifier') })
 const browserAdmission = Object.freeze({ requires: 'browser-preapproval' as const })
+// --interactive asks for a person at a terminal, so an agent invocation never carries it.
+const personFlag = Object.freeze({ forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) })
 
 
 export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIdentifier {
-    return value.startsWith('work-') || value.startsWith('browser-') || value === 'test-run'
+    return value.startsWith('work-') || value.startsWith('browser-') || value === 'test-run' || value === 'grade-criteria'
 }
 
 export const commands: readonly CommandDefinition[] = [
@@ -296,9 +297,10 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Write the generated stack and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
-        // Adoption rewrites cockpit.toml and moves a team's harness settings, and a real sync rewrites
-        // the guard's own files, so only the dry run is an ordinary agent invocation.
-        ordinary: ordinary('sync', { ...configured, 'dry-run': Object.freeze({ ...flag, required: true as const }) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }) }),
+        // Adoption rewrites cockpit.toml and moves a team's harness settings, so it stays a person's. A
+        // real sync rewrites the guard's own files from a configuration the guard already pins and
+        // holds every call after an edit to, so it is an agent's only where [autonomy] sync = "agent".
+        ordinary: ordinary('sync', { ...configured, 'dry-run': flag }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']) }), requires: 'autonomy-sync' }),
         options: {
             config: { type: 'string' },
             'dry-run': { type: 'boolean', default: false },
@@ -433,13 +435,15 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'reset',
         stage: 'run-the-stack',
-        summary: 'Preview a reset, or approve that exact preview interactively (on the active local Docker context)',
+        summary: 'Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)',
         handler: 'reset',
         visibility: 'public',
-        ordinary: unavailable('reset requires separate approval'),
+        // Reset deletes stack data, so an agent applies one only where [autonomy] reset = "agent".
+        ordinary: ordinary('reset', { ...configured, apply: Object.freeze({ ...flag, required: true as const }) }, { requires: 'autonomy-reset' }),
         options: {
             config: { type: 'string' },
             interactive: { type: 'boolean', default: false },
+            apply: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
     },
@@ -460,65 +464,44 @@ export const commands: readonly CommandDefinition[] = [
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
         ordinary: ordinary('test-run', { ...configured, gate: value('declared-gate', true), mode: value('gate-mode'), select: value('gate-selector') }),
         options: { ...workOptions, ...{ gate: { type: 'string' }, mode: { type: 'string', default: 'canonical' }, select: { type: 'string' } } } },
-    // Intake publishes a draft at most; a person accepts it separately.
-    { name: 'work intake', handler: 'work-intake', stage: 'test-and-grade', summary: 'Prepare a work order from its source document', visibility: 'public',
-        ordinary: ordinary('work-intake', { ...configured, 'work-order': value('identifier'), intent: value('confined-path'), candidate: value('confined-path') },
-            { selection: 'intent-xor-work-order' }),
-        options: { ...workOptions, ...workOrderOption, intent: { type: 'string' }, candidate: { type: 'string' } } },
-    { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report current work-order state', visibility: 'public',
+    // A gated step passes for the agent only where [work.gates] says agent; under person the command
+    // waits for the digest a person types after --interactive, which no agent invocation carries.
+    { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report each work order, its state and how it closed', visibility: 'public',
         ordinary: ordinary('work-status', { ...configured, 'work-order': value('identifier') }),
         options: { ...workOptions, ...workOrderOption } },
-    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Interactively accept the exact current work order', visibility: 'public',
-        ordinary: unavailable("acceptance is a person's answer, in an interactive terminal, to the contract digest it displays"),
-        options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
-    { name: 'work renew', handler: 'work-renew', stage: 'test-and-grade', summary: 'Interactively renew a changed work-order contract', visibility: 'public',
-        ordinary: unavailable("renewal is a person's answer, in an interactive terminal, to the changed contract digest it displays"),
-        options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
-    { name: 'work resume', handler: 'work-resume', stage: 'test-and-grade', summary: 'Resume the next executable step of the single active work order', visibility: 'public',
-        ordinary: ordinary('work-resume'),
-        options: workOptions },
+    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one, as [work.gates] allows', visibility: 'public',
+        ordinary: ordinary('work-accept', workOrderOptions, personFlag),
+        options: { ...workOptions, ...workOrderOption, interactive: { type: 'boolean', default: false } } },
+    { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
+        ordinary: ordinary('work-check', workOrderOptions),
+        options: { ...workOptions, ...workOrderOption } },
+    { name: 'work note', handler: 'work-note', stage: 'test-and-grade', summary: 'Record a note on an order, or with --ask an open question that blocks it', visibility: 'public',
+        ordinary: ordinary('work-note', { ...workOrderOptions, text: value('label', true), ask: flag }),
+        options: { ...workOptions, ...workOrderOption, text: { type: 'string' }, ask: { type: 'boolean', default: false } } },
+    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
+        ordinary: ordinary('work-answer', { ...workOrderOptions, question: value('tail', true), text: value('label', true) }, personFlag),
+        options: { ...workOptions, ...workOrderOption, question: { type: 'string' }, text: { type: 'string' }, interactive: { type: 'boolean', default: false } } },
+    // Grading hands the order to an evaluator running apart from the agent that did the work, unless
+    // [work] grading names checks or self.
+    { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',
+        ordinary: ordinary('work-grade', { ...workOrderOptions, verdict: value('label'), note: value('label') }),
+        options: { ...workOptions, ...workOrderOption, verdict: { type: 'string' }, note: { type: 'string' } } },
+    { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
+        ordinary: ordinary('work-signoff', { ...workOrderOptions, partial: flag, abandon: flag, note: value('label') }, personFlag),
+        options: { ...workOptions, ...workOrderOption, partial: { type: 'boolean', default: false }, abandon: { type: 'boolean', default: false },
+            note: { type: 'string' }, interactive: { type: 'boolean', default: false } } },
     // Inspection only reports the holder. --apply deletes the lock once a pid probe calls its holder
     // dead, and that probe sees only this machine's process table: a holder running in a container or
     // on another host that shares the checkout looks dead to it, so a person confirms it is gone.
-    { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public',
-        ordinary: ordinary('work-recover', { ...configured, lock: value('work-lock', true) }, { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
-        options: { ...workOptions, lock: { type: 'string' }, apply: { type: 'boolean', default: false } } },
-    // Execute runs the verification command of a step in an order a person accepted; the approach is a
-    // label it records and selects nothing it runs.
-    { name: 'work execute', handler: 'work-execute', stage: 'test-and-grade', summary: 'Execute one accepted work-order step', visibility: 'public',
-        ordinary: ordinary('work-execute', { ...workOrderOptions, approach: value('label', true) }),
-        options: { ...workOptions, ...{ ...workOrderOption, approach: { type: 'string' } } } },
-    { name: 'work record', handler: 'work-record', stage: 'test-and-grade', summary: 'Persist current work-order progress', visibility: 'public',
-        ordinary: ordinary('work-record', { ...workOrderOptions, 'event-file': value('confined-path', true) }),
-        options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' } } },
-    // A gap's answer and a decision speak for a person, so a person confirms them in a terminal.
-    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: "Interactively record a person's answer to an open gap, or their decision", visibility: 'public',
-        ordinary: unavailable("an answer or decision is a person's, typed in an interactive terminal against the digest it displays"),
-        options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' }, interactive: { type: 'boolean', default: false } } },
-    { name: 'work review', handler: 'work-review', stage: 'test-and-grade', summary: 'Review the current accepted work order', visibility: 'public',
-        ordinary: ordinary('work-review', workOrderOptions),
-        options: { ...workOptions, ...workOrderOption } },
-    // The preview is a report. Parking or un-parking an order changes which orders count against the
-    // work-in-progress cap a person set, so applying a sweep and reversing one stay with a person.
-    { name: 'work sweep', handler: 'work-sweep', stage: 'test-and-grade', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public',
-        ordinary: ordinary('work-sweep', configured, { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
-        options: { ...workOptions, ...{ apply: { type: 'boolean', default: false } } } },
-    { name: 'work reverse', handler: 'work-reverse', stage: 'test-and-grade', summary: 'Reverse a recorded work-order sweep', visibility: 'public',
-        ordinary: unavailable('reversing a sweep un-parks an order, which changes the orders that count against the work-in-progress cap a person set'),
-        options: { ...workOptions, ...workOrderOption } },
-    // Without a candidate it reports the next item. With one it binds that item of the person's
-    // programme ledger to the draft for good, so only the report is an agent's to run.
-    { name: 'work programme-mint', handler: 'work-programme-mint', stage: 'test-and-grade', summary: 'Mint the next declared programme work order', visibility: 'public',
-        ordinary: ordinary('work-programme-mint', { ...configured, programme: value('identifier', true), item: value('identifier') },
-            { forbidden: Object.freeze({ presence: Object.freeze(['candidate']) }) }),
-        options: { ...workOptions, ...{ programme: { type: 'string' }, item: { type: 'string' }, candidate: { type: 'string' } } } },
-    { name: 'work metrics', handler: 'work-metrics', stage: 'test-and-grade', summary: 'Report work-order metrics', visibility: 'public',
-        ordinary: ordinary('work-metrics'),
+    { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',
+        ordinary: ordinary('work-recover', workOrderOptions, { forbidden: Object.freeze({ presence: Object.freeze(['apply']) }) }),
+        options: { ...workOptions, ...workOrderOption, apply: { type: 'boolean', default: false } } },
+    { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order; in CI, pass the steps gated on ci', visibility: 'public',
+        ordinary: ordinary('work-verify'),
         options: workOptions },
-    // Review and grade hand the order to evaluators running apart from the agent that did the work.
-    { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Independently grade the current accepted work order', visibility: 'public',
-        ordinary: ordinary('work-grade', workOrderOptions),
-        options: { ...workOptions, ...workOrderOption } },
+    { name: 'grade', handler: 'grade-criteria', stage: 'test-and-grade', summary: 'Independently grade uncommitted work against a criteria file, with no work order', visibility: 'public',
+        ordinary: ordinary('grade-criteria', { ...configured, criteria: value('confined-path', true) }),
+        options: { ...workOptions, criteria: { type: 'string' } } },
     // Driving signs in and captures the application, so it runs unprompted only on the data posture a
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
@@ -554,14 +537,14 @@ export interface OrdinaryInvocationAuthority {
     readonly services: readonly string[]
     /** Test gate ids the configuration declares. */
     readonly gates: readonly string[]
-    /** Whether the configuration preapproves browser commands. */
-    readonly browserPreapproved: boolean
+    /** What the configuration grants an agent: browser preapproval, and the [autonomy] decisions set to agent. */
+    readonly grants: readonly OrdinaryGrant[]
 }
+export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset'
+const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset']
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
 const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
-// A work order, lock, programme, item or browser role id shares the work-order id shape.
-const WORK_LOCKS: ReadonlySet<string> = new Set(Object.values(WORK_ORDER_LOCKS))
 // A selected value that starts with `-` would reach the product's tool as an option of its own.
 const GATE_SELECTOR = /^(?:spec|file|test|route):[^-]/
 
@@ -598,14 +581,14 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     if (!record(candidate)
         || Object.keys(candidate).sort().join(',') !== 'argv,cwd,executable'
         || !record(captured)
-        || Object.keys(captured).sort().join(',') !== 'allowedRoots,browserPreapproved,canonicalRoot,configPath,executable,gates,services') return undefined
+        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,gates,grants,services') return undefined
     const source = captured as unknown as OrdinaryInvocationAuthority
     if (!canonicalPath(source.executable) || !canonicalPath(source.canonicalRoot) || !canonicalPath(source.configPath)
         || !Array.isArray(source.allowedRoots) || source.allowedRoots.length > GUARD_INPUT_LIMITS.paths
         || !source.allowedRoots.every(canonicalPath) || !source.allowedRoots.includes(source.canonicalRoot)
         || !Array.isArray(source.services) || !source.services.every(service => typeof service === 'string' && /^[a-z0-9][a-z0-9_.-]{0,127}$/.test(service))
         || !Array.isArray(source.gates) || !source.gates.every(gate => typeof gate === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(gate))
-        || typeof source.browserPreapproved !== 'boolean'
+        || !Array.isArray(source.grants) || !source.grants.every(grant => ORDINARY_GRANTS.includes(grant))
         || candidate.executable !== source.executable || candidate.cwd !== source.canonicalRoot
         || !Array.isArray(candidate.argv) || candidate.argv.length === 0 || candidate.argv.length > GUARD_INPUT_LIMITS.words
         || !candidate.argv.every(arg => typeof arg === 'string' && arg.length > 0
@@ -617,7 +600,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     const available: OrdinaryCommandMetadata | undefined = definition?.ordinary
     if (!definition || definition.visibility !== 'public' || available?.availability !== 'available') return undefined
     const grammar = available
-    if (grammar.requires === 'browser-preapproval' && !source.browserPreapproved) return undefined
+    if (grammar.requires !== undefined && !source.grants.includes(grammar.requires)) return undefined
     const paths = new Set<string>()
     const confined = (path: string) => {
         if (!path || path.includes('\\') || path.split('/').includes('..') || /[*?\[\]]/.test(path)) return false
@@ -654,7 +637,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'gate-mode' ? ['canonical', 'full', 'staged'].includes(text)
             : option.role === 'gate-selector' ? GATE_SELECTOR.test(text)
             : option.role === 'identifier' ? WORK_ORDER_ID.test(text)
-            : option.role === 'work-lock' ? WORK_ORDER_ID.test(text) || WORK_LOCKS.has(text)
             : option.role === 'label' ? true
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
@@ -672,7 +654,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : grammar.positional.roles[index] === 'version' ? !EXACT_VERSION.test(word)
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
-        || grammar.selection === 'intent-xor-work-order' && (options.has('intent') === options.has('work-order') || options.has('candidate') && !options.has('intent'))
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
     return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]),
         ...(reads.length ? { reads: Object.freeze(reads) } : {}) })

@@ -323,6 +323,21 @@ describe('restriction expansion', () => {
         expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
             status: 2, stdout: '', stderr: expect.stringContaining('through the canonical Codex session directory'),
         })
+
+        // At session start each registration runs the installed cockpit's check on the configuration
+        // and shows its report; it never blocks the session, and says nothing where cockpit is absent.
+        const sessionStart = (name: 'claudecode' | 'codexcli', cwd: string, env: NodeJS.ProcessEnv) => {
+            const registration = JSON.parse(target(result, name).files[0]!.bytes) as { hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> } }
+            return spawnSync('/bin/sh', ['-c', registration.hooks.SessionStart[0]!.hooks[0]!.command], { cwd, env, encoding: 'utf8' })
+        }
+        for (const [name, cwd, env] of [['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }], ['codexcli', directory, ambient]] as const) {
+            expect(sessionStart(name, cwd, env), name).toMatchObject({ status: 0, stdout: '' })
+        }
+        await mkdir(join(directory, 'node_modules/.bin'), { recursive: true })
+        await writeFile(join(directory, 'node_modules/.bin/cockpit'), '#!/bin/sh\necho "ERROR GENERATED_ARTIFACT_DRIFT from $*"\nexit 2\n', { mode: 0o755 })
+        for (const [name, cwd, env] of [['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }], ['codexcli', directory, ambient]] as const) {
+            expect(sessionStart(name, cwd, env), name).toMatchObject({ status: 0, stdout: 'ERROR GENERATED_ARTIFACT_DRIFT from check --config cockpit.toml\n' })
+        }
     })
 
     it('routes OpenCode native read, grep and glob through the guard read checks', async () => {
@@ -350,6 +365,14 @@ describe('restriction expansion', () => {
         expect(call('glob', { pattern: '**/*.env', path: join(directory, 'env') })).toMatchObject({ status: 0, stderr: '' })
         expect(call('grep', { pattern: "it's", path: join(directory, 'env/service.env.example') })).toMatchObject({ status: 0, stderr: '' })
         expect(call('read', {})).toMatchObject({ status: 1, stderr: expect.stringContaining('malformed applicable payload') })
+        // The plugin hands the guard an edit's new text for the configuration only, so the policy pin
+        // can apply it: a new [autonomy] table is refused, an edit elsewhere in the file is not.
+        const config = join(directory, 'cockpit.toml')
+        const lines = readFileSync(config, 'utf8').split('\n')
+        const anchor = lines.find(line => line.trim() && lines.filter(other => other === line).length === 1)!
+        expect(call('edit', { filePath: config, oldString: anchor, newString: `${anchor}\n` })).toMatchObject({ status: 0, stderr: '' })
+        expect(call('edit', { filePath: config, oldString: anchor, newString: `[autonomy]\npreset = "agent"\n\n${anchor}` }))
+            .toMatchObject({ status: 1, stderr: expect.stringContaining('Refusing to change [work], [work.gates] and [autonomy]') })
     }, 60_000)
 
     it('runs the generated Codex hook from a cockpit directory inside a larger Git repository', async () => {

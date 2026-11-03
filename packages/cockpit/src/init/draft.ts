@@ -649,8 +649,8 @@ function buildAttributions(
         ['guards.allow', defaults.guards.allow, 'allowed commands'],
         ['guards.deny', defaults.guards.deny, 'denied commands'],
         ['mcp.approved', defaults.mcp.approved, 'approved MCP servers'],
-        ['workorders.attempt_cap', defaults.workorders.attempt_cap, 'the work-order attempt cap'],
-        ['workorders.wip_cap', defaults.workorders.wip_cap, 'the work-order WIP cap'],
+        ['work.attempt_cap', defaults.work.attempt_cap, 'the work-order attempt cap'],
+        ['work.wip_cap', defaults.work.wip_cap, 'the work-order WIP cap'],
     ] as const) {
         attributions.push({ target, value, from: 'default', because: defaultReason(field, source) })
     }

@@ -398,21 +398,21 @@ const HOOK_ROOT = Object.freeze({
     codexcli: { expression: '$(pwd -P 2>/dev/null)', source: 'the canonical Codex session directory' },
 } as const)
 
-function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: string, askIsDeny: boolean): string {
+function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: string, askIsDeny: boolean, configFile: string): string {
     const root = HOOK_ROOT[target]
     // Both hook runners block only on exit 2; any other failure (a handler that cannot load, a killed
     // process, a missing shell) would let the tool call run, so it is folded into a blocking exit.
     const guard = `R="${root.expression}"; H="$R/${guardPath}"; test -n "$R" && test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s (the hook finds the cockpit checkout through ${root.source}), so every tool call is held. Fix: start the agent from the cockpit checkout; if the file is gone, run git restore ${guardPath} there (it is committed), or have a human run npx --no cockpit sync --config <your cockpit.toml> in a terminal.\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${target}; s=$?; case $s in 0|2) exit $s;; esac; printf 'cockpit guard failed (exit %s)\\n' "$s" >&2; exit 2`
-    const value = target === 'codexcli' ? {
-        description: 'Generated authenticated restriction transport.',
-        hooks: { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard }] }] },
-    } : {
-        hooks: { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard }] }] },
-    }
+    // Claude Code 2.1.317 and Codex 0.166.0 (a trusted hook) each ran a SessionStart command and put its
+    // stdout in the agent's context, measured 2026-11-03 beside a misspelled event that never ran. A
+    // drift report there tells the agent what to re-sync before it works; the hook never blocks.
+    const sessionStart = `R="${root.expression}"; test -n "$R" && test -x "$R/node_modules/.bin/cockpit" || exit 0; cd "$R" && ./node_modules/.bin/cockpit check --config ${shellLiteral(configFile)} 2>&1 | tail -n 40; exit 0`
+    const hooks = { PreToolUse: [{ matcher, hooks: [{ type: 'command', command: guard }] }], SessionStart: [{ hooks: [{ type: 'command', command: sessionStart }] }] }
+    const value = target === 'codexcli' ? { description: 'Generated authenticated restriction transport and session-start drift check.', hooks } : { hooks }
     return `${JSON.stringify(value, null, 2)}\n`
 }
 
-function opencodeBytes(guardPath: string): string {
+function opencodeBytes(guardPath: string, configFile: string): string {
     // The plugin is committed, so it locates the guard from its own published location.
     const guard = `fileURLToPath(new URL(${JSON.stringify(`../../${guardPath}`)}, import.meta.url))`
     // OpenCode's native read, grep and glob tools never reach a shell, and OpenCode 1.19.4 returned a
@@ -421,7 +421,7 @@ function opencodeBytes(guardPath: string): string {
     // shell command that reads at least the same paths: `cat` for read, a recursive `grep` for grep
     // (OpenCode searches hidden files too) and `ls` for glob, which reports names only.
     const readTools = `  if (tool === "Read") return typeof args.filePath === "string" ? shell(\`cat -- \${quote(args.filePath)}\`) : null\n  if (tool === "Grep" || tool === "Glob") {\n    if (typeof args.pattern !== "string" || args.path !== undefined && typeof args.path !== "string") return null\n    const path = quote(args.path ?? ".")\n    return shell(tool === "Grep" ? \`grep -r -e \${quote(args.pattern)} -- \${path}\` : \`ls -- \${path}\`)\n  }\n`
-    return `import { spawnSync } from "node:child_process"\nimport { fileURLToPath } from "node:url"\n\nconst tools = { bash: "Bash", edit: "Edit", write: "Write", apply_patch: "apply_patch", read: "Read", grep: "Grep", glob: "Glob" }\n\nconst quote = (value) => \`'\${value.replaceAll("'", "'\\\\''")}'\`\nconst shell = (command) => ({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } })\n\nfunction payload(tool, args) {\n  if (tool === "Bash") return typeof args.command === "string" ? shell(args.command) : null\n  if (tool === "apply_patch") return typeof args.patchText === "string" ? { hook_event_name: "PreToolUse", tool_name: "apply_patch", tool_input: { command: args.patchText } } : null\n${readTools}  const file_path = args.filePath ?? args.path ?? args.file\n  return typeof file_path === "string" ? { hook_event_name: "PreToolUse", tool_name: tool, tool_input: { file_path } } : null\n}\n\nexport const CockpitRestrictions = async () => ({\n  "tool.execute.before": async (input, output) => {\n    const tool = tools[String(input?.tool ?? "").toLowerCase()]\n    if (!tool) return\n    const normalized = payload(tool, output?.args ?? {})\n    if (!normalized) throw new Error("cockpit restriction guard: malformed applicable payload")\n    const result = spawnSync("/bin/bash", [${guard}, "--harness", "opencode"], {\n      input: JSON.stringify(normalized), encoding: "utf8",\n      env: { ...process.env, COCKPIT_ASK_IS_DENY: "1" },\n    })\n    if (result.error) throw new Error(\`cockpit restriction guard failed: \${result.error.message}\`)\n    // A restated read names the command the guard judged, so the agent can narrow its path.\n    const checked = tool === "Read" || tool === "Grep" || tool === "Glob" ? \` (OpenCode \${tool.toLowerCase()} is checked as: \${normalized.tool_input.command})\` : ""\n    if (result.status !== 0) throw new Error((result.stderr.trim() || "cockpit restriction guard refused without a reason") + checked)\n    let decision\n    try { decision = JSON.parse(result.stdout || "{}")?.hookSpecificOutput }\n    catch { throw new Error("cockpit restriction guard returned malformed output") }\n    if (decision?.permissionDecision === "deny" || decision?.permissionDecision === "ask") {\n      throw new Error(\`cockpit restriction guard: \${decision.permissionDecisionReason}\${checked}\`)\n    }\n  },\n})\n`
+    return `import { spawnSync } from "node:child_process"\nimport { fileURLToPath } from "node:url"\n\nconst tools = { bash: "Bash", edit: "Edit", write: "Write", apply_patch: "apply_patch", read: "Read", grep: "Grep", glob: "Glob" }\n\nconst quote = (value) => \`'\${value.replaceAll("'", "'\\\\''")}'\`\nconst shell = (command) => ({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } })\n\nfunction payload(tool, args) {\n  if (tool === "Bash") return typeof args.command === "string" ? shell(args.command) : null\n  if (tool === "apply_patch") return typeof args.patchText === "string" ? { hook_event_name: "PreToolUse", tool_name: "apply_patch", tool_input: { command: args.patchText } } : null\n${readTools}  const file_path = args.filePath ?? args.path ?? args.file\n  if (typeof file_path !== "string") return null\n  // The guard checks an edit of the configuration against its pinned policy tables, so that file's new text is sent.\n  const text = file_path.split("/").pop() !== ${JSON.stringify(configFile.split('/').pop())} ? {}\n    : tool === "Edit" ? { old_string: args.oldString, new_string: args.newString, replace_all: args.replaceAll === true } : { content: args.content }\n  return { hook_event_name: "PreToolUse", tool_name: tool, tool_input: { file_path, ...text } }\n}\n\nexport const CockpitRestrictions = async () => ({\n  "tool.execute.before": async (input, output) => {\n    const tool = tools[String(input?.tool ?? "").toLowerCase()]\n    if (!tool) return\n    const normalized = payload(tool, output?.args ?? {})\n    if (!normalized) throw new Error("cockpit restriction guard: malformed applicable payload")\n    const result = spawnSync("/bin/bash", [${guard}, "--harness", "opencode"], {\n      input: JSON.stringify(normalized), encoding: "utf8",\n      env: { ...process.env, COCKPIT_ASK_IS_DENY: "1" },\n    })\n    if (result.error) throw new Error(\`cockpit restriction guard failed: \${result.error.message}\`)\n    // A restated read names the command the guard judged, so the agent can narrow its path.\n    const checked = tool === "Read" || tool === "Grep" || tool === "Glob" ? \` (OpenCode \${tool.toLowerCase()} is checked as: \${normalized.tool_input.command})\` : ""\n    if (result.status !== 0) throw new Error((result.stderr.trim() || "cockpit restriction guard refused without a reason") + checked)\n    let decision\n    try { decision = JSON.parse(result.stdout || "{}")?.hookSpecificOutput }\n    catch { throw new Error("cockpit restriction guard returned malformed output") }\n    if (decision?.permissionDecision === "deny" || decision?.permissionDecision === "ask") {\n      throw new Error(\`cockpit restriction guard: \${decision.permissionDecisionReason}\${checked}\`)\n    }\n  },\n})\n`
 }
 
 function registration(adapter: NativeRestrictionAdapter, input: RestrictionExpansionInput): RestrictionFile {
@@ -429,8 +429,8 @@ function registration(adapter: NativeRestrictionAdapter, input: RestrictionExpan
     // Codex and OpenCode have no ask tier, so a prompt they cannot show refuses instead of proceeding;
     // Claude Code shows the prompt.
     const bytes = adapter.target === 'opencode'
-        ? opencodeBytes(input.guardPath)
-        : hooksBytes(adapter.target, adapter.registration.matcher, input.guardPath, adapter.target === 'codexcli')
+        ? opencodeBytes(input.guardPath, input.configFile)
+        : hooksBytes(adapter.target, adapter.registration.matcher, input.guardPath, adapter.target === 'codexcli', input.configFile)
     return file(adapter.registration.path, bytes)
 }
 

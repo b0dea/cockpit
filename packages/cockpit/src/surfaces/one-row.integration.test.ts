@@ -231,10 +231,11 @@ describe('one-row generated surface integration', () => {
         const openCode = JSON.parse(openCodeJson) as {
             mcp: Record<string, { enabled: boolean }>
         }
+        // Under the default [autonomy] mcp_approve = "agent" a declared server is enabled as declared now.
         expect(Object.keys(claudeMcp.mcpServers)).toEqual(['row-server'])
-        expect(claudeSettings.enabledMcpjsonServers).toEqual([])
-        expect(codex.mcp_servers['row-server']?.enabled).toBe(false)
-        expect(openCode.mcp['row-server']?.enabled).toBe(false)
+        expect(claudeSettings.enabledMcpjsonServers).toEqual(['row-server'])
+        expect(codex.mcp_servers['row-server']?.enabled).not.toBe(false)
+        expect(openCode.mcp['row-server']?.enabled).toBe(true)
 
         const evidence = [
             JSON.stringify(addedSync),

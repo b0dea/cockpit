@@ -297,3 +297,21 @@ reported to the human.
 Run `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` first: it reports health and wiring without repairing
 anything. Follow the fix each diagnostic names. Use `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` when
 the environment must pass the blocking gate, and the cockpit-explain skill to turn the result into a plain account.
+
+## On drift
+
+`check` reports drift as `GENERATED_ARTIFACT_DRIFT`, and the session-start hook prints the same report
+before you work. Act on the fix it names:
+
+1. **A sibling guide's copy is stale** (the message names the guide). Run
+   `./node_modules/.bin/cockpit sync --config cockpit.toml`, review the regenerated `AGENTS.md`, and commit it together
+   with the guide change. Under `[autonomy] sync = "person"` or `"ci"` the guard stops that sync: ask
+   the person to run it.
+2. **A generated file was edited by hand** (`SURFACE_STATE_CONFLICT`). Move the change into
+   `cockpit.toml` or a `[surfaces].overlays` entry, then sync. Never edit the generated file again to
+   silence the report.
+3. **A formerly generated file is still on disk.** If the fix says to run `sync`, `[autonomy] stale_delete`
+   lets it remove the file: run it and review what it removed. If the fix asks a person to approve a
+   digest, stop and ask them.
+
+Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0.

@@ -134,6 +134,16 @@ configuration without changing it and report `CODEX_HOOK_UNTRUSTED` until every 
 trusted, or when they cannot verify it. They report it only once Codex has run on the machine (a
 Codex home exists); before that, no Codex session can skip the hook.
 
+### Session-start drift check
+
+The generated `.claude/settings.json` and `.codex/hooks.json` also register a `SessionStart` hook that
+runs `./node_modules/.bin/cockpit check --config cockpit.toml` in the cockpit root and prints the end of its report, so the
+agent sees drift and the fix it names before it works; the *On drift* section of the cockpit-setup
+procedure, which every shipped skill points to, says what to do with it. The hook never blocks a session. Codex runs it only once a person trusts it, like
+the guard hook. OpenCode gets none: its plugins receive `session.created`, but no run has shown a plugin
+putting text in the agent's context. The [capability matrix](capability-matrix.md) dates each
+measurement.
+
 ### Run cockpit outside the Codex sandbox
 
 The generated `.codex/config.toml` runs Codex in its `workspace-write` sandbox with the sibling

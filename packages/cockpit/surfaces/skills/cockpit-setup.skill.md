@@ -13,7 +13,7 @@ cockpit:
   non-goals: [parsing registries, deciding environment policy, claiming an unproved installation]
   procedure: procedures/setup.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
-  entry-point-lines: 11
+  entry-point-lines: 12
 claudecode:
   allowed-tools: [Bash]
 codexcli:
@@ -34,3 +34,4 @@ For test users, roles and signed-in browser state, read `references/test-data-an
 
 Preview every proposed mutation and obtain explicit confirmation before irreversible work.
 The init command resumes after an interruption and runs the final environment checks; show its actual result and anything still unconfirmed.
+If `check` or the session-start report names drift, follow **On drift** in its procedure first.

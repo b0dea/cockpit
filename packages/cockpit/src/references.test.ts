@@ -321,13 +321,14 @@ describe('reference pages', () => {
         const section = (heading: string) => matrix.slice(matrix.indexOf(`## ${heading}\n`)).split(/\n(?=## )/)[0]!
         // One row per harness, one column per capability. Guard firing is enforced only where a dated
         // run of the real tool showed a refusal, and Codex's holds only once a person trusts the hook.
-        // Every tool stays in the matrix; the unmeasured ones are written only when listed.
-        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills |\n| --- | --- | --- | --- | --- |\n'
-            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed |\n'
-            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed |\n'
-            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed |\n'
-            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated |\n'
-            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated |\n')
+        // Every tool stays in the matrix; the unmeasured ones are written only when listed. The session-start
+        // check is generated only where a dated run saw the hook fire and reach the agent.
+        expect(matrix).toContain('| Tool | Written | Guard firing | Instruction loading | Skills | Session-start check |\n| --- | --- | --- | --- | --- | --- |\n'
+            + '| Claude Code (`claudecode`) | by default | enforced | instructed | instructed | instructed |\n'
+            + '| Codex (`codexcli`) | by default | enforced (needs a person) | instructed | instructed | instructed (needs a person) |\n'
+            + '| OpenCode (`opencode`) | by default | enforced | instructed | instructed | unavailable |\n'
+            + '| Cursor (`cursor`) | when listed | unavailable | generated | generated | unavailable |\n'
+            + '| Grok Build (`grokcli`) | when listed | unavailable | generated | generated | unavailable |\n')
         expect(section('Measurements')).toMatch(/^- Codex, guard firing \(\d{4}-\d{2}-\d{2}, version [^)]+\): only after a person trusts the hook: [^\n]+\.$/m)
         expect(section('Measurements')).not.toMatch(/Cursor|Grok Build|skills/)
         // A date reads as a run of the tool, so cells nobody ran carry none.

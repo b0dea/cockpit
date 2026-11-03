@@ -415,13 +415,14 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual(['packages/cockpit/src/docs.test.ts', 'packages/cockpit/src/task.test.ts'])
     })
 
-    it.each(['scripts/build-cockpit.mjs', 'packages/cockpit/scripts/build.mjs', 'packages/cockpit/scripts/build-helper.mjs'])(
+    it.each(['scripts/build-cockpit.mjs', 'scripts/render-pages.ts', 'packages/cockpit/scripts/build.mjs', 'packages/cockpit/scripts/build-helper.mjs'])(
         'runs the exact test owner importing changed package script %s', path => {
             const fixture = withOwners({
                 'scripts/build-cockpit.mjs': 'export const cleanOwnedPackageDist = () => undefined\n',
+                'scripts/render-pages.ts': 'export const render = () => undefined\n',
                 'packages/cockpit/scripts/build.mjs': "export { build } from './build-helper.mjs'\n",
                 'packages/cockpit/scripts/build-helper.mjs': 'export const build = 1\n',
-                'packages/cockpit/src/package-build.test.ts': "import { cleanOwnedPackageDist } from '../../../scripts/build-cockpit.mjs'\nimport { build } from '../scripts/build.mjs'\n",
+                'packages/cockpit/src/package-build.test.ts': "import { cleanOwnedPackageDist } from '../../../scripts/build-cockpit.mjs'\nimport { render } from '../../../scripts/render-pages.ts'\nimport { build } from '../scripts/build.mjs'\n",
                 'packages/cockpit/src/unrelated/build-helper.mjs': 'export const build = 2\n',
                 'packages/cockpit/src/unrelated.test.ts': "import { build } from './unrelated/build-helper.mjs'\n",
             })
@@ -595,13 +596,15 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual([ARCHITECTURE, 'packages/cockpit/src/user.test.ts'])
     })
 
-    it('does not refuse a deleted source file that nothing imports any more, or its deleted test', () => {
+    it('does not refuse a deleted source file or test-support module that nothing imports any more, or its deleted test', () => {
         const fixture = withOwners({
             'packages/cockpit/src/gone/thing.ts': 'export const thing = 1\n',
             'packages/cockpit/src/gone/thing.test.ts': "import { thing } from './thing.js'\n",
+            'packages/cockpit/test-support/gone-fixture.ts': 'export const fixture = 1\n',
             'packages/cockpit/src/user.test.ts': 'user\n',
         })
         rmSync(join(fixture.root, 'packages/cockpit/src/gone'), { recursive: true })
+        rmSync(join(fixture.root, 'packages/cockpit/test-support/gone-fixture.ts'))
 
         const result = fixture.run()
 

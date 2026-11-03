@@ -3,6 +3,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
 import type { EvaluatorTool } from '../schema.js'
 import { evaluatorUnavailable, findEvaluators } from '../grading/evaluate.js'
+import { createWorkStore } from '../work-orders/store.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
@@ -645,16 +646,16 @@ async function checkoutProjection(
     }, consumeSetupCheckoutProjection)
 }
 
-// Work orders exist once workorders/ does, and from then on work review and work grade run the first
-// tool workorders.evaluators lists that can run, whichever agent tool did the work; doctor names the case
-// where none is on PATH before a grade fails on it.
+// Work orders exist once workorders/ does, and from then on work grade and cockpit grade run the first
+// tool work.evaluators lists that can run, whichever agent tool did the work; doctor names the case
+// where none is on PATH before a grade fails on it, and says how each closed order closed.
 async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>, evaluators: readonly EvaluatorTool[]): Promise<readonly EnvironmentDiagnostic[]> {
     try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return Object.freeze([]) }
     catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
         throw error
     }
-    // work review searches only canonical PATH directories, so doctor does too.
+    // The evaluator search looks only in canonical PATH directories, so doctor does too.
     const directories: string[] = []
     for (const directory of (env.PATH ?? '').split(delimiter)) {
         if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
@@ -663,10 +664,13 @@ async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, s
             throw error
         }
     }
+    const closed = (await createWorkStore(root).list()).flatMap(record => record.closure ? [Object.freeze({ severity: 'info' as const,
+        code: ENVIRONMENT_CODES.WORK_ORDER_CLOSED, target: `workorders/${record.id}.md`,
+        message: `${record.id} closed as ${record.closure.how}, signed off by ${record.closure.by}${record.closure.note ? `: ${record.closure.note}` : ''}` })] : [])
     const { found, missing } = await findEvaluators(evaluators, directories)
-    if (found.length) return Object.freeze([])
+    if (found.length) return Object.freeze(closed)
     return Object.freeze([Object.freeze({ severity: 'warning' as const, target: 'workorders',
-        ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator workorders.evaluators lists is on PATH to run work review and work grade: ${missing.map(row => row.message).join('; ')}`) })])
+        ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator work.evaluators lists is on PATH to run work grade and cockpit grade: ${missing.map(row => row.message).join('; ')}`) }), ...closed])
 }
 
 export function createHealthCommandAdapters(

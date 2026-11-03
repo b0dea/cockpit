@@ -1701,11 +1701,11 @@ function ownershipViolations(
 const WORK_OWNER_CONTRACTS = [
     {
         id: 'work-order-contract', module: 'packages/cockpit/src/work-orders/contract.ts',
-        facets: ['isParsedWorkOrder', 'parseWorkOrder'],
+        facets: ['parseWorkOrder', 'workOrderDigest', 'criteriaWeakening'],
     },
     {
-        id: 'work-order-state', module: 'packages/cockpit/src/work-orders/state.ts',
-        facets: ['createWorkOrderState', 'encodeWorkOrderState', 'persistWorkOrderProgress', 'readWorkOrderState', 'validateWorkOrderRepositories', 'workOrderProofIsCurrent'],
+        id: 'work-order-store', module: 'packages/cockpit/src/work-orders/store.ts',
+        facets: ['createWorkStore'],
     },
     {
         id: 'work-order-application', module: 'packages/cockpit/src/work-orders/application.ts',
@@ -1716,12 +1716,8 @@ const WORK_OWNER_CONTRACTS = [
         facets: ['isWorkApplicationComposition', 'createConfiguredWorkApplicationComposition'],
     },
     {
-        id: 'work-order-verification', module: 'packages/cockpit/src/grading/verifier.ts',
-        facets: ['checkGradeCurrency', 'checkPreparedWorkOrderCurrency', 'prepareWorkOrderVerification', 'verifyPreparedWorkOrder'],
-    },
-    {
-        id: 'work-order-completion', module: 'packages/cockpit/src/grading/completion.ts',
-        facets: ['completeWorkOrder'],
+        id: 'independent-grade', module: 'packages/cockpit/src/grading/grade.ts',
+        facets: ['gradingDocument', 'gradingSchema', 'readGradingAnswer'],
     },
     {
         id: 'browser-runtime', module: 'packages/cockpit/src/browser/runtime.ts',
@@ -5470,11 +5466,10 @@ describe('product architecture contract', () => {
 
     it.each([
         ['work-order parser', 'parseWorkOrder'],
-        ['work-order state store', 'readWorkOrderState'],
+        ['work-order record store', 'createWorkStore'],
         ['work-order orchestration', 'runWorkApplication'],
         ['work-order composition', 'createConfiguredWorkApplicationComposition'],
-        ['work-order verifier', 'verifyPreparedWorkOrder'],
-        ['work-order completion writer', 'completeWorkOrder'],
+        ['independent grade reader', 'readGradingAnswer'],
         ['browser runtime', 'resolveBrowserRuntime'],
         ['testing gate classifier', 'createGateRegistry'],
         ['testing run verdict', 'classifyRun'],

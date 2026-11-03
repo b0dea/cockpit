@@ -13,7 +13,7 @@ import {
     type SourceProvenance,
     snapshotJson,
 } from '../environment/contract.js'
-import { validateWorkOrderPolicy, WORK_ORDER_WIP_MAXIMA, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
+import { effectivePolicy, readRecordedPolicy, type EffectivePolicy } from '../autonomy.js'
 import { CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
 import { deriveRegistry } from '../registry-derivation.js'
 import { formatShellCommand } from '../fix-catalogue.js'
@@ -21,7 +21,7 @@ import { formatShellCommand } from '../fix-catalogue.js'
 export const mechanism = {
     id: 'configuration-loading',
     module: 'packages/cockpit/src/config/load.ts',
-    exports: ['loadCockpitConfig', 'evaluatorTools', 'unboundHostOperation', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
+    exports: ['loadCockpitConfig', 'loadAutonomyPolicy', 'evaluatorTools', 'unboundHostOperation', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
 } as const
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
@@ -102,7 +102,9 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly siblingsRoot: string
     readonly source: SourceProvenance
     readonly siblings: readonly Readonly<{ slug: string; dir: string; environmentFiles: readonly Readonly<{ template: string; instance: string }>[] }>[]
-    readonly workOrderPolicy: ValidatedWorkOrderPolicy
+    readonly policy: EffectivePolicy
+    readonly wipCap: number
+    readonly attemptCap: number
     readonly verificationTimeoutSeconds: number
     readonly evaluatorTimeoutSeconds: number
     readonly evaluators: readonly EvaluatorTool[]
@@ -188,12 +190,6 @@ export function projectWorkEnvironmentConfig(
 ): WorkEnvironmentConfigProjection | undefined {
     const loaded = configuration && typeof configuration === 'object' ? issuedConfigProjections.get(configuration) : undefined
     if (!loaded) return undefined
-    const policy = validateWorkOrderPolicy({
-        cockpitCap: loaded.config.workorders.wip_cap,
-        attemptCap: loaded.config.workorders.attempt_cap,
-        programmeCap: WORK_ORDER_WIP_MAXIMA.programme,
-    })
-    if (policy.kind !== 'policy') return undefined
     const declaredBrowser = loaded.config.browser
     const browser = declaredBrowser === undefined ? undefined : projectBrowserConfig(declaredBrowser)
     if (browser && (new Set(Object.values(browser.artifacts)).size !== loaded.config.environment.generated_host_paths.length
@@ -208,9 +204,11 @@ export function projectWorkEnvironmentConfig(
         siblings: Object.freeze(loaded.config.sibling.map(({ slug, dir, environment_files }) => Object.freeze({ slug, dir,
             environmentFiles: Object.freeze((environment_files ?? []).map(row => Object.freeze({ template: row.template, instance: row.instance }))),
         }))),
-        workOrderPolicy: policy.policy,
-        verificationTimeoutSeconds: loaded.config.workorders.verification_timeout_seconds,
-        evaluatorTimeoutSeconds: loaded.config.workorders.evaluator_timeout_seconds,
+        policy: effectivePolicy(loaded.config),
+        wipCap: loaded.config.work.wip_cap,
+        attemptCap: loaded.config.work.attempt_cap,
+        verificationTimeoutSeconds: loaded.config.work.verification_timeout_seconds,
+        evaluatorTimeoutSeconds: loaded.config.work.evaluator_timeout_seconds,
         evaluators: Object.freeze([...evaluatorTools(loaded.config)]),
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
@@ -424,6 +422,16 @@ async function syncedConfigName(directory: string): Promise<string | undefined> 
     return typeof name === 'string' && name !== '' && basename(name) === name ? name : undefined
 }
 
+/** The policy cockpit.toml declares now and the one the last sync recorded, for a command that gates a decision. */
+export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{ root: string; current: EffectivePolicy; recorded?: EffectivePolicy }>
+    | Readonly<{ refusal: EnvironmentDiagnostic }>> {
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind !== 'complete') return { refusal: loaded.diagnostics[0]! }
+    const root = dirname(loaded.result.source.path)
+    const recorded = await readRecordedPolicy(root)
+    return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {} }
+}
+
 export async function loadCockpitConfig(
     inputPath: string,
 ): Promise<EnvironmentCommandOutcome<LoadedCockpitConfig>> {
@@ -541,9 +549,9 @@ export async function loadCockpitConfig(
 }
 
 /**
- * The evaluators work review and work grade try, in order. Left unset, they are the listed agent
+ * The evaluators work grade and cockpit grade try, in order. Left unset, they are the listed agent
  * tools that can evaluate, so a team on one tool is never told to install another to grade.
  */
-export function evaluatorTools(config: Pick<CockpitConfig, 'workorders' | 'surfaces'>): readonly EvaluatorTool[] {
-    return config.workorders.evaluators ?? config.surfaces.tools.filter((tool): tool is EvaluatorTool => Object.hasOwn(EVALUATOR_COMMANDS, tool))
+export function evaluatorTools(config: Pick<CockpitConfig, 'work' | 'surfaces'>): readonly EvaluatorTool[] {
+    return config.work.evaluators ?? config.surfaces.tools.filter((tool): tool is EvaluatorTool => Object.hasOwn(EVALUATOR_COMMANDS, tool))
 }

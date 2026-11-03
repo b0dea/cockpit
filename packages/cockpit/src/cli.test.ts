@@ -15,6 +15,8 @@ import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from
 import type { SetupResult } from './environment/setup.js'
 import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './environment/selftest-application.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
+import { effectivePolicy } from './autonomy.js'
+import { Autonomy, Work } from './schema.js'
 import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
@@ -130,14 +132,15 @@ describe('invocation publication', () => {
 
 describe('closed ordinary invocation metadata', () => {
     const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
-        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'], browserPreapproved: true }
+        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'],
+        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset'] as const }
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
-        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'], sync: ['--dry-run'],
-        'test-run': ['--gate', 'quick'], 'work intake': ['--intent', 'intents/task.json'], 'work recover': ['--lock', 'WO-001'],
-        'work execute': ['--work-order', 'WO-001', '--approach', 'first-try'], 'work record': ['--work-order', 'WO-001', '--event-file', 'workorders/events/progress.json'],
-        'work review': ['--work-order', 'WO-001'], 'work grade': ['--work-order', 'WO-001'], 'work programme-mint': ['--programme', 'release'],
+        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'],
+        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'],
+        ...Object.fromEntries(['accept', 'check', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
+        'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
     }
     it('keeps public rows compatible and internal transport separately typed and closed', async () => {
         expect(commands.every(row => row.visibility === 'public' && row.ordinary !== undefined)).toBe(true)
@@ -164,7 +167,7 @@ describe('closed ordinary invocation metadata', () => {
     it('admits exactly the public ordinary profiles with bounded roles', () => {
         const cases = [
             ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '/workspace/app', '--adoption', 'adoption.toml'],
-            ['setup'], ['sync', '--dry-run'], ['check'],
+            ['setup'], ['sync', '--dry-run'], ['sync'], ['reset', '--apply'], ['check'],
             ['selftest', '--probe-specifications', 'probes.json'],
             ['up'], ['sleep'], ['down'], ['preflight'], ['doctor'],
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
@@ -172,13 +175,12 @@ describe('closed ordinary invocation metadata', () => {
             ['runtime', 'measure', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', `sha256:${'c'.repeat(64)}`, '--json'],
             // The documented agent steps of the test, work-order and browser loops.
             ['test-run', '--gate', 'quick', '--json'], ['test-run', '--gate=quick', '--mode', 'staged', '--select', 'file:src/cache.test.ts'],
-            ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-001'], ['work', 'resume'], ['work', 'metrics', '--json'],
-            ['work', 'intake', '--intent', 'intents/task.json'], ['work', 'intake', '--intent', 'intents/task.json', '--candidate', 'drafts/task.md', '--json'],
-            ['work', 'intake', '--work-order', 'WO-001'], ['work', 'execute', '--work-order', 'WO-001', '--approach', 'cache refresh, first try'],
-            ['work', 'record', '--work-order', 'WO-001', '--event-file', 'workorders/events/progress.json'],
-            ['work', 'review', '--work-order', 'WO-001', '--json'], ['work', 'grade', '--work-order', 'WO-001'],
-            ['work', 'recover', '--lock', 'WO-001'], ['work', 'recover', '--lock', '.admission-capacity'], ['work', 'sweep'],
-            ['work', 'programme-mint', '--programme', 'release', '--item', 'first-item'],
+            ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-1'], ['work', 'accept', '--work-order', 'WO-1'],
+            ['work', 'check', '--work-order', 'WO-1', '--json'], ['work', 'note', '--work-order', 'WO-1', '--ask', '--text', 'Which origin is canonical?'],
+            ['work', 'answer', '--work-order', 'WO-1', '--question', '2', '--text', 'The first one'],
+            ['work', 'grade', '--work-order', 'WO-1'], ['work', 'grade', '--work-order', 'WO-1', '--verdict', 'met', '--note', 'ran the suite'],
+            ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
+            ['work', 'recover', '--work-order', 'WO-1'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
             ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
         ]
         for (const args of cases) {
@@ -187,8 +189,7 @@ describe('closed ordinary invocation metadata', () => {
             expect(profile, argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
         }
         // The files a command parses are carried for the evaluator to check as reads.
-        expect(ordinary(['work', 'intake', '--config', authority.configPath, '--intent', 'intents/task.json', '--candidate', 'drafts/task.md'])?.reads)
-            .toEqual(['/workspace/product/intents/task.json', '/workspace/product/drafts/task.md'])
+        expect(ordinary(['grade', '--config', authority.configPath, '--criteria', 'criteria.md'])?.reads).toEqual(['/workspace/product/criteria.md'])
         expect(ordinary(['work', 'status', '--config', authority.configPath])).not.toHaveProperty('reads')
         for (const field of ['environment.install_policies', 'environment.test_data']) {
             const argv = ['init', '.', '--target', 'codexcli', '--reset-answer', field, '--json']
@@ -198,9 +199,9 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
-            'test-run', 'work intake', 'work status', 'work resume', 'work recover', 'work execute', 'work record', 'work review', 'work sweep',
-            'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot'])
+        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'reset', 'doctor',
+            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade',
+            'browser drive', 'browser screenshot'])
         for (const row of rows) {
             const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
             expect(ordinary(argv), `${row.name} missing config`).toBeUndefined()
@@ -230,23 +231,21 @@ describe('closed ordinary invocation metadata', () => {
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
-            ['sync'], ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'], ['reset'], ['guard-evaluate', '--harness', 'claudecode'],
+            ['sync', '--adopt', '.claude/settings.json'], ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'],
+            ['reset'], ['reset', '--interactive'], ['guard-evaluate', '--harness', 'claudecode'],
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
             ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
-            // A person answers the displayed digest, applies or reverses a sweep, takes a lock, binds a programme item or opens the debugger.
-            ['work', 'accept', '--work-order', 'WO-001'], ['work', 'accept', '--work-order', 'WO-001', '--interactive'], ['work', 'renew', '--work-order', 'WO-001'],
-            ['work', 'answer', '--work-order', 'WO-001', '--event-file', 'workorders/events/answer.json', '--interactive'],
-            ['work', 'reverse', '--work-order', 'WO-001'], ['work', 'sweep', '--apply'], ['work', 'recover', '--lock', 'WO-001', '--apply'],
-            ['work', 'programme-mint', '--programme', 'release', '--candidate', 'drafts/task.md'], ['browser', 'debugger'],
+            // A person types the displayed digest, takes a lock whose holder only looks dead, or opens the debugger.
+            ['work', 'accept', '--work-order', 'WO-1', '--interactive'], ['work', 'answer', '--work-order', 'WO-1', '--question', '1', '--text', 'yes', '--interactive'],
+            ['work', 'signoff', '--work-order', 'WO-1', '--interactive'], ['work', 'recover', '--work-order', 'WO-1', '--apply'], ['browser', 'debugger'],
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
             ['test-run', '--gate', 'quick', '--select', 'file:--config=evil.ts'], ['test-run', '--gate', 'quick', '--select', 'src/cache.test.ts'],
-            ['work', 'intake'], ['work', 'intake', '--candidate', 'drafts/task.md', '--work-order', 'WO-001'],
-            ['work', 'intake', '--intent', 'intents/task.json', '--work-order', 'WO-001'], ['work', 'intake', '--intent', '../outside.json'],
-            ['work', 'execute', '--work-order', 'WO-001'], ['work', 'execute', '--approach', 'first'], ['work', 'grade', '--work-order', '../WO-001'],
-            ['work', 'status', 'WO-001'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
+            ['work', 'note', '--work-order', 'WO-1'], ['work', 'answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
+            ['work', 'grade', '--work-order', '../WO-1'], ['grade', '--criteria', '../outside.md'], ['grade'],
+            ['work', 'status', 'WO-1'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
         ]
         for (const args of cases) {
             const argv = args[0] === 'registry-resolve' || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
@@ -257,16 +256,19 @@ describe('closed ordinary invocation metadata', () => {
             const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
-                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : 'path']
-                let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
-                if (row.name === 'work intake' && name === 'work-order') baseline = baseline.filter(arg => !['.', '--intent', 'intents/task.json'].includes(arg))
+                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' ? '1' : 'path']
+                const baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
             }
         }
-        // Browser commands run unprompted only where cockpit.toml preapproves them.
-        expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: ['browser', 'drive', '--config', authority.configPath] },
-            { ...authority, browserPreapproved: false }, () => true)).toBeUndefined()
+        // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync
+        // or an applied reset only where [autonomy] gives the decision to the agent.
+        for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset']] as const) {
+            const without = { ...authority, grants: authority.grants.filter(row => row !== grant) }
+            expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, authority, () => true), argv.join(' ')).toBeDefined()
+            expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, without, () => true), argv.join(' ')).toBeUndefined()
+        }
         for (const executable of ['cockpit', '/other/cockpit', 'bash']) expect(ordinary(['check', '--config', authority.configPath], { executable })).toBeUndefined()
         expect(ordinary(['check', '--config', authority.configPath], { cwd: '/workspace/app' })).toBeUndefined()
         expect(ordinary(['sh', '-c', 'cockpit check', '--config', authority.configPath])).toBeUndefined()
@@ -464,12 +466,13 @@ describe('CLI help', () => {
             '  logs              Show recent logs for one declared service\n' +
             '  sleep             Release this checkout and stop the stack if no other holder remains\n' +
             '  down              Stop and remove the stack (on the active local Docker context)\n' +
-            '  reset             Preview a reset, or approve that exact preview interactively (on the active local Docker context)\n\n' +
+            '  reset             Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n\n' +
             'Diagnose:\n' +
             '  doctor            Report environment problems without changing anything\n\n' +
             'Test and grade:\n' +
             '  test-run          Run a declared product test gate and report which tests it selected\n' +
-            '  work              Prepare, accept, execute, review and grade work orders\n' +
+            '  work              Accept, check, grade and close work orders\n' +
+            '  grade             Independently grade uncommitted work against a criteria file, with no work order\n' +
             '  browser           Drive, inspect and capture the declared application in a browser\n\n' +
             "Run 'cockpit <command> --help' for its options, and 'cockpit work --help' or 'cockpit browser --help' for its subcommands.\n",
         )
@@ -490,23 +493,17 @@ describe('CLI help', () => {
         const work = await runInProcess(['work', '--help'])
         expect(work.status).toBe(0)
         expect(work.stdout).toBe('Usage: cockpit work <subcommand> [options]\n\n' +
-            'Prepare, accept, execute, review and grade work orders\n\n' +
+            'Accept, check, grade and close work orders\n\n' +
             'Subcommands:\n' +
-            '  intake          Prepare a work order from its source document\n' +
-            '  status          Report current work-order state\n' +
-            '  accept          Interactively accept the exact current work order\n' +
-            '  renew           Interactively renew a changed work-order contract\n' +
-            '  resume          Resume the next executable step of the single active work order\n' +
-            '  recover         Inspect or explicitly recover one interrupted work lock\n' +
-            '  execute         Execute one accepted work-order step\n' +
-            '  record          Persist current work-order progress\n' +
-            "  answer          Interactively record a person's answer to an open gap, or their decision\n" +
-            '  review          Review the current accepted work order\n' +
-            '  sweep           Inspect or apply a reversible work-order sweep\n' +
-            '  reverse         Reverse a recorded work-order sweep\n' +
-            '  programme-mint  Mint the next declared programme work order\n' +
-            '  metrics         Report work-order metrics\n' +
-            '  grade           Independently grade the current accepted work order\n\n' +
+            '  status   Report each work order, its state and how it closed\n' +
+            '  accept   Accept a work order, or a change to an accepted one, as [work.gates] allows\n' +
+            "  check    Run every criterion's check and the order's gates\n" +
+            '  note     Record a note on an order, or with --ask an open question that blocks it\n' +
+            '  answer   Answer an open question on an order, as [work.gates] allows\n' +
+            '  grade    Grade an accepted order the way [work] grading says\n' +
+            '  signoff  Close a graded order as done, or any open one as partial or abandoned\n' +
+            "  recover  Inspect or remove a crashed command's work-order lock\n" +
+            '  verify   Check every record against its order; in CI, pass the steps gated on ci\n\n' +
             "Run 'cockpit work <subcommand> --help' for its options.\n")
         const browser = await runInProcess(['browser', '--help'])
         expect(browser.status).toBe(0)
@@ -518,7 +515,7 @@ describe('CLI help', () => {
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
         expect(await envelope(['work'])).toMatchObject({ invocation: { verb: 'work', exitCode: 2 }, diagnostics: [{ code: 'CLI_COMMAND_REQUIRED',
-            message: 'work requires a subcommand: intake, status, accept, renew, resume, recover, execute, record, answer, review, sweep, reverse, programme-mint, metrics, grade' }] })
+            message: 'work requires a subcommand: status, accept, check, note, answer, grade, signoff, recover, verify' }] })
         expect(await envelope(['work', 'bogus'])).toMatchObject({ invocation: { verb: 'unknown' }, diagnostics: [{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "work bogus"' }] })
         // There are no hyphenated aliases; the refusal names the spelling that runs.
         const hyphenated = await runInProcess(['work-grade', '--config', 'cockpit.toml'])
@@ -528,6 +525,10 @@ describe('CLI help', () => {
         expect((await envelope(['browser-drive'])).diagnostics).toMatchObject([{ code: 'CLI_UNKNOWN_COMMAND', message: 'unknown command "browser-drive"; did you mean "browser drive"?' }])
     })
 })
+
+// The interactive stale-removal path is a person's: these routing tests read the policy that keeps it so,
+// in place of a cockpit.toml on disk.
+const personStalePolicy = async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ stale_delete: 'person' }) }), record: async () => {} })
 
 describe('generated environment process contract', () => {
     function captureIo(
@@ -728,7 +729,7 @@ describe('generated environment process contract', () => {
             }
         }
         const json = captureIo()
-        expect(await runCli([command, '--config', 'cockpit.toml', '--json'], json.io, { [command]: handler })).toBe(0)
+        expect(await runCli([command, '--config', 'cockpit.toml', '--json'], json.io, { [command]: handler, loadPolicy: personStalePolicy })).toBe(0)
         expect(JSON.parse(json.output().stdout)).toEqual({
             invocation: jsonInvocation(json.output().stdout, 0, command, resolve('cockpit.toml')),
             result: { action: command, paths: ['compose.generated.yml'] },
@@ -737,7 +738,7 @@ describe('generated environment process contract', () => {
         expect(json.output().stderr).toBe('')
 
         const human = captureIo()
-        expect(await runCli([command, '--config=cockpit.toml'], human.io, { [command]: handler })).toBe(0)
+        expect(await runCli([command, '--config=cockpit.toml'], human.io, { [command]: handler, loadPolicy: personStalePolicy })).toBe(0)
         expect({ ...human.output(), stderr: humanStderr(human.output().stderr) })
             .toEqual({ stdout: '', stderr: 'INFO GENERATED_CURRENT: generated files are current\n' })
         expect(calls).toEqual([{ configPath: 'cockpit.toml' }, { configPath: 'cockpit.toml' }])
@@ -755,7 +756,7 @@ describe('generated environment process contract', () => {
             [command, '--config', 'one.toml', 'positional'],
         ]) {
             const capture = captureIo()
-            expect(await runCli(args, capture.io, { [command]: handler })).toBe(2)
+            expect(await runCli(args, capture.io, { [command]: handler, loadPolicy: personStalePolicy })).toBe(2)
             expect(capture.output().stderr).toContain('CLI_USAGE_INVALID')
         }
         expect(calls).toBe(0)
@@ -806,6 +807,7 @@ describe('generated environment process contract', () => {
         })
 
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
+            loadPolicy: personStalePolicy,
             sync: async (input) => {
                 calls.push(input)
                 if (input.dryRun) return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [], staleRemoval } }
@@ -831,12 +833,12 @@ describe('generated environment process contract', () => {
             return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [], staleRemoval } }
         }
 
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo().io, { sync }, { env: {} })).toBe(2)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo().io, { sync, loadPolicy: personStalePolicy }, { env: {} })).toBe(2)
         expect(calls).toBe(0)
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive'],
             captureIo(undefined, async () => 'd'.repeat(64)).io,
-            { sync },
+            { sync, loadPolicy: personStalePolicy },
             { env: {} },
         )).toBe(2)
         expect(calls).toBe(1)
@@ -853,12 +855,12 @@ describe('generated environment process contract', () => {
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive', '--json'],
             confirmed.io,
-            { sync },
+            { sync, loadPolicy: personStalePolicy },
         )).toBe(2)
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive'],
             confirmed.io,
-            { sync },
+            { sync, loadPolicy: personStalePolicy },
             { env: { CI: '1' } },
         )).toBe(2)
         expect(calls).toBe(0)
@@ -873,6 +875,7 @@ describe('generated environment process contract', () => {
         })
 
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
+            loadPolicy: personStalePolicy,
             sync: async (input) => {
                 calls.push(input)
                 return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, changes: [] } }
@@ -894,6 +897,7 @@ describe('generated environment process contract', () => {
         const capture = captureIo(undefined, async () => preview.digest)
 
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
+            loadPolicy: personStalePolicy,
             sync: async (input) => {
                 calls += 1
                 if (input.dryRun) return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [], staleRemoval: preview } }
@@ -1779,7 +1783,7 @@ describe('generated sync operator admission', () => {
             interactive: true, json: false, ci: undefined,
         }, { stderr, stdin }, async (input) => input.dryRun
             ? { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: preview } }
-            : { status: 0, diagnostics: [], result: { dryRun: false } })
+            : { status: 0, diagnostics: [], result: { dryRun: false } }, personStalePolicy)
 
         expect(outcome.status).toBe(0)
         expect(shown).toContain('digest:')
@@ -1811,7 +1815,7 @@ describe('generated sync operator admission', () => {
                 format: 'cockpit-stale-removal-approval/v1', digest: preview.digest,
             })
             return { status: 2, diagnostics: [{ severity: 'error', code: 'GENERATED_STALE_APPROVAL_REQUIRED', message: 'changed' }], result: null }
-        })
+        }, personStalePolicy)
         expect(outcome.status).toBe(2)
         expect(calls).toBe(2)
     })
@@ -1819,57 +1823,60 @@ describe('generated sync operator admission', () => {
 
 
 describe('work command routing', () => {
-    // Cases name the handler; a person types the command's words, such as `work intake`.
+    // Cases name the handler; a person types the command's words, such as `work accept`.
     const spelling = (handler: string) => commands.find(command => command.handler === handler)!.name
-    it('binds acceptance to one same-process human continuation after terminal admission', async () => {
-        const digest = 'a'.repeat(64), prompt = `Accept exact contract ${digest}`
+    it('completes a person gate only with the digest typed at a terminal, and passes an agent gate through', async () => {
+        const digest = 'a'.repeat(64), prompt = `Accept WO-1 (digest ${digest})`
         const decide = vi.fn(async (answer: string) => ({ status: answer === digest ? 0 : 2, result: { accepted: answer === digest }, diagnostics: [] }))
         const begin = vi.fn(async () => ({ digest, prompt, decide }))
         const confirm = vi.fn(async (candidate: Readonly<{ digest: string; prompt: string }>) => candidate.digest)
         let stdout = '', stderr = ''
         const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) }, confirmWorkOrder: confirm }
-        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
-        expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-accept', workOrderId: 'WO-001' } })
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
+        expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-accept', workOrderId: 'WO-1' } })
         expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
         expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
         // The person who accepted sees what was recorded, not silence.
         expect(stdout).toBe('accepted: true\n')
         expect(humanStderr(stderr)).toBe('')
-        begin.mockClear(); decide.mockClear(); confirm.mockClear(); stdout = ''
-        // A person's answer to an open gap, or their decision, takes the same terminal continuation.
-        expect(await runCli(['work', 'answer', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--event-file', 'workorders/events/answer.json', '--interactive'],
-            io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
-        expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'workorders/events/answer.json' } })
-        expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
-        expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
-        begin.mockClear(); decide.mockClear(); confirm.mockClear()
-        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)
-        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(2)
-        // Without a terminal on both standard input and standard output, nobody is there to read the contract.
+        for (const [args, request] of [
+            [['work', 'answer', '--work-order', 'WO-1', '--question', '2', '--text', 'The first origin'], { operation: 'work-answer', workOrderId: 'WO-1', question: 2, text: 'The first origin' }],
+            [['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 is left'], { operation: 'work-signoff', workOrderId: 'WO-1', close: 'partial', note: 'AC3 is left' }],
+        ] as const) {
+            begin.mockClear(); decide.mockClear(); confirm.mockClear()
+            expect(await runCli([...args, '--config', 'cockpit.toml', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
+            expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request })
+            expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
+        }
+        // CI, a run without --interactive, and one without a terminal on both standard streams have nobody to read the prompt.
         const piped = { stdin: Readable.from([`accept ${digest}\n`]), stdout: { write: () => true }, stderr: { write: () => true } } as unknown as CliIo
-        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], piped, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(2)
-        expect(begin).not.toHaveBeenCalled(); expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
+        for (const [runIo, args, env] of [[io, ['--interactive'], { CI: '1' }], [io, [], {}], [piped, ['--interactive'], {}]] as const) {
+            decide.mockClear(); confirm.mockClear()
+            let output = ''
+            const captured = runIo === io ? { ...io, stdout: { write: (text: string) => ((output += text), true) } } : runIo
+            expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1', '--json', ...args], captured, { beginOperatorWorkApplication: begin }, { env })).toBe(2)
+            expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
+            if (runIo === io) expect(JSON.parse(output).diagnostics[0].code).toBe('WORK_PERSON_REQUIRED')
+        }
+        // Under an agent gate the application records the step itself, and no terminal is asked for.
+        const recorded = vi.fn(async () => ({ status: 0, result: { by: 'agent' }, diagnostics: [] }))
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1'], io, { beginOperatorWorkApplication: recorded }, { env: {} })).toBe(0)
+        expect(recorded).toHaveBeenCalledOnce()
     })
 
     it('routes closed work browser and testing selectors through one configured application input', async () => {
         const cases: readonly (readonly [string, readonly string[], unknown])[] = [
-            ['work-intake', ['--work-order', 'WO-001'], { operation: 'work-intake', workOrderId: 'WO-001' }],
-            ['work-intake', ['--intent', 'intents/task.json'], { operation: 'work-intake', intent: 'intents/task.json' }],
-            ['work-intake', ['--intent', 'intents/task.json', '--candidate', 'drafts/task.md'], { operation: 'work-intake', intent: 'intents/task.json', candidate: 'drafts/task.md' }],
-            ['work-record', ['--work-order', 'WO-001', '--event-file', 'events/heartbeat.json'], { operation: 'work-record', workOrderId: 'WO-001', eventFile: 'events/heartbeat.json' }],
-            ['work-review', ['--work-order', 'WO-001'], { operation: 'work-review', workOrderId: 'WO-001' }],
             ['work-status', [], { operation: 'work-status' }],
-            ['work-resume', [], { operation: 'work-resume' }],
-            ['work-recover', ['--lock', 'WO-001'], { operation: 'work-recover', lockId: 'WO-001', apply: false }],
-            ['work-recover', ['--lock', '.admission-capacity', '--apply'], { operation: 'work-recover', lockId: '.admission-capacity', apply: true }],
-            ['work-execute', ['--work-order', 'WO-001', '--approach', 'bounded correction'], { operation: 'work-execute', workOrderId: 'WO-001', approach: 'bounded correction' }],
-            ['work-sweep', [], { operation: 'work-sweep', apply: false }],
-            ['work-reverse', ['--work-order', 'WO-001'], { operation: 'work-reverse', workOrderId: 'WO-001' }],
-            ['work-programme-mint', ['--programme', 'synthetic', '--item', 'first'], { operation: 'work-programme-mint', programmeId: 'synthetic', itemKey: 'first' }],
-            ['work-programme-mint', ['--programme', 'synthetic'], { operation: 'work-programme-mint', programmeId: 'synthetic' }],
-            ['work-programme-mint', ['--programme', 'synthetic', '--candidate', 'drafts/next.md'], { operation: 'work-programme-mint', programmeId: 'synthetic', candidate: 'drafts/next.md' }],
-            ['work-metrics', [], { operation: 'work-metrics' }],
-            ['work-grade', ['--work-order', 'WO-001'], { operation: 'work-grade', workOrderId: 'WO-001' }],
+            ['work-status', ['--work-order', 'WO-1'], { operation: 'work-status', workOrderId: 'WO-1' }],
+            ['work-check', ['--work-order', 'WO-1'], { operation: 'work-check', workOrderId: 'WO-1' }],
+            ['work-note', ['--work-order', 'WO-1', '--text', 'tried the cache first'], { operation: 'work-note', workOrderId: 'WO-1', text: 'tried the cache first', question: false }],
+            ['work-note', ['--work-order', 'WO-1', '--ask', '--text', 'Which origin?'], { operation: 'work-note', workOrderId: 'WO-1', text: 'Which origin?', question: true }],
+            ['work-grade', ['--work-order', 'WO-1'], { operation: 'work-grade', workOrderId: 'WO-1' }],
+            ['work-grade', ['--work-order', 'WO-1', '--verdict', 'unmet', '--note', 'AC2 fails'], { operation: 'work-grade', workOrderId: 'WO-1', verdict: 'unmet', note: 'AC2 fails' }],
+            ['work-recover', ['--work-order', 'WO-1'], { operation: 'work-recover', workOrderId: 'WO-1', apply: false }],
+            ['work-recover', ['--work-order', 'WO-1', '--apply'], { operation: 'work-recover', workOrderId: 'WO-1', apply: true }],
+            ['work-verify', [], { operation: 'work-verify' }],
+            ['grade-criteria', ['--criteria', 'criteria.md'], { operation: 'grade-criteria', criteriaFile: 'criteria.md' }],
             ['browser-drive', ['--role', 'qa_user'], { operation: 'browser-drive', role: 'qa_user' }],
             ['browser-screenshot', ['--role', '1worker'], { operation: 'browser-screenshot', role: '1worker' }],
             ['browser-screenshot', [], { operation: 'browser-screenshot' }],
@@ -1891,28 +1898,13 @@ describe('work command routing', () => {
         }
     })
 
-    it('refuses noninteractive acceptance and malformed selectors before dispatch', async () => {
+    it('refuses malformed selectors before dispatch', async () => {
         const cases = [
-            ['work-accept', '--work-order', 'WO-001', '--interactive'],
-            ['work-renew', '--work-order', 'WO-001', '--interactive'],
-            ['work-answer', '--work-order', 'WO-001', '--event-file', 'workorders/events/answer.json', '--interactive'],
-            ['work-intake'],
-            ['work-intake', '--intent', '../outside.json'],
-            ['work-intake', '--intent', 'intents/task.json', '--work-order', 'WO-001'],
-            ['work-intake', '--work-order', 'WO-001', '--candidate', 'drafts/task.md'],
-            ['work-intake', '--intent', 'intents/task.json', '--candidate', '/absolute.md'],
-            ['work-record', '--work-order', 'WO-001'],
-            ['work-record', '--work-order', 'WO-001', '--event-file', 'events/../outside.json'],
-            ['work-review'],
-            ['work-recover'],
-            ['work-recover', '--lock', '../outside'],
-            ['work-recover', '--lock', '.'],
-            ['work-recover', '--lock', 'WO-001', '--lock', 'WO-002'],
-            ['work-programme-mint', '--programme', 'synthetic', '--candidate', './draft.md'],
-            ['work-programme-mint', '--programme', 'synthetic', '--item', 'bad/key'],
-            ['work-execute', '--work-order', 'WO-001'],
-            ['work-grade', '--work-order', 'WO-001', '--work-order', 'WO-002'],
-            ['work-sweep', '--apply', 'unexpected'],
+            ['work-check'], ['work-check', '--work-order', '../WO-1'], ['work-note', '--work-order', 'WO-1'],
+            ['work-answer', '--work-order', 'WO-1', '--text', 'yes'], ['work-answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
+            ['work-grade', '--work-order', 'WO-1', '--verdict', 'maybe'], ['work-grade', '--work-order', 'WO-1', '--work-order', 'WO-2'],
+            ['work-signoff', '--work-order', 'WO-1', '--partial', '--abandon'], ['work-recover'],
+            ['grade-criteria'], ['grade-criteria', '--criteria', '../outside.md'], ['grade-criteria', '--criteria', '/absolute.md'],
             ['test-run', '--gate', 'unit', '--select', 'unknown:value'],
             ['test-run', '--gate', 'unit', '--mode', 'arbitrary'],
             ['test-run', '--gate', 'unit', '--mode', 'canonical', '--select', 'test:' + 'é'.repeat(2049)],
@@ -1926,7 +1918,7 @@ describe('work command routing', () => {
             let stdout = '', stderr = ''
             const handler = vi.fn(async () => ({ status: 0, result: null, diagnostics: [] }))
             const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
-            expect(await runCli([...spelling(args[0]!).split(' '), '--config', 'cockpit.toml', ...args.slice(1), '--json'], io, { [args[0]!]: handler })).toBe(2)
+            expect(await runCli([...spelling(args[0]!).split(' '), '--config', 'cockpit.toml', ...args.slice(1), '--json'], io, { [args[0]!]: handler }), args.join(' ')).toBe(2)
             expect(handler).not.toHaveBeenCalled()
             expect(JSON.parse(stdout).diagnostics[0].code).not.toBe('CLI_UNKNOWN_COMMAND')
             expect(stderr).toBe('')

@@ -74,10 +74,10 @@ directory that contains one or an executable control below a protected plugin di
 an exact command allow could disable a hook, or change a program a harness starts, before the next
 guarded call. The protected files include every harness's native MCP and permission outputs derived
 from the shipped harness registry, the MCP wrapper scripts under `.cockpit/mcp/` that those
-outputs start, and the work-order store under `.cockpit/work-orders/`, `.cockpit/transactions/` and
-`.cockpit/actors/`, whose records carry no secret, so one an agent wrote would be accepted as the
-operator's by the next `cockpit work` command. This boundary follows folded path spellings and verified
-filesystem identities, so alternate case and aliases do not bypass it.
+outputs start, the work-order records under `.cockpit/work-orders/`, which carry no key, so one an
+agent wrote would read as a person's to the next `cockpit work` command, and `.cockpit/policy.json`,
+the [autonomy policy](#who-decides) the last sync accepted. This boundary follows folded path
+spellings and verified filesystem identities, so alternate case and aliases do not bypass it.
 
 The installed code the guard runs is a control too. The guard checks its entry point's digest, but
 an edited module it loads could turn every hard denial into an allow. So these are hard denials:
@@ -218,17 +218,16 @@ cockpit commands in
 | `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
 | `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
 | `npx --no cockpit test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
-| `npx --no cockpit work status --config cockpit.toml`, `work resume`, `work metrics`, `work intake` (`--intent` with an optional `--candidate`, or `--work-order`), `work execute`, `work record`, `work review` and `work grade`, each with its own options | allowed | They report, publish a draft a person still has to accept, or run and record the steps of an order a person accepted; review and grading run in a separate evaluator. `work record` refuses `resolve-gap` and `decision` events itself, so an agent cannot record a person's answer through it. |
-| `npx --no cockpit work sweep --config cockpit.toml`, `work recover --lock <lock>` and `work programme-mint --programme <programme>`, without `--apply` or `--candidate` | allowed | Without those options they only report. |
+| `npx --no cockpit work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work answer`, `work grade`, `work signoff`, `work recover` without `--apply`, `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. |
+| `npx --no cockpit sync --config cockpit.toml` | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration already declares; the guard holds every call after `cockpit.toml` changes until a person syncs, so an agent's sync never publishes an edit of its own. |
+| `npx --no cockpit reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is set, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration must declare before it can set preapproval. |
-| `work accept`, `work renew` and `work answer` | a prompt, which Codex and OpenCode turn into a denial | Each is a person's answer, in an interactive terminal, to the digest it displays: the contract, or the gap answer or decision being recorded. |
-| `work sweep --apply` and `work reverse` | a prompt, which Codex and OpenCode turn into a denial | Parking or un-parking an order changes which orders count against the work-in-progress cap a person set. |
+| `work accept`, `work answer` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
 | `work recover --apply` | a prompt, which Codex and OpenCode turn into a denial | It deletes a lock once a process probe calls its holder dead, and that probe sees only this machine's processes: a holder in a container or on another host that shares the checkout looks dead to it. |
-| `work programme-mint --candidate` | a prompt, which Codex and OpenCode turn into a denial | It binds the next item of a person's programme ledger to that draft for good. |
 | `browser debugger` | a prompt, which Codex and OpenCode turn into a denial | It opens a headed browser for a person at this machine, on that person's explicit request. |
-| `npx --no cockpit sync --config cockpit.toml`, `reset`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or the guard's own files, or delete data. |
+| `sync --adopt`, `sync --interactive`, `reset --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |
 
-A file such a command names, like `--intent`, `--candidate` or `--event-file`, is checked as a read:
+A file such a command names, like `--criteria`, is checked as a read:
 the command may quote it in a refusal. A declared instance or a file below `.secrets` is denied,
 and an undeclared `.env` file, a symlink or a path outside the configured roots prompts.
 
@@ -316,6 +315,43 @@ root itself is anchored at the project root. These rules match path spellings on
 tools cannot see filesystem identity, so a hard link or a symbolic link to an instance or secrets
 file, under a name outside the rules, stays readable to them. The guard's identity checks cover
 shell commands only.
+
+## Who decides
+
+`[autonomy]` and `[work.gates]` in `cockpit.toml` say who takes each decision cockpit gates: `agent`,
+`person` or `ci`. `[autonomy] preset = "agent"` defaults every field they leave unset to `agent`.
+`[work] grading` says how a work order earns done; the work-order fields are described in
+[Who passes each gate](work-and-browser.md#who-passes-each-gate).
+
+| Field | Decides | Default |
+| --- | --- | --- |
+| `sync` | whether the guard lets an agent run a writing `sync`; under `ci` a writing sync runs only where `CI` is set | `agent` |
+| `stale_delete` | whether `sync` removes a file it generated before and no longer generates without a person typing the stale-removal digest | `agent` |
+| `reset` | whether `reset --apply` deletes stack data without a person; otherwise a person approves the preview with `--interactive` | `person` |
+| `mcp_approve` | `agent`: sync enables every declared MCP server as declared now; `person`: only those whose digest a person recorded in `[mcp.approved]`, and `MCP_NOT_APPROVED` names the rest | `agent` |
+
+<!-- cockpit:ref path=packages/cockpit/src/guards/policy-pin.ts --> The guard pins the policy: an agent's edit, write or patch that would change `[work]`,
+`[work.gates]` or `[autonomy]`, or `[mcp]` while `mcp_approve` is `person`, is a hard denial. It
+applies the edit to the current text and compares the tables, so an edit elsewhere in the file stays
+permitted; an edit it cannot apply exactly, and a shell command that names the file and is not a
+proven read, are denied because the guard cannot show the tables unchanged. The pin holds only for the
+tool calls the guard inspects.
+
+Every writing `sync` records the policy it ran under in `.cockpit/policy.json`. A later sync that finds
+a field weaker than that record, such as a gate moved from `person` to `agent` or grading from
+`independent` to `self`, writes nothing and reports `POLICY_WEAKENING_UNCONFIRMED` with the change and
+its digest; a person runs `sync --interactive`, reads it and types the digest. Until then every work
+command refuses to run under the weaker policy. A stronger policy needs nobody.
+
+What no setting relaxes: reads of secrets and declared instances, pushes to protected branches,
+writes to guard controls, and the policy pin. What only a person can do: trust Codex's hooks, trust a
+workspace in Claude Code, and sign in to a secrets provider; `doctor` reports each with the exact
+command.
+
+A local `person` gate is best-effort: cockpit cannot tell a person from a program driving a terminal.
+`ci` relies on the `CI` variable, which an agent can set too, so locally it is best-effort as well.
+The only enforced human gate is a required CI job behind a protected environment whose reviewers must
+approve it, such as the [`work verify` job](work-and-browser.md#who-passes-each-gate).
 
 ## Native adapter behavior
 

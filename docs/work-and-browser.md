@@ -1,240 +1,171 @@
 # Work, grading, browser and testing
 
 This page is for anyone deciding whether a change needs a direct fix or a durable
-[work order](concepts.md#work-order), and then getting it graded independently, checked in a
-browser, and proven with the right test tier.
+[work order](concepts.md#work-order), and then getting it graded, checked in a browser, and proven
+with the right test tier.
 
-Each command's `--help` is its current contract. Work orders require one of the agent tools
-`workorders.evaluators` lists, on `PATH` and signed in: the independent reviewers and the grader run
-in it, whichever agent tool did the work (see [Verify and grade independently](#verify-and-grade-independently)).
+Each command's `--help` is its current contract. Most changes are fixes: the `cockpit-fix` skill
+proves one with the declared test gate before and after, with no order. Write a work order when the
+result must be held to criteria someone else set, graded by something other than the agent that did
+the work, or carried across sessions. The `cockpit-work` skill walks an agent through the loop below;
+the `cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence).
 
-## Declare work and the files it may change
+## Write a work order
 
-The `cockpit-work` skill walks an agent through the loop below. It first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`, a direct fix proven with the declared test gate before and after, which needs no intake. The `cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence) and reports what it saw, with proof, without editing code.
-
-<!-- cockpit:ref command=work intake --> Start with `cockpit work intake --config cockpit.toml --intent intents/task.json`. The intent is a JSON file, not a sentence or a work-order document. Cockpit reads the upstream file, checks which route applies and whether there is capacity, and only then reads a candidate. A fix creates no work-order files. A work-order route returns `candidateRequired: true`; follow the examples below to prepare a draft. Existing orders can be inspected with `--work-order WO-001`.
-
-### Intent descriptor
-
-Save this as `intents/task.json`, relative to the directory containing `cockpit.toml`:
-
-```json
-{
-  "version": 1,
-  "kind": "task",
-  "reference": "specs/cache-refresh.md",
-  "certification": true,
-  "crossSession": false,
-  "programme": null
-}
-```
-
-Every field shown is required, and extra fields are refused.
-
-| Field | Meaning |
-| --- | --- |
-| `version` | The descriptor format. |
-| `kind` | `task`, `issue`, `spec`, `decision` or `programme`. |
-| `reference` | An existing file inside the cockpit, even for an external issue: record the request in that file first. |
-| `certification` | Whether someone other than the agent must certify the result. |
-| `crossSession` | Whether the work must survive a change of session. |
-| `programme` | `null` for standalone work, or the declared programme slug. |
-
-`certification: true`, `crossSession: true` or a programme each select a work order. With both booleans false
-and `programme: null`, intake returns the fix route without reading a candidate or creating
-work-order files.
-
-Spec tools such as OpenSpec or spec-kit already produce that file: point a `spec` intent's
-`reference` at the change's proposal or spec, for example `openspec/changes/<name>/proposal.md`.
-
-Create the referenced upstream file before running intake. The examples below use a synthetic
-cache: replace its facts and paths with ones you have inspected in your product, and each
-verification argument array with the product's real runner and selectors. Each `read` source must
-already exist and have been inspected. Run intake without `--candidate` first, and continue only
-when it reports the work-order route and capacity.
-
-### Upstream task
-
-Save this as `specs/cache-refresh.md`:
-
-```text
-Repair cache refresh so reading a key after refresh returns its latest stored value.
-Refresh must preserve other keys and must make a previously absent key readable.
-Keep the current cache interface and storage provider.
-```
-
-### Draft contract
-
-<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Save this as `drafts/task.md`. Choose an unused work-order ID; intake checks repository refs and linked worktrees as well as current orders. Keep every heading shown and give every acceptance criterion a source, within the parser's limits. Authority lists exact files, including the intent's upstream file, so the draft is tied to the request it answers. Verification rows are argument arrays, not shell strings; they declare checks to run later and do not claim those checks ran.
+A work order is `workorders/<id>.md`. Its YAML front-matter is the whole contract cockpit accepts,
+checks and grades; the Markdown body below it is yours, for notes and a plan, and cockpit never reads
+it.
 
 ```markdown
 ---
-id: WO-004
-title: Repair cache refresh
-status: draft
-created: 2026-01-02
+id: WO-1
+objective: Signing in with an expired session sends the person back to where they were.
+scope:
+  - src/auth/
+  - tests/auth/**
+  - web:src/routes/login.ts
+depends_on: []
+gates: [unit]
+criteria:
+  - id: AC1
+    text: After sign-in, a person whose session expired returns to the page they asked for.
+    check: { gate: unit, select: "test:returns to the requested page" }
+  - id: AC2
+    text: The redirect target is never another origin.
+    check: [npm, test, --, auth/redirect]
+    source: docs/security/redirects.md
+non_goals:
+  - Changing how sessions expire.
 ---
-## Objective
-Return the latest stored value after a cache refresh.
-## Non-goals
-Changing the cache interface or storage provider.
-## Context and sources
-- S1 | read | specs/cache-refresh.md | Requested cache behavior inspected.
-- S2 | read | src/cache.ts | Current cache implementation inspected.
-- S3 | inferred | tests/cache.test.ts | Regression cases derived from the requested behavior.
-## Authority
-- specs/cache-refresh.md
-- src/cache.ts
-- tests/cache.test.ts
-## Acceptance criteria
-### AC1
-Source: S1
-Given: A cached key has an older value than storage.
-When: That key is refreshed.
-Then: Reading that key returns the latest stored value.
-### AC2
-Source: S2
-Given: Two keys are cached.
-When: One key is refreshed.
-Then: Reading the other key returns its unchanged value.
-### AC3
-Source: S3
-Given: A stored key is absent from the cache.
-When: That key is refreshed.
-Then: Reading that key returns its stored value.
-## Verification
-- AC1 | ["npm","test","--","cache-1"]
-- AC2 | ["npm","test","--","cache-2"]
-- AC3 | ["npm","test","--","cache-3"]
-## Docs impact
-none: The current interface remains unchanged.
-## Plan
-1. [ ] Reproduce stale, unrelated and absent key behavior through the cache interface.
-2. [ ] Correct refresh and run the declared verification commands.
-## Evidence
-- none
-## Decisions
-- none
+
+Notes and plan go here.
 ```
 
-Source provenance is `read` for inspected file bytes, `inferred` for a reasoned conclusion, or
-`operator-confirmed` for a fact a person confirmed. Cockpit re-reads `read` sources; the other
-labels do not show that a file was inspected. Record unresolved questions in the audit rather than
-inventing answers, and keep the `Evidence` section empty until there is something to record;
-intake never certifies the implementation.
+| Field | Meaning |
+| --- | --- |
+| `id` | The file's name without `.md`: letters, digits, `.`, `_` or `-`. |
+| `objective` | One outcome, in a sentence. |
+| `scope` | Paths and globs the work may change. A plain path covers what is below it; `*` stays within a directory and `**` crosses them. `<sibling slug>:path` names a sibling's file. |
+| `depends_on` | Orders that must be done before this one signs off. |
+| `gates` | Declared `[testing]` gates `work check` runs besides the criteria's checks. |
+| `criteria` | One to twelve, each an `id`, a `text` a reviewer cannot read two ways, an optional `check` and an optional `source`. |
+| `check` | `{ gate, select }` runs a declared gate, optionally selected as `test-run --select` takes it; a list is an argv cockpit runs from the cockpit root, without a shell. |
+| `source` | A file the criterion comes from. Its bytes are part of the contract, so a changed source makes the order stale. |
+| `non_goals` | What the order deliberately leaves alone. |
 
-### Adjacent source audit
+One schema validates the front-matter; a refusal names each field it rejects. The digest an acceptance
+binds covers the front-matter, the bytes of every `source`, and the commit each repository stood at
+when the order was accepted. A check is the product's own test command, so it runs like a product test
+stage: from the directory holding `cockpit.toml`, with `PATH` and the same non-secret variables,
+judged by exit status, keeping the end of long output, for at most `work.verification_timeout_seconds`.
 
-Save this as `drafts/task.source-audit.json`, beside `drafts/task.md`. `sources` must match the
-contract's source rows exactly, including order and reason. Each gap is an object with `kind`
-(`omission`, `contradiction` or `question`), `reference` and `detail`; unresolved gaps block later
-execution. An empty `gaps` array means this audit found no material gaps.
+## Accept, check, grade and close
 
-```json
-{
-  "sources": [
-    { "id": "S1", "provenance": "read", "reference": "specs/cache-refresh.md", "reason": "Requested cache behavior inspected." },
-    { "id": "S2", "provenance": "read", "reference": "src/cache.ts", "reason": "Current cache implementation inspected." },
-    { "id": "S3", "provenance": "inferred", "reference": "tests/cache.test.ts", "reason": "Regression cases derived from the requested behavior." }
-  ],
-  "gaps": [],
-  "skills": {
-    "status": "audited",
-    "auditor": "source-reviewer",
-    "provenance": "read",
-    "rows": []
-  }
-}
-```
-
-Before writing the draft, look through the thinking, research, specification and planning skills
-installed in the repository and for the user. Name the real auditor, use `read` or
-`operator-confirmed` provenance for that look, and record your choices under `skills.rows`. The
-empty selection above means the look found no applicable skill; it does not let you skip the look.
-Whether a skill applies is a person's judgment: a generated skill list or a file hash does not show
-that a skill was found or applies.
-
-Both `skills.auditor` and each skill row's `reference` must start with an ASCII letter or digit,
-then contain only ASCII letters, digits, `.`, `_` or `-`, within the
-[length limit in the audit reader](../packages/cockpit/src/work-orders/composition.ts); use identifiers
-such as `reviewer-name` and `planning`.
-
-Each optional row has `scope` (`repository` or `user`), a logical `reference`, `category`
-(`thinking`, `research`, `specification`, `planning` or `other`), boolean `applicable`, a nonempty
-`reason`, and `sourceIds` naming contract sources produced or informed by that skill. An applicable
-row outside `other` requires linked source IDs. Add the skill's output as a contract source and
-match it in the audit; do not use the skill's own text in place of its output. Record inspected but
-inapplicable skills with `applicable: false`, the reason, and `sourceIds: []` when no output applies.
-
-Repository rows additionally require `path`, a contained file relative to the cockpit root, and
-`sha256`, the lowercase SHA-256 digest of the file you inspected. Cockpit rechecks it.
-User rows have neither `path` nor `sha256`: their references are plain names,
-not home-directory paths. Rows accept no other fields; include only the fields for their scope.
-
-Publish only after the route accepts the draft:
+<!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work accept --> <!-- cockpit:ref command=work check --> <!-- cockpit:ref command=work grade --> <!-- cockpit:ref command=work signoff -->
 
 ```sh
-./node_modules/.bin/cockpit work intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md
-./node_modules/.bin/cockpit work status --config cockpit.toml --work-order WO-004 --json
+npx --no cockpit work accept --config cockpit.toml --work-order WO-1
+npx --no cockpit work check  --config cockpit.toml --work-order WO-1
+npx --no cockpit work grade  --config cockpit.toml --work-order WO-1
+npx --no cockpit work signoff --config cockpit.toml --work-order WO-1
+npx --no cockpit work status --config cockpit.toml
 ```
 
-Successful intake publishes the matched pair under `workorders/WO-004.md` and
-`workorders/WO-004.source-audit.json`, retaining `draft` status. It does not accept the work order or record any verification. Continue with [Accept and resume](#accept-and-resume); a person accepts the order interactively as a separate step.
+An order moves draft → accepted → checked → graded → done. `work status` also shows three states it
+derives: **stale** when the file or a source changed since acceptance, **blocked** while an open
+question waits or the attempt cap is reached, and **draft** before acceptance. `partial` and
+`abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
+not closed, and `work accept` refuses a new one past it. A failed check or grade counts an attempt;
+at `work.attempt_cap` the order is blocked until a person amends or closes it.
 
-### Programme and capacity
+- **accept** records the contract. Run it again after editing an accepted order to accept the change
+  (an amendment). The check base stays the commits recorded at first acceptance.
+- **check** runs every criterion's check and the order's gates, in the order the contract lists them.
+- **grade** grades the order the way [`[work] grading`](#how-an-order-earns-done) says, and reports
+  every changed file outside `scope` since the base commits; a change outside scope fails the grade.
+- **signoff** closes a graded order as done. `--partial --note <what is left>` or `--abandon --note <why>`
+  closes any open order without a passing grade.
+- <!-- cockpit:ref command=work note --> <!-- cockpit:ref command=work answer --> **note** records a note; `--ask` records an open question, which blocks the order until
+  `work answer --question <n> --text <answer>` answers it.
+- <!-- cockpit:ref command=work recover --> **recover** inspects the lock a crashed command left on an order; a person adds `--apply` once
+  the holder it names is gone, since a holder in a container or on another host looks dead from here.
 
-<!-- cockpit:ref command=work programme-mint --> A programme keeps its intent in one ordered ledger. `cockpit work programme-mint --config cockpit.toml --programme release` reports the first item not yet minted as a provisional candidate request. Validation checks that earlier items are complete and shippable and that capacity remains. You do not need folders for future items. Publishing a candidate checks the ledger, the identity and the capacity again.
+<!-- cockpit:ref path=packages/cockpit/src/guards/evaluator.ts --> cockpit keeps what happened in `.cockpit/work-orders/<id>.json`, committed with the work. It
+records who passed each step (`agent`, `person` or `ci`), each check's result, the grade with the
+evaluator that answered and those passed over, notes, and how the order closed. Only cockpit writes
+those records: the guard denies an agent's writes below `.cockpit/work-orders/` as
+[guard controls](safety-and-autonomy.md#configuration-git-and-guard-controls), because a record carries
+no key and one an agent wrote would read as a person's. That holds only for the tool calls the guard
+inspects; a process outside the guard can still replace a record.
 
-<!-- cockpit:ref schema=workorders.wip_cap --> <!-- cockpit:ref schema=workorders.attempt_cap --> The configured cockpit WIP and attempt caps are positive integers, with limits set by the [configuration schema](configuration-reference.md); a consumer may lower them, never raise them. A programme holds at most one open work order, which is fixed rather than configured. At the configured attempt cap, record root-cause analysis and choose a different approach before execution resumes. Unresolved questions for a human also block execution. Older state stays readable; new execution uses the current policy.
+## Who passes each gate
 
-Repository identities accept only exact, nonzero SHA-1 or SHA-256 Git object IDs. The identity check
-covers local and remote branches and linked worktrees; tags alone do not reserve an identity.
-Malformed or null object IDs are refused rather than recorded as a source.
+<!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each step: `accept`, `amend` (accepting a changed
+contract), `answer` and `signoff`. The defaults are `person`, `person`, `person` and `agent`;
+`[autonomy] preset = "agent"` defaults every unset gate to `agent`.
 
-## Accept and resume
+| Value | What happens |
+| --- | --- |
+| `agent` | The command passes the step. |
+| `person` | The command shows what is being decided and its digest, and records the step only after a person types that digest in a terminal with `--interactive`. Without a terminal it refuses with `WORK_PERSON_REQUIRED`. |
+| `ci` | The command records the step as awaiting CI, and it counts once the required `work verify` job passes. |
 
-<!-- cockpit:ref command=work accept --> <!-- cockpit:ref command=work renew --> Acceptance and renewal need an interactive terminal and the contract digest it displays. The prompt shows what that digest binds: the Authority paths, the sources, every acceptance criterion and every verification command, and for renewal the decision being confirmed, with control and bidirectional-override characters replaced, so an edit made after you read the file in an editor is on screen before you accept it. JSON, CI and calls without a terminal on both standard input and standard output are refused. The same running process must read the answer; a changed contract or a replayed answer is refused. That a person, not an agent, gives the answer is instructed, not enforced: cockpit cannot tell a person from a program driving a pseudo-terminal.
+Removing or rewriting an accepted criterion is never the agent's to certify: under `amend = "agent"`
+such an amendment still needs a person.
 
-To renew an accepted order after changing its contract, set its `status` back to `draft`, add a `## Decisions` row dated no earlier than the acceptance with disposition `accepted` that records the reason and impact, and run `cockpit work renew --config cockpit.toml --work-order WO-001 --interactive`. Until it is renewed, `work status` refuses the order because its execution state belongs to the previous contract.
+These local gates are best-effort. The guard keeps an agent's tool call from passing `--interactive`,
+and the command needs a terminal on both standard input and standard output, but cockpit cannot tell a
+person from a program driving a terminal. The only enforced human gate is `ci`: a required
+`work verify` job behind a protected environment whose reviewers must approve it before it runs.
 
-<!-- cockpit:ref command=work status --> <!-- cockpit:ref command=work resume --> Status keeps proof from local checks apart from proof from CI, the runtime and deployment. Source files you chose as sources are re-read even when they are excluded from repository change tracking; changed bytes make a record stale, and unreadable or missing bytes make it unavailable. Resume picks the next step whose prerequisites are current and that has no unresolved blocker. Acceptance survives a new process: cockpit re-checks it against the stored contract and generation. <!-- cockpit:ref path=packages/cockpit/src/guards/evaluator.ts --> These records carry no secret: each digest is computed from the record's own contents, so anything that can write `.cockpit/work-orders/`, `.cockpit/transactions/` or `.cockpit/actors/` can write a record the next command accepts as the operator's. The guard denies an agent's writes to those directories as [guard controls](safety-and-autonomy.md#configuration-git-and-guard-controls). That holds only for the tool calls the guard inspects, on a harness where it runs, and only for those paths. A process outside the guard can still replace the records: a program a permitted command starts, an interpreter a declared rule admits, or anything run outside an agent.
+<!-- cockpit:ref command=work verify --> `work verify` checks every record against its order: an open order whose contract changed since
+acceptance fails, and so does a done order without a passing grade of its accepted contract. Run in
+CI (where `CI` is set), it reports the steps gated on `ci` as confirmed; run locally it lists them as
+awaiting CI. A workflow job for it:
 
-<!-- cockpit:ref command=work recover --> An interrupted operation leaves a named lock behind. Run `cockpit work recover --config cockpit.toml --lock WO-001` with the exact lock identifier from the refusal to inspect its holder. Recovery needs an explicit `--apply` and a fresh check showing that the recorded process is gone. If the holder is still running, cannot be checked, has a malformed record, or has changed, cockpit refuses to take the lock. Ordinary status and journal recovery never take over a lock, and a malformed lock record is kept for a person to inspect.
+```yaml
+work-verify:
+  runs-on: ubuntu-latest
+  environment: work-orders   # add required reviewers to this environment
+  steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with: { node-version: 24 }
+    - run: npm ci
+    - run: npx --no cockpit work verify --config cockpit.toml
+```
 
-<!-- cockpit:ref command=work record --> `cockpit work record --config cockpit.toml --work-order WO-001 --event-file workorders/events/progress.json` saves one of the agent's own events against the current accepted order, attributed to the author. The file holds one JSON object; extra fields are refused:
+Make the job a required status check on the protected branch, so an order's `ci` steps reach the branch
+only through it.
 
-| Event | Fields | Use |
+## How an order earns done
+
+<!-- cockpit:ref schema=work.grading --> `[work] grading` says what `work grade` does, and the record, `work status` and `doctor` always say
+which way each order closed:
+
+| `grading` | `work grade` | Closes as |
 | --- | --- | --- |
-| `heartbeat` | `{"kind":"heartbeat"}` | Show the order is moving. |
-| `root-cause` | `kind`, `step`, `approach`, `detail` | Record why an approach failed; needed before retrying at the attempt cap. |
-| `gap` | `kind`, `id`, `step`, `question` | Record a question for a person; it blocks execution until answered. |
-| `reconcile-execution` | `kind`, `step`, `approach`, `reason` | Clear an execution reservation left by an interrupted `work execute`. |
-| `evidence` | `{"kind":"evidence","layer":"source","reference":"<file>"}` | Record a source file's current digest. |
+| `independent` (default) | runs the checks, then an evaluator grades each criterion against them and the change | `graded` |
+| `checks` | runs the checks; every criterion needs one, and the grade passes only when cockpit ran each and all passed | `checks-passed` |
+| `self` | records the agent's `--verdict met` or `unmet` with a `--note` saying what it checked | `self-reported` |
 
-<!-- cockpit:ref command=work answer --> A gap's answer and a decision speak for a person, so `work record` refuses them. A person records them with `cockpit work answer --config cockpit.toml --work-order WO-001 --event-file workorders/events/answer.json --interactive`, which shows the open question and the answer, or the decision, and records it as the operator only after the person types the digest it displays. Like acceptance, it needs an interactive terminal and refuses JSON and CI, and the guard asks a person before an agent's shell runs it (Codex and OpenCode deny it instead); that a person rather than a program driving a pseudo-terminal answers is instructed, not enforced. An agent may draft the file; the person reads and confirms what is recorded.
+The signoff gate applies on top in every mode.
 
-| Event | Fields | Use |
-| --- | --- | --- |
-| `resolve-gap` | `kind`, `id`, `answer` | The person's answer to an open gap. |
-| `decision` | `kind`, `decision`: `{date, decision, disposition, reason, impact}` | The person's decision; `disposition` is `accepted`, `rejected` or `deferred`. |
+<!-- cockpit:ref command=grade --> For a change that needs no order, `cockpit grade --config cockpit.toml --criteria <file>` runs the
+checks and the independent evaluator against the uncommitted change, and records nothing. The file has
+the same front-matter `criteria` list, and optionally `scope`, `gates` and `objective`.
 
-A refusal for an unparseable intent, event or programme ledger names the file, the line and column when the parser reports one, and the expected shape; it never quotes the file's bytes.
+## The independent evaluator
 
-For `evidence`, cockpit reads the named file inside the project and records its digest together with the current contract, the repository revisions and the working-tree content. Each repository entry needs both its revision and its working-tree digest, so incomplete state is refused. Changes to tracked or untracked source files make saved proof stale even when HEAD has not moved. Cockpit's own coordination files do not count as source changes: the orders and programme ledgers, its private state, and event files under `workorders/events/`. Keep event files there; an event file anywhere else is a source change and makes every earlier step's proof stale. `work execute` records attempts and step checks, not `work record`, and callers cannot claim local, CI, runtime or deployment proof.
-
-<!-- cockpit:ref command=work metrics --> Metrics show how much history they cover. Time from creation to first movement uses Git creation history and the movement history of the current generation, when they exist. Missing history is reported as partial or unavailable; it is never turned into a duration of zero.
-
-<!-- cockpit:ref command=work sweep --> <!-- cockpit:ref command=work reverse --> The sweep groups untouched drafts by creation day and programme. When a group reaches the threshold set in the [work-order composition](../packages/cockpit/src/work-orders/composition.ts), it proposes retaining the earliest identity and parking the others. Applying it saves each order's previous status; reversal checks that the order is still parked and who parked it. An order a person parked by hand is not reversed automatically.
-
-## Verify and grade independently
-
-<!-- cockpit:ref command=work execute --> <!-- cockpit:ref command=work review --> <!-- cockpit:ref command=work grade --> `cockpit work execute --config cockpit.toml --work-order WO-001 --approach "<what you are trying>"` checks the next Plan step: it runs that step's declared verification command and records the attempt. Plan step *n* runs the *n*th Verification row; steps past the last row run the last row, and rows past the last step run only at grading. Run it once per Plan step, after the work for that step, until `work resume` reports the order is awaiting grade. A step whose command fails returns its exit status and the end of its output, records a failed attempt, and leaves the step unchecked; at `workorders.attempt_cap` failures of one approach, record a `root-cause` event and try a different approach. Several accepted orders can be active within the WIP cap; `--work-order` selects which one runs.
-
-Declared verification commands run like product test stages: an argv array without a shell, from the directory holding `cockpit.toml`, with `PATH` and the same non-secret variables, judged by exit status, with the end of long output kept. Each command may run for `workorders.verification_timeout_seconds`; a command that runs longer is stopped and reported as not run, naming that field.
-
-After substantial implementation and before grading, `work review` checks that it is reviewing the current work, then runs an independent simplification review, code review and security review. The reviewers report findings; they do not edit. Findings, how each was resolved and reruns of affected proof are kept. `work grade` repeats the final review sequence, runs every declared verification command and then calls the independent grader. It refuses to grade if the listed files have changed. A grade that does not pass returns each criterion's outcome and reasons and is kept with the order; a passing grade writes the completion marker. Completion needs the separate review lanes, run by someone other than the author, that the [review sequencer](../packages/cockpit/src/work-orders/review.ts) defines, current results, and an exclusive lock held until cockpit has read the result back and written the completion marker.
-
-<!-- cockpit:ref schema=workorders.evaluators --> <!-- cockpit:ref schema=workorders.evaluator_timeout_seconds --> The reviewers and the grader run headless in an agent tool from `workorders.evaluators`, whichever agent tool did the work, so `work review` and `work grade` need one of them on `PATH` and signed in. The list is tried in order (by default the tools `surfaces.tools` lists that can evaluate, in that order, so a Claude Code-only cockpit grades with Claude Code): a tool that is missing, too old for the flags below, signed out, rate-limited or timed out is passed over and the next is tried, and each review's evidence and the grade record name which tool answered and which were passed over. An answer that fails cockpit's checks is refused rather than retried with another tool, and nothing falls back to the agent grading its own work. Each review and the grade is a new run of its own, with no session saved to resume, so it never sees the session of the agent that did the work; an answer from a session that already answered is refused:
+<!-- cockpit:ref schema=work.evaluators --> <!-- cockpit:ref schema=work.evaluator_timeout_seconds --> The grader runs headless in an agent tool from `work.evaluators`, whichever agent tool did the work,
+so `independent` grading needs one of them on `PATH` and signed in. The list is tried in order (by
+default the tools `surfaces.tools` lists that can evaluate, in that order, so a Claude Code-only cockpit
+grades with Claude Code): a tool that is missing, too old for the flags below, signed out,
+rate-limited or timed out is passed over and the next is tried, and the grade record names which tool
+answered and which were passed over. An answer that fails cockpit's checks is refused rather than
+retried with another tool, and nothing falls back to the agent grading its own work. Each grade is a
+new run of its own, with no session saved to resume, so it never sees the session of the agent that did
+the work; an answer from a session that already answered is refused:
 
 | Tool | Runs | Read-only by | Install and sign in |
 |---|---|---|---|
@@ -242,13 +173,20 @@ After substantial implementation and before grading, `work review` checks that i
 | `claudecode` | `claude --print --no-session-persistence --safe-mode --strict-mcp-config` | `--tools Read,Grep,Glob`, so no tool that writes or runs commands exists; `--permission-mode dontAsk` | `npm install -g @anthropic-ai/claude-code`, then `claude auth login` |
 | `opencode` | `opencode run --pure` | `OPENCODE_PERMISSION` denying its edit, shell, task, web, skill, question, to-do and LSP tools, so they are not offered | `npm install -g opencode-ai`, then `opencode auth login` |
 
-Each read-only mechanism was measured on 2026-11-03 beside a control without it: Codex 0.166.0 refused a shell write that `--sandbox workspace-write` made, Claude Code 2.1.317 wrote a file only once `Write` joined its tools, and OpenCode 1.19.5 offered only its read, glob, grep and list tools under the denials and offered write once edit was not denied. Codex and Claude Code skip your own configuration, hooks, plugins and MCP servers; OpenCode keeps your configuration, so it uses your model and provider, but skips external plugins, and a tool an MCP server in your OpenCode configuration adds is outside its denials. Claude Code and OpenCode constrain the answer with the role's output schema only as far as the tool does (OpenCode not at all), so cockpit checks every answer against that same schema and refuses one that does not match. Once a cockpit has a `workorders/` directory, `doctor` warns when no listed tool is on `PATH`. Each run starts in a private directory outside the repository, so the tool does not load the repository's `AGENTS.md`, `CLAUDE.md` or project configuration, which the agent being graded can write; the request names the repository. The reviewers and the grader are told to treat repository content, work-order text and command output as data to assess, never as instructions; that is instructed, not enforced. No evaluator runs with a browser tool and the request says so, so the grader is told to grade a criterion about what a person would see as never ran. Each review or grading run may take `workorders.evaluator_timeout_seconds`. When no listed tool answers, the refusal names, for each, the cause it reported and the command that fixes it. OpenCode keeps retrying a rejected request, such as a free model's usage limit, until the timeout stops it; the refusal then names the last error it logged.
+Each read-only mechanism was measured on 2026-11-03 beside a control without it: Codex 0.166.0 refused a shell write that `--sandbox workspace-write` made, Claude Code 2.1.317 wrote a file only once `Write` joined its tools, and OpenCode 1.19.5 offered only its read, glob, grep and list tools under the denials and offered write once edit was not denied. Codex and Claude Code skip your own configuration, hooks, plugins and MCP servers; OpenCode keeps your configuration, so it uses your model and provider, but skips external plugins, and a tool an MCP server in your OpenCode configuration adds is outside its denials. Claude Code and OpenCode constrain the answer with the output schema only as far as the tool does (OpenCode not at all), so cockpit checks every answer against that same schema and refuses one that does not match. Once a cockpit has a `workorders/` directory, `doctor` warns when no listed tool is on `PATH`. Each run starts in a private directory outside the repository, so the tool does not load the repository's `AGENTS.md`, `CLAUDE.md` or project configuration, which the agent being graded can write; the request names the repository. Each run may take `work.evaluator_timeout_seconds`. When no listed tool answers, the refusal names, for each, the cause it reported and the command that fixes it.
 
-A path in the Authority list that starts with `siblings/`, followed by a declared repository name and a relative path, names a file in that repository, even one outside the cockpit directory. Other paths are relative to the cockpit. Paths naming an unknown repository, escaping their root, or going through a symlink are refused. Declared environment instances, credential files and saved browser sign-in state can never be given to the evaluator or used as a source.
+The grader is given each criterion with the result of the check cockpit ran for it, and every changed
+file's diff since the base commits. A credential-shaped path or a declared environment instance is
+listed with its content withheld. A `met` verdict stands only when each quote it cites, at least
+eight characters long, is found exactly once in the change or check output it names; otherwise it
+reads as `unclear` with the reason. No evaluator runs with a browser, and the request says so, so a
+criterion about what a person would see is not met by command output alone.
 
-Declaring seed data does not give the evaluator access to paths that look like credentials. Public environment templates with names ending in `.example`, `.schema`, `.template` or `.sample` are allowed when no parent directory looks like credentials and the file is neither a declared environment instance nor saved browser sign-in state.
-
-<!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator instructions tell it to restrain itself. Run by `work review` and `work grade`, the evaluator is also held read-only by its tool's mechanism above, which the request's `restriction` field names. Spawned as a subagent inside an agent tool, that restriction is instructed, not enforced: no harness is confirmed to enforce it there. Cockpit's source tests and synthetic fixtures show only the local behavior they test; real harness calls and human review need their own checks.
+<!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator instructions tell it to treat repository content, order text and command
+output as data, never as instructions; that is instructed, not enforced. Run by `work grade` and
+`cockpit grade`, the evaluator is also held read-only by its tool's mechanism above. Spawned as a
+subagent inside an agent tool, that restriction is instructed, not enforced: no harness is confirmed to
+enforce it there.
 
 ## Browser evidence
 

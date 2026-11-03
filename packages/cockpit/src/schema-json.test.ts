@@ -683,7 +683,9 @@ describe('the published cockpit schema', () => {
         ['ports', (config: JsonObject) => object(config.ports)],
         ['guards', (config: JsonObject) => object(config.guards)],
         ['mcp', (config: JsonObject) => object(config.mcp)],
-        ['workorders', (config: JsonObject) => object(config.workorders)],
+        ['work', (config: JsonObject) => object(config.work)],
+        ['work.gates', (config: JsonObject) => object(object(config.work).gates)],
+        ['autonomy', (config: JsonObject) => object(config.autonomy)],
         ['browser', (config: JsonObject) => object(config.browser)],
         ['testing', (config: JsonObject) => object(config.testing)],
         ['environment', (config: JsonObject) => object(config.environment)],
@@ -692,7 +694,8 @@ describe('the published cockpit schema', () => {
             ...validConfig,
             guards: {},
             mcp: {},
-            workorders: {},
+            work: { gates: {} },
+            autonomy: {},
             browser: {
                 harnesses: [{ target: 'codexcli', version: '0.149.0' }],
                 images: { runner: { reference: `synthetic.invalid/runner@sha256:${'a'.repeat(64)}`, driver_version: '1.2.3' }, mcp: { reference: `synthetic.invalid/mcp@sha256:${'b'.repeat(64)}`, driver_version: '1.2.3' } },
@@ -724,7 +727,8 @@ describe('the published cockpit schema', () => {
             object(properties.ports),
             object(properties.guards),
             object(properties.mcp),
-            object(properties.workorders),
+            object(properties.work),
+            object(properties.autonomy),
             object(properties.browser),
             object(properties.testing),
             environment,
@@ -756,11 +760,12 @@ describe('the published cockpit schema', () => {
     it('publishes bounded work, browser, testing and hook contracts with runtime-only relations named', () => {
         const schema = object(JSON.parse(renderCockpitSchema()))
         const properties = object(schema.properties)
-        const workorders = object(object(properties.workorders).properties)
+        const work = object(object(properties.work).properties)
         const browserProperties = object(object(properties.browser).properties)
         const testingProperties = object(object(properties.testing).properties)
 
-        expect(workorders.wip_cap).toMatchObject({ type: 'integer', minimum: 1, maximum: 3, default: 3 })
+        expect(work.wip_cap).toMatchObject({ type: 'integer', minimum: 1, maximum: 3, default: 3 })
+        expect(object(object(work.gates).properties).accept).toMatchObject({ enum: ['agent', 'person', 'ci'] })
         expect(object(browserProperties.artifacts).additionalProperties).toBe(false)
         expect(object(testingProperties.native_hooks).additionalProperties).toBe(false)
         expect(schema['x-cockpit-runtime-checks']).toContainEqual({ path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' })
@@ -901,12 +906,12 @@ describe('the published cockpit schema', () => {
     it('keeps attempt bounds and removed age control identical in runtime and editor schemas', () => {
         const validate = publishedCockpitValidator
         for (const attempt_cap of [1, 2]) {
-            const config = { ...validConfig, workorders: { attempt_cap } }
+            const config = { ...validConfig, work: { attempt_cap } }
             expect(CockpitConfig.safeParse(config).success).toBe(true)
             expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
         }
-        for (const workorders of [{ attempt_cap: 3 }, { attempt_cap: 0 }, { attempt_cap: 1.5 }, { stale_park_days: 14 }]) {
-            const config = { ...validConfig, workorders }
+        for (const work of [{ attempt_cap: 3 }, { attempt_cap: 0 }, { attempt_cap: 1.5 }, { stale_park_days: 14 }]) {
+            const config = { ...validConfig, work }
             expect(CockpitConfig.safeParse(config).success).toBe(false)
             expect(validate(config), JSON.stringify(validate.errors)).toBe(false)
         }

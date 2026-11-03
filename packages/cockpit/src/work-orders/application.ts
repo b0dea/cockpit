@@ -1,20 +1,21 @@
+// Owns the work-order lifecycle: draft → accepted → checked → graded → done, with blocked and stale
+// derived from the record and the current file, and partial and abandoned as closures. Each command
+// that passes a gate asks the autonomy policy who may pass it; a person gate returns a continuation
+// the CLI completes only with the digest a person types in a terminal. It also routes the browser and
+// test-gate operations that share the work composition.
 import { createHash } from 'node:crypto'
-import { executeBrowserCommand, ownDataRecord } from '../browser/commands.js'
+import { z } from 'zod'
+
+import { decide, policyWeakening, runningInCi, type WorkGate } from '../autonomy.js'
+import { executeBrowserCommand } from '../browser/commands.js'
 import { evaluateUiGate } from '../browser/ui-gate.js'
-import { completeWorkOrder } from '../grading/completion.js'
+import { errorCause, RefusalError } from '../environment/contract.js'
+import type { GradingSubject, Verdict } from '../grading/grade.js'
+import type { Decider } from '../schema.js'
 import { runGate } from '../testing/gates.js'
-import { executeWorkOrderStep } from './executor.js'
-import { WORK_ORDER_ID, WORK_ORDER_LOCKS, type ParsedWorkOrder, type WorkOrderDecision } from './contract.js'
-import { acceptWorkOrder, beginWorkOrderAcceptance, beginWorkOrderRenewal, intakeWorkOrder, routeWorkOrder } from './intake.js'
-import { collectWorkOrderMetrics, renderWorkOrderMetrics } from './metrics.js'
-import { assessWorkOrderSize, assessWorkPressure, applyWorkOrderSweep, planWorkOrderSweep, reverseWorkOrderSweep } from './pressure.js'
-import { mintProgrammeWorkOrder } from './programme.js'
-import { reviewWorkOrderWave } from './review.js'
-import { resumeWorkOrder } from './resume.js'
-import { persistWorkOrderProgress } from './state.js'
-import { projectWorkOrderStatus } from './status.js'
-import { isWorkApplicationComposition, type PreparedAnswer, type WorkApplicationComposition } from './composition.js'
-import { errorCause } from '../environment/contract.js'
+import { criteriaWeakening, scopeMatches, WORK_ORDER_ID, workOrderDigest, type WorkOrder } from './contract.js'
+import type { CheckResult, WorkRecord } from './store.js'
+import { isWorkApplicationComposition, type WorkApplicationComposition } from './composition.js'
 
 export const mechanism = {
     id: 'work-order-application',
@@ -22,114 +23,69 @@ export const mechanism = {
     exports: ['captureWorkApplicationRequest', 'runWorkApplication'],
 } as const
 
-export type WorkApplicationRequest =
-    | Readonly<{ operation: 'work-intake'; workOrderId: string }>
-    | Readonly<{ operation: 'work-intake'; intent: string; candidate?: string }>
-    | Readonly<{ operation: 'work-accept' | 'work-renew' | 'work-grade' | 'work-review'; workOrderId: string }>
-    | Readonly<{ operation: 'work-status'; workOrderId?: string }>
-    | Readonly<{ operation: 'work-resume' | 'work-metrics' }>
-    | Readonly<{ operation: 'work-recover'; lockId: string; apply: boolean }>
-    | Readonly<{ operation: 'work-execute'; workOrderId: string; approach: string }>
-    | Readonly<{ operation: 'work-record' | 'work-answer'; workOrderId: string; eventFile: string }>
-    | Readonly<{ operation: 'work-sweep'; apply: boolean }>
-    | Readonly<{ operation: 'work-reverse'; workOrderId: string }>
-    | Readonly<{ operation: 'work-programme-mint'; programmeId: string; itemKey?: string; candidate?: string }>
-    | Readonly<{ operation: 'browser-drive' | 'browser-screenshot' | 'browser-debugger'; role?: string }>
-    | Readonly<{ operation: 'test-run'; gate: string; mode: 'canonical' | 'full' | 'staged'; select?: Readonly<{ kind: 'spec' | 'file' | 'test' | 'route'; value: string }> }>
+const id = z.string().regex(WORK_ORDER_ID)
+const note = z.string().trim().min(1).max(4_096).regex(/^[^\x00-\x08\x0b-\x1f\x7f]*$/)
+const relativeFile = z.string().max(4_096).regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+\-/]+$/)
+const Request = z.discriminatedUnion('operation', [
+    z.object({ operation: z.literal('work-status'), workOrderId: id.optional() }).strict(),
+    z.object({ operation: z.literal('work-accept'), workOrderId: id }).strict(),
+    z.object({ operation: z.literal('work-check'), workOrderId: id }).strict(),
+    z.object({ operation: z.literal('work-note'), workOrderId: id, text: note, question: z.boolean() }).strict(),
+    z.object({ operation: z.literal('work-answer'), workOrderId: id, question: z.number().int().min(1), text: note }).strict(),
+    z.object({ operation: z.literal('work-grade'), workOrderId: id, verdict: z.enum(['met', 'unmet']).optional(), note: note.optional() }).strict(),
+    z.object({ operation: z.literal('work-signoff'), workOrderId: id, close: z.enum(['done', 'partial', 'abandoned']), note: note.optional() }).strict(),
+    z.object({ operation: z.literal('work-recover'), workOrderId: id, apply: z.boolean() }).strict(),
+    z.object({ operation: z.literal('work-verify') }).strict(),
+    z.object({ operation: z.literal('grade-criteria'), criteriaFile: relativeFile }).strict(),
+    z.object({ operation: z.enum(['browser-drive', 'browser-screenshot', 'browser-debugger']), role: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional() }).strict(),
+    z.object({ operation: z.literal('test-run'), gate: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), mode: z.enum(['canonical', 'full', 'staged']),
+        select: z.object({ kind: z.enum(['spec', 'file', 'test', 'route']), value: z.string().min(1).refine(value => Buffer.byteLength(value) <= 4_096 && !/[\x00-\x1f\x7f]/.test(value)) }).strict().optional() }).strict(),
+])
+export type WorkApplicationRequest = z.infer<typeof Request>
+type Operation = WorkApplicationRequest['operation']
+
+export function captureWorkApplicationRequest(value: unknown): WorkApplicationRequest | undefined {
+    const parsed = Request.safeParse(value)
+    return parsed.success ? Object.freeze(parsed.data) : undefined
+}
 
 export interface WorkApplicationContinuation { readonly digest: string; readonly prompt: string; readonly decide: (answer: string) => Promise<WorkApplicationOutcome> }
 export type WorkApplicationOutcome =
-    | Readonly<{ kind: 'complete'; operation: WorkApplicationRequest['operation']; value: unknown }>
-    | Readonly<{ kind: 'human-needed'; operation: 'work-accept' | 'work-renew' | 'work-answer'; continuation: WorkApplicationContinuation }>
-    | Readonly<{ kind: 'refusal'; operation: WorkApplicationRequest['operation'] | 'invalid'; reason: string }>
-    // The operation ran and produced a result that does not meet its bar (a gate short of PASS, a grade
-    // with an unmet criterion, a step whose verification failed); the result is the evidence to act on.
-    | Readonly<{ kind: 'unsatisfied'; operation: 'test-run' | 'work-grade' | 'work-execute'; value: unknown; reason: string }>
+    | Readonly<{ kind: 'complete'; operation: Operation; value: unknown }>
+    | Readonly<{ kind: 'human-needed'; operation: Operation; continuation: WorkApplicationContinuation }>
+    | Readonly<{ kind: 'refusal'; operation: Operation | 'invalid'; reason: string }>
+    // The operation ran and its result does not meet the bar (a gate short of PASS, a failed check, an
+    // unmet criterion); the result is the evidence to act on.
+    | Readonly<{ kind: 'unsatisfied'; operation: Operation; value: unknown; reason: string }>
 
-interface OperationShape { readonly required: readonly string[]; readonly optional?: readonly string[] }
-const operationKeys: Readonly<Record<WorkApplicationRequest['operation'], OperationShape>> = Object.freeze({
-    'work-intake': { required: ['operation'], optional: ['workOrderId', 'intent', 'candidate'] }, 'work-accept': { required: ['operation', 'workOrderId'] },
-    'work-renew': { required: ['operation', 'workOrderId'] }, 'work-status': { required: ['operation'], optional: ['workOrderId'] },
-    'work-resume': { required: ['operation'] }, 'work-recover': { required: ['operation', 'lockId', 'apply'] }, 'work-execute': { required: ['operation', 'workOrderId', 'approach'] },
-    'work-record': { required: ['operation', 'workOrderId', 'eventFile'] }, 'work-answer': { required: ['operation', 'workOrderId', 'eventFile'] },
-    'work-sweep': { required: ['operation', 'apply'] }, 'work-reverse': { required: ['operation', 'workOrderId'] },
-    'work-programme-mint': { required: ['operation', 'programmeId'], optional: ['itemKey', 'candidate'] }, 'work-metrics': { required: ['operation'] },
-    'work-grade': { required: ['operation', 'workOrderId'] }, 'work-review': { required: ['operation', 'workOrderId'] }, 'browser-drive': { required: ['operation'], optional: ['role'] },
-    'browser-screenshot': { required: ['operation'], optional: ['role'] },
-    'browser-debugger': { required: ['operation'], optional: ['role'] }, 'test-run': { required: ['operation', 'gate', 'mode'], optional: ['select'] },
-})
-const requestKeys = [...new Set(Object.values(operationKeys).flatMap(shape => [...shape.required, ...(shape.optional ?? [])]))]
-function printable(value: string): boolean {
-    for (let index = 0; index < value.length; index += 1) { const code = value.charCodeAt(index); if (code < 32 || code >= 127 && code <= 159) return false }
-    return true
-}
-function bounded(value: unknown, pattern: RegExp, maximum: number): value is string {
-    return typeof value === 'string' && Buffer.byteLength(value) <= maximum && printable(value) && pattern.test(value)
-}
-const relativeSelector = (value: unknown): value is string => bounded(value, /^[A-Za-z0-9._/-]+$/, 4_096)
-    && !value.startsWith('/') && value.split('/').every(part => part !== '' && part !== '.' && part !== '..')
-export function captureWorkApplicationRequest(value: unknown): WorkApplicationRequest | undefined {
-    const row = ownDataRecord(value, [], requestKeys)
-    if (!row || typeof row.operation !== 'string' || !Object.hasOwn(operationKeys, row.operation)) return undefined
-    const operation = row.operation as WorkApplicationRequest['operation']; const shape = operationKeys[operation]
-    const allowed = [...shape.required, ...(shape.optional ?? [])]; const keys = Object.keys(row)
-    if (keys.some(key => !allowed.includes(key)) || shape.required.some(key => !Object.hasOwn(row, key))) return undefined
-    const requiresWorkOrderId = shape.required.includes('workOrderId')
-    if (requiresWorkOrderId && !bounded(row.workOrderId, WORK_ORDER_ID, 128)
-        || !requiresWorkOrderId && row.workOrderId !== undefined
-            && !bounded(row.workOrderId, WORK_ORDER_ID, 128)) return undefined
-    if ('approach' in row && !bounded(row.approach, /^.+$/, 4_096)) return undefined
-    if ('programmeId' in row && !bounded(row.programmeId, /^[a-z][a-z0-9-]{0,63}$/, 64)) return undefined
-    if ('itemKey' in row && row.itemKey !== undefined && !bounded(row.itemKey, /^[a-z][a-z0-9-]{0,63}$/, 64)) return undefined
-    if ('eventFile' in row && !relativeSelector(row.eventFile)) return undefined
-    if ('lockId' in row && row.lockId !== WORK_ORDER_LOCKS.capacity && row.lockId !== WORK_ORDER_LOCKS.identity
-        && !bounded(row.lockId, WORK_ORDER_ID, 128)) return undefined
-    if ('intent' in row && !relativeSelector(row.intent) || 'candidate' in row && row.candidate !== undefined && !relativeSelector(row.candidate)) return undefined
-    if (operation === 'work-intake' && (typeof row.workOrderId === 'string') === (typeof row.intent === 'string')
-        || operation === 'work-intake' && row.candidate !== undefined && typeof row.intent !== 'string') return undefined
-    if ('apply' in row && typeof row.apply !== 'boolean') return undefined
-    if ('gate' in row && !bounded(row.gate, /^[a-z][a-z0-9-]{0,63}$/, 64)) return undefined
-    if ('role' in row && row.role !== undefined && !bounded(row.role, /^[a-z0-9][a-z0-9_-]{0,63}$/, 64)) return undefined
-    if ('mode' in row && !['canonical', 'full', 'staged'].includes(row.mode as string)) return undefined
-    if ('select' in row && row.select !== undefined) {
-        const select = ownDataRecord(row.select, ['kind', 'value'], [])
-        if (!select || !['spec', 'file', 'test', 'route'].includes(select.kind as string) || !bounded(select.value, /^.+$/, 4_096)) return undefined
-        row.select = Object.freeze({ kind: select.kind, value: select.value })
-    }
-    return Object.freeze(row) as unknown as WorkApplicationRequest
-}
-const refusal = (operation: WorkApplicationOutcome['operation'], reason: string): WorkApplicationOutcome => Object.freeze({ kind: 'refusal', operation, reason })
-const complete = (operation: WorkApplicationRequest['operation'], value: unknown): WorkApplicationOutcome => Object.freeze({ kind: 'complete', operation, value })
-const unsatisfied = (operation: 'test-run' | 'work-grade' | 'work-execute', value: unknown, reason: string): WorkApplicationOutcome =>
+const refusal = (operation: Operation | 'invalid', reason: string): WorkApplicationOutcome => Object.freeze({ kind: 'refusal', operation, reason })
+const complete = (operation: Operation, value: unknown): WorkApplicationOutcome => Object.freeze({ kind: 'complete', operation, value })
+const unsatisfied = (operation: Operation, value: unknown, reason: string): WorkApplicationOutcome =>
     Object.freeze({ kind: 'unsatisfied', operation, value, reason })
+const now = () => new Date().toISOString()
+// Agent-written text is shown to a person with its control and bidirectional-override characters
+// replaced, so it can neither drive their terminal nor read in an order other than the one recorded.
+const shown = (value: string) => value.replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/g, '�')
+const TERMINAL = new Set<WorkRecord['state']>(['done', 'partial', 'abandoned'])
+const CLOSURE = Object.freeze({ independent: 'graded', checks: 'checks-passed', self: 'self-reported' } as const)
 
-// The prompt shows a person what they are answering; agent-written text is printed with its control
-// and bidirectional-override characters replaced so it can neither drive the person's terminal nor
-// display in an order other than the one recorded.
-const shown = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '\uFFFD')
-function answerPrompt(workOrderId: string, prepared: PreparedAnswer, digest: string): string {
-    const event = prepared.event
-    const lines = event.kind === 'resolve-gap' && prepared.question
-        ? [`Open question ${shown(prepared.question.id)} on step ${prepared.question.step} of ${workOrderId}:`, `  ${shown(prepared.question.question)}`, 'Answer to record:', `  ${shown(event.answer)}`]
-        : event.kind === 'decision'
-            ? [`Decision to record on ${workOrderId}:`, ...(['date', 'decision', 'disposition', 'reason', 'impact'] as const).map(field => `  ${field}: ${shown(String(event.decision[field]))}`)]
-            : []
-    return [...lines, `This is recorded as ${shown(prepared.writer.actor)}'s answer. To record it, type answer ${digest}`].join('\n')
+// The state a person or agent reads: the record's, unless the file changed since acceptance (stale),
+// an open question or the attempt cap holds it (blocked), or no acceptance exists yet (draft).
+type Observed = Readonly<{ id: string; order?: WorkOrder; problems: readonly string[]; record?: WorkRecord; digest?: string }>
+function displayState(row: Observed, attemptCap: number): string {
+    if (!row.record) return row.order ? 'draft' : 'invalid'
+    if (TERMINAL.has(row.record.state)) return row.record.state
+    if (!row.order || row.digest !== row.record.accepted.digest) return 'stale'
+    if (openQuestions(row.record).length || row.record.attempts >= attemptCap) return 'blocked'
+    return row.record.state
 }
-// The digest alone would let an agent edit the order after the person read it in an editor and have the
-// edited digest accepted, so the prompt shows the contract the digest binds.
-function acceptancePrompt(contract: ParsedWorkOrder, decision: WorkOrderDecision | undefined): string {
-    return [
-        `${decision ? 'Renew' : 'Accept'} ${shown(contract.frontmatter.id)}: ${shown(contract.frontmatter.title)}`,
-        'Authority:', ...contract.authority.map(path => `  - ${shown(path)}`),
-        'Sources:', ...contract.sources.map(source => `  ${shown(source.id)} (${source.provenance}) ${shown(source.reference)}: ${shown(source.reason)}`),
-        'Acceptance criteria:', ...contract.criteria.flatMap(criterion => [`  ${shown(criterion.id)} (source ${shown(criterion.source)})`,
-            `    Given: ${shown(criterion.given)}`, `    When: ${shown(criterion.when)}`, `    Then: ${shown(criterion.then)}`]),
-        'Verification:', ...contract.verification.map(row => `  ${shown(row.criterion)}: ${shown(JSON.stringify(row.argv))}`),
-        ...decision ? ['Decision this renewal confirms:', ...(['date', 'decision', 'disposition', 'reason', 'impact'] as const).map(field => `  ${field}: ${shown(decision[field])}`)] : [],
-        `To accept exactly this contract, type accept ${contract.digest}`,
-    ].join('\n')
+function openQuestions(record: WorkRecord): readonly number[] {
+    return record.notes.flatMap((row, index) => row.kind === 'question' && !record.notes.some(answer => answer.answers === index + 1) ? [index + 1] : [])
 }
+const pendingCi = (record: WorkRecord) => [
+    ...record.accepted.by === 'ci' ? ['accept'] : [], ...record.amendments.filter(row => row.by === 'ci').map(() => 'amend'),
+    ...record.notes.filter(row => row.kind === 'answer' && row.by === 'ci').map(() => 'answer'), ...record.closure?.by === 'ci' ? ['signoff'] : [],
+]
 
 export async function runWorkApplication(request: WorkApplicationRequest, composition: WorkApplicationComposition): Promise<WorkApplicationOutcome> {
     const captured = captureWorkApplicationRequest(request)
@@ -137,94 +93,269 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
     if (!isWorkApplicationComposition(composition)) return refusal('invalid', 'An issued work application composition is required')
     const operation = captured.operation
     try {
-        if (operation === 'work-status' || operation === 'work-resume') {
-            const input = await composition.status(); const result = operation === 'work-status' ? projectWorkOrderStatus(input) : resumeWorkOrder(input, composition.policy)
-            if (result.kind === 'refusal') return refusal(operation, result.message)
-            return complete(operation, operation === 'work-status' && captured.workOrderId && result.kind === 'complete' ? { ...result, orders: result.orders.filter(row => row.id === captured.workOrderId) } : result)
+        if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot' || captured.operation === 'browser-debugger') {
+            const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
+            const result = await executeBrowserCommand(await composition.browser(kind, captured.operation === 'browser-debugger', captured.role))
+            if (result.kind === 'refusal') return refusal(operation, result.reason)
+            if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) }
+            return complete(operation, result)
         }
-        if (operation === 'work-recover') {
-            const result = await composition.recovery(captured.lockId, captured.apply)
-            return result.kind === 'held'
-                ? refusal(operation, `Recovery held for lock ${result.lockId} at ${result.target}; holder=${result.holder}; pid=${result.pid ?? 'unavailable'}; ${result.recovery}`)
-                : complete(operation, result)
+        if (captured.operation === 'test-run') {
+            const prepared = await composition.gate(captured)
+            const run = await runGate(prepared.registry, prepared.request, prepared.dependencies)
+            return run.satisfiesGate ? complete(operation, run) : unsatisfied(operation, run, `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`)
         }
-        if (operation === 'work-intake') {
-            const prepared = 'intent' in captured ? await composition.intent(captured.intent, captured.candidate) : await composition.intake(captured.workOrderId)
-            const route = prepared.origin === 'existing' ? routeWorkOrder(prepared.routing, prepared.capacity) : prepared.route
-            if (route.kind === 'refusal') return refusal(operation, route.message)
-            if (route.kind === 'fix') return complete(operation, route)
-            if (prepared.origin === 'intent-route') return complete(operation, { route, candidateRequired: true, intent: prepared.intentPath })
-            const draft = intakeWorkOrder({ route, contract: prepared.contract, sourceAudit: prepared.sourceAudit, installedSkills: prepared.installedSkills })
-            if (draft.kind === 'refusal') return refusal(operation, draft.message)
-            if (prepared.origin === 'intent') await composition.persistDraft(prepared, draft)
-            return complete(operation, draft)
+        // A policy weakened in cockpit.toml since the last sync is not in force until a person accepts it there.
+        const recorded = await composition.recordedPolicy()
+        const weakened = recorded ? policyWeakening(recorded, composition.policy) : []
+        if (weakened.length) {
+            return refusal(operation, `cockpit.toml weakens ${weakened.map(row => `${row.field} from ${row.from} to ${row.to}`).join(', ')} since the last sync; `
+                + 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive and accepts the weakening, or the change is reverted')
         }
-        if (operation === 'work-accept' || operation === 'work-renew') {
-            const prepared = await composition.acceptance(captured.workOrderId)
-            const route = routeWorkOrder(prepared.intake.routing, prepared.intake.capacity)
-            const compiled = intakeWorkOrder({ route, contract: prepared.intake.contract, sourceAudit: prepared.intake.sourceAudit, installedSkills: prepared.intake.installedSkills })
-            if (compiled.kind === 'refusal') return refusal(operation, compiled.message)
-            const draft = compiled
-            const decision = operation === 'work-renew' ? prepared.decision : undefined
-            const started = operation === 'work-renew' ? prepared.previous && decision ? beginWorkOrderRenewal(prepared.previous, draft, Date.now(), decision) : undefined : beginWorkOrderAcceptance(draft, Date.now())
-            if (!started) return refusal(operation, 'Renewal requires a current accepted contract and decision')
-            if (started.kind === 'refusal') return refusal(operation, started.message)
-            const decide = async (answer: string): Promise<WorkApplicationOutcome> => {
-                const accepted = acceptWorkOrder(started.continuation, draft, { now: Date.now(), actor: composition.operator, answer })
-                if (accepted.kind === 'refusal') return refusal(operation, accepted.message)
-                try { await composition.persistAcceptance(prepared, accepted); return complete(operation, { id: captured.workOrderId, digest: accepted.binding.digest }) }
-                catch (error) { return refusal(operation, errorCause(error)) }
-            }
-            return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest: started.digest, prompt: acceptancePrompt(draft.contract, decision), decide }) })
-        }
-        if (operation === 'work-execute') {
-            const prepared = await composition.execution(captured.workOrderId, captured.approach); const result = await executeWorkOrderStep(prepared.input, prepared.dependencies)
-            return result.kind === 'complete' ? complete(operation, result) : result.kind === 'paused' ? unsatisfied(operation, result, result.reason) : refusal(operation, result.reason)
-        }
-        if (operation === 'work-record') { const prepared = await composition.record(captured.workOrderId, captured.eventFile); const result = await persistWorkOrderProgress(prepared.contract, composition.policy,
-            prepared.stateBytes, prepared.event, prepared.writer, prepared.store); return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.message) }
-        if (operation === 'work-answer') {
-            const prepared = await composition.answer(captured.workOrderId, captured.eventFile)
-            const bound = JSON.stringify({ workOrder: captured.workOrderId, contract: prepared.contract.digest, state: createHash('sha256').update(prepared.stateBytes).digest('hex'), event: prepared.event })
-            const digest = createHash('sha256').update(bound).digest('hex')
-            let consumed = false
-            const decide = async (answer: string): Promise<WorkApplicationOutcome> => {
-                if (consumed) return refusal(operation, 'This answer prompt was already used; rerun work answer')
-                consumed = true
-                if (answer.trim() !== `answer ${digest}`) return refusal(operation, `Nothing was recorded: the person did not type answer ${digest}`)
-                const result = await persistWorkOrderProgress(prepared.contract, composition.policy, prepared.stateBytes, prepared.event,
-                    { actor: prepared.writer.actor, at: new Date().toISOString() }, prepared.store)
-                return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.message)
-            }
-            return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest, prompt: answerPrompt(captured.workOrderId, prepared, digest), decide }) })
-        }
-        if (operation === 'work-sweep') {
-            const prepared = await composition.sweep(captured.apply)
-            for (const row of prepared.sizes) { const size = assessWorkOrderSize(row.contract, row.path); if (size.kind === 'refusal') return refusal(operation, size.message) }
-            const result = await applyWorkOrderSweep(planWorkOrderSweep(prepared.capacity, prepared.observations, prepared.context), prepared.writer)
-            return result.kind === 'refusal' ? refusal(operation, result.message) : complete(operation, result)
-        }
-        if (operation === 'work-reverse') { const prepared = await composition.reversal(captured.workOrderId); const result = reverseWorkOrderSweep(prepared.contract, prepared.current, prepared.expected, prepared.context); if (result.kind === 'refusal') return refusal(operation, result.message); await prepared.persist(result); return complete(operation, result) }
-        if (operation === 'work-programme-mint') { const selected = await composition.programme(captured.programmeId, captured.itemKey); const pressure = assessWorkPressure(selected.capacity, captured.programmeId); if (pressure.kind === 'refusal') return refusal(operation, pressure.message)
-            if (!captured.candidate) return complete(operation, { programmeId: captured.programmeId, itemKey: selected.itemKey, candidateRequired: true })
-            const prepared = await selected.candidate(captured.candidate); const result = mintProgrammeWorkOrder({ ...prepared.input, pressure }); if (result.kind === 'refusal') return refusal(operation, result.message); if (result.kind === 'mint') await prepared.persist(result); return complete(operation, result) }
-        if (operation === 'work-metrics') { const metrics = collectWorkOrderMetrics(await composition.metrics()); return metrics.kind === 'refusal' ? refusal(operation, metrics.message) : complete(operation, { metrics, text: renderWorkOrderMetrics(metrics) }) }
-        if (operation.startsWith('browser-')) { const browserRequest = captured as Extract<WorkApplicationRequest, { operation: `browser-${string}` }>; const kind = operation === 'browser-screenshot' ? 'screenshot' : 'drive'; const result = await executeBrowserCommand(await composition.browser(kind, operation === 'browser-debugger', browserRequest.role)); if (result.kind === 'refusal') return refusal(operation, result.reason); if (result.kind === 'complete') { const gate = evaluateUiGate({ activating: kind, receipts: [result.receipt] }); if (gate.kind === 'refusal') return refusal(operation, gate.reason) } return complete(operation, result) }
-        if (operation === 'test-run') { const prepared = await composition.gate(captured); const run = await runGate(prepared.registry, prepared.request, prepared.dependencies); return run.satisfiesGate
-            ? complete(operation, run)
-            : unsatisfied(operation, run, `${run.verdict}: ${run.reasons.join('; ') || 'declared gate was not satisfied'}`) }
-        if (operation === 'work-review') { const prepared = await composition.review(captured.workOrderId); const result = await reviewWorkOrderWave(prepared.input, prepared.dependencies)
-            return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.reason) }
-        if (operation === 'work-grade') {
-            const prepared = await composition.grading(captured.workOrderId); const result = await completeWorkOrder(prepared.input, prepared.dependencies)
-            if (result.completed) return complete(operation, result)
-            if (!result.unmet || !result.grade) return refusal(operation, result.reason)
-            const grade = result.grade
-            return unsatisfied(operation, { workOrderId: grade.workOrderId, runId: grade.runId,
-                criteria: grade.criteria.map(({ criterion, outcome, reasons }) => ({ criterion, outcome, reasons })),
-                verification: grade.verification.map(({ criterion, argv, result: observed }) => ({ criterion, argv,
-                    ...(observed.kind === 'executed' ? { exitCode: observed.exitCode } : { unavailable: observed.reason }) })) }, result.reason)
-        }
-        return refusal(operation, 'Unsupported work application operation')
+        return await work(captured as WorkRequest, composition)
     } catch (error) { return refusal(operation, errorCause(error)) }
+}
+
+type WorkRequest = Exclude<WorkApplicationRequest, { operation: 'test-run' | `browser-${string}` }>
+
+async function work(request: WorkRequest, composition: WorkApplicationComposition): Promise<WorkApplicationOutcome> {
+    const { policy, store } = composition
+    const operation = request.operation
+    const observe = async (orderId: string): Promise<Observed> => {
+        const [parsed, record] = await Promise.all([composition.readOrder(orderId), store.read(orderId)])
+        if (!parsed.ok) return { id: orderId, problems: parsed.problems, ...(record ? { record } : {}) }
+        // A source that cannot be read leaves this order without a digest, and so stale, not the whole listing refused.
+        let sources: Readonly<Record<string, string>>
+        try { sources = await composition.sourceDigests(parsed.value) }
+        catch (error) {
+            if (!(error instanceof RefusalError)) throw error
+            return { id: orderId, order: parsed.value, problems: [`a cited source cannot be read: ${error.message}`], ...(record ? { record } : {}) }
+        }
+        const base = record?.accepted.base ?? await composition.heads()
+        return { id: orderId, order: parsed.value, problems: [], ...(record ? { record } : {}), digest: workOrderDigest(parsed.value, sources, base) }
+    }
+    const wip = async () => (await store.list()).filter(record => !TERMINAL.has(record.state)).length
+
+    // Who passed a gate: the agent; a person, after typing the digest of exactly what they were shown;
+    // or CI, which locally records the step as awaiting the `work verify` job and passes it there.
+    const gated = async (gate: WorkGate, decider: Decider, lines: readonly string[], verb: string,
+        apply: (by: Decider) => Promise<WorkApplicationOutcome>): Promise<WorkApplicationOutcome> => {
+        const decision = decide(decider, composition.env)
+        if (decision === 'proceed') return apply(decider === 'ci' ? 'ci' : 'agent')
+        if (decision === 'ci-only') return apply('ci')
+        const digest = createHash('sha256').update(JSON.stringify({ gate, lines })).digest('hex')
+        let used = false
+        return Object.freeze({ kind: 'human-needed', operation, continuation: Object.freeze({ digest,
+            prompt: [...lines.map(shown), `[work.gates] ${gate} = person. To ${verb} exactly this, type ${verb} ${digest}`].join('\n'),
+            decide: async (answer: string) => {
+                if (used) return refusal(operation, `this prompt was already answered; rerun work ${operation.slice('work-'.length)}`)
+                used = true
+                return answer.trim() === `${verb} ${digest}` ? apply('person') : refusal(operation, `Nothing was recorded: the person did not type ${verb} ${digest}`)
+            } }) })
+    }
+    const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
+        const row = await observe(orderId)
+        if (!row.record) throw new RefusalError(`${orderId} is not accepted yet; run npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId}`)
+        const state = displayState(row, composition.caps.attempts)
+        if (TERMINAL.has(row.record.state)) throw new RefusalError(`${orderId} is closed (${row.record.state})`)
+        if (state === 'stale') throw new RefusalError(`${orderId} changed since it was accepted${row.problems.length ? ` and does not parse: ${row.problems.join('; ')}` : ''}; `
+            + `run npx --no cockpit work accept --config <your cockpit.toml> --work-order ${orderId} to accept the change`)
+        if (state === 'blocked') throw new RefusalError(openQuestions(row.record).length
+            ? `${orderId} has open question ${openQuestions(row.record).join(', ')}; it is answered with work answer`
+            : `${orderId} reached the attempt cap (${composition.caps.attempts}); record the root cause with work note, then a person closes it with work signoff --partial or --abandon, or amends the contract`)
+        return { row, record: row.record, order: row.order! }
+    }
+    const runChecks = async (order: Pick<WorkOrder, 'criteria' | 'gates'>): Promise<readonly CheckResult[]> => {
+        const results: CheckResult[] = []
+        // Checks share the product's state, so they run in the order the contract lists them.
+        for (const criterion of order.criteria) if (criterion.check) results.push(await composition.runCheck(criterion.id, criterion.check))
+        for (const gate of order.gates) results.push(await composition.runCheck(`gate:${gate}`, { gate }))
+        return Object.freeze(results)
+    }
+
+    if (request.operation === 'work-status') {
+        const ids = request.workOrderId ? [request.workOrderId] : [...new Set([...await composition.orderIds(), ...(await store.list()).map(row => row.id)])].sort()
+        const rows = await Promise.all(ids.map(observe))
+        const closed = new Set(rows.filter(row => row.record?.state === 'done').map(row => row.id))
+        return complete(operation, {
+            grading: policy.grading, gates: policy.gates, wip: { open: await wip(), cap: composition.caps.wip },
+            orders: rows.map(row => ({
+                id: row.id, state: displayState(row, composition.caps.attempts),
+                ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by } : {},
+                ...row.record ? { attempts: row.record.attempts, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
+                    awaitingCi: pendingCi(row.record), ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
+                        criteria: row.record.grade.criteria, outOfScope: row.record.grade.outOfScope, ...row.record.grade.evaluator ? { evaluator: row.record.grade.evaluator } : {} } } : {} } : {},
+                ...row.order ? { waitingOn: row.order.depends_on.filter(dependency => !closed.has(dependency)) } : {},
+                ...row.problems.length ? { problems: row.problems } : {},
+            })),
+        })
+    }
+    if (request.operation === 'work-accept') {
+        const row = await observe(request.workOrderId)
+        if (!row.order) return refusal(operation, `workorders/${request.workOrderId}.md is not a work order: ${row.problems.join('; ')}`)
+        const order = row.order
+        const shownOrder = [`Objective: ${order.objective}`, `Scope: ${order.scope.join(', ')}`, ...order.criteria.map(criterion =>
+            `${criterion.id}: ${criterion.text}${criterion.check ? ` [check: ${JSON.stringify(criterion.check)}]` : ''}`),
+            ...order.gates.length ? [`Gates: ${order.gates.join(', ')}`] : [], ...order.non_goals.map(goal => `Non-goal: ${goal}`)]
+        if (!row.record) {
+            if (await wip() >= composition.caps.wip) return refusal(operation, `the work-in-progress cap is reached (${composition.caps.wip} accepted orders unfinished); close one with work signoff first`)
+            const sources = await composition.sourceDigests(order)
+            const base = await composition.heads()
+            const digest = workOrderDigest(order, sources, base)
+            return gated('accept', policy.gates.accept, [`Accept ${order.id} (digest ${digest})`, ...shownOrder], 'accept', async by => store.update(order.id, async existing => {
+                if (existing) throw new RefusalError(`${order.id} was accepted while this prompt was open; rerun work status`)
+                const record: WorkRecord = { format: 'cockpit-work-order/v1', id: order.id, state: 'accepted',
+                    accepted: { at: now(), by, digest, order, sources, base }, amendments: [], attempts: 0, notes: [] }
+                return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...by === 'ci' ? { awaitingCi: ['accept'] } : {} }) }
+            }))
+        }
+        const record = row.record
+        if (TERMINAL.has(record.state)) return refusal(operation, `${order.id} is closed (${record.state}); write a new order for further work`)
+        if (row.digest === record.accepted.digest) return refusal(operation, `${order.id} is already accepted and unchanged since`)
+        const weakened = criteriaWeakening(record.accepted.order, order)
+        // Removing or rewriting an accepted criterion moves the bar the work is held to, which an agent never certifies.
+        const decider: Decider = weakened.length && policy.gates.amend === 'agent' ? 'person' : policy.gates.amend
+        const sources = await composition.sourceDigests(order)
+        const digest = workOrderDigest(order, sources, record.accepted.base)
+        return gated('amend', decider, [`Amend ${order.id} (digest ${record.accepted.digest} -> ${digest})`,
+            ...weakened.length ? [`This weakens the accepted contract: ${weakened.join('; ')}`] : [], ...shownOrder], 'amend', async by => store.update(order.id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work accept`)
+            const next: WorkRecord = { ...existing, state: 'accepted', attempts: 0, checks: undefined, grade: undefined,
+                accepted: { at: now(), by, digest, order, sources, base: existing.accepted.base },
+                amendments: [...existing.amendments, { at: now(), by, from: existing.accepted.digest, to: digest, weakened: [...weakened] }] }
+            return { record: next, value: complete(operation, { id: order.id, state: 'accepted', by, digest, amended: true, weakened }) }
+        }))
+    }
+    if (request.operation === 'work-check') {
+        const { order, record } = await current(request.workOrderId)
+        const results = await runChecks(order)
+        if (!results.length) return refusal(operation, `${order.id} declares no check on any criterion and no gates; add a check, or close it under [work] grading = "self"`)
+        const passed = results.every(row => row.passed)
+        await store.update(order.id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while its checks ran; rerun work check`)
+            return { record: { ...existing, state: passed ? 'checked' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade: undefined,
+                checks: { at: now(), digest: record.accepted.digest, results: [...results] } }, value: undefined }
+        })
+        const value = { id: order.id, state: passed ? 'checked' : 'accepted', results }
+        return passed ? complete(operation, value) : unsatisfied(operation, value, `${results.filter(row => !row.passed).map(row => `${row.criterion}: ${row.outcome}`).join('; ')}`)
+    }
+    if (request.operation === 'work-note') {
+        await current(request.workOrderId).catch(async (error: unknown) => {
+            // A note on a stale or blocked order is how its cause gets recorded, so only a closed or unaccepted one refuses.
+            const record = await store.read(request.workOrderId)
+            if (!record || TERMINAL.has(record.state)) throw error
+        })
+        const index = await store.update(request.workOrderId, async existing => {
+            if (!existing) throw new RefusalError(`${request.workOrderId} is not accepted`)
+            return { record: { ...existing, notes: [...existing.notes, { at: now(), by: 'agent', kind: request.question ? 'question' : 'note', text: request.text }] }, value: existing.notes.length + 1 }
+        })
+        return complete(operation, { id: request.workOrderId, note: index, ...request.question ? { question: index, state: 'blocked' } : {} })
+    }
+    if (request.operation === 'work-answer') {
+        const record = await store.read(request.workOrderId)
+        if (!record || TERMINAL.has(record.state)) return refusal(operation, `${request.workOrderId} has no open record to answer on`)
+        const question = record.notes[request.question - 1]
+        if (!question || question.kind !== 'question' || !openQuestions(record).includes(request.question)) return refusal(operation, `note ${request.question} on ${request.workOrderId} is not an open question`)
+        return gated('answer', policy.gates.answer, [`Open question ${request.question} on ${request.workOrderId}:`, `  ${question.text}`, 'Answer to record:', `  ${request.text}`], 'answer',
+            async by => store.update(request.workOrderId, async existing => {
+                if (!existing || !openQuestions(existing).includes(request.question)) throw new RefusalError(`question ${request.question} was answered while this prompt was open`)
+                return { record: { ...existing, notes: [...existing.notes, { at: now(), by, kind: 'answer', text: request.text, answers: request.question }] },
+                    value: complete(operation, { id: request.workOrderId, answered: request.question, by }) }
+            }))
+    }
+    if (request.operation === 'work-grade') {
+        const { order, record } = await current(request.workOrderId)
+        if (policy.grading === 'self' ? !request.verdict || !request.note : request.verdict !== undefined || request.note !== undefined) {
+            return refusal(operation, policy.grading === 'self' ? '[work] grading = "self": pass --verdict met|unmet and --note <what you checked>'
+                : `--verdict and --note apply only under [work] grading = "self"; this cockpit grades with ${policy.grading}`)
+        }
+        let checks: readonly CheckResult[] = []
+        let verdicts: readonly Verdict[]
+        let outOfScope: readonly string[] = []
+        let evaluator: NonNullable<WorkRecord['grade']>['evaluator']
+        if (policy.grading === 'self') {
+            verdicts = order.criteria.map(criterion => ({ id: criterion.id, verdict: request.verdict!, note: request.note! }))
+        } else {
+            const unchecked = order.criteria.filter(criterion => !criterion.check).map(criterion => criterion.id)
+            if (policy.grading === 'checks' && unchecked.length) return refusal(operation, `[work] grading = "checks" closes an order only when cockpit ran a check for every criterion; ${unchecked.join(', ')} declare none`)
+            checks = await runChecks(order)
+            const changes = await composition.changes(record.accepted.base)
+            outOfScope = changes.map(change => change.path).filter(path => !scopeMatches(order.scope, path))
+            if (policy.grading === 'checks') {
+                verdicts = order.criteria.map(criterion => { const result = checks.find(row => row.criterion === criterion.id)!
+                    return { id: criterion.id, verdict: result.passed ? 'met' : 'unmet', note: `cockpit ran the check: ${result.outcome}` } })
+            } else {
+                const graded = await composition.evaluate({ objective: order.objective, criteria: order.criteria, nonGoals: order.non_goals, scope: order.scope, checks, changes, outOfScope })
+                if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
+                verdicts = graded.criteria
+                evaluator = { tool: graded.evaluator.tool, fallbacks: graded.evaluator.fallbacks.map(row => ({ ...row })) }
+            }
+        }
+        const passed = verdicts.every(row => row.verdict === 'met') && checks.every(row => row.passed) && outOfScope.length === 0
+        const grade: NonNullable<WorkRecord['grade']> = { at: now(), digest: record.accepted.digest, mode: policy.grading, passed,
+            criteria: [...verdicts], outOfScope: [...outOfScope], ...evaluator ? { evaluator } : {}, ...request.note ? { note: request.note } : {} }
+        await store.update(order.id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
+            return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (passed ? 0 : 1), grade,
+                ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }
+        })
+        const value = { id: order.id, state: passed ? 'graded' : 'accepted', mode: policy.grading, criteria: verdicts, checks, outOfScope, ...evaluator ? { evaluator } : {} }
+        if (passed) return complete(operation, value)
+        return unsatisfied(operation, value, [...verdicts.filter(row => row.verdict !== 'met').map(row => `${row.id} ${row.verdict}: ${row.note}`),
+            ...checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`),
+            ...outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []].join('; '))
+    }
+    if (request.operation === 'work-signoff') {
+        const record = await store.read(request.workOrderId)
+        if (!record) return refusal(operation, `${request.workOrderId} is not accepted`)
+        if (TERMINAL.has(record.state)) return refusal(operation, `${request.workOrderId} is already closed (${record.state})`)
+        let how: NonNullable<WorkRecord['closure']>['how']
+        if (request.close === 'done') {
+            const { order } = await current(request.workOrderId)
+            if (record.state !== 'graded' || !record.grade?.passed || record.grade.digest !== record.accepted.digest) {
+                return refusal(operation, `${order.id} is ${record.state}, not graded; run npx --no cockpit work grade --config <your cockpit.toml> --work-order ${order.id}`)
+            }
+            const open = await Promise.all(order.depends_on.map(async dependency => (await store.read(dependency))?.state === 'done' ? undefined : dependency))
+            if (open.some(Boolean)) return refusal(operation, `${order.id} depends on ${open.filter(Boolean).join(', ')}, which ${open.filter(Boolean).length === 1 ? 'is' : 'are'} not done`)
+            how = CLOSURE[record.grade.mode]
+        } else {
+            if (!request.note) return refusal(operation, `closing ${request.workOrderId} as ${request.close} needs --note saying what was and was not done`)
+            how = request.close
+        }
+        return gated('signoff', policy.gates.signoff, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
+            ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : []], 'signoff', async by => store.update(request.workOrderId, async existing => {
+            if (!existing || existing.state !== record.state || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${request.workOrderId} changed while this prompt was open`)
+            const state: WorkRecord['state'] = request.close
+            return { record: { ...existing, state, closure: { at: now(), by, how, ...request.note ? { note: request.note } : {} } },
+                value: complete(operation, { id: request.workOrderId, state, closedAs: how, by }) }
+        }))
+    }
+    if (request.operation === 'work-recover') return complete(operation, await store.recover(request.workOrderId, request.apply))
+    if (request.operation === 'work-verify') {
+        const problems: string[] = []
+        const awaiting: string[] = []
+        for (const record of await store.list()) {
+            const row = await observe(record.id)
+            if (!TERMINAL.has(record.state) && row.digest !== record.accepted.digest) problems.push(`${record.id} changed since it was accepted; accept the change or revert it`)
+            if (record.state === 'done' && (!record.grade?.passed || record.grade.digest !== record.accepted.digest || !record.closure)) problems.push(`${record.id} is done without a passing grade of its accepted contract`)
+            awaiting.push(...pendingCi(record).map(step => `${record.id} ${step}`))
+        }
+        const ci = runningInCi(composition.env)
+        const value = { ci, problems, ...ci ? { confirmed: awaiting } : { awaitingCi: awaiting } }
+        return problems.length ? unsatisfied(operation, value, problems.join('; ')) : complete(operation, value)
+    }
+    // grade-criteria: the quick path, an independent grade of uncommitted work with no order and no record.
+    const parsed = await composition.readCriteriaFile(request.criteriaFile)
+    if (!parsed.ok) return refusal(operation, `${request.criteriaFile} is not a criteria file: ${parsed.problems.join('; ')}`)
+    const file = parsed.value
+    const checks = await runChecks(file)
+    const changes = await composition.changes(await composition.heads())
+    const outOfScope = file.scope.length ? changes.map(change => change.path).filter(path => !scopeMatches(file.scope, path)) : []
+    const subject: GradingSubject = { ...file.objective ? { objective: file.objective } : {}, criteria: file.criteria, nonGoals: [], scope: file.scope, checks, changes, outOfScope }
+    const graded = await composition.evaluate(subject)
+    if ('refusal' in graded) return refusal(operation, `${graded.refusal.code}: ${graded.refusal.message}; ${graded.refusal.fix}`)
+    const passed = graded.criteria.every(row => row.verdict === 'met') && checks.every(row => row.passed) && outOfScope.length === 0
+    const value = { criteria: graded.criteria, checks, outOfScope, evaluator: graded.evaluator }
+    return passed ? complete(operation, value) : unsatisfied(operation, value, graded.criteria.filter(row => row.verdict !== 'met').map(row => `${row.id} ${row.verdict}: ${row.note}`)
+        .concat(checks.filter(row => !row.passed).map(row => `check ${row.criterion}: ${row.outcome}`), outOfScope.length ? [`changed outside scope: ${outOfScope.join(', ')}`] : []).join('; '))
 }

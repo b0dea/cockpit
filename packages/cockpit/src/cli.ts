@@ -114,7 +114,7 @@ import {
     type SurfaceSelftestExecutableCandidate,
     type SurfaceSelftestProbeSpecificationsCandidate,
 } from './environment/selftest-application.js'
-import { runResetOperatorApplication } from './environment/operator-application.js'
+import { loadOperatorPolicy, runResetOperatorApplication } from './environment/operator-application.js'
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 
@@ -215,9 +215,11 @@ interface OperatorWorkBinding { readonly digest: string; readonly prompt: string
 export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
     beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
+    // The autonomy policy sync and reset decide by, read from cockpit.toml and the recorded policy.
+    loadPolicy?: typeof loadOperatorPolicy
 }>
 
-type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorWorkApplication'>
+type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorWorkApplication' | 'loadPolicy'>
 
 type HandlerRequest = {
     [Identifier in HandlerIdentifier]: {
@@ -472,22 +474,32 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
 }
 
 // Each return is a literal, so the diagnostic inventory captures the fix beside its code.
-function unsatisfiedWorkDiagnostic(operation: 'test-run' | 'work-grade' | 'work-execute', message: string): Diagnostic {
+function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
     if (operation === 'test-run') return { severity: 'error', message,
         code: 'TEST_GATE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.TEST_GATE_UNSATISFIED,
         fix: 'the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged' }
-    if (operation === 'work-grade') return { severity: 'error', message,
-        code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
-        fix: 'read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
+    if (operation === 'work-check') return { severity: 'error', message,
+        code: 'WORK_CHECK_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_CHECK_FAILED,
+        fix: 'read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun npx --no cockpit work check --config <your cockpit.toml> --work-order <id>' }
+    if (operation === 'work-verify') return { severity: 'error', message,
+        code: 'WORK_VERIFY_FAILED' satisfies typeof ENVIRONMENT_CODES.WORK_VERIFY_FAILED,
+        fix: 'for an order changed since acceptance, run npx --no cockpit work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade' }
     return { severity: 'error', message,
-        code: 'WORK_EXECUTION_PAUSED' satisfies typeof ENVIRONMENT_CODES.WORK_EXECUTION_PAUSED,
-        fix: 'read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work execute --config <your cockpit.toml> --work-order <id> --approach <text>' }
+        code: 'WORK_GRADE_UNSATISFIED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_UNSATISFIED,
+        fix: 'read result.criteria, result.checks and result.outOfScope: fix the product for an unmet or unclear criterion, make a failed check pass, move or revert a change outside scope, then grade again with npx --no cockpit work grade --config <your cockpit.toml> --work-order <id>' }
+}
+
+// A person gate binds what the person reads to the digest they type, so it never completes for an agent.
+function personRequired(handler: 'work-accept' | 'work-answer' | 'work-signoff', prompt: string): CommandOutcome {
+    return { artifact: null, destination: null, result: { prompt }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is a person's step under [work.gates] in cockpit.toml, and this run has no person at a terminal`,
+        code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
+        fix: 'stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them' }] }
 }
 
 function workCommandOutcome(outcome: WorkApplicationOutcome): CommandOutcome {
     if (outcome.kind === 'complete') return { status: 0, result: outcome.value, diagnostics: [] }
     if (outcome.kind === 'unsatisfied') return { status: 2, result: outcome.value, diagnostics: [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] }
-    return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'Work-order acceptance requires an interactive operator continuation')
+    return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'this step needs a person at a terminal')
 }
 
 async function configuredWorkApplication(input: WorkCommandInput, runtime: CliRuntime): Promise<WorkApplicationOutcome> {
@@ -865,47 +877,35 @@ async function decodeRequest(
         const text = (key: string): string | undefined => typeof values[key] === 'string' ? values[key] as string : undefined
         const workOrderId = text('work-order')
         let request: WorkApplicationRequest
-        if (['work-accept', 'work-renew', 'work-grade', 'work-review', 'work-record', 'work-answer', 'work-reverse', 'work-execute'].includes(handler) && !workOrderId) {
+        if (handler.startsWith('work-') && handler !== 'work-status' && handler !== 'work-verify' && !workOrderId) {
             return usageOutcome('CLI_USAGE_INVALID', 'provide --work-order <id>', '--work-order')
         }
-        if (handler === 'work-intake') {
-            const intent = text('intent'), candidate = text('candidate')
-            if (values.intent !== undefined) {
-                if (!intent || values['work-order'] !== undefined || values.candidate !== undefined && !candidate) {
-                    return usageOutcome('CLI_USAGE_INVALID', '--intent requires a relative path, excludes --work-order and permits one relative --candidate')
-                }
-                request = { operation: handler, intent, ...(candidate ? { candidate } : {}) }
-            } else {
-                if (!workOrderId || values.candidate !== undefined) return usageOutcome('CLI_USAGE_INVALID', 'provide --work-order <id> or --intent <relative-file> [--candidate <relative-file>]')
-                request = { operation: handler, workOrderId }
-            }
-        } else if (handler === 'work-record' || handler === 'work-answer') {
-            const eventFile = text('event-file')
-            if (!eventFile) return usageOutcome('CLI_USAGE_INVALID', 'provide --event-file <relative-file>', '--event-file')
-            request = { operation: handler, workOrderId: workOrderId!, eventFile }
-        } else if (handler === 'work-accept' || handler === 'work-renew' || handler === 'work-grade' || handler === 'work-review' || handler === 'work-reverse') {
-            request = { operation: handler, workOrderId: workOrderId! }
-        } else if (handler === 'work-status') {
+        if (handler === 'work-status') {
             if (values['work-order'] !== undefined && !workOrderId) return usageOutcome('CLI_USAGE_INVALID', '--work-order requires a bounded identifier')
             request = { operation: handler, ...(workOrderId ? { workOrderId } : {}) }
-        } else if (handler === 'work-resume' || handler === 'work-metrics') request = { operation: handler }
-        else if (handler === 'work-recover') {
-            const lockId = text('lock')
-            if (!lockId) return usageOutcome('CLI_USAGE_INVALID', 'provide --lock <lock-id>', '--lock')
-            request = { operation: handler, lockId, apply: values.apply === true }
-        }
-        else if (handler === 'work-execute') {
-            const approach = text('approach')
-            if (!approach) return usageOutcome('CLI_USAGE_INVALID', 'provide --approach <description>', '--approach')
-            request = { operation: handler, workOrderId: workOrderId!, approach }
-        } else if (handler === 'work-sweep') request = { operation: handler, apply: values.apply === true }
-        else if (handler === 'work-programme-mint') {
-            const programmeId = text('programme'), itemKey = text('item')
-            const candidate = text('candidate')
-            if (!programmeId || values.item !== undefined && !itemKey || values.candidate !== undefined && !candidate) {
-                return usageOutcome('CLI_USAGE_INVALID', 'provide --programme <id>, an optional --item <key> and an optional relative --candidate')
-            }
-            request = { operation: handler, programmeId, ...(itemKey ? { itemKey } : {}), ...(candidate ? { candidate } : {}) }
+        } else if (handler === 'work-accept' || handler === 'work-check') request = { operation: handler, workOrderId: workOrderId! }
+        else if (handler === 'work-verify') request = { operation: handler }
+        else if (handler === 'work-recover') request = { operation: handler, workOrderId: workOrderId!, apply: values.apply === true }
+        else if (handler === 'work-note') {
+            const note = text('text')
+            if (!note) return usageOutcome('CLI_USAGE_INVALID', 'provide --text <note>', '--text')
+            request = { operation: handler, workOrderId: workOrderId!, text: note, question: values.ask === true }
+        } else if (handler === 'work-answer') {
+            const answer = text('text'), question = Number(text('question'))
+            if (!answer || !Number.isSafeInteger(question) || question < 1) return usageOutcome('CLI_USAGE_INVALID', 'provide --question <number> and --text <answer>')
+            request = { operation: handler, workOrderId: workOrderId!, question, text: answer }
+        } else if (handler === 'work-grade') {
+            const verdict = text('verdict'), note = text('note')
+            if (verdict !== undefined && verdict !== 'met' && verdict !== 'unmet') return usageOutcome('CLI_USAGE_INVALID', '--verdict is met or unmet', '--verdict')
+            request = { operation: handler, workOrderId: workOrderId!, ...(verdict ? { verdict } : {}), ...(note ? { note } : {}) }
+        } else if (handler === 'work-signoff') {
+            if (values.partial === true && values.abandon === true) return usageOutcome('CLI_USAGE_INVALID', 'pass at most one of --partial and --abandon')
+            const note = text('note')
+            request = { operation: handler, workOrderId: workOrderId!, close: values.partial === true ? 'partial' : values.abandon === true ? 'abandoned' : 'done', ...(note ? { note } : {}) }
+        } else if (handler === 'grade-criteria') {
+            const criteriaFile = text('criteria')
+            if (!criteriaFile) return usageOutcome('CLI_USAGE_INVALID', 'provide --criteria <relative-file>', '--criteria')
+            request = { operation: handler, criteriaFile }
         } else if (handler === 'test-run') {
             const gate = text('gate'), mode = values.mode
             if (!gate || mode !== 'canonical' && mode !== 'full' && mode !== 'staged') return usageOutcome('CLI_USAGE_INVALID', 'provide --gate and --mode canonical|full|staged')
@@ -920,7 +920,7 @@ async function decodeRequest(
         } else {
             const role = text('role')
             if (values.role !== undefined && !role) return usageOutcome('CLI_USAGE_INVALID', '--role requires a bounded identifier')
-            request = { operation: handler, ...(role ? { role } : {}) }
+            request = { operation: handler as 'browser-drive' | 'browser-screenshot' | 'browser-debugger', ...(role ? { role } : {}) }
         }
         const { captureWorkApplicationRequest } = await import('./work-orders/application.js')
         const captured = captureWorkApplicationRequest(request)
@@ -1177,7 +1177,7 @@ async function decodeRequest(
     }
 }
 
-type InvocationOptions = { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined;
+type InvocationOptions = { readonly interactive: boolean; readonly apply?: boolean; readonly json: boolean; readonly ci: string | undefined;
     readonly env: Readonly<Record<string, string | undefined>> }
 
 // `sibling` nests its arguments under the operation it runs; every other configured command carries
@@ -1218,14 +1218,12 @@ async function dispatchHandler(
         request.handler,
     )
     if (isWorkHandler(request.handler) && 'request' in request.input) {
-        if (request.handler === 'work-accept' || request.handler === 'work-renew' || request.handler === 'work-answer') {
-            const terminal = io.confirmWorkOrder !== undefined || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true
-            if (!options.interactive || options.json || options.ci && options.ci.length > 0 || !terminal) {
-                return usageOutcome('WORK_OPERATOR_REQUIRED', `${request.handler === 'work-answer' ? 'Answering' : 'Acceptance'} requires --interactive in a human terminal outside CI and JSON modes`)
-            }
+        if (request.handler === 'work-accept' || request.handler === 'work-answer' || request.handler === 'work-signoff') {
             const opened = await operators.beginOperatorWorkApplication?.(request.input)
             if (!opened) return unavailable()
             if (!('decide' in opened)) return opened
+            const terminal = io.confirmWorkOrder !== undefined || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true
+            if (!options.interactive || options.json || options.ci && options.ci.length > 0 || !terminal) return personRequired(request.handler, opened.prompt)
             let answer: string | undefined
             if (io.confirmWorkOrder) answer = await io.confirmWorkOrder({ digest: opened.digest, prompt: opened.prompt })
             else if (io.stdin) {
@@ -1266,7 +1264,7 @@ async function dispatchHandler(
         diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))
     if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
-    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()))
+    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
     if (request.handler === 'selftest') {
         const selftest = handlers.selftest ?? (async () => unavailable())
@@ -1282,6 +1280,7 @@ async function dispatchHandler(
         ...options,
         terminal: io.confirmReset !== undefined || io.stdin?.isTTY === true,
     }, {
+        policy: operators.loadPolicy ?? loadOperatorPolicy,
         preview: handlers.reset ?? (async () => unavailable()),
         begin: operators.beginOperatorReset ?? (async () => operatorRefusal('interactive reset is unavailable')),
         confirm: (preview) => confirmOperatorReset(io, preview),
@@ -1508,6 +1507,7 @@ export async function runCli(
                 try {
                     outcome = await invokeHandler(decoded, handlers, operators, {
                         interactive: parsed.values.interactive === true,
+                        apply: parsed.values.apply === true,
                         json: parsed.values.json === true,
                         ci: (runtime.env ?? process.env).CI,
                         env: runtime.env ?? process.env,

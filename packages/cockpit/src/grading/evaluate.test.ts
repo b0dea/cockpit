@@ -80,7 +80,7 @@ async function machine(installed: readonly EvaluatorTool[]) {
     const directories = [tools]
     const request = async (evaluators: readonly EvaluatorTool[], document: Record<string, unknown>, overrides: Partial<EvaluationRequest> = {}): Promise<EvaluationRequest> => ({
         chain: await locateEvaluators(evaluators, directories), role: 'grader', document: { answer: { verdict: 'pass' }, ...document }, schema, repository,
-        timeoutMs: 30_000, timeoutField: 'workorders.evaluator_timeout_seconds', executableDirectories: directories,
+        timeoutMs: 30_000, timeoutField: 'work.evaluator_timeout_seconds', executableDirectories: directories,
         environment: { HOME: '/synthetic-home', USER: 'synthetic', CODEX_HOME: '/synthetic-home/.codex', XDG_DATA_HOME: '/synthetic-home/.data', CLAUDE_CODE_SESSION_ID: 'worker-session', SECRET: 'x' },
         ...overrides,
     })
@@ -166,6 +166,6 @@ describe('independent evaluation', () => {
     it('stops an evaluator that keeps retrying at its timeout and names the last error it reported', async () => {
         const host = await machine(['opencode'])
         await expect(evaluate(await host.request(['opencode'], { mode: 'rate-limited' }, { timeoutMs: 1_000 }))).resolves.toMatchObject({ kind: 'refusal', code: 'EVALUATOR_RUN_FAILED',
-            message: 'OpenCode timed out after 1 seconds after reporting: AI_APICallError: Free usage limit reached; raise workorders.evaluator_timeout_seconds' })
+            message: 'OpenCode timed out after 1 seconds after reporting: AI_APICallError: Free usage limit reached; raise work.evaluator_timeout_seconds' })
     })
 })

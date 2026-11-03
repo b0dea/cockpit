@@ -460,7 +460,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(malformed.stdout).toBe('')
         expect(malformed.stderr).toContain('REGISTRY_ROW_SKIPPED')
 
-        for (const command of ['sync', 'check', 'selftest', 'work intake', 'work status', 'work accept', 'work renew', 'work resume', 'work execute', 'work record', 'work review', 'work sweep', 'work reverse', 'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot', 'browser debugger', 'test-run']) {
+        for (const command of ['sync', 'check', 'selftest', 'work status', 'work accept', 'work check', 'work note', 'work answer', 'work grade', 'work signoff', 'work recover', 'work verify', 'grade', 'browser drive', 'browser screenshot', 'browser debugger', 'test-run']) {
             const invalid = spawnSync(process.execPath, [launcher, ...command.split(' '), '--json'], options)
             expect(invalid.status).toBe(2)
             expect(invalid.stderr).toBe('')

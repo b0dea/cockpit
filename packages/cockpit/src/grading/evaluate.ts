@@ -234,7 +234,7 @@ export function evaluatorUnavailable(message: string) {
     return Object.freeze({
         code: 'EVALUATOR_UNAVAILABLE' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
         message,
-        fix: 'install and sign in to an agent tool workorders.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have, then run npx --no cockpit doctor --config <your cockpit.toml>',
+        fix: 'install and sign in to an agent tool work.evaluators lists (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or list one you have, then run npx --no cockpit doctor --config <your cockpit.toml>',
     })
 }
 
@@ -371,13 +371,13 @@ export async function evaluate(request: EvaluationRequest): Promise<EvaluationRe
         if (result.kind === 'invalid') {
             return Object.freeze({ kind: 'refusal', attempts: Object.freeze([...attempts, Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: result.message })]),
                 code: 'EVALUATOR_ANSWER_INVALID' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_ANSWER_INVALID, message: result.message,
-                fix: 'rerun the command; if the answer is refused again, list another evaluator first in workorders.evaluators' })
+                fix: 'rerun the command; if the answer is refused again, list another evaluator first in work.evaluators' })
         }
         attempts.push(Object.freeze({ tool, code: ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED, message: result.message }))
     }
-    const message = attempts.map(row => row.message).join('; then ') || 'workorders.evaluators lists no evaluator'
+    const message = attempts.map(row => row.message).join('; then ') || 'work.evaluators lists no evaluator'
     if (attempts.every(row => row.code === ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE)) return Object.freeze({ kind: 'refusal', attempts: Object.freeze(attempts), ...evaluatorUnavailable(message) })
     return Object.freeze({ kind: 'refusal', attempts: Object.freeze(attempts), message,
         code: 'EVALUATOR_RUN_FAILED' as const satisfies typeof ENVIRONMENT_CODES.EVALUATOR_RUN_FAILED,
-        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, or raise workorders.evaluator_timeout_seconds, then rerun the command' })
+        fix: 'read the message for the cause each evaluator reported: sign in to it, wait out its usage limit, or raise work.evaluator_timeout_seconds, then rerun the command' })
 }

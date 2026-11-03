@@ -45,6 +45,7 @@ import {
     coreSurfaceDeclarations,
     shippedSkillSources,
 } from '../surfaces/core-declarations.js'
+import { effectivePolicy } from '../autonomy.js'
 import { collectMcpDeclarations, hasTargetMcpServers, mcpApprovalDigest, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration, type McpDiagnostic } from '../surfaces/mcp.js'
 import {
     renderSharedPostimage,
@@ -2110,14 +2111,15 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 // The cockpit commands the shipped skills tell an agent to run and the guard admits without a
 // prompt. Claude Code allows nothing in its default mode without a rule, so a headless session was
 // denied even `test-run` from its own skill. A rule only lets Claude run the command without asking:
-// the guard hook still runs first, and its ask or deny wins over the rule. Person-only commands
-// (`sync`, `work accept`, `work answer` and the rest that prompt) and the destructive `down` are left
-// out so they keep asking. Measured with Claude Code 2.1.316 on 2026-11-02 beside an unruled control: `Bash(<prefix> *)`
+// the guard hook still runs first, and its ask or deny wins over the rule, so a command whose
+// decider the [work.gates] or [autonomy] policy makes a person still asks. Commands that are always
+// a person's (`init`, `sibling add`) and the destructive `down` are left out so they keep asking. Measured with Claude Code 2.1.316 on 2026-11-02 beside an unruled control: `Bash(<prefix> *)`
 // ran a matching command headless, the control and a chain with an unmatched part were denied, a hook
 // `ask` denied a matching command, and Claude ignores these rules until a person trusts the workspace.
 const AGENT_COCKPIT_COMMANDS = [
-    'check *', 'doctor *', 'preflight *', 'logs *', 'sync * --dry-run', 'up *', 'sleep *', 'runtime measure *', 'test-run *',
-    'work status *', 'work resume *', 'work intake *', 'work record *', 'work execute *', 'work review *', 'work grade *', 'work sweep *',
+    'check *', 'doctor *', 'preflight *', 'logs *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'runtime measure *', 'test-run *',
+    'work status *', 'work accept *', 'work check *', 'work note *', 'work answer *', 'work grade *', 'work signoff *', 'work recover *',
+    'work verify *', 'grade *',
     'browser drive *', 'browser screenshot *',
 ] as const
 
@@ -2631,7 +2633,12 @@ async function prepareSurfaces(
         declarations.push(...parsed.declarations)
         evidence.push(Object.freeze({ kind: 'mcp' as const, root, path: source.path, sha256: read.sha256, identity: sourceIdentity(read.identity) }))
     }
-    let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved: config.mcp.approved, targets: tools })
+    // Under [autonomy] mcp_approve = "agent" every declared server is approved as declared now; under
+    // "person" only the digests a person recorded in [mcp.approved] are, and the guard pins that table.
+    const approved = effectivePolicy(config).autonomy.mcp_approve === 'agent'
+        ? Object.freeze({ ...config.mcp.approved, ...Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)])) })
+        : config.mcp.approved
+    let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved, targets: tools })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
     const unapprovedMcpServers = Object.freeze(mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
         .map(row => Object.freeze({ name: row.server!, sha256: row.sha256!, sources: Object.freeze((row.sources ?? []).map(source =>
@@ -2734,7 +2741,7 @@ async function prepareSurfaces(
                 declarations: declarations.flatMap(row => row.name !== 'playwright' ? [row]
                     : browserTargets.size ? [browserMcp] : []),
                 // The leased endpoint rewrites an approved argument, so the bound server carries its own digest.
-                approved: { ...Object.fromEntries(Object.entries(config.mcp.approved).filter(([name]) => name !== 'playwright')),
+                approved: { ...Object.fromEntries(Object.entries(approved).filter(([name]) => name !== 'playwright')),
                     ...(browserTargets.size > 0 ? { playwright: mcpApprovalDigest(browserMcp, prepared.root) } : {}) },
                 targets: tools,
             })
@@ -4009,15 +4016,17 @@ async function checkCanonicalGeneratedEnvironment(
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
     if (comparison.kind !== 'complete') return surfacePlanRefusal(prepared, comparison.diagnostic)
     const drift = comparison.actions.map(action => action.path)
-    // Removing a formerly owned path needs a person's approval of its exact digest, which plain
-    // sync refuses to give itself; send the reader to the one command that can.
+    // Removing a formerly owned path is plain sync's to do only where [autonomy] stale_delete is agent;
+    // otherwise it needs a person's approval of its exact digest, so send the reader to the one command that can.
     const stale = comparison.actions.find(action => action.kind === 'remove')
-    if (stale) return refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
-        'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
+    if (stale) return prepared.workEnvironment.policy.autonomy.stale_delete === 'agent'
+        ? refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
+        : refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
+            'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
     const staleGuides = drift.includes('AGENTS.md') ? staleSiblingGuides(prepared, surfaceState.observed) : []
     if (staleGuides.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT',
         `AGENTS.md holds an out-of-date copy of ${staleGuides.join(', ')}: the guide changed in its sibling, or the declared guides changed, since the last sync`,
-        'AGENTS.md', 'run npx --no cockpit sync --config <your cockpit.toml>, then review and commit AGENTS.md')
+        'AGENTS.md', 'run npx --no cockpit sync --config <your cockpit.toml>, then commit AGENTS.md together with the guide change')
     if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run npx --no cockpit sync --config <your cockpit.toml>')
     if (ownership.bytes !== encodeOwnershipManifest(prepared).bytes) return refuse(
         'GENERATED_OWNERSHIP_DRIFT', 'generated ownership metadata differs from the current canonical manifest', OWNERSHIP_PATH,

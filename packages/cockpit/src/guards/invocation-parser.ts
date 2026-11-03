@@ -26,6 +26,11 @@ export interface ParsedInvocation {
      */
     readonly expandsStatus?: true
 }
+/** The new text a file tool call carries, as the payload spells it, kept so the policy pin can apply it. */
+export type GuardFileContent =
+    | Readonly<{ kind: 'replace'; path: string; old: string; new: string; all: boolean }>
+    | Readonly<{ kind: 'write'; path: string; content: string }>
+    | Readonly<{ kind: 'patch'; text: string }>
 export type GuardParseResult = {
     readonly status: 'parsed'
     readonly tool: 'Bash' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch'
@@ -34,6 +39,7 @@ export type GuardParseResult = {
     readonly paths: readonly string[]
     /** Targets deleted, moved away from or emptied, as opposed to edited in place. */
     readonly removed: readonly string[]
+    readonly content?: GuardFileContent
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -482,6 +488,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
         let paths: string[] = []
         let removed: string[] = []
         let invocations: ParsedInvocation[] = []
+        let content: GuardFileContent | undefined
         if (tool === 'Bash' || tool === 'apply_patch') {
             // Native Bash calls carry execution options beside the command; they are type-checked
             // and otherwise ignored, because the command text alone decides what runs.
@@ -492,7 +499,10 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             if (!keys(fields, ['command'], Object.keys(options)) || !text(fields.command) || !fields.command
                 || Object.entries(options).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
             if (tool === 'Bash') invocations = parseShell(fields.command, cwd)
-            else ({ paths, removed } = patchPaths(fields.command))
+            else {
+                ({ paths, removed } = patchPaths(fields.command))
+                content = Object.freeze({ kind: 'patch', text: fields.command })
+            }
         } else if (tool === 'NotebookEdit') {
             if (!keys(fields, ['notebook_path', 'new_source'], ['cell_id', 'cell_type', 'edit_mode'])
                 || !text(fields.notebook_path) || !posix.isAbsolute(fields.notebook_path)
@@ -507,6 +517,11 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             paths = [path(fields.file_path)]
             // Writing nothing empties the file, which is the shell's `: > file`.
             if (tool === 'Write' && fields.content === '') removed = [...paths]
+            // OpenCode's plugin passes new text only for the configuration file, so a payload may lack it.
+            if (tool === 'Write' && typeof fields.content === 'string') content = Object.freeze({ kind: 'write', path: paths[0]!, content: fields.content })
+            if (tool === 'Edit' && typeof fields.old_string === 'string' && typeof fields.new_string === 'string') {
+                content = Object.freeze({ kind: 'replace', path: paths[0]!, old: fields.old_string, new: fields.new_string, all: fields.replace_all === true })
+            }
         } else refuse('Unsupported guard tool.')
         if (paths.length + invocations.reduce((sum, item) => sum + item.redirects.length, 0) > GUARD_INPUT_LIMITS.paths) refuse('Guard path limit exceeded.')
         for (const item of invocations) {
@@ -517,7 +532,8 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             Object.freeze(item.redirects)
             Object.freeze(item)
         }
-        const result = Object.freeze({ status: 'parsed' as const, tool, cwd, paths: Object.freeze(paths), removed: Object.freeze(removed), invocations: Object.freeze(invocations) })
+        const result = Object.freeze({ status: 'parsed' as const, tool, cwd, paths: Object.freeze(paths), removed: Object.freeze(removed), invocations: Object.freeze(invocations),
+            ...content ? { content } : {} })
         parsedInputs.add(result)
         return result
     } catch (error) {

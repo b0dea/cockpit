@@ -31,4 +31,6 @@ yourself has nobody left to check it, so hand it to whoever owns the repository.
 5. **Never edit code.** Report findings in order of user impact and stop. A headed debugger is an explicit
    separate request, and it gives no acceptance result.
 
+If `check` or the session-start report names drift, follow *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, first.
+
 {{browser}}

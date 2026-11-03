@@ -293,6 +293,7 @@ describe('guard policy construction', () => {
                 { action: 'read-file', segments: ['.cockpit', 'guards'], name: 'bash-guard.sh', maxBytes: 65_536 },
                 { action: 'read-file', segments: ['.claude'], name: 'settings.json', maxBytes: 65_536 },
                 { action: 'read-file', segments: ['.cockpit', 'local'], name: 'guard-identity', maxBytes: 65_536 },
+                { action: 'read-file', segments: [], name: 'cockpit.toml', maxBytes: 1_048_576 },
             ] })
         }
         const module = steps.filter(({ step }) => step.cwd !== root)

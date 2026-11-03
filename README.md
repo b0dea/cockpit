@@ -135,7 +135,7 @@ To set cockpit up for your own product, start at [Getting started](docs/getting-
 | Generate and verify | `sync`, `check`, `selftest` |
 | Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
 | Diagnose | `doctor` |
-| Test and grade | `test-run`, `work`, `browser` |
+| Test and grade | `test-run`, `work`, `grade`, `browser` |
 
 `cockpit --help` lists the same stages; `cockpit work --help` and `cockpit browser --help` list
 their subcommands. Every command and flag is in the [CLI reference](docs/cli-reference.md).
@@ -156,11 +156,11 @@ their subcommands. Every command and flag is in the [CLI reference](docs/cli-ref
 - **macOS and Linux.** Native Windows stops at startup with `CLI_PLATFORM_UNSUPPORTED`.
 - **Running the stack needs Docker Compose** and a measured local runtime. Generation and `check`
   work without Docker; see [which commands need a runtime](docs/environment.md#measure-the-container-runtime).
-- **Work orders need one headless agent tool.** `work review` and `work grade` run the independent
-  reviewers and grader in the first of the Codex CLI, Claude Code and OpenCode that
-  `workorders.evaluators` lists and that can run, so one of them must be on `PATH` and signed in,
+- **Independent grading needs one headless agent tool.** `work grade` and `cockpit grade` run the
+  independent grader in the first of the Codex CLI, Claude Code and OpenCode that
+  `work.evaluators` lists and that can run, so one of them must be on `PATH` and signed in,
   whichever tool did the work; see
-  [Verify and grade independently](docs/work-and-browser.md#verify-and-grade-independently).
+  [The independent evaluator](docs/work-and-browser.md#the-independent-evaluator).
 - **Not a sandbox.** Guards, ignore rules and file permissions stop mistakes, not malicious code
   running as your user.
 - **One maintainer.** See [Governance](CONTRIBUTING.md#governance).

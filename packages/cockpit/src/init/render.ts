@@ -63,13 +63,15 @@ function renderAttributions(attributions: readonly Attribution[]): string {
 function draftConfig(model: DocumentModel): Record<string, unknown> {
     // Written, the guard hosts read as a decision that none exists, even as the schema default [].
     const { hosted_db_hosts: _hosted, vendor_endpoint_hosts: _vendors, ...guards } = model.defaults.guards
-    // No registry dialect records the work-order time budgets or the evaluator tools, so a draft that
-    // wrote the schema's values would present them as this product's; left out, the loader applies the same defaults.
-    const { verification_timeout_seconds: _verification, evaluator_timeout_seconds: _timeout, evaluators: _evaluators, ...workorders } = model.defaults.workorders
+    // No registry dialect records the work-order time budgets, grading, gates, evaluator tools or
+    // autonomy, so a draft that wrote the schema's values would present them as this product's
+    // decisions; left out, the loader applies the same defaults.
+    const { autonomy: _autonomy, ...defaults } = model.defaults
+    const work = { attempt_cap: model.defaults.work.attempt_cap, wip_cap: model.defaults.work.wip_cap }
     const bases = model.inferred?.['ports.bases']
     const composeFiles = model.inferred?.['environment.compose_files']
     return {
-        ...model.defaults,
+        ...defaults,
         cockpit: {
             ...model.defaults.cockpit,
             ...(model.name ? { name: model.name } : {}),
@@ -80,7 +82,7 @@ function draftConfig(model: DocumentModel): Record<string, unknown> {
         })),
         ports: { ...model.defaults.ports, ...(bases === undefined ? {} : { bases }) },
         guards,
-        workorders,
+        work,
         environment: { ...model.defaults.environment, ...(composeFiles === undefined ? {} : { compose_files: composeFiles }) },
     }
 }

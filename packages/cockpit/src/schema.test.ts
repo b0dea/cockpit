@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
-import { Browser, EntrypointDerivative, Environment, GeneratedService, InstallPolicy, Sibling, Testing, Workorders } from './schema.js'
+import { Autonomy, Browser, EntrypointDerivative, Environment, GeneratedService, InstallPolicy, Sibling, Testing, Work } from './schema.js'
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
@@ -594,18 +594,25 @@ describe('work and browser declarations', () => {
         expect(CockpitConfig.safeParse({ ...generatedConfig, environment, browser: { ...signedOut, authentication: browser.authentication } }).success).toBe(false)
     })
 
-    it('keeps WIP and attempt controls lower-only', () => {
-        expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3,
+    it('keeps WIP and attempt controls lower-only and each decision to agent, person or ci', () => {
+        expect(Work.parse({})).toEqual({ grading: 'independent', attempt_cap: 2, wip_cap: 3, gates: {},
             verification_timeout_seconds: 1_800, evaluator_timeout_seconds: 900 })
-        expect(Workorders.parse({ evaluators: ['opencode', 'claudecode'] })).toMatchObject({ evaluators: ['opencode', 'claudecode'] })
-        for (const evaluators of [[], ['cursor'], ['claudecode', 'claudecode']]) expect(Workorders.safeParse({ evaluators }).success, JSON.stringify(evaluators)).toBe(false)
+        expect(Work.parse({ evaluators: ['opencode', 'claudecode'] })).toMatchObject({ evaluators: ['opencode', 'claudecode'] })
+        for (const evaluators of [[], ['cursor'], ['claudecode', 'claudecode']]) expect(Work.safeParse({ evaluators }).success, JSON.stringify(evaluators)).toBe(false)
         for (const field of ['verification_timeout_seconds', 'evaluator_timeout_seconds']) {
-            for (const value of [0, 7_201, 1.5]) expect(Workorders.safeParse({ [field]: value }).success, `${field}=${value}`).toBe(false)
+            for (const value of [0, 7_201, 1.5]) expect(Work.safeParse({ [field]: value }).success, `${field}=${value}`).toBe(false)
         }
-        expect(Workorders.parse({ wip_cap: 1 })).toMatchObject({ wip_cap: 1 })
-        for (const value of [0, 4, 1.5]) expect(Workorders.safeParse({ wip_cap: value }).success).toBe(false)
-        // The programme cap has one legal value, so it is policy rather than configuration.
-        expect(Workorders.safeParse({ programme_wip_cap: 1 }).success).toBe(false)
+        expect(Work.parse({ wip_cap: 1 })).toMatchObject({ wip_cap: 1 })
+        for (const value of [0, 4, 1.5]) expect(Work.safeParse({ wip_cap: value }).success).toBe(false)
+        for (const value of [0, 3]) expect(Work.safeParse({ attempt_cap: value }).success).toBe(false)
+        expect(Work.safeParse({ grading: 'vibes' }).success).toBe(false)
+        expect(Work.safeParse({ gates: { accept: 'ci', signoff: 'person' } }).success).toBe(true)
+        expect(Work.safeParse({ gates: { accept: 'anyone' } }).success).toBe(false)
+        expect(Work.safeParse({ gates: { merge: 'agent' } }).success).toBe(false)
+        expect(Autonomy.safeParse({ preset: 'agent', reset: 'ci', sync: 'person' }).success).toBe(true)
+        // An MCP approval is a digest a person records, which CI cannot add to.
+        expect(Autonomy.safeParse({ mcp_approve: 'ci' }).success).toBe(false)
+        expect(Autonomy.safeParse({ commit: 'agent' }).success).toBe(false)
     })
 
     it('pins the runner to the project driver exactly and lets an MCP pre-release share its major.minor', () => {
@@ -804,7 +811,7 @@ describe('vendor client policy declarations', () => {
 })
 
 it('rejects the superseded stale age control as an unknown key', () => {
-    const result = Workorders.safeParse({ stale_park_days: 14 })
+    const result = Work.safeParse({ stale_park_days: 14 })
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.issues).toContainEqual(expect.objectContaining({ code: 'unrecognized_keys', keys: ['stale_park_days'] }))
 })

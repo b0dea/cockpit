@@ -29,6 +29,8 @@ const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
 const EXAMPLE_TESTS = ['example-cockpit.test.ts', 'example-cockpit.slow.test.ts']
 const MODULE_PATH = /^packages\/[^/]+\/(?:src|test-support)\/.+\.[cm]?tsx?$/
 const PACKAGE_SCRIPT_MODULE_PATH = /^packages\/[^/]+\/scripts\/.+\.[cm]?js$/
+// A root TypeScript script runs under tsx and is imported by its tests like any source module.
+const ROOT_SCRIPT_MODULE_PATH = /^scripts\/[^/]+\.[cm]?ts$/
 const SCRIPT_MODULE_PATH = /^scripts\/([^/]+)\.mjs$/
 const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g
@@ -312,7 +314,7 @@ function ownerTests(root, paths, extras, wide) {
         const packageFixture = PACKAGE_FIXTURE_PATH.exec(path)
         const example = EXAMPLE_PATH.exec(path)
         const mapped = []
-        if (MODULE_PATH.test(path) || PACKAGE_SCRIPT_MODULE_PATH.test(path)) {
+        if (MODULE_PATH.test(path) || PACKAGE_SCRIPT_MODULE_PATH.test(path) || ROOT_SCRIPT_MODULE_PATH.test(path)) {
             imports ??= importedModules(root, wide)
             mapped.push(...testsImporting(root, imports, path))
         }
@@ -344,7 +346,8 @@ function ownerTests(root, paths, extras, wide) {
             mapped.push(...testsReadingFixtures(root, fixture ? `fixtures/${fixture[1]}` : `fixtures/${packageFixture[1]}`, imports))
         }
         if (mapped.length) for (const candidate of mapped) selected.add(candidate)
-        else unmapped.push(path)
+        // A deleted test-support module nothing imports any more has no owner left to run, as a deleted source file has none.
+        else if (existingFile(root, path) || !MODULE_PATH.test(path)) unmapped.push(path)
     }
     for (const path of extras) {
         if (posix.normalize(path) !== path || !TEST_PATH.test(path) || !existingFile(root, path)) {

@@ -1,0 +1,154 @@
+// Owns the autonomy policy: who may pass each decision point cockpit gates, as cockpit.toml's [work]
+// and [autonomy] tables declare it, what an unset field means, which change weakens it, and the
+// record of the policy the last sync accepted. Every command that gates a decision asks `decide`
+// here, so a field cannot mean one thing to sync and another to the guard.
+import { createHash, randomUUID } from 'node:crypto'
+import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import { parse as parseToml, TomlError } from 'smol-toml'
+
+import { hasErrorCode, RefusalError } from './environment/contract.js'
+import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
+
+export const mechanism = {
+    id: 'autonomy-policy',
+    module: 'packages/cockpit/src/autonomy.ts',
+    exports: ['POLICY_RECORD_PATH', 'decide', 'effectivePolicy', 'pinnedPolicyTables', 'policyWeakening', 'readRecordedPolicy', 'runningInCi', 'weakeningDigest', 'writeRecordedPolicy'],
+} as const
+
+export type WorkGate = 'accept' | 'amend' | 'answer' | 'signoff'
+export type AutonomyDecision = 'sync' | 'stale_delete' | 'reset' | 'mcp_approve'
+export interface EffectivePolicy {
+    readonly grading: WorkGrading
+    readonly gates: Readonly<Record<WorkGate, Decider>>
+    readonly autonomy: Readonly<Record<AutonomyDecision, Decider>>
+}
+
+// The owner's defaults: an agent runs cockpit end to end except where stack data is lost or a work
+// contract is set, and a team opts into person or CI gates field by field.
+const GATE_DEFAULTS: Readonly<Record<WorkGate, Decider>> = Object.freeze({ accept: 'person', amend: 'person', answer: 'person', signoff: 'agent' })
+const AUTONOMY_DEFAULTS: Readonly<Record<AutonomyDecision, Decider>> = Object.freeze({ sync: 'agent', stale_delete: 'agent', reset: 'person', mcp_approve: 'agent' })
+
+export function effectivePolicy(config: Readonly<{ work: Readonly<Pick<CockpitConfig['work'], 'grading'> & { gates: Readonly<CockpitConfig['work']['gates']> }>
+    autonomy: Readonly<CockpitConfig['autonomy']> }>): EffectivePolicy {
+    const preset = config.autonomy.preset === 'agent'
+    const pick = <K extends string>(declared: Partial<Record<K, Decider>>, defaults: Readonly<Record<K, Decider>>) => Object.freeze(Object.fromEntries(
+        Object.entries(defaults).map(([key, value]) => [key, declared[key as K] ?? (preset ? 'agent' : value)])) as Record<K, Decider>)
+    return Object.freeze({
+        grading: config.work.grading,
+        gates: pick<WorkGate>(config.work.gates, GATE_DEFAULTS),
+        autonomy: pick<AutonomyDecision>({ sync: config.autonomy.sync, stale_delete: config.autonomy.stale_delete,
+            reset: config.autonomy.reset, mcp_approve: config.autonomy.mcp_approve }, AUTONOMY_DEFAULTS),
+    })
+}
+
+/** cockpit detects CI from the CI variable, as every hosted runner sets it; an agent can set it too. */
+export function runningInCi(env: Readonly<Record<string, string | undefined>>): boolean {
+    return typeof env.CI === 'string' && env.CI.length > 0 && env.CI !== 'false' && env.CI !== '0'
+}
+
+/**
+ * Whether this run may pass the decision without a person. A `person` decision is never passed here:
+ * its caller asks for the typed digest. A `ci` decision passes only under CI, where a protected
+ * environment's reviewers are the human gate; locally that is best-effort, as an agent can set CI too.
+ */
+export function decide(decider: Decider, env: Readonly<Record<string, string | undefined>>): 'proceed' | 'person' | 'ci-only' {
+    if (decider === 'agent') return 'proceed'
+    if (decider === 'person') return 'person'
+    return runningInCi(env) ? 'proceed' : 'ci-only'
+}
+
+// Stronger is later: an agent decision is the weakest, CI behind reviewers the strongest.
+const DECIDER_RANK: Readonly<Record<Decider, number>> = Object.freeze({ agent: 0, person: 1, ci: 2 })
+const GRADING_RANK: Readonly<Record<WorkGrading, number>> = Object.freeze({ self: 0, checks: 1, independent: 2 })
+
+
+export interface PolicyWeakening { readonly field: string; readonly from: string; readonly to: string }
+
+/** Every field `current` sets weaker than `recorded`, named as cockpit.toml spells it. */
+export function policyWeakening(recorded: EffectivePolicy, current: EffectivePolicy): readonly PolicyWeakening[] {
+    const rows: PolicyWeakening[] = []
+    if (GRADING_RANK[current.grading] < GRADING_RANK[recorded.grading]) rows.push({ field: 'work.grading', from: recorded.grading, to: current.grading })
+    for (const [table, field] of [['gates', 'work.gates'], ['autonomy', 'autonomy']] as const) {
+        for (const [key, was] of Object.entries(recorded[table]) as [string, Decider][]) {
+            const now = (current[table] as Record<string, Decider>)[key]!
+            if (DECIDER_RANK[now] < DECIDER_RANK[was]) rows.push({ field: `${field}.${key}`, from: was, to: now })
+        }
+    }
+    return Object.freeze(rows)
+}
+
+/** The digest a person types to accept exactly these weakenings of exactly this recorded policy. */
+export function weakeningDigest(recorded: EffectivePolicy, current: EffectivePolicy): string {
+    return createHash('sha256').update(JSON.stringify({ recorded, current })).digest('hex')
+}
+
+// Written only by cockpit: the guard protects `.cockpit/policy.json` as a control, so the policy an
+// agent's edit would weaken still stands until a person accepts the weakening at sync.
+export const POLICY_RECORD_PATH = '.cockpit/policy.json'
+const RECORD_FORMAT = 'cockpit-policy/v1'
+
+function validPolicy(value: unknown): value is EffectivePolicy {
+    const row = value as EffectivePolicy
+    const deciders = (table: unknown, keys: readonly string[]) => typeof table === 'object' && table !== null && !Array.isArray(table)
+        && Object.keys(table).sort().join() === [...keys].sort().join()
+        && Object.values(table).every(entry => Object.hasOwn(DECIDER_RANK, entry as string))
+    return typeof value === 'object' && value !== null && Object.keys(value).sort().join() === 'autonomy,gates,grading'
+        && Object.hasOwn(GRADING_RANK, row.grading) && deciders(row.gates, Object.keys(GATE_DEFAULTS)) && deciders(row.autonomy, Object.keys(AUTONOMY_DEFAULTS))
+}
+
+/** The policy the last sync recorded, or undefined before the first; an unreadable record refuses. */
+export async function readRecordedPolicy(root: string): Promise<EffectivePolicy | undefined> {
+    const path = join(root, POLICY_RECORD_PATH)
+    let bytes: Buffer
+    try {
+        const status = await lstat(path)
+        if (!status.isFile() || status.size > 65_536) throw new RefusalError(`${POLICY_RECORD_PATH} is not a regular file of at most 64 KiB; restore it with git restore -- ${POLICY_RECORD_PATH}`)
+        bytes = await readFile(path)
+    } catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return undefined
+        throw error
+    }
+    let parsed: unknown
+    try { parsed = JSON.parse(bytes.toString('utf8')) }
+    catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        throw new RefusalError(`${POLICY_RECORD_PATH} is not JSON; restore it with git restore -- ${POLICY_RECORD_PATH}`)
+    }
+    const record = parsed as { format?: unknown; policy?: unknown }
+    if (record?.format !== RECORD_FORMAT || !validPolicy(record.policy)) {
+        throw new RefusalError(`${POLICY_RECORD_PATH} is not a ${RECORD_FORMAT} record; restore it with git restore -- ${POLICY_RECORD_PATH}`)
+    }
+    return record.policy
+}
+
+export async function writeRecordedPolicy(root: string, policy: EffectivePolicy): Promise<void> {
+    const path = join(root, POLICY_RECORD_PATH)
+    if (isDeepStrictEqual(await readRecordedPolicy(root), policy)) return
+    await mkdir(dirname(path), { recursive: true })
+    const staged = `${path}.${randomUUID()}.tmp`
+    const handle = await open(staged, 'wx', 0o644)
+    try {
+        await handle.writeFile(`${JSON.stringify({ format: RECORD_FORMAT, policy }, null, 2)}\n`)
+        await handle.sync()
+    } finally { await handle.close() }
+    try { await rename(staged, path) }
+    catch (error) { await rm(staged, { force: true }); throw error }
+}
+
+/**
+ * The cockpit.toml tables the guard keeps an agent from editing, as parsed values to compare, or
+ * undefined when the text is not TOML. [mcp] is pinned only while a person approves MCP servers.
+ */
+export function pinnedPolicyTables(text: string): Readonly<Record<string, unknown>> | undefined {
+    let parsed: Record<string, unknown>
+    try { parsed = parseToml(text) as Record<string, unknown> }
+    catch (error) {
+        if (error instanceof TomlError) return undefined
+        throw error
+    }
+    const autonomy = parsed.autonomy as Record<string, unknown> | undefined
+    const mcpByAgent = (autonomy?.mcp_approve ?? (autonomy?.preset === 'agent' ? 'agent' : AUTONOMY_DEFAULTS.mcp_approve)) === 'agent'
+    return Object.freeze({ work: parsed.work, autonomy: parsed.autonomy, ...(mcpByAgent ? {} : { mcp: parsed.mcp }) })
+}

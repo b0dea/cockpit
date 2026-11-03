@@ -55,6 +55,8 @@ describe('public surface publication transaction', () => {
                 .filter(entry => entry.subject !== 'vendor')
             // Every shipped tool is listed so each tool's grant spelling is checked.
             declaration.surfaces.tools = [...SURFACE_TARGETS]
+            // A person approves each server here, so only the one whose digest is recorded is enabled.
+            declaration.autonomy.mcp_approve = 'person'
             await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
             await writeFile(join(outside, '.mcp.json'), JSON.stringify({ mcpServers: {
                 'approved-server': { command: '/usr/bin/printenv', env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' } },
@@ -113,12 +115,13 @@ describe('public surface publication transaction', () => {
             // secrets directory, and each declared instance by its clone-independent sibling suffix.
             expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
             // Claude's default mode runs no Bash without a rule, so the commands the skills tell an
-            // agent to run are allowed by prefix; person-only commands keep prompting.
+            // agent to run are allowed by prefix. A policy-decided command such as sync or work accept is
+            // allowed too, because the guard's ask still wins; always-person and destructive ones keep prompting.
             expect(settings.permissions.allow).toEqual(expect.arrayContaining([
-                'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync * --dry-run)',
+                'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync *)',
+                'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)',
             ]))
-            expect(settings.permissions.allow!.filter(rule => /cockpit (down|sync|reset|work (accept|renew|answer|reverse)) /.test(rule)
-                && !rule.endsWith('--dry-run)'))).toEqual([])
+            expect(settings.permissions.allow!.filter(rule => /cockpit (down|init|sibling|session|browser debugger)\b/.test(rule))).toEqual([])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({

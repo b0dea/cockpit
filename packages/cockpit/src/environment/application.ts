@@ -41,8 +41,10 @@ import type { InstructionPointerResult } from './instruction-pointer.js'
 import type { SiblingInstructionFilesResult } from './sibling-instructions.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type EvaluatorTool, type InstallPolicy, type Sibling } from '../schema.js'
-import { evaluateGuard, GUARD_LOCATION_LIMITS, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
-import { ordinarySessionCommand, resolveOrdinaryInvocation } from '../command-table.js'
+import { pinnedPolicyDenial } from '../guards/policy-pin.js'
+import { evaluateGuard, foldGuardSpelling, GUARD_LOCATION_LIMITS, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
+import { ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../command-table.js'
+import { effectivePolicy } from '../autonomy.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
@@ -402,8 +404,10 @@ export async function runGuardEvaluationApplication(
         const config = loaded.result.config
         const manifestPath = '.cockpit/generated-environment-ownership.json'
         const registration = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }[harness]
-        const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity].map(path => ({
-            path, action: 'read-file' as const, maxBytes: path === manifestPath ? 1_048_576 : 65_536,
+        // The configuration rides in the same batch: the policy pin applies an edit to exactly these bytes.
+        const configName = basename(identity.configPath)
+        const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity, configName].map(path => ({
+            path, action: 'read-file' as const, maxBytes: path === manifestPath || path === configName ? 1_048_576 : 65_536,
         }))
         const readPublication = async () => {
             const batch = await readAnchoredBatches(identity.root, publicationRequests, node, { execute: adapters.execute ?? executeProbe })
@@ -608,7 +612,7 @@ export async function runGuardEvaluationApplication(
                 { node, resolveDocker: adapters.resolveDocker, execute: adapters.execute ?? executeProbe })
             if (typeof services === 'string') return unavailable(`Guard could not read the Compose service list: ${services}`)
             const authority = { executable: launcher, ...configured, allowedRoots: prepared.result.policy.allowedRoots, services,
-                gates: config.testing?.gates.map(gate => gate.id) ?? [], browserPreapproved: config.browser?.request_preapproval === true }
+                gates: config.testing?.gates.map(gate => gate.id) ?? [], grants: ordinaryGrants(config) }
             for (const { executable, cwd, argv, prefix, session } of launched) {
                 const args = argv.slice(prefix)
                 // A session inside a session would run a command the evaluator never sees.
@@ -623,6 +627,18 @@ export async function runGuardEvaluationApplication(
             }
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
+        // The policy pin needs the text an edit applies to, which must be the text the guard was generated for.
+        const configRead = publication.get(configName)!
+        if (configRead.sha256 !== identity.configSha256) return unavailable('Guard configuration changed during evaluation.')
+        const configStatus = lstatSync(identity.configPath)
+        // A hard link or another spelling of the configuration is the configuration.
+        const isConfig = (path: string) => {
+            if (foldGuardSpelling(path) === foldGuardSpelling(identity.configPath)) return true
+            try { const status = lstatSync(path); return status.dev === configStatus.dev && status.ino === configStatus.ino }
+            catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
+        }
+        const pinned = pinnedPolicyDenial(parsed, configRead.bytes.toString('utf8'), isConfig)
+        if (pinned) return { decision: pinned, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: pinned.reason, target: 'guard' }] }
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
             cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
@@ -646,6 +662,14 @@ export async function runGuardEvaluationApplication(
     } catch (error) {
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
+}
+
+// The guard runs only against the configuration sync generated it from, so the policy read here is the
+// one the last sync accepted.
+function ordinaryGrants(config: CockpitConfig): readonly OrdinaryGrant[] {
+    const policy = effectivePolicy(config)
+    return [...config.browser?.request_preapproval === true ? ['browser-preapproval' as const] : [],
+        ...policy.autonomy.sync === 'agent' ? ['autonomy-sync' as const] : [], ...policy.autonomy.reset === 'agent' ? ['autonomy-reset' as const] : []]
 }
 
 class GuardFileMissing extends RefusalError {

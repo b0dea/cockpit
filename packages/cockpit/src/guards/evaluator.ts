@@ -111,16 +111,18 @@ const GUARD_CONTROL_FILES = [
     ...SURFACE_EXECUTION_CONTROL_PATHS,
     '.claude/settings.local.json', '.codex/hooks.json', 'opencode.json',
     'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
+    // The policy the last sync accepted: an agent that rewrote it could present its own weakening as accepted.
+    '.cockpit/policy.json',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
 // bundle carries its own MCP servers and hook registration, so no file below them is data. Every
 // harness starts the generated MCP wrapper scripts as the server program, so overwriting one changes
 // what runs before the next guarded call. The machine-local guard identity names the handler the
-// guard launches, so it is a control as well. The work-order store holds accepted contracts, state,
-// answers and completions whose digests are unkeyed, so a record an agent wrote there, signed as
-// the operator, would be accepted by the next `cockpit work` command: only cockpit writes it.
+// guard launches, so it is a control as well. The work-order records hold who accepted, answered and
+// signed off each order, unkeyed, so a record an agent wrote there would read as a person's or CI's
+// to the next `cockpit work` command: only cockpit writes it.
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', '.cockpit/mcp', GUARD_LOCAL_PATHS.directory,
-    '.cockpit/work-orders', '.cockpit/transactions', '.cockpit/actors'] as const
+    '.cockpit/work-orders'] as const
 const SECRETS_ROOT = 'env/.secrets'
 /**
  * Bounds on the locations the policy and the path inspector carry, one per quantity, each set above

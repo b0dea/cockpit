@@ -39,6 +39,18 @@ const openCodeFiring = Object.freeze({
     state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01', measuredVersion: '1.19.4',
     provenance: 'the plugin refused git push and a native read of a secrets file while an unprotected read stayed allowed; before read was routed through the guard, the same read returned the file',
 })
+// The session-start drift check is guidance: the tool runs `cockpit check` as a session starts and
+// shows its report to the agent, which nothing makes act on it. Each run below put a marker line from
+// the hook into the agent's context, beside a misspelled event that never ran.
+const claudeSessionStart = Object.freeze({
+    state: 'instructed' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-03', measuredVersion: '2.1.317',
+    provenance: 'a SessionStart hook in .claude/settings.json ran under claude -p and the agent quoted its stdout back, while a hook under a misspelled event name never ran and Claude Code named it as ignored',
+})
+const codexSessionStart = Object.freeze({
+    state: 'instructed' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-03', measuredVersion: '0.166.0',
+    provenance: 'only after a person trusts the hook, as for the guard: a trusted SessionStart hook in .codex/hooks.json ran under codex exec and the agent quoted its stdout back, while a hook under a misspelled event name never ran',
+})
+const noSessionStart = (reason: string) => Object.freeze({ state: 'unavailable' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-03', measuredVersion: null, provenance: reason })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -47,32 +59,35 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'claudecode', type: 'agent' as const, displayName: 'Claude Code', rulesyncTarget: 'claudecode',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative,
+        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: reviewedNative, sessionStart: claudeSessionStart,
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
-        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative,
+        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: reviewedNative, sessionStart: codexSessionStart,
     }),
     Object.freeze({
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
         rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
         guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: reviewedNative,
+        // OpenCode 1.19.5 delivered session.created to a project plugin beside a misspelled hook that
+        // never ran, but its model call failed, so no plugin hook was shown to put text in the agent's context.
+        sessionStart: noSessionStart('OpenCode 1.19.5 delivers session.created to a plugin, but no run has shown a plugin putting text in the agent\'s context, so cockpit generates no session-start check'),
     }),
     Object.freeze({
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',
         rulesyncFeatures: completeRulesyncFeatures,
         // Rules overlays only: cockpit's own instructions reach Cursor through the root AGENTS.md.
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
-        guard: noGuardAdapter, native: generatedNative,
+        guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
     }),
     Object.freeze({
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
-        guard: noGuardAdapter, native: generatedNative,
+        guard: noGuardAdapter, native: generatedNative, sessionStart: noSessionStart('cockpit generates no hook for this tool'),
     }),
 ] as const)
 
