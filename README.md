@@ -157,7 +157,8 @@ A work order lists acceptance criteria, each with a check. `work grade` reruns t
 evaluator from `work.evaluators` grades each criterion in a fresh read-only run that starts outside the
 repository and never sees the writer's session. For a change without an order:
 `npx --no cockpit grade --config cockpit.toml --criteria criteria.md`. Grading can also be `checks`
-(cockpit's reruns decide) or `self`. See [Work and browser](docs/work-and-browser.md).
+(cockpit's reruns decide) or `self`. By default work done in Claude Code is graded by Codex and the
+other way round, and `--evaluator <tool>` picks one grader for a run. See [Work and browser](docs/work-and-browser.md).
 
 ### Gates for who decides
 
