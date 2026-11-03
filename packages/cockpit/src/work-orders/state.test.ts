@@ -37,8 +37,10 @@ function memoryStore(initial: Uint8Array) {
 
 describe('durable work-order progress', () => {
     it('refuses null repository revisions', () => {
-        expect(validateWorkOrderRepositories([{ path: 'product', revision: '0'.repeat(40) }])).toBeUndefined()
-        expect(validateWorkOrderRepositories([{ path: 'product', revision: '0'.repeat(64) }])).toBeUndefined()
+        const worktreeDigest = 'b'.repeat(64)
+        expect(validateWorkOrderRepositories([{ path: 'product', revision: '1'.repeat(40), worktreeDigest }])).toHaveLength(1)
+        expect(validateWorkOrderRepositories([{ path: 'product', revision: '0'.repeat(40), worktreeDigest }])).toBeUndefined()
+        expect(validateWorkOrderRepositories([{ path: 'product', revision: '0'.repeat(64), worktreeDigest }])).toBeUndefined()
     })
 
     it('requires exact revision and worktree bytes for current proof', () => {
