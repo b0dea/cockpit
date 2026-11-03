@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -58,5 +61,21 @@ describe('the installed launcher runtime floor', () => {
             result: null,
             diagnostics: [{ code: 'CONFIG_NOT_FOUND' }],
         })
+    })
+})
+
+describe('the compiled CLI entry', () => {
+    // npm link and workspaces reach dist/cli.js through a symlink; the entry check compared an
+    // unresolved argv path with the resolved module URL and silently did nothing.
+    it('runs when invoked through a symlink', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-entry-'))
+        try {
+            const link = join(directory, 'cli.js')
+            symlinkSync(fileURLToPath(new URL('../dist/cli.js', import.meta.url)), link)
+            const result = spawnSync(process.execPath, [link, '--help'], { encoding: 'utf8' })
+            expect(result.error).toBeUndefined()
+            expect(result.status).toBe(0)
+            expect(result.stdout).toContain('Usage: cockpit')
+        } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 })

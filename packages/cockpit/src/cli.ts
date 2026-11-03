@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { realpathSync } from 'node:fs'
 import { commandSpelling } from './command-table.js'
 import { runGuardCommand } from './cli-guard.js'
 import type { CliHandlerOverrides, CliIo, CliRuntime } from './cli-main.js'
@@ -22,6 +23,6 @@ export async function runCli(
     return (await import('./cli-main.js')).runCli(args, io, handlerOverrides, runtime)
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
     process.exitCode = await runCli(process.argv.slice(2))
 }
