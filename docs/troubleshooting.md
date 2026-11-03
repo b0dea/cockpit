@@ -239,7 +239,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
-| `EVALUATOR_UNAVAILABLE` | install the Codex CLI with npm install -g @openai/codex, sign in with codex login, then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `EXECUTION_TERMINATION_UNCONFIRMED` | [see above](#merge-ownership-and-generation) |
 | `GENERATED_ARTIFACT_DRIFT` | [see above](#generated_artifact_drift) |
 | `GENERATED_DECLARATION_MISSING` | declare [environment.generated] for the runner, or remove browser.endpoint |

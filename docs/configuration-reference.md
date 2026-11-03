@@ -45,7 +45,12 @@ The values cockpit uses for a key the configuration leaves out.
     "attempt_cap": 2,
     "wip_cap": 3,
     "verification_timeout_seconds": 1800,
-    "evaluator_timeout_seconds": 900
+    "evaluator_timeout_seconds": 900,
+    "evaluators": [
+      "codexcli",
+      "claudecode",
+      "opencode"
+    ]
   },
   "environment": {
     "resettable_volumes": [],
@@ -235,6 +240,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `wip_cap` | Work orders that may be in progress at once; may be lowered but not raised. | integer | `3` | 1–3 |
 | `verification_timeout_seconds` | Seconds one declared work-order verification command may run before it is stopped and reported as not run. | integer | `1800` | 1–7200 |
 | `evaluator_timeout_seconds` | Seconds one independent review or grading run of the evaluator may take before it is stopped. | integer | `900` | 1–7200 |
+| `evaluators` | Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode. | array of string | `["codexcli","claudecode","opencode"]` | 1–3 items; each item: one of `"codexcli"`, `"claudecode"`, `"opencode"` |
 
 ### `[browser]`
 
@@ -1003,6 +1009,6 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `8bf5b64d98b3ef7755243573022e33f8f8114d9e1531cca2f6617440cae4eb4a`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `945182cc59a3ed8a9b5907850d0c5d7c1c64bae341d7cafdb9b626ad8225b562`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
