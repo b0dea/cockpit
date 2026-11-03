@@ -150,3 +150,25 @@ One maintainer, [@b0dea](https://github.com/b0dea), reviews and merges everythin
 path in [CODEOWNERS](.github/CODEOWNERS). There is no second reviewer and no on-call, so review
 can stall, and no response window is promised except for security reports. The license is MIT, so
 a fork is always available.
+
+## Maintenance posture and road to 1.0
+
+cockpit is pre-1.0 and maintained by one person. While the major version is 0, a minor release can
+change configuration, generated files and commands, and it ships a migration note when it does
+([release policy](docs/release-policy.md)). Fixes land on the latest minor only. Issues and pull
+requests are read when time allows; security reports are the exception ([SECURITY.md](SECURITY.md)).
+Small, tested changes that follow the rules above are the ones most likely to merge, and a larger
+change is worth proposing in an issue first.
+
+1.0 means the configuration, the generated file layout and the command surface stop changing without
+a deprecation period. It waits on:
+
+- **Measured tools.** Every cell the README claims is a dated run of the real tool in the
+  [capability matrix](docs/capability-matrix.md), and a cell that cannot be measured is not claimed.
+- **A cold-start journey that needs no help.** In a new repository, an agent in each measured tool
+  sets cockpit up from the guide; a second, fresh session in the same repository then fixes a planted
+  bug with the guard denying a planted secret read and a push to the protected branch.
+- **Settled defaults.** The autonomy defaults, the work-order format and the `cockpit.toml` schema have
+  been used on real products long enough that changes to them are rare.
+- **Published and reproducible.** The package is on npm, and `cockpit upgrade` moves
+  a real consumer across a release without manual edits.
