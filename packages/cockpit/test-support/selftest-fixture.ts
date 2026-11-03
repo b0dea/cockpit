@@ -14,7 +14,7 @@ async function syntheticSkillSources(names: readonly string[]): Promise<string> 
     const procedure = '---\nloading: pull\nbudget: uncapped\n---\n\nInspect the synthetic product-owned verification target.\n'
     return names.flatMap((name) => [
         { path: `skills/${name}/SKILL.md`, bytes: entry.replace('name: cockpit-setup', `name: ${name}`) },
-        { path: `skills/${name}/procedures/onboarding.md`, bytes: procedure },
+        { path: `skills/${name}/procedures/setup.md`, bytes: procedure },
     ]).map(({ path, bytes }) => `{ path = ${JSON.stringify(path)}, bytes = ${JSON.stringify(bytes)} }`).join(',\n  ')
 }
 

@@ -16,6 +16,7 @@ import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js
 import { mcpApprovalDigest } from '../surfaces/mcp.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { selectStateRoot, transactState } from '../environment/state.js'
+import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { recordLifecycleStarted } from '../environment/lifecycle-stage.js'
 import {
     generatedApplicationProjection,
@@ -52,6 +53,8 @@ describe('public surface publication transaction', () => {
             declaration.environment.generated!.vendors = []
             declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
                 .filter(entry => entry.subject !== 'vendor')
+            // Every shipped tool is listed so each tool's grant spelling is checked.
+            declaration.surfaces.tools = [...SURFACE_TARGETS]
             await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
             await writeFile(join(outside, '.mcp.json'), JSON.stringify({ mcpServers: {
                 'approved-server': { command: '/usr/bin/printenv', env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' } },

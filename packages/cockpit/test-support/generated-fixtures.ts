@@ -105,7 +105,7 @@ export function createGeneratedCommandFixture() {
     source = ${JSON.stringify(`surfaces/synthetic-${name}.json`)}
     sources = [
       { path = ${JSON.stringify(`skills/${name}/SKILL.md`)}, bytes = ${JSON.stringify(entryPoint.replace('name: cockpit-setup', `name: ${name}`))} },
-      { path = ${JSON.stringify(`skills/${name}/procedures/onboarding.md`)}, bytes = ${JSON.stringify(procedure)} },
+      { path = ${JSON.stringify(`skills/${name}/procedures/setup.md`)}, bytes = ${JSON.stringify(procedure)} },
     ]
     `).join('')
     }

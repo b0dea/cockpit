@@ -31,7 +31,8 @@ async function consumer(name: string, includeRow: boolean) {
     )
     const row = await readFile(rowFixture, 'utf8')
     const configPath = join(root, 'cockpit.toml')
-    await writeFile(configPath, includeRow ? `${baseline}\n${row}` : baseline)
+    // Every shipped tool is listed so the row's grants are checked in each tool's spelling.
+    await writeFile(configPath, `${includeRow ? `${baseline}\n${row}` : baseline}\n[surfaces]\ntools = ${JSON.stringify(SURFACE_TARGETS)}\n`)
     await Promise.all([
         mkdir(join(root, 'app'), { recursive: true }),
         mkdir(join(root, 'fixtures'), { recursive: true }),
