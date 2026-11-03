@@ -256,19 +256,23 @@ describe('teardown replay', () => {
             })).toEqual(expect.objectContaining({ kind: 'refusal' }))
             const fresh = await authenticatedInput(resources, firstInput.root)
             try {
+                // A receipt the planner never issued is refused even beside valid consent, rather
+                // than ignored; the same request without it is the control that proceeds.
+                expect(await planTeardown({
+                    ...fresh.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
+                    continuation: Object.freeze({ kind: 'teardown-continuation', digest: first.discoveryDigest }),
+                })).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                    code: 'RECLAIM_ACCOUNTING_MISMATCH', message: 'teardown continuation receipt is invalid or already consumed',
+                })] })
                 const action = await planTeardown({ ...fresh.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined })
                 expect(action).toEqual(expect.objectContaining({
-                    kind: 'complete', actionAuthority: expect.any(Object), continuation: null, remaining: 1, steps: [],
+                    kind: 'complete', actionAuthority: { kind: 'teardown-action-authority' }, continuation: null, remaining: 1, steps: [],
                 }))
-                if (action.kind !== 'complete') return
+                if (action.kind !== 'complete') throw new Error(JSON.stringify(action))
                 expect(JSON.stringify(action)).not.toContain('container rm')
                 const recreated = await authenticatedInput(resources, firstInput.root)
                 expect(await planTeardown({
                     ...recreated.value, expectedDiscoveryDigest: first.discoveryDigest, consent: first.consent ?? undefined,
-                })).toEqual(expect.objectContaining({ kind: 'refusal' }))
-                expect(await planTeardown({
-                    ...recreated.value, expectedDiscoveryDigest: first.discoveryDigest,
-                    continuation: Object.freeze({ kind: 'fabricated-teardown-continuation' }),
                 })).toEqual(expect.objectContaining({ kind: 'refusal' }))
             } finally { await rm(fresh.root, { recursive: true, force: true }) }
         } finally { await rm(firstInput.root, { recursive: true, force: true }); await rm(secondInput.root, { recursive: true, force: true }) }
@@ -329,7 +333,7 @@ describe('teardown replay', () => {
                 ...fresh.value, expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
             })
             expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1 }))
-            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
+            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: { kind: 'teardown-action-authority' } }))
         } finally { await rm(initial.root, { recursive: true, force: true }) }
     })
 
@@ -382,7 +386,7 @@ describe('teardown replay', () => {
                 ...fresh.value, declaredCacheIds: [cacheId], expectedDiscoveryDigest: preview.discoveryDigest,
                 consent: preview.consent ?? undefined,
             })
-            expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0, steps: [], actionAuthority: expect.any(Object) }))
+            expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0, steps: [], actionAuthority: { kind: 'teardown-action-authority' } }))
             await writeFile(join(initial.root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: 'unix:///tmp/another.sock' })}\n`)
         } finally { await rm(initial.root, { recursive: true, force: true }) }
     })
@@ -420,7 +424,7 @@ describe('teardown replay', () => {
                 expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
             })
             expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0 }))
-            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
+            if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: { kind: 'teardown-action-authority' } }))
             expect((await lstat(cachePath)).isDirectory()).toBe(true)
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
     })

@@ -745,115 +745,126 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
 }, 120_000)
 
 
-// Installs the packed tarball and runs init once per target: about 2.5 minutes on a laptop and over 4
-// on a loaded shared CI runner, where the earlier limit failed a correct run.
-it('runs installed init for each isolated target and refuses missing roots or broken adjacent assets', async () => {
+// The installed-init cases share one HOME, as one operator's machine would; each case inits its own root.
+// Together they took over 5 minutes at a load average of 20, so each keeps the bound the single case
+// they were split from had: a loaded shared CI runner failed a correct run under a tighter one.
+let installedInit: ReturnType<typeof prepareInstalledInit> | undefined
+async function prepareInstalledInit() {
     const installed = packedPackageRoot(), launcher = join(installed, 'bin/cockpit.mjs')
     const home = join(packScratch, 'init-home')
     mkdirSync(home)
     const env = { ...npmEnvironment(), HOME: home, XDG_STATE_HOME: join(home, 'state') }
     const { runCli: installedCli } = await import(pathToFileURL(join(installed, 'dist/cli.js')).href)
-    const estates = [
-        { target: 'claudecode', classification: 'one-sibling', repositories: [{ slug: 'app', scripts: { start: 'node server.mjs' } }] },
-        { target: 'codexcli', classification: 'no-runnable-product', repositories: [{ slug: 'library', scripts: { test: 'node test.mjs' } }] },
-        { target: 'opencode', classification: 'ready-multi-repository', repositories: [
-            { slug: 'api', scripts: { start: 'node server.mjs' } },
-            { slug: 'web', scripts: { dev: 'node server.mjs' } },
-        ] },
-    ] as const
-    for (const estate of estates) {
-        const { target, classification } = estate
-        const requested = join(packScratch, `init-${classification}`)
-        mkdirSync(requested)
-        const root = realpathSync(requested)
-        for (const repository of estate.repositories) {
-            const directory = join(root, repository.slug)
-            mkdirSync(directory)
-            writeFileSync(join(directory, 'package.json'), `${JSON.stringify({
-                name: `synthetic-${repository.slug}`, version: '0.0.0', scripts: repository.scripts,
-            })}\n`)
-        }
-        const preview = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
-        expect(preview.status, preview.stdout + preview.stderr).toBe(0)
-        const result = JSON.parse(preview.stdout).result
-        expect(result).toMatchObject({ root, target, stage: 'surface-previewed' })
-        const prefix = target === 'claudecode' ? '.claude/skills/cockpit-setup/' : target === 'codexcli' ? '.agents/skills/cockpit-setup/' : '.opencode/skills/cockpit-setup/'
-        expect(result.files.length).toBe(target === 'codexcli' ? 3 : 2)
-        expect(result.files.every((file: { path: string }) => file.path.startsWith(prefix))).toBe(true)
-        expect(existsSync(join(root, prefix))).toBe(false)
-        let stdout = '', stderr = ''
-        const questions: Array<{ field: string; expectedSha256?: string }> = []
-        const status = await installedCli(['init', root, '--target', target, '--interactive'], {
-            stdout: { write: (value: string) => ((stdout += value), true) }, stderr: { write: (value: string) => ((stderr += value), true) },
-            confirmInit: async (shown: { previewSha256: string }) => shown.previewSha256,
-            answerInitQuestion: async (question: { field: string; expectedSha256?: string }) => {
-                questions.push(question)
-                if (question.field === 'cockpit.name') return '"synthetic"'
-                if (question.field === 'sibling') return JSON.stringify(estate.repositories.map(repository => ({
-                    slug: repository.slug, dir: repository.slug, mount: 'always', acquire: 'none',
-                    var: `${repository.slug.toUpperCase()}_DIR`, purpose: `Synthetic ${repository.slug} service`,
-                })))
-                if (question.field === 'ports.bases') return '{}'
-                if (question.field === 'guards') return JSON.stringify({ hosted_db_hosts: [], vendor_endpoint_hosts: [] })
-                if (question.field === 'environment.install_policies') return JSON.stringify([{
-                    toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json',
-                    install: ['npm', 'ci'], load_probe: ['node', '--version'],
-                }])
-                if (question.field === 'environment.test_data') return JSON.stringify({ seeded_data: false, signed_in_users: false })
-                // The interview now continues past the local test-data decision, so the fifth question is
-                // reached; declining it leaves the target unwritten and the answers resumable. A
-                // surfaces-only interview has no environment questions and reaches the defaults instead.
-                if (question.field === 'environment.generated' || question.field === 'configuration.defaults') return undefined
-                throw new Error(`unexpected installed init question: ${question.field}`)
-            },
-        }, {}, { env })
-        for (const file of result.files) expect(existsSync(join(root, file.path))).toBe(true)
-        for (const other of ['.claude', '.agents', '.opencode'].filter(value => !prefix.startsWith(value))) {
-            expect(existsSync(join(root, other))).toBe(false)
-        }
-        expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
-        if (classification === 'no-runnable-product') {
-            expect(status, stderr).toBe(2)
-            expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
-            expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'configuration.defaults'])
-            // The interactive answers are persisted, so a caller with no terminal finishes the same
-            // init from the printed digests alone: it must not need a second interview.
-            const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
-            expect(pendingRun.status, pendingRun.stderr).toBe(0)
-            const printed = JSON.parse(pendingRun.stdout).result
-            expect(printed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['configuration.defaults'])
-            const answersFile = join(root, '..', `${classification}-answers.toml`)
-            writeFileSync(answersFile, '[ports]\nbases = {}\n')
-            const finish = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', target,
-                '--accept-preview', printed.previewSha256, '--answers', answersFile, ...extra, '--json'], { cwd: root, env, encoding: 'utf8' })
-            const awaiting = finish()
-            expect(awaiting.status, awaiting.stderr).toBe(0)
-            expect(JSON.parse(awaiting.stdout).result.question).toMatchObject({ field: 'configuration.defaults' })
-            expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
-            const wrong = finish('--accept-defaults', 'f'.repeat(64))
-            expect(wrong.status).toBe(2)
-            expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
-            const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
-            expect(done.status, done.stdout + done.stderr).toBe(0)
-            expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified' })
-            expect(JSON.parse(done.stdout).result).not.toHaveProperty('nextCommand')
-            expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
-        } else {
-            expect(status, stderr).toBe(2)
-            expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
-            expect(questions.map(question => question.field)).toEqual([
-                'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.generated',
-            ])
-            const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
-                cwd: root, env, encoding: 'utf8',
-            })
-            expect(resumed.status, resumed.stderr).toBe(0)
-            expect(JSON.parse(resumed.stdout).result).toMatchObject({
-                estate: { classification },
-                question: { field: 'environment.generated' },
-            })
-        }
+    return { installed, launcher, env, installedCli }
+}
+const installedInitEnvironment = () => installedInit ??= prepareInstalledInit()
+
+const initEstates = [
+    { target: 'claudecode', classification: 'one-sibling', repositories: [{ slug: 'app', scripts: { start: 'node server.mjs' } }] },
+    { target: 'codexcli', classification: 'no-runnable-product', repositories: [{ slug: 'library', scripts: { test: 'node test.mjs' } }] },
+    { target: 'opencode', classification: 'ready-multi-repository', repositories: [
+        { slug: 'api', scripts: { start: 'node server.mjs' } },
+        { slug: 'web', scripts: { dev: 'node server.mjs' } },
+    ] },
+] as const
+
+it.each(initEstates)('runs installed init on $target for a $classification estate and resumes it from its persisted answers', async (estate) => {
+    const { launcher, env, installedCli } = await installedInitEnvironment()
+    const { target, classification } = estate
+    const requested = join(packScratch, `init-${classification}`)
+    mkdirSync(requested)
+    const root = realpathSync(requested)
+    for (const repository of estate.repositories) {
+        const directory = join(root, repository.slug)
+        mkdirSync(directory)
+        writeFileSync(join(directory, 'package.json'), `${JSON.stringify({
+            name: `synthetic-${repository.slug}`, version: '0.0.0', scripts: repository.scripts,
+        })}\n`)
     }
+    const preview = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
+    expect(preview.status, preview.stdout + preview.stderr).toBe(0)
+    const result = JSON.parse(preview.stdout).result
+    expect(result).toMatchObject({ root, target, stage: 'surface-previewed' })
+    const prefix = target === 'claudecode' ? '.claude/skills/cockpit-setup/' : target === 'codexcli' ? '.agents/skills/cockpit-setup/' : '.opencode/skills/cockpit-setup/'
+    expect(result.files.length).toBe(target === 'codexcli' ? 3 : 2)
+    expect(result.files.every((file: { path: string }) => file.path.startsWith(prefix))).toBe(true)
+    expect(existsSync(join(root, prefix))).toBe(false)
+    let stdout = '', stderr = ''
+    const questions: Array<{ field: string; expectedSha256?: string }> = []
+    const status = await installedCli(['init', root, '--target', target, '--interactive'], {
+        stdout: { write: (value: string) => ((stdout += value), true) }, stderr: { write: (value: string) => ((stderr += value), true) },
+        confirmInit: async (shown: { previewSha256: string }) => shown.previewSha256,
+        answerInitQuestion: async (question: { field: string; expectedSha256?: string }) => {
+            questions.push(question)
+            if (question.field === 'cockpit.name') return '"synthetic"'
+            if (question.field === 'sibling') return JSON.stringify(estate.repositories.map(repository => ({
+                slug: repository.slug, dir: repository.slug, mount: 'always', acquire: 'none',
+                var: `${repository.slug.toUpperCase()}_DIR`, purpose: `Synthetic ${repository.slug} service`,
+            })))
+            if (question.field === 'ports.bases') return '{}'
+            if (question.field === 'guards') return JSON.stringify({ hosted_db_hosts: [], vendor_endpoint_hosts: [] })
+            if (question.field === 'environment.install_policies') return JSON.stringify([{
+                toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json',
+                install: ['npm', 'ci'], load_probe: ['node', '--version'],
+            }])
+            if (question.field === 'environment.test_data') return JSON.stringify({ seeded_data: false, signed_in_users: false })
+            // The interview now continues past the local test-data decision, so the fifth question is
+            // reached; declining it leaves the target unwritten and the answers resumable. A
+            // surfaces-only interview has no environment questions and reaches the defaults instead.
+            if (question.field === 'environment.generated' || question.field === 'configuration.defaults') return undefined
+            throw new Error(`unexpected installed init question: ${question.field}`)
+        },
+    }, {}, { env })
+    for (const file of result.files) expect(existsSync(join(root, file.path))).toBe(true)
+    for (const other of ['.claude', '.agents', '.opencode'].filter(value => !prefix.startsWith(value))) {
+        expect(existsSync(join(root, other))).toBe(false)
+    }
+    expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
+    if (classification === 'no-runnable-product') {
+        expect(status, stderr).toBe(2)
+        expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
+        expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'configuration.defaults'])
+        // The interactive answers are persisted, so a caller with no terminal finishes the same
+        // init from the printed digests alone: it must not need a second interview.
+        const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
+        expect(pendingRun.status, pendingRun.stderr).toBe(0)
+        const printed = JSON.parse(pendingRun.stdout).result
+        expect(printed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['configuration.defaults'])
+        const answersFile = join(root, '..', `${classification}-answers.toml`)
+        writeFileSync(answersFile, '[ports]\nbases = {}\n')
+        const finish = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', target,
+            '--accept-preview', printed.previewSha256, '--answers', answersFile, ...extra, '--json'], { cwd: root, env, encoding: 'utf8' })
+        const awaiting = finish()
+        expect(awaiting.status, awaiting.stderr).toBe(0)
+        expect(JSON.parse(awaiting.stdout).result.question).toMatchObject({ field: 'configuration.defaults' })
+        expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
+        const wrong = finish('--accept-defaults', 'f'.repeat(64))
+        expect(wrong.status).toBe(2)
+        expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
+        const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
+        expect(done.status, done.stdout + done.stderr).toBe(0)
+        expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified' })
+        expect(JSON.parse(done.stdout).result).not.toHaveProperty('nextCommand')
+        expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
+    } else {
+        expect(status, stderr).toBe(2)
+        expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
+        expect(questions.map(question => question.field)).toEqual([
+            'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.generated',
+        ])
+        const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
+            cwd: root, env, encoding: 'utf8',
+        })
+        expect(resumed.status, resumed.stderr).toBe(0)
+        expect(JSON.parse(resumed.stdout).result).toMatchObject({
+            estate: { classification },
+            question: { field: 'environment.generated' },
+        })
+    }
+}, 480_000)
+
+it('discards answers inferred for an estate that changes from no runnable product to one sibling', async () => {
+    const { launcher, env } = await installedInitEnvironment()
     const changingRequested = join(packScratch, 'init-no-runnable-to-runnable')
     mkdirSync(changingRequested)
     const changingRoot = realpathSync(changingRequested)
@@ -901,17 +912,15 @@ it('runs installed init for each isolated target and refuses missing roots or br
             expect.objectContaining({ provenance: 'operator-confirmed' })] },
         question: { field: 'ports.bases' },
     })
+}, 480_000)
+
+it('lists every outstanding headless init question with the values it inferred', async () => {
+    const { launcher, env } = await installedInitEnvironment()
     mkdirSync(join(packScratch, 'init-headless'))
     const headless = realpathSync(join(packScratch, 'init-headless'))
     mkdirSync(join(headless, 'library'))
     writeFileSync(join(headless, 'library/package.json'), `${JSON.stringify({ name: 'synthetic-library', version: '0.0.0', scripts: { test: 'node test.mjs' } })}\n`)
     writeFileSync(join(headless, 'library/Dockerfile'), 'FROM node:22-slim\nEXPOSE 4100\nCMD ["node", "index.mjs"]\n')
-    const answersFile = join(packScratch, 'headless-answers.toml')
-    writeFileSync(answersFile, [
-        '[cockpit]', 'name = "synthetic"', '',
-        '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
-        'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
-        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', ''].join('\n'))
     const run = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', headless, '--target', 'opencode', ...args, '--json'],
         { cwd: headless, env, encoding: 'utf8' })
     const first = run()
@@ -927,7 +936,16 @@ it('runs installed init for each isolated target and refuses missing roots or br
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'testing').inferred).toEqual([
         expect.objectContaining({ target: 'testing.library', provenance: expect.objectContaining({ kind: 'inferred', source: 'library/package.json' }) }),
     ])
+}, 480_000)
 
+it('finishes init across three runs without a terminal and lets a teammate clone set up, sync and check', async () => {
+    const { launcher, env } = await installedInitEnvironment()
+    const answersFile = join(packScratch, 'headless-answers.toml')
+    writeFileSync(answersFile, [
+        '[cockpit]', 'name = "synthetic"', '',
+        '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
+        'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
+        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', ''].join('\n'))
     // An agent has no terminal at any point: three runs, each given only what the previous one printed.
     const portableRequested = join(packScratch, 'init-portable')
     mkdirSync(portableRequested)
@@ -990,7 +1008,10 @@ it('runs installed init for each isolated target and refuses missing roots or br
         expect(result.status, `${command}: ${result.stdout}${result.stderr}`).toBe(0)
     }
     expect(execFileSync('git', ['-C', teammate, 'status', '--porcelain'], { encoding: 'utf8', env: teammateEnv })).toBe('')
+}, 480_000)
 
+it('refuses init without a root or with a broken adjacent asset and writes nothing', async () => {
+    const { installed, launcher, env } = await installedInitEnvironment()
     const untouched = join(packScratch, 'init-missing-root')
     mkdirSync(untouched)
     const missing = spawnSync(process.execPath, [launcher, 'init', '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })

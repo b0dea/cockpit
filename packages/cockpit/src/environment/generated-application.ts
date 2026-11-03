@@ -578,6 +578,10 @@ const MAX_SURFACE_FILE_BYTES = 65_536
 const MAX_SURFACE_BYTES = 4_194_304
 const MAX_HELPER_FRAME_BYTES = 65_536
 const HELPER_TIMEOUT_MS = 10_000
+// The native hook cost workload spawns Git once per ref update, 128 times. On a loaded host that
+// takes seconds (7 s at a load average of 24), so under the helper bound an over-budget hook timed
+// out and was reported as a failed execution instead of being sent to CI.
+const NATIVE_HOOK_COST_TIMEOUT_MS = 60_000
 const SURFACE_ROOT = fileURLToPath(new URL('../../surfaces', import.meta.url))
 const RESTRICTION_ASSETS = Object.freeze([
     'guards/bash-guard.sh',
@@ -2480,7 +2484,7 @@ async function projectExplicitNativeHooks(
                         argv0: shell.value.canonicalPath,
                         cwd: prepared.root,
                         env: { PATH: dirname(git.value.canonicalPath) },
-                        timeoutMs: HELPER_TIMEOUT_MS,
+                        timeoutMs: NATIVE_HOOK_COST_TIMEOUT_MS,
                         spawnNotAfter: new Date(Date.now() + HELPER_TIMEOUT_MS).toISOString(),
                         stdoutLimitBytes: 4_096,
                         stderrLimitBytes: 4_096,

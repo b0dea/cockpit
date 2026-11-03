@@ -10,6 +10,11 @@ import { ENVIRONMENT_CODES, snapshotJson, type ExecutionPlan, type ExecutionStep
 import { resolveExecutablePath } from '../environment/executable.js'
 import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, repairFencedExecution } from './execute.js'
 
+// A spawned step reaches its first line in milliseconds when idle and in seconds under load;
+// expect.poll's 1 s default failed these waits whenever a full suite shared the machine. The wait
+// matches the steps' own 10 s bound.
+const PROCESS_START_POLL = { timeout: 10_000 }
+
 const nodeStep = (id: string, script: string, overrides: Partial<ExecutionStep> = {}): ExecutionStep => ({
     id, argv: [process.execPath, '-e', script], argv0: process.execPath, cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' },
     timeoutMs: 10_000, stdoutLimitBytes: 1_024, stderrLimitBytes: 1_024,
@@ -1232,7 +1237,7 @@ done
                 `require('node:fs').writeFileSync(${JSON.stringify(compensated)}, 'done')`,
             )],
         })] }, { signal: controller.signal })
-        await expect.poll(() => existsSync(started)).toBe(true)
+        await expect.poll(() => existsSync(started), PROCESS_START_POLL).toBe(true)
 
         controller.abort()
         const outcome = await execution
@@ -1288,7 +1293,7 @@ while :; do sleep 1; done
                         `require('node:fs').writeFileSync(${JSON.stringify(compensationMarker)}, 'ran')`,
                     )],
                 })] }, { signal: controller.signal })
-                await expect.poll(() => existsSync(stagingMarker)).toBe(true)
+                await expect.poll(() => existsSync(stagingMarker), PROCESS_START_POLL).toBe(true)
                 controller.abort()
                 outcome = await execution
             } finally {
@@ -1348,7 +1353,7 @@ while :; do sleep 1; done
         try {
             try {
                 const execution = executeProbe(step, { signal: controller.signal })
-                await expect.poll(() => existsSync(started)).toBe(true)
+                await expect.poll(() => existsSync(started), PROCESS_START_POLL).toBe(true)
                 controller.abort()
                 outcome = await execution
             } finally {

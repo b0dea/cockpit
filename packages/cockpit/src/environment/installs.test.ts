@@ -480,7 +480,7 @@ describe('install serialization', () => {
         const first = await planInstall(input, { execute: executeProbe })
         expect(first.kind).toBe('complete')
         const old = new Date('2000-01-01T00:00:00.000Z')
-        if (first.kind !== 'complete' || !first.lock) return
+        if (first.kind !== 'complete' || !first.lock) throw new Error(`expected an install lock: ${JSON.stringify(first)}`)
         const lockPath = first.lock.path
         await import('node:fs/promises').then(({ utimes }) => utimes(lockPath, old, old))
         const result = await planInstall({ ...input, holderId: holderB, observeHolder: async () => holderState }, { execute: executeProbe })

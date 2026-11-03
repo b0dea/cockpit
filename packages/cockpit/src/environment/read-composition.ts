@@ -607,6 +607,14 @@ export function createReadCommandAdapters(
         }
         latestPreviews.delete(basis.stackId)
         pending.delete(basis.stackId)
+        await remeasureBaseline(basis)
+        pending.set(basis.stackId, basis)
+        return observation
+    }
+
+    // Revalidation and the write both re-measure the approved runtime; either refuses by naming
+    // what changed, whether a fingerprint moved or the measurement itself failed.
+    const remeasureBaseline = async (basis: PendingBaseline): Promise<void> => {
         let fresh: BaselineMeasurement
         try {
             fresh = await measureBaseline()
@@ -625,8 +633,6 @@ export function createReadCommandAdapters(
             }
             throw new RefusalError(`baseline ${names[changed]} changed`)
         }
-        pending.set(basis.stackId, basis)
-        return observation
     }
 
     const writeBaseline = async (baseline: EnvironmentBaseline): Promise<void> => {
@@ -640,16 +646,7 @@ export function createReadCommandAdapters(
             throw new RefusalError('baseline write authority is unavailable')
         }
         pending.delete(baseline.stackId)
-        let fresh: BaselineMeasurement
-        try {
-            fresh = await measureBaseline()
-        } catch {
-            throw new RefusalError('baseline write authority is unavailable')
-        }
-        if ((Object.keys(basis.fingerprint) as (keyof PendingBaseline['fingerprint'])[])
-            .some((field) => basis.fingerprint[field] !== fresh.basis.fingerprint[field])) {
-            throw new RefusalError('baseline write authority is unavailable')
-        }
+        await remeasureBaseline(basis)
         const expected = JSON.stringify(basis.expected)
         const result = await transactState(
             basis.namespace,

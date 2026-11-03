@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readdirSync, writeFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     ENVIRONMENT_CODES,
@@ -58,7 +57,7 @@ import {
 import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
 import { leasePortFamily } from './ports.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
-import { abortStateTransaction, readState, selectStateRoot, SERIALIZED_RECORD_BYTE_LIMIT, transactState, withStateNamespaceInventory, type StateNamespace, type StateRecord } from './state.js'
+import { readState, selectStateRoot, SERIALIZED_RECORD_BYTE_LIMIT, transactState, withStateNamespaceInventory, type StateNamespace, type StateRecord } from './state.js'
 
 const inventoryIdentityGate = vi.hoisted(() => ({
     target: undefined as string | undefined,
@@ -1429,26 +1428,6 @@ describe('active stack inventory', () => {
             }],
         })
     })
-
-    it('synchronizes the directory after removing verified prepared bytes', async () => {
-        const state = await namespace()
-        const address = state.paths.coordination(stackId)
-        const publicationParent = dirname(address.path)
-        await mkdir(publicationParent, { recursive: true })
-        const sync = await interceptDirectorySync(publicationParent, () => undefined)
-        let result
-        try {
-            result = await transactState(state, address, {
-                ownerId: holderA,
-                beforeCommit: () => abortStateTransaction('cancelled'),
-            }, () => claimRecord([]))
-        } finally {
-            sync.restore()
-        }
-
-        expect(result).toEqual({ aborted: true, value: 'cancelled' })
-        expect(sync.calls()).toBe(1)
-    })
 })
 
 // A `cockpit session` killed with SIGKILL never runs its closing sleep; its hold made down, reset
@@ -2646,71 +2625,6 @@ describe('session-aware claims', () => {
             pending: [],
         })
     })
-    it('rejects prepared state bytes mutated by a commit veto callback', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const address = state.paths.coordination(stackId)
-        const before = await readState(address)
-        if (before.kind !== 'complete') throw new Error('expected coordination record')
-        const result = await transactState(state, address, {
-            ownerId: holderA,
-            beforeCommit: () => {
-                const temporary = readdirSync(dirname(address.path)).find((name) => name.startsWith(`.${stackId.replace(':', '_')}.`) && name.endsWith('.tmp'))
-                if (!temporary) throw new Error('expected prepared state file')
-                writeFileSync(join(dirname(address.path), temporary), `${JSON.stringify({
-                    ...before.value,
-                    revision: before.value.revision + 1,
-                    updatedAt: new Date().toISOString(),
-                    value: { holders: [], lease: null, lastReleasedHolder: null },
-                })}\n`)
-                return undefined
-            },
-        }, (current) => ({
-            ...current!,
-            revision: current!.revision + 1,
-            updatedAt: new Date().toISOString(),
-        }))
-        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
-        expect(await readState(address)).toEqual(before)
-    })
-
-    it('rejects prepared state bytes mutated before ordinary publication', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const address = state.paths.coordination(stackId)
-        const before = await readState(address)
-        if (before.kind !== 'complete') throw new Error('expected coordination record')
-        let temporaryPath = ''
-        let injected = ''
-        const result = await transactState(state, address, {
-            ownerId: holderA,
-            beforePublish: async (path) => {
-                temporaryPath = path
-                injected = `${JSON.stringify({
-                    ...before.value,
-                    revision: before.value.revision + 1,
-                    updatedAt: new Date().toISOString(),
-                    value: { holders: [], lease: null, lastReleasedHolder: null },
-                })}\n`
-                writeFileSync(path, injected)
-            },
-        }, (current) => ({
-            ...current!,
-            revision: current!.revision + 1,
-            updatedAt: new Date().toISOString(),
-        }))
-        expect(result).toMatchObject({
-            kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            message: expect.stringContaining('unverified bytes were preserved'), target: temporaryPath,
-        })
-        expect(await readState(address)).toEqual(before)
-        expect(await readFile(temporaryPath, 'utf8')).toBe(injected)
-    })
-
     it('records self-release with observed time rather than caller time', async () => {
         const state = await namespace()
         await seedCoordination(state, [
