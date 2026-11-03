@@ -1523,8 +1523,15 @@ export type PublicationOutcome = PublicationRefusal | Readonly<{
     staleRemoval?: GeneratedStaleRemovalApprovalRequest
 }>
 
-const issuedPlans = new WeakMap<object, PublicationRecord>()
-const consumedPlans = new WeakSet<object>()
+/**
+ * An admitted plan carries the exact checks and mutations it was admitted against, and the one
+ * approval answer that authorization and the run share. Publication itself is single-use because
+ * every write is anchored to the pre-image the plan observed.
+ */
+interface AdmittedPublicationPlan extends PublicationPlan {
+    readonly record: PublicationRecord
+    approval?: Promise<boolean>
+}
 
 function sameExpected(left: ExpectedEntryState, right: ExpectedEntryState): boolean {
     return left.kind === right.kind && left.sha256 === right.sha256 && left.target === right.target
@@ -1661,9 +1668,8 @@ async function admitBootstrapPlan(
     }
     const ordered = groups.flatMap(group => group.mutations)
     const changes = ordered.map(row => ({ operation: 'write' as const, path: row.path }))
-    const plan = { changes }
-    issuedPlans.set(plan, Object.freeze({ root: serializable.root, rootIdentity: serializable.rootIdentity, node,
-        mutations: ordered, groups, changes, checks: Object.freeze(checks) }))
+    const plan: AdmittedPublicationPlan = { changes, record: { root: serializable.root, rootIdentity: serializable.rootIdentity, node,
+        mutations: ordered, groups, changes, checks } }
     return { kind: 'complete', plan }
 }
 
@@ -1822,20 +1828,15 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     const staleRemoval = staleRemovalRequest({ cockpitId: authority.cockpitId, generation: captured.generation, sourceSha256: captured.sourceSha256 }, ordered)
     if (ordered.some(row => row.phase === 'stale') && !staleRemoval) return refuse('GENERATED_STALE_APPROVAL_INVALID', 'stale operations cannot be bound to exact current identities', 'generated-environment')
     const changes = ordered.map(row => ({ operation: row.operation.startsWith('remove-') ? 'remove' as const : 'write' as const, path: row.path }))
-    const plan = { changes, ...(staleRemoval ? { staleRemoval } : {}) }
-    issuedPlans.set(plan, Object.freeze({ root: authority.root, rootIdentity: captured.rootIdentity, node, mutations: ordered, groups, changes, checks: Object.freeze(checks), ...(staleRemoval ? { staleRemoval } : {}) }))
+    const plan: AdmittedPublicationPlan = { changes, ...(staleRemoval ? { staleRemoval } : {}),
+        record: { root: authority.root, rootIdentity: captured.rootIdentity, node, mutations: ordered, groups, changes, checks, ...(staleRemoval ? { staleRemoval } : {}) } }
     return { kind: 'complete', plan }
 }
 
-const publicationApprovals = new WeakMap<PublicationPlan, Promise<boolean>>()
-
-function publicationApproved(plan: PublicationPlan, record: PublicationRecord, adapters: PublicationAdapters): Promise<boolean> {
-    let approval = publicationApprovals.get(plan)
-    if (!approval) {
-        approval = Promise.resolve().then(() => record.staleRemoval ? staleRemovalApproved(record.staleRemoval, adapters) : true)
-        publicationApprovals.set(plan, approval)
-    }
-    return approval
+function publicationApproved(plan: AdmittedPublicationPlan, adapters: PublicationAdapters): Promise<boolean> {
+    const { staleRemoval } = plan.record
+    plan.approval ??= Promise.resolve().then(() => staleRemoval ? staleRemovalApproved(staleRemoval, adapters) : true)
+    return plan.approval
 }
 
 function approvalRefusal(record: PublicationRecord): PublicationRefusal {
@@ -1851,15 +1852,10 @@ function approvalRefusal(record: PublicationRecord): PublicationRefusal {
     }
 }
 
-/** Admit approval before another owner writes, retaining the exact plan's one-use publication. */
+/** Asks for approval before another owner writes; the run reuses this answer instead of asking again. */
 export async function authorizePublicationPlan(plan: PublicationPlan, adapters: PublicationAdapters): Promise<true | PublicationRefusal> {
-    const record = plan && issuedPlans.get(plan)
-    if (!record || consumedPlans.has(plan)) return refuse('GENERATED_PUBLICATION_FAILED', 'publication requires a current owner-issued plan', 'generated-environment')
-    const approved = await publicationApproved(plan, record, adapters)
-    if (consumedPlans.has(plan)) return refuse('GENERATED_PUBLICATION_FAILED', 'publication requires a current owner-issued plan', 'generated-environment')
-    if (approved) return true
-    consumedPlans.add(plan)
-    return approvalRefusal(record)
+    const admitted = plan as AdmittedPublicationPlan
+    return await publicationApproved(admitted, adapters) ? true : approvalRefusal(admitted.record)
 }
 
 export async function runPublicationPlan(plan: PublicationPlan, adapters: PublicationRunAdapters): Promise<PublicationOutcome> {
@@ -1869,16 +1865,15 @@ export async function runPublicationPlan(plan: PublicationPlan, adapters: Public
 }
 
 async function runPlan(plan: PublicationPlan, adapters: PublicationRunAdapters): Promise<PublicationOutcome> {
-    const record = plan && issuedPlans.get(plan)
-    if (!record || consumedPlans.has(plan)) return refuse('GENERATED_PUBLICATION_FAILED', 'publication requires a current owner-issued plan', 'generated-environment')
+    const admitted = plan as AdmittedPublicationPlan
+    const { record } = admitted
     if (adapters.dryRun) {
         const current = await adapters.revalidate(undefined, 'preview')
         if (current !== true) return typeof current === 'object' ? current : refuse('GENERATED_SOURCE_CHANGED', 'publication preview inputs changed', 'generated-environment')
         if (!await planCurrent(record, adapters)) return refuse('GENERATED_SOURCE_CHANGED', 'publication preview identities changed', 'generated-environment')
         return { kind: 'complete', changes: record.changes, committedPaths: [], ...(record.staleRemoval ? { staleRemoval: record.staleRemoval } : {}) }
     }
-    consumedPlans.add(plan)
-    if (!await publicationApproved(plan, record, adapters)) return approvalRefusal(record)
+    if (!await publicationApproved(admitted, adapters)) return approvalRefusal(record)
     return applyPrepared(record, adapters)
 }
 

@@ -827,33 +827,28 @@ describe('generated publication transaction', () => {
             const { dev, ino, mtimeMs } = await lstat(join(root, path))
             return { dev, ino, mtimeMs }
         }))).toEqual(identities)
-        expect(await runPublicationPlan(plan, { execute: executeProbe, revalidate: async () => { throw new Error('replayed authority reached validation') } }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }] })
+        // An unchanged plan publishes nothing, so running it again is idempotent.
+        expect(await runPublicationPlan(plan, { execute: executeProbe, revalidate: async () => true }))
+            .toEqual({ kind: 'complete', changes: [], committedPaths: [] })
     })
 
-    it('shares exact approval across concurrent admission and one-use publication', async () => {
+    it('shares one approval across concurrent authorization and the run, and refuses a second run once its writes landed', async () => {
         const { input } = await publication()
         const admitted = await admitPublicationPlan(input, { execute: executeProbe })
         if (admitted.kind !== 'complete') throw new Error('expected publication plan')
         const authorizeStaleRemoval = vi.fn(approve)
         const adapters = { execute: executeProbe, authorizeStaleRemoval, revalidate: async () => true }
-        expect(await authorizePublicationPlan({ ...admitted.plan }, adapters)).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }],
-        })
-        expect(authorizeStaleRemoval).not.toHaveBeenCalled()
         expect(await Promise.all([
             authorizePublicationPlan(admitted.plan, adapters), authorizePublicationPlan(admitted.plan, adapters),
         ])).toEqual([true, true])
         expect(await runPublicationPlan(admitted.plan, adapters)).toMatchObject({ kind: 'complete' })
         expect(authorizeStaleRemoval).toHaveBeenCalledTimes(1)
-        expect(await authorizePublicationPlan(admitted.plan, adapters)).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }],
-        })
+        // Every write is anchored to the pre-image the plan observed, so the published plan cannot run again.
         expect(await runPublicationPlan(admitted.plan, adapters)).toMatchObject({ kind: 'refusal' })
         expect(authorizeStaleRemoval).toHaveBeenCalledTimes(1)
     })
 
-    it('consumes a denied approval before metadata admission can retry it', async () => {
+    it('keeps a denied approval for the run instead of asking again', async () => {
         const { root, input, prior } = await publication()
         const admitted = await admitPublicationPlan(input, { execute: executeProbe })
         if (admitted.kind !== 'complete') throw new Error('expected publication plan')
@@ -865,7 +860,7 @@ describe('generated publication transaction', () => {
                 fix: expect.stringContaining('npx --no cockpit sync --config <your cockpit.toml> --interactive') }],
         })
         expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval: approve, revalidate: async () => true }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }] })
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_STALE_APPROVAL_REQUIRED' }] })
         expect(authorizeStaleRemoval).toHaveBeenCalledTimes(1)
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(prior.bytes)
     })
@@ -927,7 +922,7 @@ describe('generated publication transaction', () => {
         expect(await readFile(join(held, 'z-shared.md'), 'utf8')).toBe(before)
     })
 
-    it('propagates the exact final source-input refusal for unchanged publication and consumes authority', async () => {
+    it('propagates the exact final source-input refusal for unchanged publication', async () => {
         const { root, input, prior, before } = await publication()
         await writeFile(join(root, 'source.json'), 'source')
         const admitted = await admitPublicationPlan({ ...input, nextLedgerBytes: prior.bytes, mutations: [] }, { execute: executeProbe })
@@ -946,7 +941,6 @@ describe('generated publication transaction', () => {
         })).toBe(refusal)
         expect(stages).toEqual(['after-publish'])
         expect(actions).toEqual([])
-        expect((await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true })).kind).toBe('refusal')
         expect(await readFile(join(root, 'source.json'), 'utf8')).toBe('changed source')
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(prior.bytes)
         expect(await readFile(join(root, 'z-shared.md'), 'utf8')).toBe(before)
