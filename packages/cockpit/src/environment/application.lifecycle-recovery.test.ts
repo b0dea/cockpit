@@ -250,7 +250,7 @@ const gitExecutable = {
     executionMode: 'verified-path' as const,
 }
 
-function stubUpPlanner(planner: typeof import('./lifecycle.js').planUp): void {
+function stubUpPlanner(planner: typeof import('../../test-support/lifecycle-planning.js').planUp): void {
     const inputs = new WeakMap<object, Parameters<typeof import('./lifecycle.js').admitUpProgress>[0]>()
     applicationOwners.lifecycle.admitUpProgress = (input) => {
         const authority = Object.freeze({}) as import('./lifecycle.js').UpPlanningAuthority

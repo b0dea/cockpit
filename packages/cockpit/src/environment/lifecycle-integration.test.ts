@@ -18,8 +18,8 @@ import {
     planDown,
     planResetLifecycle,
     planSleep,
-    planUp,
 } from './lifecycle.js'
+import { planUp } from '../../test-support/lifecycle-planning.js'
 import {
     projectLifecycleStage,
     resolveLifecycleStage,

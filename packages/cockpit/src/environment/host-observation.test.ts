@@ -13,7 +13,7 @@ import { observeHostCapacity, type HostCapacityFloor } from './host-observation.
 import { collectMachineFloorEvidence, createMachineFloorPlan, issueMachineFloorAuthority, type MachineFloorEvidence } from './runtime.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
-import { evaluatePreflight, resolveObservationPostures } from './observations.js'
+import { aggregateObservations, resolveObservationPostures } from './observations.js'
 import { resolveLifecycleStage } from './lifecycle-stage.js'
 import { observeConfiguration, selectStateRoot } from './state.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, stackId as deriveStackId } from './identity.js'
@@ -115,11 +115,11 @@ describe('host capacity evidence', () => {
     })
 
     it('requires host measurements only for an authentic declared machine floor', async () => {
-        const absent = evaluatePreflight([], await evaluationContext(new Date().toISOString())).checks
+        const absent = aggregateObservations([[]], await evaluationContext(new Date().toISOString())).checks
             .filter(({ owner }) => owner === 'host-observation')
         expect(absent).toHaveLength(3)
         expect(absent.map(({ verdict }) => verdict)).toEqual(['not-applicable', 'not-applicable', 'not-applicable'])
-        const declared = evaluatePreflight([], await evaluationContext(new Date().toISOString(), {
+        const declared = aggregateObservations([[]], await evaluationContext(new Date().toISOString(), {
             memoryBytes: 1_048_576, cpuMillis: 1_000, freeDiskBytes: 1_048_576,
         })).checks.filter(({ owner }) => owner === 'host-observation')
         expect(declared).toHaveLength(3)
@@ -130,11 +130,11 @@ describe('host capacity evidence', () => {
         const exact = await evidence(8_589_934_592, 2, 10_240)
         const floor = { memoryBytes: exact.memoryBytes, cpuMillis: exact.cpuMillis, freeDiskBytes: exact.freeDiskBytes }
         const observations = observeHostCapacity({ evidence: exact })
-        expect(evaluatePreflight(observations, await evaluationContext(exact.observedAt, floor)).checks
+        expect(aggregateObservations([observations], await evaluationContext(exact.observedAt, floor)).checks
             .filter(({ owner }) => owner === 'host-observation').every(({ verdict }) => verdict === 'pass')).toBe(true)
         const raised = { memoryBytes: floor.memoryBytes + 1_048_576, cpuMillis: floor.cpuMillis + 1_000, freeDiskBytes: floor.freeDiskBytes + 1_048_576 }
         const below = await evidence(8_589_934_592, 2, 10_240, raised)
-        expect(evaluatePreflight(observeHostCapacity({ evidence: below }), {
+        expect(aggregateObservations([observeHostCapacity({ evidence: below })], {
             ...await evaluationContext(below.observedAt, raised),
         }).verdict).toBe('fail')
         expect(observations.map(({ observed }) => observed)).toEqual(expect.arrayContaining([

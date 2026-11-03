@@ -326,7 +326,7 @@ const ENVIRONMENT_EXECUTOR = 'packages/cockpit/src/environment-exec/execute.ts'
 const ENVIRONMENT_CONTRACT = 'packages/cockpit/src/environment/contract.ts'
 const LIFECYCLE_MODULE = 'packages/cockpit/src/environment/lifecycle.ts'
 const LIFECYCLE_EXPORTS = [
-    'admitUpProgress', 'planAdmittedUp', 'planUp', 'planSleep', 'planDown', 'planResetLifecycle', 'consumeLifecycleIssuance',
+    'admitUpProgress', 'planAdmittedUp', 'planSleep', 'planDown', 'planResetLifecycle', 'consumeLifecycleIssuance',
 ] as const
 const LIFECYCLE_IMPORT_CONTRACT = new Map<string, readonly string[]>([
     ['node:crypto', ['createHash']],

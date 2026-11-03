@@ -8,7 +8,7 @@ import {
     type GeneratedComposeArtifactAuthority,
 } from './generated-render.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { MAX_COLD_START_SECONDS, type MachineFloor } from '../schema.js'
+import { MAX_COLD_START_SECONDS } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
 import {
     DOCKER_CLIENT_ENVIRONMENT,
@@ -17,9 +17,7 @@ import {
     isCanonicalTimestamp,
     OBSERVATION_REASON_BYTE_LIMIT,
     snapshotEnvironmentObservation,
-    EXECUTION_FAILURE_CODES,
     HOST_PROCESS_CONTROL_ENV,
-    REFUSAL_CODES,
     snapshotExecutionPlan,
     snapshotExecutionStep,
     snapshotJson,
@@ -27,11 +25,9 @@ import {
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
-    type ExecutionFailureCode,
     type ExecutionPlan,
     type ExecutionStep,
     type JsonSnapshot,
-    type Observation,
     type RefusalCode,
     type CockpitId,
     type StackId,
@@ -69,7 +65,7 @@ import { composeProcessEnvironment } from './compose-environment.js'
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'isVersionFloor', 'versionAtLeast', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'observeRuntimeExecution', 'isRuntimeObservation', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'isVersionFloor', 'versionAtLeast', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -261,7 +257,6 @@ const REMOTE_REFERENCE = /^[A-Za-z][A-Za-z0-9+.-]*:/
 const MAX_TIMEOUT_MS = 300_000
 const OUTPUT_LIMIT_BYTES = 65_536
 const RUNTIME_OPERATIONS = ['validate', 'up', 'down'] as const
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
 const SHA256 = /^[a-f0-9]{64}$/
 const VERSION = /^\d+\.\d+\.\d+$/
 // What Docker and Compose print: a numeric core and an optional vendor suffix, such as Docker
@@ -273,7 +268,6 @@ const OBSERVED_VERSION = /^(\d+\.\d+\.\d+)(?:[-+][0-9A-Za-z.-]+)?$/
 export function observedVersionCore(value: string): string | undefined {
     return value.match(OBSERVED_VERSION)?.[1]
 }
-const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 
 function exactKeys(value: object, keys: readonly string[]): boolean {
     const actual = Reflect.ownKeys(Object.getOwnPropertyDescriptors(value))
@@ -3788,236 +3782,4 @@ export function consumeRuntimeStopped(authority: RuntimeStoppedAuthority): Drain
     if (!outcome) return undefined
     issuedRuntimeStoppedAuthorities.delete(authority)
     return outcome
-}
-
-export type MachineMetric = 'runtime_memory_mb' | 'runtime_cpus' | 'free_disk_mb'
-
-export interface FloorComparison {
-    metric: MachineMetric
-    measured: number
-    threshold: number
-    relation: 'at-least'
-    passed: boolean
-    producer: string
-    observedAt: string
-}
-
-export type MachineFloorResult =
-    | { verdict: 'pass' | 'fail'; comparisons: readonly FloorComparison[]; gaps: readonly [] }
-    | { verdict: 'unavailable'; comparisons: readonly FloorComparison[]; gaps: readonly Observation<number>[] }
-
-export interface MachineFloorObservations {
-    runtimeMemoryMb: Observation<number>
-    runtimeCpus: Observation<number>
-    freeDiskMb: Observation<number>
-}
-
-const malformedMeasurement: Observation<number> = Object.freeze({
-    state: 'unavailable',
-    reason: 'measurement input is malformed',
-    producer: 'runtime-measurement-validator',
-})
-
-function validInstant(value: string): boolean {
-    if (!ISO_INSTANT.test(value)) return false
-    const date = new Date(value)
-    const canonical = value.includes('.') ? value : value.replace('Z', '.000Z')
-    return !Number.isNaN(date.valueOf()) && date.toISOString() === canonical
-}
-
-function parsedObservation(value: unknown): Observation<number> | undefined {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-    const candidate = value as Partial<Observation<number>>
-    if (candidate.state === 'available') {
-        if (!exactKeys(value, ['state', 'value', 'observedAt', 'producer'])
-            || typeof candidate.value !== 'number' || !Number.isFinite(candidate.value) || candidate.value < 0
-            || typeof candidate.observedAt !== 'string' || !validInstant(candidate.observedAt)
-            || typeof candidate.producer !== 'string' || candidate.producer.length === 0 || candidate.producer.includes('\0')) return undefined
-        return Object.freeze({ state: candidate.state, value: candidate.value, observedAt: candidate.observedAt, producer: candidate.producer })
-    }
-    if (candidate.state === 'unavailable') {
-        if (!exactKeys(value, ['state', 'reason', 'producer'])
-            || typeof candidate.reason !== 'string' || candidate.reason.length === 0 || candidate.reason.includes('\0')
-            || typeof candidate.producer !== 'string' || candidate.producer.length === 0 || candidate.producer.includes('\0')) return undefined
-        return Object.freeze({ state: candidate.state, reason: candidate.reason, producer: candidate.producer })
-    }
-    if (candidate.state === 'failed') {
-        if (!exactKeys(value, ['state', 'code', 'reason', 'producer'])
-            || typeof candidate.code !== 'string' || !REFUSAL_CODES.includes(candidate.code as RefusalCode)
-            || typeof candidate.reason !== 'string' || candidate.reason.length === 0 || candidate.reason.includes('\0')
-            || typeof candidate.producer !== 'string' || candidate.producer.length === 0 || candidate.producer.includes('\0')) return undefined
-        return Object.freeze({ state: candidate.state, code: candidate.code as RefusalCode, reason: candidate.reason, producer: candidate.producer })
-    }
-    return undefined
-}
-
-function measurementInputs(
-    floor: unknown,
-    observations: unknown,
-): { floor: MachineFloor; observations: MachineFloorObservations } | undefined {
-    const snapshot = snapshotJson({ floor, observations })
-    if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
-    const input = snapshot as { floor?: unknown; observations?: unknown }
-    const ownedFloor = input.floor
-    const ownedObservations = input.observations
-    if (ownedFloor === null || typeof ownedFloor !== 'object' || Array.isArray(ownedFloor)
-        || !exactKeys(ownedFloor, ['runtime_memory_mb', 'runtime_cpus', 'free_disk_mb', 'cold_start_seconds'])
-        || ownedObservations === null || typeof ownedObservations !== 'object' || Array.isArray(ownedObservations)
-        || !exactKeys(ownedObservations, ['runtimeMemoryMb', 'runtimeCpus', 'freeDiskMb'])) return undefined
-    const thresholds = ownedFloor as Record<string, unknown>
-    if (!Number.isSafeInteger(thresholds.runtime_memory_mb) || (thresholds.runtime_memory_mb as number) <= 0
-        || typeof thresholds.runtime_cpus !== 'number' || !Number.isFinite(thresholds.runtime_cpus) || thresholds.runtime_cpus <= 0
-        || !Number.isSafeInteger(thresholds.free_disk_mb) || (thresholds.free_disk_mb as number) <= 0
-        || !Number.isSafeInteger(thresholds.cold_start_seconds) || (thresholds.cold_start_seconds as number) <= 0) return undefined
-    const ownedMeasurements = ownedObservations as Record<string, unknown>
-    const runtimeMemoryMb = parsedObservation(ownedMeasurements.runtimeMemoryMb)
-    const runtimeCpus = parsedObservation(ownedMeasurements.runtimeCpus)
-    const freeDiskMb = parsedObservation(ownedMeasurements.freeDiskMb)
-    if (runtimeMemoryMb === undefined || runtimeCpus === undefined || freeDiskMb === undefined) return undefined
-    return {
-        floor: ownedFloor as unknown as MachineFloor,
-        observations: { runtimeMemoryMb, runtimeCpus, freeDiskMb },
-    }
-}
-
-export function measureMachineFloor(
-    floor: MachineFloor,
-    observations: MachineFloorObservations,
-): MachineFloorResult {
-    const owned = measurementInputs(floor, observations)
-    if (owned === undefined) return { verdict: 'unavailable', comparisons: [], gaps: [malformedMeasurement] }
-    const inputs = [
-        ['runtime_memory_mb', owned.floor.runtime_memory_mb, owned.observations.runtimeMemoryMb, 'runtime-resource-collector'],
-        ['runtime_cpus', owned.floor.runtime_cpus, owned.observations.runtimeCpus, 'runtime-resource-collector'],
-        ['free_disk_mb', owned.floor.free_disk_mb, owned.observations.freeDiskMb, 'free-disk-collector'],
-    ] as const
-    const comparisons: FloorComparison[] = []
-    const gaps: Observation<number>[] = []
-    for (const [metric, threshold, observation, requiredProducer] of inputs) {
-        if (observation.state !== 'available' || observation.producer !== requiredProducer) {
-            gaps.push(observation)
-            continue
-        }
-        comparisons.push({
-            metric,
-            measured: observation.value,
-            threshold,
-            relation: 'at-least',
-            passed: Number.isFinite(observation.value) && observation.value >= threshold,
-            producer: observation.producer,
-            observedAt: observation.observedAt,
-        })
-    }
-    if (gaps.length > 0) return { verdict: 'unavailable', comparisons, gaps }
-    return { verdict: comparisons.every(({ passed }) => passed) ? 'pass' : 'fail', comparisons, gaps: [] }
-}
-
-export type ProbeExecution = { kind: 'complete'; exitCode: 0; binding?: ProbeBinding }
-    | { kind: 'refusal'; code: ExecutionFailureCode; binding?: ProbeBinding; failureSignature?: 'compose-config-invalid' }
-export interface ProbeBinding { batchId: string; packageArtifactSha256: string; runtimeExecutableSha256: string; subject: 'runtime-version' | 'compose-version' | 'candidate' | 'broken-control' }
-export interface RuntimeProbeInput { runtime: { name: string; version: string } | null; composeVersion: string | null; composeFloor: string; measuredOn: string; runtimeVersionProbe: ProbeExecution; versionProbe: ProbeExecution; candidate: ProbeExecution; brokenControl: ProbeExecution }
-export type RuntimeProbeVerdict = { status: 'unavailable'; runtime: { name: string; version: string } | null; composeVersion: string | null; composeFloor: string; measuredOn: string; candidate: 'passed' | 'failed'; brokenControl: 'rejected' | 'accepted' | 'inconclusive'; evidence: { runtimeVersionProbe: ProbeExecution; versionProbe: ProbeExecution; candidate: ProbeExecution; brokenControl: ProbeExecution } | null; operatorAction: { required: true; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE | typeof ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT; reason: string } }
-
-type ProbeSubject = ProbeBinding['subject']
-
-function validDate(value: string): boolean {
-    const match = value.match(DATE)
-    if (match === null) return false
-    const date = new Date(`${value}T00:00:00.000Z`)
-    return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value
-}
-
-function probeBinding(value: unknown, expectedSubject: ProbeSubject): ProbeBinding | undefined {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)
-        || !exactKeys(value, ['batchId', 'packageArtifactSha256', 'runtimeExecutableSha256', 'subject'])) return undefined
-    const candidate = value as Partial<ProbeBinding>
-    if (typeof candidate.batchId !== 'string' || !SHA256.test(candidate.batchId)
-        || typeof candidate.packageArtifactSha256 !== 'string' || !SHA256.test(candidate.packageArtifactSha256)
-        || typeof candidate.runtimeExecutableSha256 !== 'string' || !SHA256.test(candidate.runtimeExecutableSha256)
-        || candidate.subject !== expectedSubject) return undefined
-    return Object.freeze({
-        batchId: candidate.batchId,
-        packageArtifactSha256: candidate.packageArtifactSha256,
-        runtimeExecutableSha256: candidate.runtimeExecutableSha256,
-        subject: candidate.subject,
-    })
-}
-
-function probeExecution(value: unknown, expectedSubject: ProbeSubject): ProbeExecution | undefined {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-    const candidate = value as Partial<ProbeExecution>
-    const hasBinding = 'binding' in value
-    const binding = hasBinding ? probeBinding(candidate.binding, expectedSubject) : undefined
-    if (hasBinding && binding === undefined) return undefined
-    if (candidate.kind === 'complete') {
-        if (!exactKeys(value, hasBinding ? ['kind', 'exitCode', 'binding'] : ['kind', 'exitCode']) || candidate.exitCode !== 0) return undefined
-        return Object.freeze(binding === undefined ? { kind: candidate.kind, exitCode: 0 } : { kind: candidate.kind, exitCode: 0, binding })
-    }
-    if (candidate.kind !== 'refusal') return undefined
-    const hasFailureSignature = 'failureSignature' in value
-    const expectedKeys = ['kind', 'code', ...(hasBinding ? ['binding'] : []), ...(hasFailureSignature ? ['failureSignature'] : [])]
-    if (!exactKeys(value, expectedKeys)
-        || typeof candidate.code !== 'string' || !EXECUTION_FAILURE_CODES.includes(candidate.code as ExecutionFailureCode)
-        || (hasFailureSignature && (candidate.failureSignature !== 'compose-config-invalid' || expectedSubject !== 'broken-control'))) return undefined
-    return Object.freeze({
-        kind: candidate.kind,
-        code: candidate.code as ExecutionFailureCode,
-        ...(binding === undefined ? {} : { binding }),
-        ...(hasFailureSignature ? { failureSignature: 'compose-config-invalid' as const } : {}),
-    })
-}
-
-function runtimeProbeInput(value: unknown): RuntimeProbeInput | undefined {
-    const snapshot = snapshotJson(value)
-    if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)
-        || !exactKeys(snapshot, ['runtime', 'composeVersion', 'composeFloor', 'measuredOn', 'runtimeVersionProbe', 'versionProbe', 'candidate', 'brokenControl'])) return undefined
-    const candidate = snapshot as Record<string, unknown>
-    let runtime: RuntimeProbeInput['runtime'] = null
-    if (candidate.runtime !== null) {
-        if (typeof candidate.runtime !== 'object' || Array.isArray(candidate.runtime)
-            || !exactKeys(candidate.runtime, ['name', 'version'])) return undefined
-        const runtimeValue = candidate.runtime as Record<string, unknown>
-        if (typeof runtimeValue.name !== 'string' || runtimeValue.name.length === 0 || runtimeValue.name.length > 128 || runtimeValue.name.includes('\0')
-            || typeof runtimeValue.version !== 'string' || !OBSERVED_VERSION.test(runtimeValue.version)) return undefined
-        runtime = Object.freeze({ name: runtimeValue.name, version: runtimeValue.version })
-    }
-    if ((candidate.composeVersion !== null && (typeof candidate.composeVersion !== 'string' || !OBSERVED_VERSION.test(candidate.composeVersion)))
-        || typeof candidate.composeFloor !== 'string' || !VERSION.test(candidate.composeFloor)
-        || typeof candidate.measuredOn !== 'string' || !validDate(candidate.measuredOn)) return undefined
-    const runtimeVersionProbe = probeExecution(candidate.runtimeVersionProbe, 'runtime-version')
-    const versionProbe = probeExecution(candidate.versionProbe, 'compose-version')
-    const candidateProbe = probeExecution(candidate.candidate, 'candidate')
-    const brokenControl = probeExecution(candidate.brokenControl, 'broken-control')
-    if (runtimeVersionProbe === undefined || versionProbe === undefined || candidateProbe === undefined || brokenControl === undefined) return undefined
-    return Object.freeze({
-        runtime,
-        composeVersion: candidate.composeVersion as string | null,
-        composeFloor: candidate.composeFloor,
-        measuredOn: candidate.measuredOn,
-        runtimeVersionProbe,
-        versionProbe,
-        candidate: candidateProbe,
-        brokenControl,
-    })
-}
-
-const malformedProbeVerdict: RuntimeProbeVerdict = Object.freeze({
-    status: 'unavailable', runtime: null, composeVersion: null, composeFloor: '', measuredOn: '',
-    candidate: 'failed', brokenControl: 'inconclusive', evidence: null,
-    operatorAction: Object.freeze({ required: true, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime probe input is malformed or unreadable' }),
-})
-
-export function classifyRuntimeProbe(rawInput: RuntimeProbeInput): RuntimeProbeVerdict {
-    const input = runtimeProbeInput(rawInput)
-    if (input === undefined) return malformedProbeVerdict
-    const timedOut = [input.runtimeVersionProbe, input.versionProbe, input.candidate, input.brokenControl]
-        .some((outcome) => outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT)
-    return {
-        status: 'unavailable', runtime: input.runtime, composeVersion: input.composeVersion,
-        composeFloor: input.composeFloor, measuredOn: input.measuredOn,
-        candidate: input.candidate.kind === 'complete' ? 'passed' : 'failed',
-        brokenControl: input.brokenControl.kind === 'complete' ? 'accepted' : 'inconclusive',
-        evidence: { runtimeVersionProbe: input.runtimeVersionProbe, versionProbe: input.versionProbe, candidate: input.candidate, brokenControl: input.brokenControl },
-        operatorAction: { required: true, code: timedOut ? ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT : ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'plain probe records cannot establish runtime support; run the authenticated packaged probe' },
-    }
 }

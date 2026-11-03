@@ -7,11 +7,11 @@ import {
     coordinationStateRecord,
     decodeCoordinationRecord,
     isDrainActive,
+    isRestoreActive,
     removeExactCoordinationHolder,
     releaseClaim,
     readRootPortInventory,
     type HolderProcess,
-    type HolderReleaseAuthority,
     type PortLeaseRecord,
 } from './claims.js'
 import {
@@ -1102,6 +1102,7 @@ export async function leasePortFamily(supplied: {
     const prior = decodeCoordinationRecord(priorResult.kind === 'complete' ? priorResult.value : null, input.stackId)
     if (!prior) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
     if (isDrainActive(prior)) return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId)
+    if (isRestoreActive(prior)) return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is being restored', input.stackId)
     const observed = observePortFamilies({
         config: input.config,
         requestedAt: input.now,
@@ -1119,6 +1120,7 @@ export async function leasePortFamily(supplied: {
         const currentValue = decodeCoordinationRecord(current, input.stackId)
         if (!currentValue) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
         if (isDrainActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId))
+        if (isRestoreActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is being restored', input.stackId))
         const added = addCoordinationHolder(currentValue, { holderId: input.holderId, checkoutId: input.checkoutId, ...input.holderProcess }, input.now)
         if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', input.holderId))
         const currentLease = currentValue.lease
@@ -1374,7 +1376,6 @@ export async function releasePortFamily(input: {
     readonly stackId: StackId
     readonly requesterId: HolderId
     readonly holderId: HolderId
-    readonly authority?: HolderReleaseAuthority
     readonly now: string
 }): Promise<ReleasePortFamilyResult> {
     let request: Parameters<typeof releaseClaim>[0]
@@ -1388,7 +1389,6 @@ export async function releasePortFamily(input: {
             stackId: input.stackId,
             requesterId: input.requesterId,
             holderId: input.holderId,
-            authority: input.authority,
             now: input.now,
         })
     } catch {

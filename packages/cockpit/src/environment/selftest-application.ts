@@ -42,7 +42,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/selftest-application.ts',
     exports: [
         'runSurfaceSelftestApplication', 'runConfiguredSurfaceSelftestApplication',
-        'runConfiguredSurfaceSelftestOutcome', 'runSelftestOperatorCommand', 'writeConfiguredSurfaceSelftestSpecifications',
+        'runConfiguredSurfaceSelftestOutcome', 'runSelftestOperatorCommand',
     ],
 } as const
 
@@ -708,7 +708,7 @@ export interface SelftestOperatorOptions {
  * Writes the probe-specification file for the current cockpit.toml and generated manifest. The CLI
  * creates `destination` and refuses an existing path, so a filled-in file is never overwritten.
  */
-export async function writeConfiguredSurfaceSelftestSpecifications(
+async function writeConfiguredSurfaceSelftestSpecifications(
     input: SurfaceSelftestDraftInput,
 ): Promise<SurfaceSelftestDispatchOutcome> {
     const refused = (message: string): SurfaceSelftestDispatchOutcome => ({

@@ -1,10 +1,10 @@
 export const mechanism = {
     id: 'shipped-harness-registry',
     module: 'packages/cockpit/src/surfaces/harness-registry.ts',
-    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget'],
+    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget', 'isMeasurementDate'],
 } as const
 
-const pendingNative = (measuredOn: '2026-09-26') => Object.freeze({
+const pendingNative = (measuredOn: string) => Object.freeze({
     state: 'pending_evidence' as const,
     measuredOn,
     reason: 'native loading and enforcement require a paired candidate and broken-control probe',
@@ -14,27 +14,27 @@ const pendingNative = (measuredOn: '2026-09-26') => Object.freeze({
 // generator, so `unavailable` (nothing emitted) would be false; nothing yet shows the tool reads them.
 const generatedNative = Object.freeze({
     state: 'generated' as const,
-    measuredOn: '2026-10-28' as const,
+    measuredOn: '2026-10-28',
     reason: 'cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them',
 })
 const noGuardAdapter = Object.freeze({
     capability: 'unavailable' as const,
-    measuredOn: '2026-10-28' as const,
+    measuredOn: '2026-10-28',
     reason: 'no guard adapter is checked in, so cockpit generates no guard hook',
 })
 // A dated run of the real tool against the generated guard. It replaces the adapter's own record in
 // the capability matrix only while that adapter stays native; the adapter keeps recording the
 // transport shape it was written against.
 const claudeFiring = Object.freeze({
-    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01' as const, measuredVersion: '2.1.316',
+    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01', measuredVersion: '2.1.316',
     provenance: 'with the exact push pre-allowed by permissions, the hook refused git push to a protected branch and the remote stayed empty while git status ran; the same checkout without the hook pushed',
 })
 const codexFiring = Object.freeze({
-    state: 'enforced' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-01' as const, measuredVersion: '0.165.0',
+    state: 'enforced' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-01', measuredVersion: '0.165.0',
     provenance: 'only after a person trusts the hook: untrusted, Codex skipped it and git push ran; trusted (forced with --dangerously-bypass-hook-trust), it refused the push. Trust is per machine and cockpit doctor warns until it is given',
 })
 const openCodeFiring = Object.freeze({
-    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01' as const, measuredVersion: '1.19.4',
+    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01', measuredVersion: '1.19.4',
     provenance: 'the plugin refused git push and a native read of a secrets file while an unprotected read stayed allowed; before read was routed through the guard, the same read returned the file',
 })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
@@ -92,6 +92,17 @@ export const SURFACE_PUBLICATION_ANCHORS = Object.freeze([...new Set(HARNESS_REG
 
 export function isGuardSurfaceTarget(value: unknown): value is GuardSurfaceTarget {
     return typeof value === 'string' && GUARD_SURFACE_TARGETS.some(target => target === value)
+}
+
+/**
+ * A date a capability was measured on: a real calendar day, written YYYY-MM-DD, that is not still
+ * to come. Re-measuring a tool changes its date here and in the rows that quote it; the shape is
+ * checked rather than pinned to one literal, so a new run does not mean editing a type and a guard.
+ */
+export function isMeasurementDate(value: unknown, today: Date = new Date()): value is string {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+    const parsed = new Date(`${value}T00:00:00.000Z`)
+    return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value && value <= today.toISOString().slice(0, 10)
 }
 
 export function harnessFact(target: SurfaceTarget): HarnessRegistryRow {

@@ -5448,14 +5448,7 @@ export async function runBaselineRecord(
     const confirmation = captured?.confirmation
     const recordedAt = captured?.recordedAt
     if (typeof configPath !== 'string' || typeof confirmation !== 'string' || typeof recordedAt !== 'string') {
-        return Object.freeze({
-            kind: 'refusal', status: 2, result: null,
-            diagnostics: Object.freeze([applicationDiagnostic(
-                ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-                'baseline request must contain exact public options',
-                'environment-baseline',
-            )]),
-        })
+        return baselineOperatorRefusal('baseline request must contain exact public options')
     }
     let observed: BaselineObservation
     try {
@@ -5465,14 +5458,7 @@ export async function runBaselineRecord(
     }
     const evidence = ownDataValues(observed, ['snapshot', 'evidence'], ['previous'])
     if (!evidence) {
-        return Object.freeze({
-            kind: 'refusal', status: 2, result: null,
-            diagnostics: Object.freeze([applicationDiagnostic(
-                ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-                'baseline evidence observation must be readable',
-                'environment-baseline',
-            )]),
-        })
+        return baselineOperatorRefusal('baseline evidence observation must be readable')
     }
     try {
         const current = await adapters.revalidate(observed)
@@ -5492,14 +5478,11 @@ export async function runBaselineRecord(
         await adapters.write(admitted.result)
         return admitted
     } catch (error) {
-        return Object.freeze({
-            kind: 'refusal', status: 2, result: null,
-            diagnostics: Object.freeze([applicationDiagnostic(
-                ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-                `environment baseline durability is indeterminate: ${errorCause(error)}`,
-                admitted.result.stackId,
-            )]),
-        })
+        return baselineOperatorRefusal(
+            `environment baseline durability is indeterminate: ${errorCause(error)}`,
+            ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
+            admitted.result.stackId,
+        )
     }
 }
 
@@ -5589,11 +5572,13 @@ function baselineRevalidationMessage(error: unknown): string {
     ].includes(message) ? message : 'baseline evidence changed after confirmation'
 }
 
-function baselineOperatorRefusal(message: string): Extract<BaselineCommandResult, { kind: 'refusal' }> {
+function baselineOperatorRefusal(
+    message: string,
+    code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+    target = 'environment-baseline',
+): Extract<BaselineCommandResult, { kind: 'refusal' }> {
     return Object.freeze({
         kind: 'refusal', status: 2, result: null,
-        diagnostics: Object.freeze([applicationDiagnostic(
-            ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message, 'environment-baseline',
-        )]),
+        diagnostics: Object.freeze([applicationDiagnostic(code, message, target)]),
     })
 }

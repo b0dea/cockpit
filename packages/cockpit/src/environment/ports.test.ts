@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENTRYPOINT_KINDS } from '../entrypoint-kinds.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type EntrypointDerivative } from '../schema.js'
-import { acquireClaim, coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
+import { coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
 import {
     ENVIRONMENT_CODES,
     type CheckoutId,
@@ -150,16 +150,6 @@ async function interceptDirectorySync(directoryPath: string, intercept: () => Pr
         await realSync.call(this)
     })
     return () => spy.mockRestore()
-}
-
-async function claim(state: StateNamespace, stackId: StackId, holderId: HolderId): Promise<void> {
-    const result = await acquireClaim({
-        namespace: state,
-        stackId,
-        holder: { holderId, checkoutId },
-        now,
-    })
-    if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
 }
 
 const noListeners = async (ports: readonly number[]) => ({
@@ -487,8 +477,8 @@ describe('whole-family port leases', () => {
         } })
         expect(reserved.kind).toBe('complete')
         const before = await readState(state.paths.coordination(stackA))
-        expect(await acquireClaim({ namespace: state, stackId: stackA, holder: { holderId: holderA, checkoutId }, now }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
+        expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
         expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
         for (const release of [
@@ -1141,6 +1131,44 @@ describe('whole-family port leases', () => {
         expect(leftPorts.every((port) => !rightPorts.includes(port))).toBe(true)
     })
 
+    it('keeps one holder per session across repeated joins and one holder for each session', async () => {
+        const state = await namespace()
+        const join = (holderId: HolderId, checkout: CheckoutId = checkoutId, at = now) => leasePortFamily({
+            namespace: state, stackId: stackA, holderId, checkoutId: checkout, config, now: at,
+            listenerTimeoutMs: 100,
+            observeListeners: async (ports) => ({ state: 'available' as const, value: ports.filter(() => false), observedAt: at, producer: 'test-listener-probe' }),
+        })
+        const holders = async () => {
+            const stored = await readState(state.paths.coordination(stackA))
+            if (stored.kind !== 'complete') throw new Error('expected coordination record')
+            return (stored.value.value as { holders: { holderId: HolderId; claimedAt: string }[] }).holders
+        }
+        expect(await join(holderA)).toMatchObject({ kind: 'complete' })
+        expect(await join(holderB)).toMatchObject({ kind: 'complete' })
+        const before = await readFile(state.paths.coordination(stackA).path)
+        // The same session joining again adds nothing and does not rewrite the claim time.
+        expect(await join(holderA, checkoutId, '2026-09-07T12:05:00.000Z')).toMatchObject({ kind: 'complete', change: 'unchanged' })
+        expect((await holders()).map(({ holderId }) => holderId).sort()).toEqual([holderA, holderB].sort())
+        expect(await readFile(state.paths.coordination(stackA).path)).toEqual(before)
+        // A session cannot move to another checkout by joining again.
+        const otherCheckout = `checkout:${'9'.repeat(64)}` as CheckoutId
+        expect(await join(holderA, otherCheckout)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
+        expect(await readFile(state.paths.coordination(stackA).path)).toEqual(before)
+    })
+
+    it('preserves every holder when two processes join the same stack concurrently', async () => {
+        const state = await namespace()
+        const home = dirname(dirname(dirname(dirname(state.root))))
+        await Promise.all([
+            runLease({ home, stackId: stackA, holderId: holderA }),
+            runLease({ home, stackId: stackA, holderId: holderB }),
+        ])
+        const stored = await readState(state.paths.coordination(stackA))
+        if (stored.kind !== 'complete') throw new Error('expected coordination record')
+        const value = stored.value.value as { holders: { holderId: HolderId }[] }
+        expect(value.holders.map(({ holderId }) => holderId).sort()).toEqual([holderA, holderB].sort())
+    })
+
     it('keeps listener observation outside and lease publication inside the global transaction', async () => {
         const state = await namespace()
         let entered!: () => void
@@ -1171,10 +1199,10 @@ describe('whole-family port leases', () => {
             namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners,
         })).toMatchObject({ kind: 'complete' })
-        expect(await acquireClaim({
-            namespace: state, stackId: stackA,
-            holder: { holderId: holderB, checkoutId }, now,
-        })).toMatchObject({ kind: 'complete', change: 'acquired' })
+        expect(await leasePortFamily({
+            namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners,
+        })).toMatchObject({ kind: 'complete' })
 
         expect(await releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now }))
             .toEqual({ kind: 'complete', change: 'retained' })

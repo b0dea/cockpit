@@ -11,7 +11,6 @@ import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObs
 import {
     aggregateObservations,
     allObservationDeclarations,
-    evaluatePreflight,
     observationSatisfiesExpectation,
     projectDoctor,
     refreshObservationPostures,
@@ -106,7 +105,7 @@ async function unavailableConfiguration() {
 async function evaluateFixture(values: readonly EnvironmentObservation[]) {
     const stackIds = [...new Set(values.map(({ stackId: value }) => value))]
     const contexts = await Promise.all(stackIds.map((value) => context(value)))
-    return evaluatePreflight(values, {
+    return aggregateObservations([values], {
         authorities: contexts.map(({ authorities }) => authorities[0]!),
         stages: contexts.map(({ stages }) => stages[0]!),
     })
@@ -190,7 +189,7 @@ describe('observation contract and applicability', () => {
 
     it('fails preflight when selected postures lack exact bidirectional requirement tags', async () => {
         const complete = await context()
-        const completeResult = evaluatePreflight([], complete)
+        const completeResult = aggregateObservations([[]], complete)
         expect(completeResult.checks.filter(({ owner }) => owner === 'posture-requirements')).toEqual([
             expect.objectContaining({ verdict: 'pass', measured: 'hostname' }),
             expect.objectContaining({ verdict: 'pass', measured: 'real' }),
@@ -198,7 +197,7 @@ describe('observation contract and applicability', () => {
 
         const missing = await context(otherStackId, 'always', validConfigSource
             .replace('posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]\n', ''))
-        const missingResult = evaluatePreflight([], missing)
+        const missingResult = aggregateObservations([[]], missing)
         expect(missingResult.verdict).toBe('fail')
         expect(missingResult.checks.filter(({ owner }) => owner === 'posture-requirements')).toEqual([
             expect.objectContaining({ verdict: 'fail', reason: 'posture requirement catalog is not declared' }),
@@ -227,7 +226,7 @@ describe('observation contract and applicability', () => {
         ]
         for (const testCase of cases) {
             const issued = await context(stackId, 'always', testCase.source)
-            expect(evaluatePreflight([], issued).checks).toEqual(expect.arrayContaining([
+            expect(aggregateObservations([[]], issued).checks).toEqual(expect.arrayContaining([
                 expect.objectContaining({ owner: 'posture-requirements', verdict: 'fail', reason: testCase.reason }),
             ]))
         }
@@ -238,14 +237,14 @@ describe('observation contract and applicability', () => {
             .replace('authentication = "real"\n', 'authentication = "none"\n')
             .replace('posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]',
                 'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname" }]')
-        const passed = evaluatePreflight([], await context(stackId, 'always', open))
+        const passed = aggregateObservations([[]], await context(stackId, 'always', open))
         expect(passed.checks.filter(({ owner }) => owner === 'posture-requirements')).toEqual([
             expect.objectContaining({ verdict: 'pass', measured: 'hostname' }),
             expect.objectContaining({ verdict: 'pass', measured: 'none', reason: 'no authentication is declared, and no requirement depends on one' }),
         ])
 
         // A requirement tagged with a sign-in posture contradicts a stack that has none.
-        const contradicted = evaluatePreflight([], await context(otherStackId, 'always', open.replace(
+        const contradicted = aggregateObservations([[]], await context(otherStackId, 'always', open.replace(
             'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname" }]',
             'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]')))
         expect(contradicted.checks).toEqual(expect.arrayContaining([expect.objectContaining({ owner: 'posture-requirements',
@@ -256,7 +255,7 @@ describe('observation contract and applicability', () => {
         const issued = await context(stackId, 'always', validConfigSource, new Date().toISOString())
         const authority = issued.authorities[0]!
         await writeFile(authority.source, validConfigSource.replace('purpose = "synthetic service"', 'purpose = "changed service"'))
-        expect(() => evaluatePreflight([], issued)).toThrow('configuration changed after posture resolution')
+        expect(() => aggregateObservations([[]], issued)).toThrow('configuration changed after posture resolution')
     })
 
     it('keeps healthy delayed observations inside one authenticated bounded window', async () => {
@@ -290,7 +289,7 @@ describe('observation contract and applicability', () => {
         if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
 
         expect(refreshed.evaluatedAt).toBe(initialObservedAt)
-        expect(evaluatePreflight([delayed], { authorities: [refreshed], stages: [stage.authority] }).checks)
+        expect(aggregateObservations([[delayed]], { authorities: [refreshed], stages: [stage.authority] }).checks)
             .toEqual(expect.arrayContaining([expect.objectContaining({ code: ENVIRONMENT_CODES.CONFIG_STALE, verdict: 'pass' })]))
     })
 
@@ -323,7 +322,7 @@ describe('observation contract and applicability', () => {
         await writeFile(replacement, validConfigSource)
         await rm(authority.source)
         await symlink(replacement, authority.source)
-        expect(() => evaluatePreflight([], issued)).toThrow('configuration changed after posture resolution')
+        expect(() => aggregateObservations([[]], issued)).toThrow('configuration changed after posture resolution')
     })
 
     it('rejects a fifo substituted for the authoritative config without waiting for its contents', async () => {
@@ -337,7 +336,7 @@ describe('observation contract and applicability', () => {
         })
         const writer = spawn(process.execPath, ['-e', "require('node:fs').writeFileSync(process.argv[1],Buffer.from(process.argv[2],'base64'))", authority.source, Buffer.from(validConfigSource).toString('base64')], { stdio: 'ignore' })
         try {
-            expect(() => evaluatePreflight([], issued)).toThrow('configuration changed after posture resolution')
+            expect(() => aggregateObservations([[]], issued)).toThrow('configuration changed after posture resolution')
         } finally {
             writer.kill()
         }
@@ -347,7 +346,7 @@ describe('observation contract and applicability', () => {
         const issued = await context()
         const authority = issued.authorities[0]!
         await writeFile(authority.source, Buffer.alloc(1_048_577, 0x20))
-        expect(() => evaluatePreflight([], issued)).toThrow('configuration changed after posture resolution')
+        expect(() => aggregateObservations([[]], issued)).toThrow('configuration changed after posture resolution')
     })
 
     it('rejects stale or substituted configuration evidence for a stack', async () => {
@@ -411,7 +410,7 @@ describe('observation contract and applicability', () => {
         }
 
         const evaluationContext = await context()
-        expect(() => evaluatePreflight([forged], evaluationContext)).toThrow('producer-issued')
+        expect(() => aggregateObservations([[forged]], evaluationContext)).toThrow('producer-issued')
     })
 
     it('rejects runtime health derived from a caller-authored plan and outcome', () => {
@@ -512,7 +511,7 @@ describe('observation contract and applicability', () => {
     })
 
     it('keeps operation timing and undeclared artifact ceilings outside read-only health', async () => {
-        const result = evaluatePreflight([], await context())
+        const result = aggregateObservations([[]], await context())
         expect(result.checks.map(({ code }) => code)).not.toContain(ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED)
         expect(result.checks.map(({ code }) => code)).not.toContain('DISK_BUDGET_EXCEEDED')
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR)?.verdict).toBe('not-applicable')
@@ -536,10 +535,10 @@ describe('observation contract and applicability', () => {
         ])
         const evaluationContext = await context()
         const healthItems = items.filter(({ code }) => code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION)
-        expect(() => evaluatePreflight(healthItems.map((item) => ({ ...item })), evaluationContext)).toThrow('producer-issued')
+        expect(() => aggregateObservations([healthItems.map((item) => ({ ...item }))], evaluationContext)).toThrow('producer-issued')
         const acquisitionContext = await context()
-        expect(() => evaluatePreflight([items[1]!], acquisitionContext)).toThrow('no declared producer authority')
-        expect(evaluatePreflight(healthItems, await context()).checks.filter(({ code }) => healthItems.some((item) => item.code === code)).map(({ verdict }) => verdict))
+        expect(() => aggregateObservations([[items[1]!]], acquisitionContext)).toThrow('no declared producer authority')
+        expect(aggregateObservations([healthItems], await context()).checks.filter(({ code }) => healthItems.some((item) => item.code === code)).map(({ verdict }) => verdict))
             .toEqual(['not-applicable', 'not-applicable'])
     })
 
@@ -553,7 +552,7 @@ describe('observation contract and applicability', () => {
             .replace('name = "generated-environment"', 'name = "fixture"')
         const posture = await context(stackId, 'always', generatedSource)
         expect(posture.authorities[0]!.postures).toContain('dependencies')
-        const checks = evaluatePreflight([stage.observation], {
+        const checks = aggregateObservations([[stage.observation]], {
             authorities: posture.authorities,
             stages: [stage.authority],
         }).checks
@@ -644,7 +643,7 @@ describe('observation contract and applicability', () => {
             { state: 'available', value: false, observedAt: now },
         ])
         expect(JSON.stringify(observations)).not.toContain('PRIVATE_TOKEN=')
-        expect(evaluatePreflight(observations, await context()).checks.filter(({ code }) => observations.some((item) => item.code === code)).map(({ verdict }) => verdict))
+        expect(aggregateObservations([observations], await context()).checks.filter(({ code }) => observations.some((item) => item.code === code)).map(({ verdict }) => verdict))
             .toEqual(['fail', 'fail'])
         let declarationReads = 0
         const mutableDeclaration = Object.defineProperty({ stackId, observedAt: now, siblingRoot: root }, 'declaration', {
@@ -667,7 +666,7 @@ describe('observation contract and applicability', () => {
         ])
         expect(observations.every(({ observed }) => observed.state !== 'available')).toBe(true)
         const evaluationContext = await context()
-        expect(() => evaluatePreflight(observations.map((item) => ({ ...item })), evaluationContext)).toThrow('producer-issued')
+        expect(() => aggregateObservations([observations.map((item) => ({ ...item }))], evaluationContext)).toThrow('producer-issued')
         const validPath = join(root, 'valid.toml')
         await writeFile(validPath, validConfigSource)
         let pathReads = 0
@@ -797,15 +796,15 @@ describe('observation contract and applicability', () => {
         const stale = await observation()
         expect((await evaluateFixture([unavailable])).checks.find(({ code }) => code === unavailable.code)?.verdict).toBe('unavailable')
         const changedSource = `${validConfigSource}# changed\n`
-        expect(evaluatePreflight([stale], await context(stackId, 'always', changedSource)).checks.find(({ code }) => code === stale.code)?.verdict).toBe('fail')
+        expect(aggregateObservations([[stale]], await context(stackId, 'always', changedSource)).checks.find(({ code }) => code === stale.code)?.verdict).toBe('fail')
     })
 
     it('keeps not-applicable evidence distinct from missing required evidence', async () => {
-        const result = evaluatePreflight([], await context(stackId, 'none'))
+        const result = aggregateObservations([[]], await context(stackId, 'none'))
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('not-applicable')
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('unavailable')
-        expect(evaluatePreflight([], await context(stackId, 'host')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
-        expect(evaluatePreflight([], await context(stackId, 'profile:web')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
+        expect(aggregateObservations([[]], await context(stackId, 'host')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
+        expect(aggregateObservations([[]], await context(stackId, 'profile:web')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
     })
 
     it('requires real surface owners and rejects a fabricated passing surface row', async () => {
@@ -817,7 +816,7 @@ describe('observation contract and applicability', () => {
             expect(declaration, code).toBeDefined()
             expect(declaration!.isIssued({ code, observed: { state: 'available', value: true } })).toBe(false)
         }
-        const result = evaluatePreflight([], await context())
+        const result = aggregateObservations([[]], await context())
         expect(result.verdict).toBe('unavailable')
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE)?.verdict).toBe('unavailable')
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE)?.verdict).toBe('unavailable')
@@ -839,7 +838,7 @@ describe('deterministic preflight and doctor', () => {
         const instant = Date.parse(issued.authorities[0]!.evaluatedAt)
         const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(instant).mockReturnValue(instant + 60_000)
         try {
-            expect(() => evaluatePreflight([], issued)).not.toThrow()
+            expect(() => aggregateObservations([[]], issued)).not.toThrow()
             expect(clock).toHaveBeenCalledTimes(1)
         } finally {
             clock.mockRestore()
@@ -851,8 +850,7 @@ describe('deterministic preflight and doctor', () => {
         vi.useFakeTimers()
         vi.setSystemTime(evaluationTime)
         const future = new Date(Date.parse(evaluationTime) + 1_000).toISOString()
-        const result = evaluatePreflight(
-            [await observation({ observedAt: future })],
+        const result = aggregateObservations([[await observation({ observedAt: future })]],
             await context(stackId, 'always', validConfigSource, evaluationTime),
         )
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
@@ -865,15 +863,13 @@ describe('deterministic preflight and doctor', () => {
         const future = new Date(issuedAt + 1_000).toISOString()
         const evidence = await observation({ observedAt: future })
         const evaluationContext = await context(stackId, 'always', validConfigSource, new Date(issuedAt).toISOString())
-        expect(evaluatePreflight(
-            [evidence],
+        expect(aggregateObservations([[evidence]],
             evaluationContext,
         ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
 
         vi.setSystemTime(issuedAt + 2_000)
         const laterContext = await context(stackId, 'always', validConfigSource, new Date(issuedAt).toISOString())
-        expect(evaluatePreflight(
-            [evidence],
+        expect(aggregateObservations([[evidence]],
             laterContext,
         ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
     })
@@ -935,7 +931,7 @@ describe('deterministic preflight and doctor', () => {
                 return [current][Symbol.iterator]()
             },
         }
-        expect(() => evaluatePreflight(iterable as never, issued)).toThrow('bounded dense array')
+        expect(() => aggregateObservations([iterable as never], issued)).toThrow('bounded dense array')
         expect(iteratorCalls).toBe(0)
 
         let accessorCalls = 0
@@ -948,12 +944,12 @@ describe('deterministic preflight and doctor', () => {
                 return current
             },
         })
-        expect(() => evaluatePreflight(oversized, issued)).toThrow('bounded dense array')
+        expect(() => aggregateObservations([oversized], issued)).toThrow('bounded dense array')
         expect(accessorCalls).toBe(0)
     })
 
     it('reports every omitted required declaration as unavailable', async () => {
-        const result = evaluatePreflight([], await context())
+        const result = aggregateObservations([[]], await context())
         expect(result.verdict).toBe('unavailable')
         expect(result.checks.length).toBe(allObservationDeclarations.length + 2)
         expect(result.checks.filter(({ owner }) => owner === 'posture-requirements').every(({ verdict }) => verdict === 'pass')).toBe(true)
@@ -978,7 +974,7 @@ describe('deterministic preflight and doctor', () => {
         if (!step) throw new Error('fixture Git step unavailable')
         const observed = observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })
         if (observed.kind !== 'complete') throw new Error('fixture Git evidence unavailable')
-        expect(evaluatePreflight(observed.observations, posture).checks.find(({ code }) => code === ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY))
+        expect(aggregateObservations([observed.observations], posture).checks.find(({ code }) => code === ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY))
             .toMatchObject({
                 verdict: 'fail',
                 reason: 'observed value does not satisfy the expectation: trackedDirtyCount is 1 (expected 0), untrackedCount is 2 (expected 0)',
@@ -990,7 +986,7 @@ describe('deterministic preflight and doctor', () => {
         const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
         if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         const posture = await context()
-        const result = evaluatePreflight([stage.observation], {
+        const result = aggregateObservations([[stage.observation]], {
             authorities: posture.authorities, stages: [stage.authority],
         })
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.STATE_UNSEEDED)).toMatchObject({
@@ -1005,7 +1001,7 @@ describe('deterministic preflight and doctor', () => {
         const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
         if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         const posture = await context()
-        const result = evaluatePreflight([stage.observation], {
+        const result = aggregateObservations([[stage.observation]], {
             authorities: posture.authorities, stages: [stage.authority],
         })
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.STATE_UNSEEDED)).toMatchObject({
@@ -1018,7 +1014,7 @@ describe('deterministic preflight and doctor', () => {
         const firstStage = await resolveLifecycleStage({ namespace: firstState, stackId, observedAt: now })
         if (firstStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         const firstPosture = await context()
-        expect(() => evaluatePreflight([], {
+        expect(() => aggregateObservations([[]], {
             authorities: firstPosture.authorities, stages: [{ ...firstStage.authority }],
         })).toThrow('lifecycle stage authority')
         let proxyTrapCalls = 0
@@ -1028,19 +1024,19 @@ describe('deterministic preflight and doctor', () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        expect(() => evaluatePreflight([], {
+        expect(() => aggregateObservations([[]], {
             authorities: firstPosture.authorities, stages: [proxiedAuthority],
         })).toThrow('lifecycle stage authority')
         expect(proxyTrapCalls).toBe(0)
-        expect(() => evaluatePreflight([], { authorities: firstPosture.authorities, stages: [] })).toThrow('lifecycle stage authority')
+        expect(() => aggregateObservations([[]], { authorities: firstPosture.authorities, stages: [] })).toThrow('lifecycle stage authority')
 
         const replayState = await namespace()
         const replayStage = await resolveLifecycleStage({ namespace: replayState, stackId, observedAt: now })
         if (replayStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         const replayPosture = await context()
-        evaluatePreflight([replayStage.observation], { authorities: replayPosture.authorities, stages: [replayStage.authority] })
+        aggregateObservations([[replayStage.observation]], { authorities: replayPosture.authorities, stages: [replayStage.authority] })
         const nextPosture = await context()
-        expect(() => evaluatePreflight([], {
+        expect(() => aggregateObservations([[]], {
             authorities: nextPosture.authorities, stages: [replayStage.authority],
         })).toThrow('lifecycle stage authority')
 
@@ -1048,7 +1044,7 @@ describe('deterministic preflight and doctor', () => {
         const otherStage = await resolveLifecycleStage({ namespace: otherState, stackId: otherStackId, observedAt: now })
         if (otherStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         const wrongStackPosture = await context()
-        expect(() => evaluatePreflight([], {
+        expect(() => aggregateObservations([[]], {
             authorities: wrongStackPosture.authorities, stages: [otherStage.authority],
         })).toThrow('lifecycle stage authority')
 
@@ -1059,21 +1055,21 @@ describe('deterministic preflight and doctor', () => {
         if (expiring.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         vi.advanceTimersByTime(31_000)
         const currentPosture = await context(stackId, 'always', validConfigSource, new Date().toISOString())
-        expect(() => evaluatePreflight([], {
+        expect(() => aggregateObservations([[]], {
             authorities: currentPosture.authorities, stages: [expiring.authority],
         })).toThrow('lifecycle stage authority')
     })
 
     it('uses the complete production declaration set', async () => {
-        const result = evaluatePreflight([], await context())
+        const result = aggregateObservations([[]], await context())
         expect(result.checks).toHaveLength(allObservationDeclarations.length + 2)
     })
 
     it('requires an explicit timestamp whenever missing evidence is synthesized', async () => {
         const current = await observation()
         const issued = await context()
-        expect(() => evaluatePreflight([current], {} as never)).toThrow('resolved posture authority')
-        expect(() => evaluatePreflight([current], { authorities: [{ ...issued.authorities[0] }] } as never)).toThrow('resolved posture authority')
+        expect(() => aggregateObservations([[current]], {} as never)).toThrow('resolved posture authority')
+        expect(() => aggregateObservations([[current]], { authorities: [{ ...issued.authorities[0] }] } as never)).toThrow('resolved posture authority')
     })
 
     it('derives temporal freshness and is stable across differing timestamp permutations', async () => {
@@ -1082,17 +1078,17 @@ describe('deterministic preflight and doctor', () => {
         const first = await observation()
         const second = await observation({ stackId: otherStack, observedAt: later })
         const contexts = [await context(stackId, 'always', validConfigSource, later), await context(otherStack, 'always', validConfigSource, later)]
-        const result = evaluatePreflight([first, second], {
+        const result = aggregateObservations([[first, second]], {
             authorities: contexts.map(({ authorities }) => authorities[0]!),
             stages: contexts.map(({ stages }) => stages[0]!),
         })
         const reverseContexts = [await context(otherStack, 'always', validConfigSource, later), await context(stackId, 'always', validConfigSource, later)]
-        expect(result).toEqual(evaluatePreflight([second, first], {
+        expect(result).toEqual(aggregateObservations([[second, first]], {
             authorities: reverseContexts.map(({ authorities }) => authorities[0]!),
             stages: reverseContexts.map(({ stages }) => stages[0]!),
         }))
         expect(result.checks.find(({ stackId: target, code }) => target === stackId && code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
-        expect(evaluatePreflight([second], await context(otherStack)).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('pass')
+        expect(aggregateObservations([[second]], await context(otherStack)).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('pass')
     })
 
     it('accepts independently completed observations inside overlapping issued windows', async () => {
@@ -1101,7 +1097,7 @@ describe('deterministic preflight and doctor', () => {
         const first = await observation({ observedAt: now })
         const second = await observation({ stackId: otherStack, observedAt: later })
         const contexts = [await context(stackId, 'always', validConfigSource, now), await context(otherStack, 'always', validConfigSource, later)]
-        const checks = evaluatePreflight([first, second], {
+        const checks = aggregateObservations([[first, second]], {
             authorities: contexts.map(({ authorities }) => authorities[0]!),
             stages: contexts.map(({ stages }) => stages[0]!),
         }).checks
@@ -1130,14 +1126,14 @@ describe('deterministic preflight and doctor', () => {
     })
 
     it('represents an empty generated-artifact set without inventing drift', async () => {
-        const result = evaluatePreflight([], await context(stackId, 'none'))
+        const result = aggregateObservations([[]], await context(stackId, 'none'))
         expect(result.revision).toMatch(/^[a-f0-9]{64}$/)
         expect(result.checks.some(({ source }) => source === 'generated-artifacts')).toBe(false)
     })
 
     it('preserves one nonzero verdict when doctor adds evidence', async () => {
         const mismatch = await observation()
-        const preflight = evaluatePreflight([mismatch], await context(stackId, 'always', `${validConfigSource}# changed\n`))
+        const preflight = aggregateObservations([[mismatch]], await context(stackId, 'always', `${validConfigSource}# changed\n`))
         expect(preflight.verdict).toBe('fail')
         expect(projectDoctor(preflight).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)).toMatchObject({ verdict: 'fail' })
         expect(() => projectDoctor({ ...preflight })).toThrow('preflight evaluation is not authentic')
@@ -1147,7 +1143,7 @@ describe('deterministic preflight and doctor', () => {
         const original = String.prototype.localeCompare
         String.prototype.localeCompare = () => { throw new Error('locale must not decide protocol order') }
         try {
-            expect(evaluatePreflight([await observation() ], {
+            expect(aggregateObservations([[await observation() ]], {
                 ...await context(),
             }).checks).toHaveLength(allObservationDeclarations.length + 2)
         } finally {

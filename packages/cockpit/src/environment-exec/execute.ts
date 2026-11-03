@@ -29,7 +29,7 @@ import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from './verifie
 export const mechanism = {
     id: 'environment-execution',
     module: 'packages/cockpit/src/environment-exec/execute.ts',
-    exports: ['executePlan', 'executeProbe', 'executeForegroundProcess', 'repairFencedExecution', 'cleanupFencedExecution', 'consumeFencedExecutionTermination', 'authenticatedExecutionOutcome', 'executionOutcomeMatches', 'executionReceiptMatches'],
+    exports: ['executePlan', 'executeProbe', 'executeForegroundProcess', 'repairFencedExecution', 'cleanupFencedExecution', 'consumeFencedExecutionTermination', 'authenticatedExecutionOutcome', 'executionOutcomeMatches'],
 } as const
 
 const FENCE_READY_MS = 2_000
@@ -348,10 +348,6 @@ function executionReceipt(stepId: string, fingerprint: string, consumedFingerpri
     })
     issuedReceipts.set(receipt, { stepFingerprint: fingerprint, consumedFingerprint })
     return receipt
-}
-
-export function executionReceiptMatches(receipt: ExecutionReceipt, step: ExecutionStep): boolean {
-    return issuedReceipts.has(receipt) && receipt.receiptMatches(step)
 }
 
 async function checkFilesystem(check: FilesystemCheck): Promise<boolean> {

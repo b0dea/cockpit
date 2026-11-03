@@ -1,7 +1,6 @@
 import { chmod, link, mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readdirSync, writeFileSync } from 'node:fs'
@@ -14,11 +13,9 @@ import {
     type StackId,
 } from './contract.js'
 import {
-    acquireClaim,
     finalizeDrainOutcome,
     matchReclaimDrainContinuation,
     reduceDrainOutcome,
-    classifyHolders,
     inspectDrainAttemptAuthority,
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
@@ -27,12 +24,9 @@ import {
     consumeRestoreExecutionAuthority,
     settleRestoreExecutionAuthority,
     consumeFailedReclaimRecovery,
-    collectHolderProcessProbe,
     consumeDrainReservationAuthority,
     coordinationStateRecord,
-    createHolderProcessProbePlan,
     decodeCoordinationRecord,
-    observeHolderCheckouts,
     observeProcessStart,
     processHost,
     prepareDrainOutcomePublication,
@@ -52,22 +46,19 @@ import {
     settleInterruptedDrainRepair,
     readActiveStackInventory,
     readRootPortInventory,
-    type ClaimHolder,
     type ProcessHost,
     type DrainReservationRequest,
     type DrainReservation,
     type DrainAttemptResult,
-    type HolderObservationInput,
     type ReclaimDrainExecutionAuthority,
     type RuntimeDrainExecutionAuthority,
     type RestoreExecutionAuthority,
     type SleepDrainRecoveryAuthority,
 } from './claims.js'
 import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
-import { resolvedExecutable } from './executable.js'
+import { leasePortFamily } from './ports.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import { abortStateTransaction, readState, selectStateRoot, SERIALIZED_RECORD_BYTE_LIMIT, transactState, withStateNamespaceInventory, type StateNamespace, type StateRecord } from './state.js'
-import { checkoutId as deriveCheckoutId } from './identity.js'
 
 const inventoryIdentityGate = vi.hoisted(() => ({
     target: undefined as string | undefined,
@@ -138,7 +129,6 @@ const checkoutB = `checkout:${'d'.repeat(64)}` as CheckoutId
 const holderA = `holder:${'e'.repeat(64)}:session` as HolderId
 const holderB = `holder:${'f'.repeat(64)}:session` as HolderId
 const holderC = `holder:${'1'.repeat(64)}:session` as HolderId
-const obsoleteCompatibilityHolder = `holder:${'2'.repeat(64)}:compat` as HolderId
 const roots: string[] = []
 
 afterEach(async () => {
@@ -216,33 +206,6 @@ function claimRecord(holders: readonly {
     }
 }
 
-function observationsFor(
-    record: StateRecord,
-    observation: (holder: ClaimHolder, budgetMs: number) => HolderObservationInput['observation'],
-    budgetMs = 500,
-): HolderObservationInput[] {
-    const holders = (record.value as unknown as { holders: ClaimHolder[] }).holders
-    return holders.map((holder) => ({ holderId: holder.holderId, observation: observation(holder, budgetMs) }))
-}
-
-async function issuedProcessProbe(state: StateNamespace, timeoutMs = 10_000, env: Readonly<Record<string, string>> = {}) {
-    const executablePath = process.execPath
-    const bytes = await readFile(executablePath)
-    const executable = resolvedExecutable({
-        canonicalPath: executablePath, invocationPath: executablePath,
-        sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path',
-    })!
-    const planned = await createHolderProcessProbePlan({
-        namespace: state, stackId, timeoutMs, executable,
-        ...(Object.keys(env).length === 0 ? {} : { env }),
-    } as never)
-    if (planned.kind !== 'preview') throw new Error('process probe plan was refused')
-    const outcomes = await Promise.all(planned.plan.steps.map((step) => executeProbe(step)))
-    const result = collectHolderProcessProbe(planned.plan, outcomes)
-    if (!result) throw new Error('process probe evidence was refused')
-    return result
-}
-
 function after(instant: string, millis: number): string {
     return new Date(Date.parse(instant) + millis).toISOString()
 }
@@ -262,6 +225,16 @@ async function seedCoordination(
         () => ({ ...claimRecord(holders), cockpitId: state.paths.coordination(stackId).cockpitId }),
     )
     if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
+}
+
+// The live co-tenant join: a second holder takes the stack's existing port lease.
+function joinStack(state: StateNamespace, now: string) {
+    return leasePortFamily({
+        namespace: state, stackId, holderId: holderB, checkoutId: checkoutB, now,
+        config: { step: 100, count: 3, bases: { WEB: 3000 } }, listenerTimeoutMs: 100,
+        // The seeded lease is at offset 0, the only family the join observes.
+        listenerEvidence: [{ ports: [3000], observation: { state: 'available', value: [], observedAt: now, producer: 'test-listener-probe' } }],
+    })
 }
 
 describe('restore execution authority', () => {
@@ -314,9 +287,7 @@ describe('restore execution authority', () => {
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256 })
         if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:01.000Z',
-        })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
+        await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
 
         const consumed = await consumeRestoreExecutionAuthority({
             namespace: state, authority: issued.authority, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
@@ -327,9 +298,7 @@ describe('restore execution authority', () => {
         await expect(settleRestoreExecutionAuthority({ namespace: otherState, lease: consumed.lease }))
             .resolves.toMatchObject({ kind: 'refusal' })
         await expect(settleRestoreExecutionAuthority({ namespace: state, lease: consumed.lease })).resolves.toEqual({ kind: 'complete' })
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:02.000Z',
-        })).resolves.toMatchObject({ kind: 'complete' })
+        await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
         await expect(consumeRestoreExecutionAuthority({
             namespace: state, authority: issued.authority, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256,
         })).resolves.toMatchObject({ kind: 'refusal' })
@@ -349,9 +318,7 @@ describe('restore execution authority', () => {
             namespace: state, authority: issued.authority, stackId, holderId: holderA,
             requesterId: holderA, configPath, configSha256, stepSha256, extra: true,
         } as never)).resolves.toMatchObject({ kind: 'refusal' })
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:01.000Z',
-        })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
+        await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
 
         const consumed = await consumeRestoreExecutionAuthority({
             namespace: state, authority: issued.authority, stackId, holderId: holderA,
@@ -359,9 +326,7 @@ describe('restore execution authority', () => {
         })
         if (consumed.kind !== 'complete') throw new Error(JSON.stringify(consumed))
         await expect(settleRestoreExecutionAuthority({ namespace: state, lease: consumed.lease })).resolves.toEqual({ kind: 'complete' })
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:02.000Z',
-        })).resolves.toMatchObject({ kind: 'complete' })
+        await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('refuses a copied namespace and configuration drift before execution', async () => {
@@ -385,9 +350,7 @@ describe('restore execution authority', () => {
         })).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED }],
         })
-        await expect(acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:03.000Z',
-        })).resolves.toMatchObject({ kind: 'complete' })
+        await expect(joinStack(state, '2026-09-07T12:00:03.000Z')).resolves.toMatchObject({ kind: 'complete' })
     })
 })
 
@@ -1459,40 +1422,6 @@ describe('active stack inventory', () => {
     })
 })
 
-function runAcquisition(input: {
-    home: string
-    holderId: HolderId
-    checkoutId: CheckoutId
-}): Promise<void> {
-    const claimsModule = fileURLToPath(new URL('./claims.ts', import.meta.url))
-    const stateModule = fileURLToPath(new URL('./state.ts', import.meta.url))
-    const source = `
-        import { acquireClaim } from ${JSON.stringify(claimsModule)}
-        import { selectStateRoot } from ${JSON.stringify(stateModule)}
-        const [home, cockpitId, stackId, holderId, checkoutId] = process.argv.slice(1)
-        const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
-        if (selected.kind !== 'complete') throw new Error(JSON.stringify(selected))
-        const result = await acquireClaim({
-            namespace: selected.value,
-            stackId,
-            holder: { holderId, checkoutId },
-            now: '2026-09-07T12:00:00.000Z',
-        })
-        if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-    `
-    return new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [
-            '--import', 'tsx', '--input-type=module', '--eval', source,
-            input.home, cockpitId, stackId, input.holderId, input.checkoutId,
-        ], { stdio: ['ignore', 'ignore', 'pipe'] })
-        let stderr = ''
-        child.stderr.setEncoding('utf8')
-        child.stderr.on('data', (chunk: string) => { stderr += chunk })
-        child.once('error', reject)
-        child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(stderr || `child exited ${code}`)))
-    })
-}
-
 // A `cockpit session` killed with SIGKILL never runs its closing sleep; its hold made down, reset
 // and sleep refuse forever while naming a session nobody could end.
 describe('dead session holders', () => {
@@ -1544,6 +1473,34 @@ describe('dead session holders', () => {
 
         expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderC }, { holderId: holderB }] })
         expect((await holders(state)).holders.map(({ holderId }) => holderId)).toEqual([holderD, holderA])
+    })
+
+    it('refuses a malformed or oversized holder list without observing any process', async () => {
+        const observed: number[] = []
+        const observe = async (pid: number) => { observed.push(pid); return { state: 'unknown' as const, reason: 'must not be asked' } }
+        const successor = { holderId: holderA, checkoutId: checkoutA }
+        const overLimit = Array.from({ length: STRUCTURED_INPUT_ENTRY_LIMIT + 1 }, (_, index) => ({
+            holderId: `holder:${index.toString(16).padStart(64, '0')}:session`, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 1 + index,
+        }))
+        const malformed = [
+            [{ holderId: 'holder:invalid:session', checkoutId: checkoutA, claimedAt: 'not-a-date', pid: 4242 }],
+            [{ holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 2_147_483_648 }],
+            overLimit,
+        ]
+        for (const holders of malformed) {
+            const state = await namespace()
+            const seeded = await transactState(state, state.paths.coordination(stackId), { ownerId: holderA }, () => {
+                const record = claimRecord([])
+                record.value = { holders, lease: { offset: 0, ports: { WEB: 3000 }, released: false, declaration: { step: 100, count: 3, bases: { WEB: 3000 } } }, lastReleasedHolder: null }
+                return { ...record, cockpitId: state.paths.coordination(stackId).cockpitId }
+            })
+            if (seeded.kind !== 'complete') throw new Error(JSON.stringify(seeded))
+            const before = await readFile(state.paths.coordination(stackId).path)
+            expect(await releaseDeadSessionHolders({ namespace: state, stackId, successor, now: '2026-09-07T12:00:00.000Z', observe }))
+                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
+            expect(await readFile(state.paths.coordination(stackId).path)).toEqual(before)
+        }
+        expect(observed).toEqual([])
     })
 
     // procps derives a wall-clock start from the boot time, which moves when the wall clock is
@@ -2046,7 +2003,7 @@ describe('session-aware claims', () => {
         if (reserved.kind !== 'complete') return
         expect(reserved.reservation.reservationId).toMatch(/^[a-f0-9]{64}$/)
         expect(reserved.reservation.reservedAt).toMatch(/\.\d{3}Z$/)
-        expect(await acquireClaim({ namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:01.000Z' }))
+        expect(await joinStack(state, '2026-09-07T12:00:01.000Z'))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
         expect(await releaseClaim({ namespace: state, stackId, requesterId: holderA, holderId: holderA, now: '2026-09-07T12:00:01.000Z' }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
@@ -2634,345 +2591,6 @@ describe('session-aware claims', () => {
             pending: [],
         })
     })
-    it('reports committed ownership provenance for acquired and unchanged calls', async () => {
-        const state = await namespace()
-        await seedCoordination(state)
-        const acquired = await acquireClaim({ namespace: state, stackId, holder: { holderId: holderA, checkoutId: checkoutA }, now: '2026-09-07T12:00:00.000Z' })
-        const unchanged = await acquireClaim({ namespace: state, stackId, holder: { holderId: holderA, checkoutId: checkoutA }, now: '2026-09-07T12:00:01.000Z' })
-        const secondHolder = await acquireClaim({ namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-07T12:00:02.000Z' })
-        expect(acquired).toMatchObject({ kind: 'complete', ownership: { stackId, holderId: holderA, change: 'acquired', recordRevision: 1 } })
-        expect(unchanged).toMatchObject({ kind: 'complete', ownership: { stackId, holderId: holderA, change: 'unchanged', recordRevision: 1 } })
-        expect(secondHolder).toMatchObject({ kind: 'complete', ownership: { stackId, holderId: holderB, change: 'acquired', recordRevision: 2 } })
-    })
-
-    it('issues bounded checkout absence authority while keeping present peers', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-checkouts-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state,
-            stackId,
-            timeoutMs: 5_000,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const shiftedRequestedAt = new Date(Date.parse(evidence.requestedAt) - 1).toISOString()
-        expect(await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: shiftedRequestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-        expect(await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: 0, observations: evidence.observations,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-        const classified = await classifyHolders({
-            record: stored.value,
-            requester: holderA,
-            requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs,
-            observations: evidence.observations,
-        })
-        expect(classified).toMatchObject({
-            kind: 'complete',
-            classifications: [
-                { holderId: holderA, state: 'live' },
-                { holderId: holderB, state: 'checkout-missing' },
-            ],
-        })
-        if (classified.kind !== 'complete') return
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        expect(authority).toBeDefined()
-        expect(await releaseClaim({
-            namespace: state,
-            stackId,
-            requesterId: holderA,
-            holderId: holderB,
-            authority,
-            now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'complete', change: 'released', remaining: [holderA] })
-    })
-
-    it('preserves checkout authority across reappearance but consumes it after commit', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-reappearance-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 5_000,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        await mkdir(missingPath)
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        await rm(missingPath, { recursive: true })
-        const replayed = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        expect(replayed).toMatchObject({ kind: 'complete', authorities: [] })
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'complete', change: 'released' })
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-    })
-
-    it('preserves checkout absence authority when the release-time check is uncertain', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-uncertain-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingParent = join(checkoutRoot, 'missing-parent')
-        const missingPath = join(missingParent, 'checkout')
-        await mkdir(presentPath)
-        await mkdir(missingParent)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 5_000,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        await rm(missingParent, { recursive: true })
-        await writeFile(missingParent, 'not a directory')
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        await rm(missingParent)
-        await mkdir(missingParent)
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'complete', change: 'released' })
-    })
-
-    it('revalidates checkout absence while the coordination transaction is held', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-race-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 5_000,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        let continueRelease: () => void = () => undefined
-        let reportAbsence: () => void = () => undefined
-        const absenceObserved = new Promise<void>((resolve) => { reportAbsence = resolve })
-        const releaseContinuation = new Promise<void>((resolve) => { continueRelease = resolve })
-        checkoutAbsenceGate.target = missingPath
-        checkoutAbsenceGate.reached = reportAbsence
-        checkoutAbsenceGate.continuation = releaseContinuation
-        try {
-            const releasing = releaseClaim({
-                namespace: state, stackId, requesterId: holderA, holderId: holderB,
-                authority, now: evidence.requestedAt,
-            })
-            await absenceObserved
-            await mkdir(missingPath)
-            expect(await acquireClaim({
-                namespace: state, stackId, holder: { holderId: holderB, checkoutId: missingCheckout },
-                now: new Date().toISOString(),
-            })).toMatchObject({ kind: 'complete', change: 'unchanged' })
-            continueRelease()
-            await expect(releasing).resolves.toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }],
-            })
-            const after = await readState(state.paths.coordination(stackId))
-            expect(after.kind === 'complete' && (after.value.value as unknown as { holders: ClaimHolder[] }).holders)
-                .toEqual(expect.arrayContaining([expect.objectContaining({ holderId: holderB })]))
-        } finally {
-            continueRelease()
-            checkoutAbsenceGate.target = undefined
-            checkoutAbsenceGate.reached = undefined
-            checkoutAbsenceGate.continuation = undefined
-        }
-    })
-
-    it('releases an authority reservation when coordination addressing throws', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-address-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 5_000,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        const malformedNamespace = {
-            ...state,
-            paths: { ...state.paths, coordination: () => { throw new Error('coordination address unavailable') } },
-        }
-
-        await expect(releaseClaim({
-            namespace: malformedNamespace, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).rejects.toThrow('coordination address unavailable')
-        await expect(releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).resolves.toMatchObject({ kind: 'complete', change: 'released' })
-    })
-
-    it('does not publish a claim removal when checkout absence changes at the commit boundary', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-publish-race-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 5_000,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        let continueCommit: () => void = () => undefined
-        let reportPrepared: () => void = () => undefined
-        const prepared = new Promise<void>((resolve) => { reportPrepared = resolve })
-        const commitContinuation = new Promise<void>((resolve) => { continueCommit = resolve })
-        coordinationCommitGate.temporaryPrefix = `${dirname(state.paths.coordination(stackId).path)}/.${stackId.replace(':', '_')}.`
-        coordinationCommitGate.reached = reportPrepared
-        coordinationCommitGate.continuation = commitContinuation
-        try {
-            const releasing = releaseClaim({
-                namespace: state, stackId, requesterId: holderA, holderId: holderB,
-                authority, now: evidence.requestedAt,
-            })
-            await prepared
-            const exposed = await readState(state.paths.coordination(stackId))
-            expect(exposed.kind === 'complete' && (exposed.value.value as unknown as { holders: ClaimHolder[] }).holders)
-                .toEqual(expect.arrayContaining([expect.objectContaining({ holderId: holderB })]))
-            await mkdir(missingPath)
-            const reacquiring = acquireClaim({
-                namespace: state, stackId, holder: { holderId: holderB, checkoutId: missingCheckout },
-                now: new Date().toISOString(),
-            })
-            continueCommit()
-            await expect(releasing).resolves.toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }],
-            })
-            await expect(reacquiring).resolves.toMatchObject({ kind: 'complete', change: 'unchanged' })
-            const after = await readState(state.paths.coordination(stackId))
-            expect(after.kind === 'complete' && (after.value.value as unknown as { holders: ClaimHolder[] }).holders)
-                .toEqual(expect.arrayContaining([expect.objectContaining({ holderId: holderB })]))
-            expect(after.kind === 'complete' && after.value.revision).toBe(stored.value.revision)
-            await rm(missingPath, { recursive: true })
-            await expect(releaseClaim({
-                namespace: state, stackId, requesterId: holderA, holderId: holderB,
-                authority, now: evidence.requestedAt,
-            })).resolves.toMatchObject({ kind: 'complete', change: 'released' })
-        } finally {
-            continueCommit()
-            coordinationCommitGate.temporaryPrefix = undefined
-            coordinationCommitGate.reached = undefined
-            coordinationCommitGate.continuation = undefined
-        }
-    })
-
     it('rejects prepared state bytes mutated by a commit veto callback', async () => {
         const state = await namespace()
         await seedCoordination(state, [
@@ -3038,127 +2656,6 @@ describe('session-aware claims', () => {
         expect(await readFile(temporaryPath, 'utf8')).toBe(injected)
     })
 
-    it('expires checkout absence authority against wall-clock time', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-expiry-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 100,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        await new Promise((resolve) => setTimeout(resolve, 125))
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority, now: evidence.requestedAt,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-    })
-
-    it('rechecks checkout authority expiry at the publication boundary', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-commit-expiry-'))
-        roots.push(checkoutRoot)
-        const presentPath = join(checkoutRoot, 'present')
-        const missingPath = join(checkoutRoot, 'missing')
-        await mkdir(presentPath)
-        const presentCheckout = deriveCheckoutId({ checkoutPath: presentPath })
-        const missingCheckout = deriveCheckoutId({ checkoutPath: missingPath })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: presentCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: missingCheckout, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const evidence = await observeHolderCheckouts({
-            namespace: state, stackId, timeoutMs: 100,
-            checkouts: [
-                { checkoutId: presentCheckout, path: presentPath },
-                { checkoutId: missingCheckout, path: missingPath },
-            ],
-        })
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA, requestedAt: evidence.requestedAt,
-            timeoutMs: evidence.timeoutMs, observations: evidence.observations,
-        })
-        if (classified.kind !== 'complete') throw new Error('expected checkout absence authority')
-        const authority = classified.authorities.find((candidate) => candidate.holderId === holderB)
-        let continueCommit: () => void = () => undefined
-        let reportPrepared: () => void = () => undefined
-        const prepared = new Promise<void>((resolve) => { reportPrepared = resolve })
-        coordinationCommitGate.temporaryPrefix = `${dirname(state.paths.coordination(stackId).path)}/.${stackId.replace(':', '_')}.`
-        coordinationCommitGate.reached = reportPrepared
-        coordinationCommitGate.continuation = new Promise<void>((resolve) => { continueCommit = resolve })
-        try {
-            const releasing = releaseClaim({
-                namespace: state, stackId, requesterId: holderA, holderId: holderB,
-                authority, now: evidence.requestedAt,
-            })
-            await prepared
-            await new Promise((resolve) => setTimeout(resolve, 125))
-            continueCommit()
-            await expect(releasing).resolves.toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }],
-            })
-        } finally {
-            continueCommit()
-            coordinationCommitGate.temporaryPrefix = undefined
-            coordinationCommitGate.reached = undefined
-            coordinationCommitGate.continuation = undefined
-        }
-    })
-
-    it('rejects hostile checkout containers without invoking accessors or iterators', async () => {
-        const state = await namespace()
-        const checkoutRoot = await mkdtemp(join(tmpdir(), 'cockpit-holder-hostile-'))
-        roots.push(checkoutRoot)
-        const checkoutPath = join(checkoutRoot, 'checkout')
-        await mkdir(checkoutPath)
-        const checkoutId = deriveCheckoutId({ checkoutPath })
-        await seedCoordination(state, [{ holderId: holderA, checkoutId, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        let accessorReads = 0
-        const accessor: unknown[] = []
-        Object.defineProperty(accessor, '0', { configurable: true, enumerable: true, get: () => { accessorReads += 1; return { checkoutId, path: checkoutPath } } })
-        await expect(observeHolderCheckouts({ namespace: state, stackId, timeoutMs: 500, checkouts: accessor as never }))
-            .rejects.toThrow('holder checkout probe input is malformed')
-        expect(accessorReads).toBe(0)
-
-        const entryAccessor = { path: checkoutPath } as { checkoutId?: CheckoutId; path: string }
-        Object.defineProperty(entryAccessor, 'checkoutId', { enumerable: true, get: () => { accessorReads += 1; return checkoutId } })
-        await expect(observeHolderCheckouts({ namespace: state, stackId, timeoutMs: 500, checkouts: [entryAccessor] as never }))
-            .rejects.toThrow('holder checkout probe input is malformed')
-        expect(accessorReads).toBe(0)
-
-        let iteratorCalls = 0
-        const iterable = [{ checkoutId, path: checkoutPath }]
-        Object.defineProperty(iterable, Symbol.iterator, { value: () => { iteratorCalls += 1; throw new Error('iterator invoked') } })
-        await expect(observeHolderCheckouts({ namespace: state, stackId, timeoutMs: 500, checkouts: iterable }))
-            .rejects.toThrow('holder checkout probe input is malformed')
-        expect(iteratorCalls).toBe(0)
-
-        const sparse = new Array(1) as { checkoutId: CheckoutId; path: string }[]
-        await expect(observeHolderCheckouts({ namespace: state, stackId, timeoutMs: 500, checkouts: sparse }))
-            .rejects.toThrow('holder checkout probe input is malformed')
-    })
-
     it('records self-release with observed time rather than caller time', async () => {
         const state = await namespace()
         await seedCoordination(state, [
@@ -3175,49 +2672,12 @@ describe('session-aware claims', () => {
         expect(Date.parse(stored.value.updatedAt)).toBeGreaterThanOrEqual(before)
     })
 
-    it('refuses loader injection in holder probes', async () => {
+    it('snapshots a release request before coordination yields', async () => {
         const state = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z', pid: process.pid }])
-        await expect(issuedProcessProbe(state, 10_000, { LD_PRELOAD: '/tmp/untrusted.so' })).rejects.toThrow('holder process probe input is malformed')
-    })
-
-    it('does not accept a caller-authored holder process map', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z', pid: process.pid }])
-        const executablePath = process.execPath
-        const bytes = await readFile(executablePath)
-        const executable = resolvedExecutable({
-            canonicalPath: executablePath, invocationPath: executablePath,
-            sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path',
-        })!
-        await expect(createHolderProcessProbePlan({
-            namespace: state, stackId, executable, timeoutMs: 10_000,
-            processes: [{ holderId: holderA, pid: 2_147_483_647 }],
-        } as never)).rejects.toThrow('holder process probe input is malformed')
-    })
-
-    it('never turns permission-denied or live process evidence into absence', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z', pid: 1 }])
-        const probe = await issuedProcessProbe(state)
-        const observation = probe.observations[0]!.observation
-        expect(observation.state !== 'available' || observation.value.state).not.toBe('dead')
-    })
-    it('snapshots acquisition and release requests before coordination yields', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const acquisition = {
-            namespace: state,
-            stackId,
-            holder: { holderId: holderB, checkoutId: checkoutB },
-            now: '2026-09-07T12:00:00.000Z',
-        }
-        const acquiring = acquireClaim(acquisition)
-        acquisition.stackId = `stack:${'9'.repeat(64)}` as StackId
-        acquisition.holder.holderId = holderA
-        acquisition.now = 'invalid'
-        await expect(acquiring).resolves.toMatchObject({ kind: 'complete', change: 'acquired' })
-
+        await seedCoordination(state, [
+            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
+            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:30.000Z' },
+        ])
         const release = { namespace: state, stackId, requesterId: holderB, holderId: holderB, now: '2026-09-07T12:00:01.000Z' }
         const releasing = releaseClaim(release)
         release.stackId = `stack:${'8'.repeat(64)}` as StackId
@@ -3226,95 +2686,26 @@ describe('session-aware claims', () => {
         await expect(releasing).resolves.toMatchObject({ kind: 'complete', change: 'released', remaining: [holderA] })
     })
 
-    it.each([
-        ['acquisition', () => {
-            const hostile = {} as Parameters<typeof acquireClaim>[0]
-            Object.defineProperty(hostile, 'namespace', { get: () => { throw new Error('hostile namespace getter') } })
-            return acquireClaim(hostile)
-        }],
-        ['release', () => {
-            const hostile = {} as Parameters<typeof releaseClaim>[0]
-            Object.defineProperty(hostile, 'namespace', { get: () => { throw new Error('hostile namespace getter') } })
-            return releaseClaim(hostile)
-        }],
-    ])('returns a named refusal when a claim %s getter throws', async (_label, operation) => {
-        await expect(operation()).resolves.toMatchObject({
+    it('returns a named refusal when a claim release getter throws', async () => {
+        const hostile = {} as Parameters<typeof releaseClaim>[0]
+        Object.defineProperty(hostile, 'namespace', { get: () => { throw new Error('hostile namespace getter') } })
+        await expect(releaseClaim(hostile)).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
         })
     })
 
-    it('keeps distinct session holders and acquisition idempotent', async () => {
-        const state = await namespace()
-        await seedCoordination(state)
-
-        const first = await acquireClaim({
-            namespace: state,
-            stackId,
-            holder: { holderId: holderA, checkoutId: checkoutA },
-            now: '2026-09-07T12:00:00.000Z',
-        })
-        const beforeDuplicate = await readFile(state.paths.coordination(stackId).path)
-        const duplicate = await acquireClaim({
-            namespace: state,
-            stackId,
-            holder: { holderId: holderA, checkoutId: checkoutA },
-            now: '2036-09-07T12:00:00.000Z',
-        })
-        const afterDuplicate = await readFile(state.paths.coordination(stackId).path)
-        const existingSession = await acquireClaim({
-            namespace: state,
-            stackId,
-            holder: { holderId: holderC, checkoutId: checkoutA },
-            now: '2026-09-07T12:00:01.000Z',
-        })
-
-        expect(first).toMatchObject({ kind: 'complete', change: 'acquired' })
-        expect(duplicate).toMatchObject({ kind: 'complete', change: 'unchanged' })
-        expect(afterDuplicate).toEqual(beforeDuplicate)
-        expect(await acquireClaim({
-            namespace: state, stackId,
-            holder: { holderId: holderA, checkoutId: checkoutA },
-            now: '2036-09-07T12:00:00Z',
-        })).toMatchObject({ kind: 'refusal' })
-        expect(await readFile(state.paths.coordination(stackId).path)).toEqual(beforeDuplicate)
-        expect(existingSession).toMatchObject({ kind: 'complete', change: 'unchanged' })
-        const stored = await readState(state.paths.coordination(stackId))
-        expect(stored).toMatchObject({
-            kind: 'complete',
-            value: {
-                value: {
-                    holders: [
-                        { holderId: holderC, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
-                        { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' },
-                    ],
-                },
-            },
-        })
-    })
-
-    it('rejects an obsolete compatibility holder at claim admission', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-
-        expect(await acquireClaim({
-            namespace: state,
-            stackId,
-            holder: { holderId: obsoleteCompatibilityHolder, checkoutId: checkoutB },
-            now: '2026-09-07T12:00:00.000Z',
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
-    })
-
     it('releases only the exact non-final holder and requires a drain for the final holder', async () => {
         const state = await namespace()
-        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        for (const holder of [
-            { holderId: holderA, checkoutId: checkoutA },
-            { holderId: holderB, checkoutId: checkoutB },
-        ]) {
-            expect(await acquireClaim({ namespace: state, stackId, holder, now: '2026-09-07T12:00:00.000Z' }))
-                .toMatchObject({ kind: 'complete' })
-        }
+        await seedCoordination(state, [
+            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
+            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T12:00:00.000Z' },
+        ])
 
+        // Another holder's claim is never this call's to drop, whatever the requester says.
+        const beforeCrossRelease = await readFile(state.paths.coordination(stackId).path)
+        expect(await releaseClaim({ namespace: state, stackId, requesterId: holderA, holderId: holderB, now: '2026-09-07T12:00:00.500Z' }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
+        expect(await readFile(state.paths.coordination(stackId).path)).toEqual(beforeCrossRelease)
         expect(await releaseClaim({ namespace: state, stackId, requesterId: holderA, holderId: holderA, now: '2026-09-07T12:00:01.000Z' }))
             .toMatchObject({ kind: 'complete', change: 'released', decision: 'retain', remaining: [holderB] })
         const beforeDuplicate = await readFile(state.paths.coordination(stackId).path)
@@ -3336,434 +2727,4 @@ describe('session-aware claims', () => {
         expect(stored.value).not.toHaveProperty('releasedHolders')
     })
 
-    it('requires a classified positive-evidence authority to release another holder', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 2_147_483_647 },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z', pid: 2_147_483_646 },
-        ])
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            now: '2026-09-07T12:00:00.000Z',
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            authority: {
-                stackId, requesterId: holderA, holderId: holderB,
-                claimedAt: '2026-09-07T11:59:00.000Z', recordRevision: 0,
-            } as never,
-            now: '2026-09-07T12:00:00.000Z',
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const probe = await issuedProcessProbe(state)
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderC,
-            requestedAt: probe.requestedAt, timeoutMs: 10_000, observations: probe.observations,
-        })
-        expect(classified).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderC, holderId: holderB,
-            now: after(probe.requestedAt, 250),
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-    })
-
-    it('does not turn an exited command process into holder release authority', async () => {
-        const state = await namespace()
-        const command = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
-        const commandPid = command.pid
-        if (commandPid === undefined) throw new Error('expected command process identifier')
-        await new Promise<void>((resolve, reject) => {
-            command.once('error', reject)
-            command.once('exit', () => resolve())
-        })
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 2_147_483_647 },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z', pid: commandPid },
-        ])
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const probe = await issuedProcessProbe(state)
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderC,
-            requestedAt: probe.requestedAt, timeoutMs: 10_000, observations: probe.observations,
-        })
-        expect(classified).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-        expect(await acquireClaim({
-            namespace: state, stackId, holder: { holderId: holderA, checkoutId: checkoutA },
-            now: '2026-09-07T12:00:01.000Z',
-        })).toMatchObject({ kind: 'complete', change: 'unchanged' })
-        const unchanged = await readState(state.paths.coordination(stackId))
-        expect(unchanged.kind === 'complete' && (unchanged.value.value as { holders: unknown[] }).holders).toEqual([
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 2_147_483_647 },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z', pid: commandPid },
-        ])
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderC, holderId: holderB,
-            now: after(probe.requestedAt, 250),
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-    })
-
-    it('does not treat a reused live PID as the holder session', async () => {
-        const state = await namespace()
-        await seedCoordination(state, [
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid },
-        ])
-        const stored = await readState(state.paths.coordination(stackId))
-        if (stored.kind !== 'complete') throw new Error('expected coordination record')
-        const probe = await issuedProcessProbe(state, 30_000)
-        const classified = await classifyHolders({
-            record: stored.value, requester: holderA,
-            requestedAt: probe.requestedAt, timeoutMs: 30_000, observations: probe.observations,
-        })
-        expect(classified).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-        expect(await releaseClaim({
-            namespace: state, stackId, requesterId: holderA, holderId: holderB,
-            now: after(probe.requestedAt, 250),
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-    })
-
-    it('refuses co-tenants and unknown evidence while accepting positive death evidence', async () => {
-        const record = claimRecord([
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2000-01-01T00:00:00.000Z' },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T12:00:00.000Z' },
-        ])
-
-        const live = await classifyHolders({
-            record,
-            requester: holderA,
-            requestedAt: '2026-09-07T12:00:00.750Z',
-            timeoutMs: 500,
-            observations: observationsFor(record, (holder, budget) => ({
-                state: 'available',
-                value: holder.holderId === holderB
-                    ? { state: 'live' }
-                    : { state: 'dead', evidence: 'process-absent' },
-                observedAt: '2026-09-07T12:00:01.000Z',
-                producer: `holder-probe-${budget}`,
-            })),
-        })
-        expect(live).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT, target: holderB }],
-        })
-
-        const unknown = await classifyHolders({
-            record,
-            requester: holderA,
-            requestedAt: '2026-09-07T12:00:00.750Z',
-            timeoutMs: 500,
-            observations: observationsFor(record, () => ({ state: 'unavailable', reason: 'probe denied', producer: 'holder-probe' })),
-        })
-        expect(unknown).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-
-        const dead = await classifyHolders({
-            record,
-            requester: holderA,
-            requestedAt: '2026-09-07T12:00:00.750Z',
-            timeoutMs: 500,
-            observations: observationsFor(record, (holder) => ({
-                state: 'available',
-                value: holder.holderId === holderB
-                    ? { state: 'dead', evidence: 'checkout-missing' }
-                    : { state: 'live' },
-                observedAt: '2026-09-07T12:00:01.000Z',
-                producer: 'holder-probe',
-            })),
-        })
-        expect(dead).toMatchObject({
-            kind: 'complete',
-            classifications: [
-                { holderId: holderA, state: 'live' },
-                { holderId: holderB, state: 'checkout-missing' },
-            ],
-        })
-    })
-
-    it('returns a named refusal when classification input getters throw', async () => {
-        const hostile = {} as Parameters<typeof classifyHolders>[0]
-        Object.defineProperty(hostile, 'record', { get: () => { throw new Error('hostile record getter') } })
-
-        await expect(classifyHolders(hostile)).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-    })
-
-    it('returns a named refusal when a nested classification record getter throws', async () => {
-        const hostile = claimRecord([])
-        Object.defineProperty(hostile, 'subjectId', { get: () => { throw new Error('hostile subject getter') } })
-
-        await expect(classifyHolders({
-            record: hostile, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z',
-            timeoutMs: 500, observations: [],
-        })).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-    })
-
-    it('never turns elapsed age into death authority', async () => {
-        const old = claimRecord([{ holderId: holderB, checkoutId: checkoutB, claimedAt: '2000-01-01T00:00:00.000Z' }])
-        const recent = claimRecord([{ holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T12:00:00.000Z' }])
-        const observe = () => ({
-            state: 'unavailable' as const,
-            reason: 'no positive evidence',
-            producer: 'holder-probe',
-        })
-
-        const [oldResult, recentResult] = await Promise.all([
-            classifyHolders({ record: old, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500, observations: observationsFor(old, observe) }),
-            classifyHolders({ record: recent, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500, observations: observationsFor(recent, observe) }),
-        ])
-        expect(oldResult).toEqual(recentResult)
-        expect(oldResult).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-    })
-
-    it('fails closed for malformed holder records and bounded-observation inputs', async () => {
-        const malformed = claimRecord([])
-        malformed.value = {
-            holders: [{ holderId: 'holder:invalid:session', checkoutId: checkoutA, claimedAt: 'not-a-date' }],
-            lease: null,
-            lastReleasedHolder: null,
-        }
-        expect(await classifyHolders({ record: malformed, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500, observations: [] }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
-        expect(await classifyHolders({ record: claimRecord([]), requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 0, observations: [] }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-    })
-
-    it.each([
-        { state: 'available', value: { state: 'dead', evidence: 'elapsed-age' }, observedAt: '2026-09-07T12:00:00.000Z', producer: 'holder-probe' },
-        { state: 'available', value: { state: 'dead', evidence: 'process-absent' }, observedAt: 'invalid', producer: 'holder-probe' },
-        { state: 'available', value: { state: 'dead', evidence: 'process-absent' }, observedAt: '2026-09-07T12:00:00.501Z', producer: 'holder-probe' },
-        { state: 'available', value: { state: 'live' }, observedAt: '2026-09-07T12:00:00.000Z', producer: '' },
-        { state: 'available', value: { state: 'live' }, observedAt: '2026-09-07T12:00:00.000Z', producer: 'p'.repeat(257) },
-        { state: 'unavailable', reason: '', producer: 'holder-probe' },
-        { state: 'unavailable', reason: 'r'.repeat(1_025), producer: 'holder-probe' },
-        { state: 'failed', code: 'NOT_A_REFUSAL', reason: 'failed', producer: 'holder-probe' },
-    ])('refuses malformed liveness observation %# without throwing', async (observation) => {
-        const result = await classifyHolders({
-            record: claimRecord([{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' }]),
-            requester: holderA,
-            requestedAt: '2026-09-07T12:00:00.000Z',
-            timeoutMs: 500,
-            observations: [{ holderId: holderA, observation: observation as never }],
-        })
-        expect(result).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-    })
-
-    it('accepts observation provenance and reasons at their exact byte limits', async () => {
-        const record = claimRecord([{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        expect(await classifyHolders({
-            record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations: [{ holderId: holderA, observation: {
-                state: 'available', value: { state: 'live' },
-                observedAt: '2026-09-07T12:00:00.000Z', producer: 'p'.repeat(256),
-            } }],
-        })).toMatchObject({ kind: 'complete' })
-
-        expect(await classifyHolders({
-            record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations: [{ holderId: holderA, observation: {
-                state: 'unavailable', reason: 'r'.repeat(1_024), producer: 'p'.repeat(256),
-            } }],
-        })).toMatchObject({
-            kind: 'refusal',
-            diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, message: expect.stringContaining('elapsed age') }],
-        })
-    })
-
-    it('refuses stale positive liveness evidence without minting release authority', async () => {
-        const result = await classifyHolders({
-            record: claimRecord([{ holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z' }]),
-            requester: holderA,
-            requestedAt: '2026-09-07T12:00:00.000Z',
-            timeoutMs: 500,
-            observations: [{ holderId: holderB, observation: {
-                state: 'available', value: { state: 'dead', evidence: 'process-absent' },
-                observedAt: '2000-01-01T00:00:00.000Z', producer: 'holder-probe',
-            } }],
-        })
-        expect(result).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-    })
-
-    it('does not mint release authority from caller-authored liveness evidence', async () => {
-        const record = claimRecord([{ holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const request = {
-            record,
-            requester: holderA,
-            requestedAt: '2026-09-07T12:00:00.000Z',
-            timeoutMs: 500,
-            get observations() {
-                record.revision = 99
-                request.requester = holderC
-                return [{ holderId: holderB, observation: {
-                    state: 'available' as const,
-                    value: { state: 'dead' as const, evidence: 'process-absent' as const },
-                    observedAt: '2026-09-07T12:00:00.250Z',
-                    producer: 'bounded-holder-probe',
-                } }]
-            },
-        }
-        const result = await classifyHolders(request)
-        expect(result).toMatchObject({
-            kind: 'complete',
-            classifications: [{ holderId: holderB, state: 'dead' }],
-            authorities: [],
-        })
-    })
-
-    it('requires exact holder coverage once and accepts evidence independent of array order', async () => {
-        const record = claimRecord([
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z' },
-        ])
-        const observation = {
-            state: 'available' as const,
-            value: { state: 'dead' as const, evidence: 'process-absent' as const },
-            observedAt: '2026-09-07T12:00:00.250Z',
-            producer: 'resolved-holder-probe',
-        }
-        expect(await classifyHolders({
-            record, requester: holderC, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations: [
-                { holderId: holderB, observation },
-                { holderId: holderA, observation },
-            ],
-        })).toMatchObject({ kind: 'complete', classifications: [{ holderId: holderA }, { holderId: holderB }] })
-
-        for (const observations of [
-            [{ holderId: holderA, observation }],
-            [{ holderId: holderA, observation }, { holderId: holderA, observation }],
-            [{ holderId: holderC, observation }, { holderId: holderA, observation }],
-            [{ holderId: holderA, observation, ignored: true }, { holderId: holderB, observation }],
-        ]) {
-            expect(await classifyHolders({
-                record, requester: holderC, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-                observations: observations as never,
-            })).toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-            })
-        }
-    })
-
-    it('bounds holder evidence before traversing entries or consulting array-like lengths', async () => {
-        const record = claimRecord([{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        let observationReads = 0
-        const oversized = Array.from({ length: 65 }, () => ({
-            holderId: holderA,
-            get observation() {
-                observationReads += 1
-                return {
-                    state: 'available' as const,
-                    value: { state: 'live' as const },
-                    observedAt: '2026-09-07T12:00:00.000Z',
-                    producer: 'holder-probe',
-                }
-            },
-        }))
-        expect(await classifyHolders({
-            record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations: oversized,
-        })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-        expect(observationReads).toBe(0)
-
-        let lengthReads = 0
-        const arrayLike = {
-            get length() {
-                lengthReads += 1
-                return 1
-            },
-        }
-        expect(await classifyHolders({
-            record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations: arrayLike as never,
-        })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-        expect(lengthReads).toBe(0)
-
-        const revoked = Proxy.revocable([], {})
-        revoked.revoke()
-        expect(await classifyHolders({
-            record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations: revoked.proxy,
-        })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
-        })
-    })
-
-    it('reads bounded holder observations by captured indexes without invoking iterators', async () => {
-        const record = claimRecord([{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        let iteratorCalls = 0
-        const observations = [{
-            holderId: holderA,
-            observation: {
-                state: 'available' as const,
-                value: { state: 'live' as const },
-                observedAt: '2026-09-07T12:00:00.000Z',
-                producer: 'holder-probe',
-            },
-        }]
-        Object.defineProperty(observations, Symbol.iterator, {
-            value: () => {
-                iteratorCalls += 1
-                throw new Error('iterator must not be called')
-            },
-        })
-
-        expect(await classifyHolders({
-            record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
-            observations,
-        })).toMatchObject({ kind: 'complete', classifications: [{ holderId: holderA, state: 'live' }] })
-        expect(iteratorCalls).toBe(0)
-    })
-
-    it('refuses sparse holder observations inherited from the array prototype', async () => {
-        const record = claimRecord([{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const inherited = {
-            holderId: holderA,
-            observation: { state: 'available' as const, value: { state: 'dead' as const, evidence: 'process-absent' as const }, observedAt: '2026-09-07T12:00:00.000Z', producer: 'holder-probe' },
-        }
-        const prior = Object.getOwnPropertyDescriptor(Array.prototype, '0')
-        Object.defineProperty(Array.prototype, '0', { configurable: true, writable: true, value: inherited })
-        try {
-            const observations = new Array(1) as typeof inherited[]
-            const result = await classifyHolders({ record, requester: holderA, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500, observations })
-            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
-            expect(result).not.toHaveProperty('authorities')
-        } finally {
-            if (prior) Object.defineProperty(Array.prototype, '0', prior)
-            else delete (Array.prototype as unknown as Record<string, unknown>)['0']
-        }
-    })
-
-    it('preserves every holder across concurrent processes', async () => {
-        const state = await namespace()
-        const home = state.root.slice(0, state.root.indexOf('/.local/state/'))
-        await seedCoordination(state)
-
-        await Promise.all([
-            runAcquisition({ home, holderId: holderA, checkoutId: checkoutA }),
-            runAcquisition({ home, holderId: holderB, checkoutId: checkoutB }),
-        ])
-
-        const source = await readFile(state.paths.coordination(stackId).path, 'utf8')
-        expect(JSON.parse(source).value.holders).toEqual([
-            { holderId: holderC, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
-            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' },
-            { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T12:00:00.000Z' },
-        ])
-    })
 })

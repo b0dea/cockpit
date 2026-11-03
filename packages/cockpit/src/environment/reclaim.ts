@@ -55,7 +55,7 @@ export const mechanism = {
         'createImageInspectionSteps', 'admitImageInspections', 'createVolumeInspectionSteps',
         'admitVolumeInspections', 'createNetworkInspectionSteps', 'admitNetworkInspections',
         'combineReclaimDiscoveries', 'inspectionOverflow',
-        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'keptTeardownResources', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
+        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'keptTeardownResources', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted',
     ],
 } as const
 
@@ -96,8 +96,6 @@ const consentAuthorities = new WeakMap<object, { readonly digest: string; readon
 const consumedConsents = new WeakSet<object>()
 const teardownContinuations = new WeakMap<object, TeardownContinuationAuthority>()
 const consumedTeardownContinuations = new WeakSet<object>()
-const teardownReconciliations = new WeakMap<object, TeardownReconciliationAuthority>()
-const consumedTeardownReconciliations = new WeakSet<object>()
 const consumedExecutionReceipts = new WeakSet<object>()
 // A reconciliation discovery that proved one action of a continuing drain, kept for that drain's
 // next plan. It started after the action finished, so it is as fresh as a second discovery would
@@ -289,14 +287,6 @@ interface PathTargetIdentity {
     readonly ino: number
     readonly birthtimeNs: string
     readonly ancestors: readonly FilesystemAncestorIdentity[]
-}
-
-interface TeardownReconciliationAuthority {
-    readonly step: ExecutionStep
-    readonly completed: ClassifiedReclaimResource
-    readonly remaining: readonly ClassifiedReclaimResource[]
-    readonly runtime: DiscoveryAuthority
-    readonly caches: readonly DependencyCacheAuthority[]
 }
 
 export type ReclaimResourceKind = 'container' | 'network' | 'volume' | 'image' | 'build-cache' | 'cache'
@@ -2912,55 +2902,4 @@ export function consumeReclaimCompleted(authority: object): DrainOutcomeAuthorit
     if (!fact) return undefined
     issuedReclaimCompleted.delete(authority)
     return fact
-}
-
-export type TeardownReconciliationResult =
-    | { readonly kind: 'complete'; readonly resourceId: string; readonly actuallyReclaimed: number | null }
-    | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
-
-export function reconcileTeardown(
-    plan: TeardownPlanResult,
-    outcome: ExecuteProbeOutcome,
-    discovery: ReclaimDiscoverySnapshot,
-): TeardownReconciliationResult {
-    const reconciliation = plan !== null && typeof plan === 'object' ? teardownReconciliations.get(plan) : undefined
-    const authority = discoveryAuthorities.get(discovery)
-    if (reconciliation === undefined || consumedTeardownReconciliations.has(plan as object)
-        || authority === undefined || !admittedDiscoveries.has(discovery)
-        || sameRuntimeAuthority(discovery, reconciliation.runtime.stackId, reconciliation.runtime.executable, reconciliation.runtime.cwd,
-            reconciliation.runtime.env, reconciliation.runtime.selection) === undefined) {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown reconciliation authority is missing, stale, or already consumed', 'teardown-reconciliation')
-    }
-    const admitted = authenticatedExecutionOutcome(outcome, reconciliation.step)
-    const sourceReceipt = outcome !== null && typeof outcome === 'object' && 'receipt' in outcome
-        && outcome.receipt !== undefined && outcome.receipt !== null && typeof outcome.receipt === 'object'
-        ? outcome.receipt : undefined
-    const remaining = reconciliation.remaining.filter(({ kind }) => kind !== 'cache').map((item) => {
-        const { ownership: _ownership, reversibility: _reversibility, action: _action, evidence: _evidence, reason: _reason, suggestion: _suggestion, ...resource } = item
-        return resource
-    })
-    const cacheStateMatches = reconciliation.caches.every((cache) => {
-        try {
-            const observed = lstatSync(cache.path, { bigint: true })
-            if (reconciliation.completed.kind === 'cache' && cache.cacheId === reconciliation.completed.id) return false
-            const { evidence } = cache
-            return evidence.state === 'present' && observed.isDirectory() && !observed.isSymbolicLink()
-                && evidence.dev !== undefined && evidence.ino !== undefined && evidence.birthtimeNs !== undefined
-                && sameFilesystemObject(observed, { dev: evidence.dev, ino: evidence.ino, birthtimeNs: evidence.birthtimeNs })
-        } catch (error) {
-            return reconciliation.completed.kind === 'cache' && cache.cacheId === reconciliation.completed.id
-                && (error as NodeJS.ErrnoException).code === 'ENOENT'
-        }
-    })
-    if (admitted === undefined || admitted.kind !== 'complete' || sourceReceipt === undefined || !cacheStateMatches
-        || consumedExecutionReceipts.has(sourceReceipt)
-        || Date.parse(authority.startedAt) < Date.parse(admitted.receipt.finishedAt)
-        || discovery.resources.some(({ kind, id }) => kind === reconciliation.completed.kind && id === reconciliation.completed.id)
-        || digestValue(discovery.resources) !== digestValue(remaining)) {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'post-action discovery did not prove one exact resource removal', 'teardown-reconciliation')
-    }
-    consumedTeardownReconciliations.add(plan as object)
-    consumedExecutionReceipts.add(sourceReceipt)
-    consumeAuthority(authority)
-    return Object.freeze({ kind: 'complete', resourceId: reconciliation.completed.id, actuallyReclaimed: null })
 }

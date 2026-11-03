@@ -26,6 +26,7 @@ export const PROBE_OWNER_LABEL = 'dev.b0dea.cockpit.probe-owner'
 const OWNER = /^([1-9][0-9]{0,9})(?:@(\S+))?$/
 const DOCKER_ID = /^[a-f0-9]{12,64}$/
 const DOCKER_NAME = /^[a-z0-9][a-z0-9_.-]{0,200}$/
+const MEASURE_DIRECTORY_NAME = new RegExp(`^${MEASURE_DIRECTORY_PREFIX}[A-Za-z0-9]{6}$`)
 
 /** Run one Docker read or removal; `failed` carries the first line of Docker's complaint. */
 export type ResidueRunner = (id: string, args: readonly string[]) => Promise<Readonly<{ kind: 'complete'; text: string }> | Readonly<{ kind: 'failed'; detail: string }>>
@@ -55,37 +56,51 @@ async function ownerGone(owner: string, observe: ProcessObserver): Promise<boole
     return isProcessGone(start, await observe(Number(pid)))
 }
 
+// One measure's directory, containers, network and volume share an owner; observe it once per sweep.
+function cachedOwnerGone(observe: ProcessObserver): (owner: string) => Promise<boolean> {
+    const gone = new Map<string, Promise<boolean>>()
+    return (owner) => {
+        let known = gone.get(owner)
+        if (known === undefined) { known = ownerGone(owner, observe); gone.set(owner, known) }
+        return known
+    }
+}
+
 type MeasureDirectory = Readonly<{ path: string; alive: boolean }>
 
-async function measureDirectories(temporaryDirectory: string, uid: number | undefined, observe: ProcessObserver): Promise<MeasureDirectory[]> {
-    const found: MeasureDirectory[] = []
-    for (const name of await readdir(temporaryDirectory)) {
-        if (!new RegExp(`^${MEASURE_DIRECTORY_PREFIX}[A-Za-z0-9]{6}$`).test(name)) continue
+async function measureDirectories(temporaryDirectory: string, uid: number | undefined, gone: (owner: string) => Promise<boolean>): Promise<MeasureDirectory[]> {
+    const names = (await readdir(temporaryDirectory)).filter((name) => MEASURE_DIRECTORY_NAME.test(name))
+    const judged = await Promise.all(names.map(async (name): Promise<MeasureDirectory | undefined> => {
         const path = join(temporaryDirectory, name)
         const status = await lstat(path)
         // Only a real directory of this user: a symlink or someone else's directory is not ours to judge or delete.
-        if (!status.isDirectory() || status.isSymbolicLink() || (uid !== undefined && status.uid !== uid)) continue
+        if (!status.isDirectory() || status.isSymbolicLink() || (uid !== undefined && status.uid !== uid)) return undefined
         let owner: string | undefined
         try { owner = (await readFile(join(path, OWNER_FILE), 'utf8')).trim() } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
         }
-        const alive = owner === undefined ? Date.now() - status.mtimeMs < UNOWNED_STALE_MS : !await ownerGone(owner, observe)
-        found.push(Object.freeze({ path, alive }))
-    }
-    return found
+        const alive = owner === undefined ? Date.now() - status.mtimeMs < UNOWNED_STALE_MS : !await gone(owner)
+        return Object.freeze({ path, alive })
+    }))
+    return judged.filter((directory) => directory !== undefined)
 }
 
 interface Found { readonly kind: 'container' | 'network' | 'volume'; readonly handle: string; readonly project: string; readonly batchLabel: string; readonly owner: string }
 
+const LISTING_FORMAT = (handle: string) => `{{.${handle}}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "${PROBE_LABEL}"}}\t{{.Label "${PROBE_OWNER_LABEL}"}}`
+const LISTINGS = [
+    ['container', ['ps', '-a', '--no-trunc'], 'ID', DOCKER_ID],
+    ['network', ['network', 'ls', '--no-trunc'], 'ID', DOCKER_ID],
+    ['volume', ['volume', 'ls'], 'Name', DOCKER_NAME],
+] as const
+
 async function discover(run: ResidueRunner): Promise<Found[] | string> {
-    const listings = [
-        ['container', ['ps', '-a', '--no-trunc', '--filter', `label=${PROBE_LABEL}`, '--format', `{{.ID}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "${PROBE_LABEL}"}}\t{{.Label "${PROBE_OWNER_LABEL}"}}`], DOCKER_ID],
-        ['network', ['network', 'ls', '--no-trunc', '--filter', `label=${PROBE_LABEL}`, '--format', `{{.ID}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "${PROBE_LABEL}"}}\t{{.Label "${PROBE_OWNER_LABEL}"}}`], DOCKER_ID],
-        ['volume', ['volume', 'ls', '--filter', `label=${PROBE_LABEL}`, '--format', `{{.Name}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "${PROBE_LABEL}"}}\t{{.Label "${PROBE_OWNER_LABEL}"}}`], DOCKER_NAME],
-    ] as const
+    // The listings are independent reads; the results are walked in listing order so the first refusal named is stable.
+    const listings = await Promise.all(LISTINGS.map(([kind, command, handle]) =>
+        run(`runtime:measure:residue:${kind}`, [...command, '--filter', `label=${PROBE_LABEL}`, '--format', LISTING_FORMAT(handle)])))
     const found: Found[] = []
-    for (const [kind, args, valid] of listings) {
-        const listed = await run(`runtime:measure:residue:${kind}`, args)
+    for (const [index, listed] of listings.entries()) {
+        const [kind, , , valid] = LISTINGS[index]!
         if (listed.kind !== 'complete') return `listing leftover probe ${kind}s failed (${listed.detail})`
         for (const line of listed.text.split('\n').filter(Boolean)) {
             const [handle = '', project = '', batchLabel = '', owner = ''] = line.split('\t')
@@ -113,7 +128,8 @@ export async function sweepProbeResidue(input: Readonly<{
     observe: ProcessObserver
     uid?: number
 }>): Promise<ProbeResidueOutcome> {
-    const directories = (await measureDirectories(input.temporaryDirectory, input.uid, input.observe)).filter(({ path }) => path !== input.ownDirectory)
+    const gone = cachedOwnerGone(input.observe)
+    const directories = (await measureDirectories(input.temporaryDirectory, input.uid, gone)).filter(({ path }) => path !== input.ownDirectory)
     const projectPattern = new RegExp(`^${input.projectPrefix.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}-probe-([0-9a-f]{32})(?:-[0-9a-f]{12})?$`)
 
     const discovered = await discover(input.run)
@@ -127,13 +143,8 @@ export async function sweepProbeResidue(input: Readonly<{
         return batch === undefined || batch !== item.batchLabel ? [] : [{ ...item, batch }]
     })
     const label = (item: Found) => `${item.kind} ${item.kind === 'volume' ? item.handle : item.handle.slice(0, 12)} (project ${item.project})`
-    // One measure's containers, network and volume share an owner; observe it once.
-    const gone = new Map<string, Promise<boolean>>()
-    const doomed: typeof owned = []
-    for (const item of owned) {
-        if (!gone.has(item.owner)) gone.set(item.owner, ownerGone(item.owner, input.observe))
-        if (await gone.get(item.owner)) doomed.push(item)
-    }
+    const dead = await Promise.all(owned.map((item) => gone(item.owner)))
+    const doomed = owned.filter((_, index) => dead[index])
     for (const item of owned) if (!doomed.includes(item)) left.push(label(item))
     // Containers first: a network or volume a container still uses cannot be removed.
     for (const kind of ['container', 'network', 'volume'] as const) {

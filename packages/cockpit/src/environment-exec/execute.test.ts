@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, snapshotJson, type ExecutionPlan, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
-import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, executionReceiptMatches, repairFencedExecution } from './execute.js'
+import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, repairFencedExecution } from './execute.js'
 
 const nodeStep = (id: string, script: string, overrides: Partial<ExecutionStep> = {}): ExecutionStep => ({
     id, argv: [process.execPath, '-e', script], argv0: process.execPath, cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' },
@@ -538,8 +538,8 @@ describe('mechanical environment executor', () => {
         expect(Object.isFrozen(probe.receipt)).toBe(true)
         expect(probe.receipt.receiptMatches(step)).toBe(true)
         expect(probe.receipt.receiptMatches({ ...step, labels: { ...step.labels, batchId: 'caller-relabelled' } })).toBe(false)
-        expect(executionReceiptMatches(probe.receipt, step)).toBe(true)
-        expect(executionReceiptMatches({ ...probe.receipt }, step)).toBe(false)
+        expect(executionOutcomeMatches(probe, step)).toBe(true)
+        expect(executionOutcomeMatches({ ...probe, receipt: { ...probe.receipt } }, step)).toBe(false)
     })
 
     it('binds every enumerable record key without prototype interpretation', async () => {
@@ -554,8 +554,8 @@ describe('mechanical environment executor', () => {
         if (outcome.kind !== 'complete') return
         const alteredLabels = { ...labels }
         Object.defineProperty(alteredLabels, '__proto__', { enumerable: true, value: 'altered' })
-        expect(executionReceiptMatches(outcome.receipt, step)).toBe(true)
-        expect(executionReceiptMatches(outcome.receipt, { ...step, labels: alteredLabels })).toBe(false)
+        expect(outcome.receipt.receiptMatches(step)).toBe(true)
+        expect(outcome.receipt.receiptMatches({ ...step, labels: alteredLabels })).toBe(false)
     })
 
     it('refuses caller-owned step accessors without invoking them', async () => {
@@ -724,7 +724,7 @@ describe('mechanical environment executor', () => {
         expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', stdout: Buffer.from(executable) }))
         if (outcome.kind !== 'complete') return
         const rebound = { ...step, consumedFiles: [{ ...step.consumedFiles[0]!, sha256: sha256('other') }] }
-        expect(executionReceiptMatches(outcome.receipt, rebound as ExecutionStep)).toBe(false)
+        expect(outcome.receipt.receiptMatches(rebound as ExecutionStep)).toBe(false)
         expect(executionOutcomeMatches(outcome, rebound as ExecutionStep)).toBe(false)
     })
 

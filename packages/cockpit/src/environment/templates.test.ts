@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 import { inspect } from 'node:util'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { externalDependencyTemplateFragments, inspectEnvironmentKeys, planEnvironmentSeed, seedEnvironmentInstance, seedEnvironmentInstanceSync } from './templates.js'
+import { externalDependencyTemplateFragments, inspectEnvironmentKeys, planEnvironmentSeed, seedEnvironmentInstanceSync } from './templates.js'
 
 const scratch: string[] = []
 
@@ -42,7 +42,7 @@ function delayedFifoWriter(path: string) {
     )
 }
 
-async function beforeDelayedFifoWriter<T>(path: string, operation: () => Promise<T>): Promise<T> {
+async function beforeDelayedFifoWriter<T>(path: string, operation: () => T): Promise<Awaited<T>> {
     const writer = delayedFifoWriter(path)
     const started = performance.now()
     try {
@@ -377,7 +377,7 @@ describe('environment instance seeding', () => {
             environmentFile: { template, instance },
         })
         expect(plan.kind).toBe('ready')
-        const result = await seedEnvironmentInstance(plan)
+        const result = seedEnvironmentInstanceSync(plan)
 
         expect(result).toEqual({
             kind: 'created',
@@ -396,7 +396,7 @@ describe('environment instance seeding', () => {
         const plan = await planEnvironmentSeed({ siblingRoot: root })
 
         expect(plan).toEqual({ kind: 'none' })
-        await expect(seedEnvironmentInstance(plan)).resolves.toEqual({ kind: 'none' })
+        expect(seedEnvironmentInstanceSync(plan)).toEqual({ kind: 'none' })
         expect(statSync(root).mtimeMs).toBe(before)
     })
 
@@ -417,7 +417,7 @@ describe('environment instance seeding', () => {
             siblingRoot: root,
             destination: join(realpathSync(root), instance),
         })
-        await expect(seedEnvironmentInstance(plan)).resolves.toEqual(plan)
+        expect(seedEnvironmentInstanceSync(plan)).toEqual(plan)
         expect(readFileSync(join(root, instance))).toEqual(original)
         await expect(inspectEnvironmentKeys({
             siblingRoot: root,
@@ -442,7 +442,7 @@ describe('environment instance seeding', () => {
         const observer = setInterval(() => {
             if (existsSync(join(root, instance))) observedLengths.push(statSync(join(root, instance)).size)
         }, 0)
-        const results = await Promise.all([seedEnvironmentInstance(plan), seedEnvironmentInstance(plan)])
+        const results = [seedEnvironmentInstanceSync(plan), seedEnvironmentInstanceSync(plan)]
         clearInterval(observer)
         observedLengths.push(statSync(join(root, instance)).size)
 
@@ -463,7 +463,7 @@ describe('environment instance seeding', () => {
         const raced = Buffer.from('KEY=racer-secret\n')
         writeFileSync(join(root, '.env'), raced)
 
-        await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({ kind: 'unchanged' })
+        expect(seedEnvironmentInstanceSync(plan)).toMatchObject({ kind: 'unchanged' })
         expect(readFileSync(join(root, '.env'))).toEqual(raced)
         expect(readdirSync(root).filter((name) => name.includes('.cockpit-seed-'))).toEqual([])
     })
@@ -486,7 +486,7 @@ describe('environment instance seeding', () => {
             else mkdirSync(destination)
             const racedIdentity = lstatSync(destination, { bigint: true })
 
-            await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
+            expect(seedEnvironmentInstanceSync(plan)).toMatchObject({
                 kind: 'refusal',
                 code:
                     racer === 'source hard-link'
@@ -514,7 +514,7 @@ describe('environment instance seeding', () => {
         expect(plan.kind).toBe('ready')
         execFileSync('mkfifo', [destination])
         await expect(
-            beforeDelayedFifoWriter(destination, () => seedEnvironmentInstance(plan)),
+            beforeDelayedFifoWriter(destination, () => seedEnvironmentInstanceSync(plan)),
         ).resolves.toMatchObject({ kind: 'refusal', code: 'TEMPLATE_PATH_OUTSIDE_ROOT' })
     })
 
@@ -573,7 +573,7 @@ describe('environment instance seeding', () => {
         rmSync(join(root, 'private'), { recursive: true })
         symlinkSync(outside, join(root, 'private'))
 
-        await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
+        expect(seedEnvironmentInstanceSync(plan)).toMatchObject({
             kind: 'refusal',
             code: 'TEMPLATE_PATH_OUTSIDE_ROOT',
         })
@@ -605,7 +605,7 @@ describe('environment instance seeding', () => {
             }
         })
         try {
-            await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
+            expect(seedEnvironmentInstanceSync(plan)).toMatchObject({
                 kind: 'refusal',
                 code: 'TEMPLATE_PATH_OUTSIDE_ROOT',
             })
@@ -632,7 +632,7 @@ describe('environment instance seeding', () => {
         rmSync(join(root, 'config'), { recursive: true })
         symlinkSync(outside, join(root, 'config'))
 
-        await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
+        expect(seedEnvironmentInstanceSync(plan)).toMatchObject({
             kind: 'refusal',
             code: 'TEMPLATE_PATH_OUTSIDE_ROOT',
         })
@@ -661,7 +661,7 @@ describe('environment instance seeding', () => {
         })
         try {
             await expect(
-                beforeDelayedFifoWriter(template, () => seedEnvironmentInstance(plan)),
+                beforeDelayedFifoWriter(template, () => seedEnvironmentInstanceSync(plan)),
             ).resolves.toMatchObject({ kind: 'refusal', code: 'ENVIRONMENT_SEED_PRECONDITION_CHANGED' })
         } finally {
             chdir.mockRestore()
@@ -681,7 +681,7 @@ describe('environment instance seeding', () => {
         rmSync(join(root, '.env.example'))
         writeFileSync(join(root, '.env.example'), 'KEY=second\n')
 
-        await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
+        expect(seedEnvironmentInstanceSync(plan)).toMatchObject({
             kind: 'refusal',
             code: 'ENVIRONMENT_SEED_PRECONDITION_CHANGED',
         })
@@ -703,7 +703,7 @@ describe('environment instance seeding', () => {
         writeFileSync(template, 'KEY=omega\n')
         utimesSync(template, fixedTime, fixedTime)
 
-        await expect(seedEnvironmentInstance(plan)).resolves.toMatchObject({
+        expect(seedEnvironmentInstanceSync(plan)).toMatchObject({
             kind: 'refusal',
             code: 'ENVIRONMENT_SEED_PRECONDITION_CHANGED',
         })

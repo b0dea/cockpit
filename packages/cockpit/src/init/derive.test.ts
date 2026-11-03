@@ -265,9 +265,9 @@ describe('inferred interview answers', () => {
         ] }, provenance: { kind: 'inferred', source: 'api/package.json', reason: expect.stringMatching(
             /pnpm-lock\.yaml selects pnpm.*targeted gate runs the same command.*test:e2e are not proposed.*requires_stack is false/) } })
         // The same lockfile proposes the node toolchain, naming the install policy row setup then needs.
-        expect(byTarget(facts, 'api.toolchain')).toEqual({ fields: ['sibling', 'environment.install_policies'], target: 'api.toolchain',
+        expect(byTarget(facts, 'api.toolchain')).toEqual({ fields: ['sibling', 'environment.install_policies', 'environment.generated'], target: 'api.toolchain',
             value: 'node', provenance: { kind: 'inferred', source: 'api/pnpm-lock.yaml',
-                reason: expect.stringMatching(/toolchain "node" and lockfile "pnpm-lock\.yaml".*INSTALL_POLICY_MISSING/) } })
+                reason: expect.stringMatching(/toolchain "node" and lockfile "pnpm-lock\.yaml".*INSTALL_POLICY_MISSING.*purpose = "dependencies".*GENERATED_DEPENDENCY_VOLUME_MISSING/) } })
     })
 
     it('proposes the affected run of a build tool as the targeted gate', async () => {

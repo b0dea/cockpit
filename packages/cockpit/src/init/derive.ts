@@ -14,7 +14,7 @@ import { errorCause } from '../environment/contract.js'
 import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
 import { repositoryIdentity } from '../environment/repository-identity.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
-import { initCommand } from '../fix-catalogue.js'
+import { formatShellCommand, initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable, TestingName } from '../schema.js'
 
 export const mechanism = {
@@ -282,12 +282,9 @@ const NPM_PLACEHOLDER_TEST = /no test specified/
 
 type TestEntry = Readonly<{ file: string; full: readonly string[]; affected?: readonly string[]; tool: string; reason: string }>
 
-const SHELL_SAFE = /^[A-Za-z0-9_./:=@%+-]+$/
-const shellWord = (word: string) => SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`
-
 /** A stage command runs from the cockpit root, so a repository elsewhere is entered first. */
 function stageCommand(directory: string, argv: readonly string[]): readonly string[] {
-    return directory === '.' ? argv : ['sh', '-c', `cd ${shellWord(directory)} && exec ${argv.map(shellWord).join(' ')}`]
+    return directory === '.' ? argv : ['sh', '-c', `cd ${formatShellCommand([directory])} && exec ${formatShellCommand(argv)}`]
 }
 
 function jsonObject(text: string | undefined, onInvalid: (cause: string) => void): Record<string, unknown> | undefined {
@@ -549,9 +546,9 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                 reason: `no test entry point was found, so no [testing] gate is proposed for ${slug}; looked for ${TEST_ENTRY_LOOKED_FOR}` })
             // setup resolves a non-none toolchain to exactly one install policy and refuses without
             // one, so the toolchain is proposed together with the policy row the interview must hold.
-            if (node) facts.push({ fields: ['sibling', 'environment.install_policies'], target: `${slug}.toolchain`, value: 'node',
+            if (node) facts.push({ fields: ['sibling', 'environment.install_policies', 'environment.generated'], target: `${slug}.toolchain`, value: 'node',
                 provenance: { kind: 'inferred', source: relative(directory.path, node.lockfile),
-                    reason: `${node.lockfile} is ${node.manager}'s lockfile, so the node toolchain is proposed; setup then needs exactly one environment.install_policies row with toolchain "node" and lockfile "${node.lockfile}" and refuses INSTALL_POLICY_MISSING without it, so declare that row with the product's own volume, install and load_probe commands, or keep toolchain "none", as a cockpit with no runtime environment must, since it is never asked for install policies` } })
+                    reason: `${node.lockfile} is ${node.manager}'s lockfile, so the node toolchain is proposed; setup then needs exactly one environment.install_policies row with toolchain "node" and lockfile "${node.lockfile}" and refuses INSTALL_POLICY_MISSING without it, so declare that row with the product's own volume, install and load_probe commands, and mount that volume in the generated service that runs the product (a [[environment.generated.volumes]] row with purpose = "dependencies", which the config refuses GENERATED_DEPENDENCY_VOLUME_MISSING without), or keep toolchain "none", as a cockpit with no runtime environment must, since it is never asked for install policies` } })
             const dockerfile = await readHere('Dockerfile')
             const parsed = dockerfile === undefined ? undefined : readDockerfileFacts(dockerfile)
             if (parsed) {

@@ -15,7 +15,7 @@ import { foldGuardSpelling, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_SECRET_FILE_LI
 export const mechanism = {
     id: 'guard-protected-locations', module: 'packages/cockpit/src/guards/protected-locations.ts',
     exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSearchPathRelativeEntry', 'guardSecretFiles', 'guardSensitivePathsBelow',
-        'guardUnignoredSensitivePaths', 'guardTrackedSensitivePaths', 'GUARD_SEARCH_ENTRY_LIMIT'],
+        'guardUnignoredSensitivePaths', 'guardTrackedSensitivePaths'],
 } as const
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
@@ -136,7 +136,7 @@ export function guardSearchPathRelativeEntry(searchPath: string): string | null 
 }
 
 /** Directory entries a recursive search may walk before the guard stops proving what it reads. */
-export const GUARD_SEARCH_ENTRY_LIMIT = 20_000
+const GUARD_SEARCH_ENTRY_LIMIT = 20_000
 
 const sensitiveName = (name: string) => { const folded = foldGuardSpelling(name); return folded.startsWith('.env') || folded === '.secrets' }
 
