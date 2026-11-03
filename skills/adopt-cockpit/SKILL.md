@@ -100,7 +100,8 @@ has been cleared or reported to the human.
   `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold.
   `./node_modules/.bin/cockpit down --config cockpit.toml` removes its runtime from the local
   Docker daemon fixed at the start of the run; ask first.
-- **Upgrade:** install the new version, then run
+- **Upgrade:** `./node_modules/.bin/cockpit upgrade --config cockpit.toml` does the move (`--dry-run`
+  previews). By hand, install the new version, then run
   `./node_modules/.bin/cockpit check --config cockpit.toml`,
   `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and
   `./node_modules/.bin/cockpit sync --config cockpit.toml`. The guard trusts only the cockpit, Node

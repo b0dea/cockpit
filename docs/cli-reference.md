@@ -93,6 +93,23 @@ Does not read `cockpit.toml`.
 | 2 | failure |
 | 130 | cancelled |
 
+## cockpit upgrade
+
+Move the exact cockpit pin to a newer version and re-run sync.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--dry-run` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
 ## cockpit sync
 
 Write the generated stack and agent files from cockpit.toml.

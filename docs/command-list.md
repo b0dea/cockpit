@@ -10,6 +10,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit setup`: Clone or locate the declared sibling repositories and link them.
 - `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
 - `cockpit registry-resolve`: Turn a validated shell registry into data shell scripts can source.
+- `cockpit upgrade`: Move the exact cockpit pin to a newer version and re-run sync.
 
 ## Generate and verify
 

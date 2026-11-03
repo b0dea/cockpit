@@ -351,6 +351,12 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `SURFACE_WORKER_TIMEOUT` | [see above](#merge-ownership-and-generation) |
 | `TESTING_GATE_UNDECLARED` | declare the product test commands as [testing] stages with a targeted and a full gate in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `TEST_GATE_UNSATISFIED` | the message gives the verdict and its reasons. FAIL: a check a stage ran failed, so fix the product. DEGRADED: start the stack with npx --no cockpit up --config <your cockpit.toml> for a stage that needs it, make a stage command that could not start runnable from the cockpit root, raise testing.stages[].timeout_seconds for a stage that timed out, or declare testing.stages[].select.<kind> for a --select a stage lacks. VOID: stop changing the checkouts and run the gate again. PARTIAL: only the complete gate can PASS, so run it without --select or --mode staged |
+| `UPGRADE_ALREADY_CURRENT` | nothing to upgrade; to move to another version name it: npx --no cockpit upgrade --config <your cockpit.toml> <version> |
+| `UPGRADE_INSTALL_FAILED` | fix what the package manager reported (is the version published?), then run npx --no cockpit upgrade --config <your cockpit.toml> <version> |
+| `UPGRADE_PACKAGE_MANAGER_UNKNOWN` | keep exactly one of package-lock.json, pnpm-lock.yaml or yarn.lock at the cockpit root and put its package manager (npm, pnpm or yarn) on PATH, then run npx --no cockpit upgrade --config <your cockpit.toml> |
+| `UPGRADE_REGISTRY_UNREACHABLE` | check the network, the registry login and that npm is on PATH, or name the version: npx --no cockpit upgrade --config <your cockpit.toml> <version> |
+| `UPGRADE_SYNC_FAILED` | act on what sync reported above or put npx on PATH, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `UPGRADE_VERSION_INVALID` | give a full version such as 1.2.3, not a range or tag |
 | `WORK_EXECUTION_PAUSED` | read result.reason and result.verification, fix the cause, then rerun npx --no cockpit work execute --config <your cockpit.toml> --work-order <id> --approach <text> |
 | `WORK_GRADE_UNSATISFIED` | read result.criteria: fix the product for a criterion that failed after execution, make a check that never ran runnable, then rerun npx --no cockpit work grade --config <your cockpit.toml> --work-order <id> |
 <!-- cockpit:diagnostic-index:end -->
