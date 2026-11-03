@@ -513,18 +513,25 @@ describe('guard policy construction', () => {
     it('refuses spellings and hard links that resolve to a protected file through the installed route', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         const instance = join(root, 'app/config/runtime.env')
-        const created = [instance, join(root, 'app/config/linked'), join(root, 'app/config/notes.md')]
+        const created = [instance, join(root, 'app/config/linked'), join(root, 'app/config/notes.md'), join(root, 'app/link'), join(root, 'app/config/sub')]
         try {
             writeFileSync(instance, 'synthetic instance\n')
             linkSync(instance, join(root, 'app/config/linked'))
             writeFileSync(join(root, 'app/config/notes.md'), 'synthetic notes\n')
+            mkdirSync(join(root, 'app/config/sub'))
+            symlinkSync(join(root, 'app/config/sub'), join(root, 'app/link'))
             const decide = async (file: string) => (await runGuardEvaluationApplication({ ...request,
                 payload: { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: file } } }, adapters)).decision.decision
             expect(await decide('app/config/linked')).toBe('deny')
             expect(await decide('app/config/RUNTIME.ENV')).toBe('deny')
             expect(await decide('.claude/\u017Fettings.json')).toBe('deny')
             expect(await decide('app/config/NOTES.md')).toBe('allow')
-        } finally { for (const path of created) rmSync(path, { force: true }) }
+            // The system resolves `..` from where a link leads, so `app/link/..` is app/config, not app.
+            const read = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin',
+                payload: { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command } } }, adapters)).decision.decision
+            expect(await read('cat app/link/../runtime.env')).toBe('ask')
+            expect(await read('cat app/config/sub/../notes.md')).toBe('allow')
+        } finally { for (const path of created) rmSync(path, { recursive: true, force: true }) }
     }, 120_000)
 
     it.each(['missing', 'symlink', 'changed'] as const)('refuses %s guard publication through authenticated reads', async change => {

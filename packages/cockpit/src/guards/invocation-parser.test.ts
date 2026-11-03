@@ -41,15 +41,18 @@ describe('guard invocation capture', () => {
         expect(parseGuardInput(shellPayload('g"i"t push origin ma\\in; printf a\\;b'))).toMatchObject({
             status: 'parsed', invocations: [{ executable: 'git', argv: ['push', 'origin', 'main'] }, { argv: ['a;b'] }],
         })
-        // Braces without a comma or `..`, a tilde inside a word and `$?` expand to nothing the guard cannot see.
-        const literal = parseGuardInput(shellPayload('git rev-parse @{u} HEAD@{1} HEAD~1 x{}y {u}; echo "exit=$?"; echo \'$?\''))
+        // Braces without a comma or `..`, a tilde inside a word, a lone or quoted `=` and `$?` expand to nothing the guard cannot see.
+        const literal = parseGuardInput(shellPayload('git rev-parse @{u} HEAD@{1} HEAD~1 x{}y {u}; echo "exit=$?"; echo \'$?\' = \\=x "=y"; X=$? nice -n $? ls'))
         expect(literal).toMatchObject({ status: 'parsed', invocations: [
             { executable: 'git', argv: ['rev-parse', '@{u}', 'HEAD@{1}', 'HEAD~1', 'x{}y', '{u}'] },
             { executable: 'echo', argv: ['exit=$?'], expandsStatus: true },
-            { executable: 'echo', argv: ['$?'] },
+            { executable: 'echo', argv: ['$?', '=', '=x', '=y'] },
+            { executable: 'ls', argv: [], expandsStatus: true },
         ] })
-        expect(literal.status === 'parsed' && literal.invocations.map((item) => Object.hasOwn(item, 'expandsStatus'))).toEqual([false, true, false])
-        for (const command of ['printf a{b,c}', 'printf {1..3}', "printf {a,'b c'}", 'printf {a,{b}}', 'printf ~/x', 'printf a=~/x', 'printf ok > out$?', '$? push origin main', 'echo "$HOME"', 'git add *', 'sh -c "git push origin main"', 'eval "git push origin main"', 'printf `date`', 'printf x\\', 'printf "x', 'echo x &&', '(echo x)', 'cd tmp; git status', 'printf\vok']) {
+        expect(literal.status === 'parsed' && literal.invocations.map((item) => Object.hasOwn(item, 'expandsStatus'))).toEqual([false, true, false, true])
+        // zsh, the default macOS shell, expands a word starting with `=` to a command's path.
+        for (const command of ['printf a{b,c}', 'printf {1..3}', "printf {a,'b c'}", 'printf {a,{b}}', 'printf ~/x', 'printf a=~/x', 'printf ok > out$?', '$? push origin main', 'echo "$HOME"', 'git add *', 'sh -c "git push origin main"', 'eval "git push origin main"', 'printf `date`', 'printf x\\', 'printf "x', 'echo x &&', '(echo x)', 'cd tmp; git status', 'printf\vok',
+            'cat =cockpit', 'env -C $? cat x', 'env --chdir=$? cat x', 'env -C ./link/.. cat x', 'builtin cd .. && ls']) {
             expect(parseGuardInput(shellPayload(command)), command).toMatchObject({ status: 'unavailable', reason: expect.any(String) })
         }
     })
@@ -67,9 +70,13 @@ describe('guard invocation capture', () => {
         expect(at('cd /workspace/other && cd ../project/web && ls')).toEqual([[null, '/workspace/other'], [null, `${root}/web`], ['ls', `${root}/web`]])
         expect(at('cd .. && ls')).toEqual([[null, '/workspace'], ['ls', '/workspace']])
         expect(at('cd ./api && pwd & ls; cat x')).toEqual([[null, `${root}/api`], ['pwd', `${root}/api`], ['ls', root], ['cat', root]])
+        // `&&` and `||` group left to right, so a cd that `||` may skip leaves the next `&&` command in either directory.
+        expect(at('pwd || cd ./api && ls')).toEqual([['pwd', root], [null, `${root}/api`], ['ls', root], ['ls', `${root}/api`]])
+        // A newline after `&&`, `||` or `|` continues the list.
+        expect(at('cd ./api &&\nls')).toEqual([[null, `${root}/api`], ['ls', `${root}/api`]])
         expect(at('cd api && ls')).toEqual(expect.stringContaining('may resolve through CDPATH'))
-        for (const command of ['cd && ls', 'cd - && ls', 'cd ./a ./b', 'cd "$HOME" && ls', 'cd ~/a && ls', 'cd ./a | ls', 'ls | cd ./a', 'cd ./a & ls',
-            'CDPATH=/x cd ./a', 'command cd ./a', 'cd ./a > out']) {
+        for (const command of ['cd && ls', 'cd - && ls', 'cd ./a ./b', 'cd "$HOME" && ls', 'cd ~/a && ls', 'cd ./a | ls', 'ls | cd ./a', 'ls |\ncd ./a && ls', 'cd ./a & ls',
+            'CDPATH=/x cd ./a', 'command cd ./a', 'cd ./a > out', 'cd ./link/../b && ls', 'pushd .. && ls', 'popd && ls', 'chdir .. && ls']) {
             expect(at(command), command).toEqual(expect.stringContaining('cd is judged only as'))
         }
         expect(at('cd() { :; }; cd ./a && ls')).toBe('Unsupported executable or defined command invocation.')

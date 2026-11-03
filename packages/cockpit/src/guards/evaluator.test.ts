@@ -746,6 +746,9 @@ describe('built-in read-only profile', () => {
             // A command after cd is judged from where it runs, and after `;` also from where a failed cd leaves it.
             'cd ./config && cat active.instance', 'cd ./src; cat ../config/active.instance', 'cd ./missing; cat config/active.instance',
             'cd ./env/.secrets && cat token', 'cd /workspace/project/config && head active.instance',
+            // `&&` and `||` group left to right: a cd after `||` may be skipped while the `&&` after it still runs.
+            'pwd || cd ./src && cat config/active.instance', 'cd ./config || cd /workspace/project/src && cat active.instance',
+            'ls && pwd || cd ./src && cat config/active.instance', 'pwd ||\ncd ./src && cat config/active.instance',
             // A list ending in `&` runs in a background subshell, so its cd moves nothing after it.
             'cd ./src && pwd & cat config/active.instance']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
@@ -764,6 +767,11 @@ describe('built-in read-only profile', () => {
             return resolved.endsWith('/link') ? { status: 'resolved', path: resolved, symlink: true } : inspect({ path, cwd })
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('cat link')), policy(), symlinked).decision).toBe('ask')
+        // `git -C` resolves `..` from where a link leads, so its directory is inspected as spelled.
+        const leaving = (request: { path: string; cwd: string; operation?: string }) => request.path.startsWith('link/..')
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), symlink: true } : withGit(request)
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C link/.. status')), policy(), leaving).decision).toBe('unavailable')
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C . status')), policy(), leaving).decision).toBe('allow')
     })
 
     it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {

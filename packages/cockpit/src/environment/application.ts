@@ -529,10 +529,30 @@ export async function runGuardEvaluationApplication(
             return found.length > GUARD_LOCATION_LIMITS.sensitivePaths ? null : found
         }
         const inspected = new Map<string, Stats>()
+        // The system resolves `..` from where a link leads, so `link/../x` names a sibling of the link's
+        // target, not of the link: a spelling that leaves a link through `..` is not its lexical path.
+        const leavesLink = (cwd: string, spelled: string) => {
+            let cursor = isAbsolute(spelled) ? '/' : cwd
+            for (const component of spelled.split('/')) {
+                if (component === '..') {
+                    try {
+                        const status = lstatSync(cursor)
+                        if (status.isSymbolicLink()) return true
+                        inspected.set(cursor, status)
+                    } catch (error) {
+                        // A missing or non-directory component fails the system's lookup before `..` applies.
+                        if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+                    }
+                    cursor = dirname(cursor)
+                } else if (component && component !== '.') cursor = join(cursor, component)
+            }
+            return false
+        }
         const inspect: import('../guards/evaluator.js').PathInspection = request => {
             const path = resolve(request.cwd, request.path)
             const root = prepared.result.policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
             if (!root) return { status: 'unavailable', path, symlink: false }
+            if (leavesLink(request.cwd, request.path)) return { status: 'resolved', path, symlink: true }
             let cursor = root
             const rootStatus = lstatSync(root)
             inspected.set(root, rootStatus)

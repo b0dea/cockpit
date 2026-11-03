@@ -194,6 +194,23 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
         && outcome.execution.exitCode === 1 && outcome.execution.signal === null ? [] : null
 }
 
+// A `.gitignore` is a short list of patterns; one past this is not read.
+const IGNORE_FILE_BYTES = 1_048_576
+
+/**
+ * Whether Git and ripgrep may disagree on what an ignore line matches. They compile globs with
+ * different engines: ripgrep reads `{a,b}` as alternatives where Git matches the braces literally,
+ * does not know POSIX classes such as `[[:alpha:]]`, and in older releases refuses a `**` that is not
+ * a whole path component, skipping the line. Git trims only trailing spaces where ripgrep trims any
+ * trailing whitespace. Each lets Git ignore a file ripgrep reads, so the walk decides instead of
+ * Git's list. A backslash escape counts too: no check here proves both engines read every escape alike.
+ */
+function divergentIgnoreLine(line: string): boolean {
+    if (line.startsWith('#')) return false
+    const pattern = line.replace(/^!/, '')
+    return /[{}\\]|\[[:=.]|\s$/u.test(pattern) || pattern.split('/').some(component => component.includes('**') && component !== '**')
+}
+
 function present(path: string): boolean {
     try { lstatSync(path); return true } catch (error) { if (missing(error)) return false; throw error }
 }
@@ -217,6 +234,7 @@ function repositoryAbove(directory: string): string | undefined {
  * Only `.gitignore` files are applied: ripgrep reads those, the repository's exclude file and the
  * global excludes file, but finds the global one by other rules than Git, so Git applying fewer
  * lists more. Hidden paths are kept: a type such as `rg -t sh`, which matches `.env`, reads them.
+ * Undefined as well when a `.gitignore` Git reads holds a line the two may match differently.
  */
 export async function guardUnignoredSensitivePaths(path: string, watched: readonly string[], git: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null | undefined> {
     // ripgrep reads a path it is named whatever ignores it, and one such name already decides.
@@ -278,6 +296,27 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
         // Git names an untracked nested repository as a directory and lists nothing inside it.
         if (entry.endsWith('/')) return undefined
         listed.push(entry)
+    }
+    // Git reads the `.gitignore` in each directory it enters: those from the repository down to the
+    // search, and those it lists below it under any status. One that is not a plain file, such as a
+    // link Git declines to follow and ripgrep follows, is not proven to say the same to both.
+    const ignoreFiles = new Set<string>()
+    for (let cursor = start; ; cursor = dirname(cursor)) {
+        ignoreFiles.add(join(cursor, '.gitignore'))
+        if (cursor === repository) break
+    }
+    for (const entry of [...listed, ...ignored]) if (foldGuardSpelling(basename(entry)) === '.gitignore') ignoreFiles.add(join(repository, entry))
+    for (const file of ignoreFiles) {
+        let status
+        try { status = lstatSync(file) } catch (error) { if (missing(error)) continue; throw error }
+        if (!status.isFile() || status.size > IGNORE_FILE_BYTES) return undefined
+        // ripgrep stops reading an ignore file at its first line that is not UTF-8; Git reads on.
+        let text: string
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(file)) } catch (error) {
+            if (error instanceof TypeError && (error as NodeJS.ErrnoException).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') return undefined
+            throw error
+        }
+        if (text.split('\n').some(divergentIgnoreLine)) return undefined
     }
     const found = new Set<string>()
     for (const entry of listed) {
