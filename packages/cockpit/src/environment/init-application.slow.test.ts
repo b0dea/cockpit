@@ -10,7 +10,7 @@ import { runInitApplication, type InitApplicationAdapters, type InitApplicationI
 import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
 import { cockpitCommand, initCommand } from '../fix-catalogue.js'
-import { classifyEstateObservation, documentObservedCommand, observePublicEstate } from '../document/command.js'
+import { classifyEstateObservation, documentObservedCommand, observePublicEstate } from '../init/draft.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
 import { syncTeamGeneratedEnvironment } from './generated-application.js'
 import { inspectInitReadiness } from './readiness-composition.js'

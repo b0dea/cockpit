@@ -1,6 +1,6 @@
 import { stringify } from 'smol-toml'
 import type { CockpitConfig } from './schema.js'
-import type { DocumentedSibling, Gap } from './document/registry.js'
+import type { DocumentedSibling, Gap } from './registry-resolve/registry.js'
 
 export const mechanism = {
     id: 'toml-emission',
@@ -21,7 +21,7 @@ export function emitToml(config: CockpitConfig): string {
 }
 
 /**
- * Render the gaps `document` could not answer, as commented TOML.
+ * Render the gaps a registry draft could not answer, as commented TOML.
  *
  * Deliberately emitted as comments rather than placeholder values: a placeholder is a value,
  * and a value is indistinguishable from an answer the moment the file is read by anything

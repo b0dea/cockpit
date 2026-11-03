@@ -16,7 +16,7 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
-import { classifyEstateObservation, documentCommand, documentObservedCommand, observeCockpitRoot, observePublicEstate, type DocumentCommandInput } from './document/command.js'
+import { classifyEstateObservation, documentObservedCommand, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
@@ -165,7 +165,6 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     check: GeneratedEnvironmentCommandInput
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
-    document: DocumentCommandInput
     down: DownCommandInput
     logs: Readonly<{
         configPath: string
@@ -584,7 +583,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
     }
     return {
         ...workHandlers,
-        document: documentCommand,
         init: input => runInitApplication(input, {
             now: () => new Date().toISOString(),
             prepareBootstrap: prepareSelectedBootstrapSurface,
@@ -979,24 +977,6 @@ async function decodeRequest(
             ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
             ...(unattended.value ? { unattended: unattended.value } : {}) } }
     }
-    if (handler === 'document') {
-        const values = parsed.values as { registry?: string; output?: string; json?: boolean }
-        const [root, ...extraRoots] = parsed.positionals
-        if (extraRoots.length > 0) {
-            return usageOutcome('DOCUMENT_ROOT_COUNT', 'document accepts at most one cockpit root')
-        }
-        if (root && values.registry) {
-            return usageOutcome('DOCUMENT_SOURCE_CONFLICT', 'a cockpit root and --registry are mutually exclusive')
-        }
-        if (!root && !values.registry) {
-            return usageOutcome('DOCUMENT_SOURCE_REQUIRED', 'provide one cockpit root or --registry <file>')
-        }
-        if (values.output !== undefined && values.output.length === 0) {
-            return usageOutcome('CLI_USAGE_INVALID', '--output requires a non-empty path', '--output')
-        }
-        return { handler, input: { root, registry: values.registry, output: values.output } }
-    }
-
     if (handler === 'setup') {
         const values = parsed.values as { config?: string; json?: boolean; 'write-instruction-pointers'?: boolean; 'write-instruction-files'?: boolean }
         if (parsed.positionals.length > 0) {
@@ -1277,7 +1257,6 @@ async function dispatchHandler(
         },
     }, handlers.init ?? (async () => ({ kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))
-    if (request.handler === 'document') return handlers.document?.(request.input) ?? unavailable()
     if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()))
@@ -1514,13 +1493,9 @@ export async function runCli(
     } else if (duplicateOption !== undefined) {
         // Each code is a literal in its own arm so the diagnostic inventory lists it under its command only.
         const message = `each ${definition.name} option may be supplied only once`
-        outcome = definition.handler === 'document' ? usageOutcome('DOCUMENT_OPTION_DUPLICATE', message, `--${duplicateOption}`)
-            : definition.handler === 'registry-resolve' ? usageOutcome('REGISTRY_OPTION_DUPLICATE', message, `--${duplicateOption}`)
+        outcome = definition.handler === 'registry-resolve' ? usageOutcome('REGISTRY_OPTION_DUPLICATE', message, `--${duplicateOption}`)
             : definition.handler === 'setup' ? usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, message, `--${duplicateOption}`)
             : usageOutcome('CLI_USAGE_INVALID', message, `--${duplicateOption}`)
-    } else if (definition.handler === 'document' && jsonRequested && optionCount(optionArgs, 'output') > 0) {
-        // --json never writes files; without this refusal --output was dropped silently and the run exited 0.
-        outcome = usageOutcome('DOCUMENT_OUTPUT_JSON_UNSUPPORTED', '--json prints the result envelope and does not write --output; drop one of the two options', '--output')
     } else {
         let parsed: ParsedCommandArguments | undefined
         try {

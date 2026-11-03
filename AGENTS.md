@@ -44,7 +44,7 @@ settings directories are not published (enforced by `tree-hygiene.test.ts`).
 
 | Path | What |
 |---|---|
-| `packages/cockpit` | the CLI: config, registry, codegen, drift, `init`, `document` |
+| `packages/cockpit` | the CLI: config, registry, codegen, drift, `init` |
 | `packages/cockpit/surfaces` | shipped templates rendered into a consumer's cockpit |
 | `.agents/skills` | skills for working on cockpit itself |
 | `fixtures/registries` | synthetic registries, the round-trip corpus |

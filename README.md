@@ -121,14 +121,14 @@ To set cockpit up for your own product, start at [Getting started](docs/getting-
 - **Safe on a shared machine.** Port leases and holder tracking mean one agent cannot stop another
   agent's stack.
 - **Adopt what you already have.** `cockpit init` previews a first setup for one agent tool, and
-  `cockpit document` turns an existing shell-script setup into an annotated draft that marks every
-  value it had to guess.
+  with `--registry` turns an existing shell-script setup into a draft that marks every value it
+  had to guess.
 
 ## Commands at a glance
 
 | Stage | Commands |
 |---|---|
-| Set up | `init`, `document`, `setup`, `sibling add` / `sibling remove`, `registry-resolve` |
+| Set up | `init`, `setup`, `sibling add` / `sibling remove`, `registry-resolve` |
 | Generate and verify | `sync`, `check`, `selftest` |
 | Run the stack | `runtime measure`, `up`, `preflight`, `session`, `logs`, `sleep`, `down`, `reset` |
 | Diagnose | `doctor`, `baseline-record` *(experimental)* |

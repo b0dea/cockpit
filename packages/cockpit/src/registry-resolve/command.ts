@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readBoundedInput, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from '../document/registry.js'
+import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from './registry.js'
 import { renderResolvedRegistryShell } from './render-shell.js'
 
 export const mechanism = {

@@ -325,8 +325,8 @@ describe('registry resolver command', () => {
     it('contains one parser call site and no command peer or secret-file contact', () => {
         const source = requireSource('./command.ts')
         expect(source.match(/\bparseRegistry\s*\(/g)).toHaveLength(1)
-        expect(source).toMatch(/import\s*\{[^}]*\bparseRegistry\b[^}]*\}\s*from\s*'\.\.\/document\/registry\.js'/)
-        expect(source).not.toMatch(/document\/command|\.secrets|local\.env/)
+        expect(source).toMatch(/import\s*\{[^}]*\bparseRegistry\b[^}]*\}\s*from\s*'\.\/registry\.js'/)
+        expect(source).not.toMatch(/init\/draft|\.secrets|local\.env/)
     })
 })
 

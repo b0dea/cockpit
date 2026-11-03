@@ -2,15 +2,15 @@ import { requiresOperatorGate, type Acquire, type Mount } from '../schema.js'
 
 export const mechanism = {
     id: 'registry-parsing',
-    module: 'packages/cockpit/src/document/registry.ts',
+    module: 'packages/cockpit/src/registry-resolve/registry.ts',
     exports: ['parseRegistry', 'gaps'],
 } as const
 
-// `document` reads a cockpit that already exists and writes down what it already is. It
-// never guesses silently: every field it could not read directly carries a Provenance, and
-// `cockpit document` prints the inferred ones for a human to confirm once. A clean-looking
-// config with invented values in it is worse than a gap, because the next reader budgets for
-// a fact that was never established.
+// A registry read describes a cockpit that already exists as what it already is. It never
+// guesses silently: every field it could not read directly carries a Provenance, and `init
+// --registry` lists the inferred ones for a human to confirm once. A clean-looking config with
+// invented values in it is worse than a gap, because the next reader budgets for a fact that was
+// never established.
 export type Provenance = 'read' | 'inferred'
 
 export interface Field<T> {
@@ -39,7 +39,7 @@ export interface RegistryReadResult {
      *
      * Never defaulted. An earlier version returned `'lane'` for a file with no registry in
      * it, which meant a caller could not tell "this file has no registry" from "this
-     * registry is empty" from "I did not recognise the opening line" — and `document` would
+     * registry is empty" from "I did not recognise the opening line" — and a draft would
      * report success over a config with no siblings. The field a reader trusts most is the
      * last one that may be invented.
      */
@@ -318,12 +318,12 @@ export interface Gap {
 }
 
 /**
- * Fields `document` cannot answer from any existing registry.
+ * Fields a registry draft cannot answer from any existing registry.
  *
  * This is deliberately not solved by writing a plausible value. A host lane's reason — a
  * simulator that cannot be containerised, a renderer that lives in a vendor's cloud — is a
  * constraint someone discovered, and a generated guess at it is worse than a blank, because
- * the next reader treats it as established. So `document` produces a config that is
+ * the next reader treats it as established. So a registry draft is a config that is
  * incomplete *and says which parts*, and the operator answers once.
  */
 export function gaps(siblings: DocumentedSibling[]): Gap[] {
@@ -338,7 +338,7 @@ export function gaps(siblings: DocumentedSibling[]): Gap[] {
             })
         }
         // A lane touching live data or local hardware must never run automatically, and no
-        // dialect records that. Left unasked, `document` emits a config in which a lane that
+        // dialect records that. Left unasked, a draft would be a config in which a lane that
         // renders against a live third-party store is an ordinary automatic target.
         if (requiresOperatorGate({ mount: s.mount.value, purpose: s.purpose })) {
             out.push({

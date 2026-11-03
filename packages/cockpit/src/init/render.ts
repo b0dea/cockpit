@@ -1,10 +1,10 @@
 import type { CockpitConfig, configurationDefaults, UNCONFIRMABLE_ANSWERS } from '../schema.js'
 import { emitGaps, emitToml, toSiblingRows } from '../emit.js'
-import type { DocumentedSibling, Gap } from './registry.js'
+import type { DocumentedSibling, Gap } from '../registry-resolve/registry.js'
 
 export const mechanism = {
     id: 'document-rendering',
-    module: 'packages/cockpit/src/document/render.ts',
+    module: 'packages/cockpit/src/init/render.ts',
     exports: ['ANSWER_PROVENANCES', 'UNCONFIRMED_FIX', 'unconfirmedReason', 'renderIncompleteDocument', 'renderCompleteDocument'],
 } as const
 

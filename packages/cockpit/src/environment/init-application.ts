@@ -9,7 +9,7 @@ import {
     type AnswerProvenance, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
     type UnconfirmedAnswer,
     type EstateObservationInput,
-} from '../document/command.js'
+} from '../init/draft.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { ENVIRONMENT_CODES, snapshotJson, errorCause } from './contract.js'
 import { bootstrapHolderId } from './identity.js'

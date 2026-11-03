@@ -347,39 +347,6 @@ For teams that already run a multi-repository product with their own scripts or 
 cockpit, and want to move to cockpit one layer at a time. Keep the old path runnable until the
 cockpit path passes the same checks.
 
-### Describe the existing setup
-
-If your setup records its repositories in a shell registry, `document` turns it into an attributed
-<!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` draft. It reads **env/lib/instance.sh** under the root you give it, or
-the file named by `--registry`. A directory without one is refused with `REGISTRY_NOT_FOUND`; for a
-product with no registry, start from [Choose a starting point](#choose-a-starting-point).
-
-```sh
-./node_modules/.bin/cockpit document . --json
-```
-
-Every value the registry did not state is marked with its source and the reason it was inferred
-or defaulted. Output for one of this repository's synthetic registry fixtures:
-
-```console
-$ cockpit document --registry fixtures/registries/tier-dialect.sh
-#:schema ./node_modules/@b00dea/cockpit/cockpit.schema.json
-# COCKPIT DOCUMENT: INCOMPLETE DRAFT — this file intentionally fails validation.
-# Provenance — every unread value names its source and reason.
-# [default] cockpit.siblings_root = "..": the registry dialect does not record the sibling checkout root; materialised from the CockpitConfig schema default
-...
-# [inferred] sibling.app.mount = "always": tier "required" — the stack bind-mounts it or preflight fails
-# [inferred] sibling.app.acquire = "auto": tier "required" implies setup clones it
-...
-# [inferred] sibling.docs.mount = "host": purpose opens with `make screenshots` — a target, never a compose service
-...
-```
-
-The draft deliberately fails validation until you fill its gaps, for example
-<!-- cockpit:ref schema=ports.bases --> `ports.bases` when the registry does not carry the port map. Fill each from the
-[configuration reference](configuration-reference.md), and never substitute a similarly named
-registry found elsewhere.
-
 ### Bootstrap from the registry
 
 Preview for one harness, then accept. Replace `<tool>` with its target, listed under
@@ -390,8 +357,12 @@ Preview for one harness, then accept. Replace `<tool>` with its target, listed u
 ./node_modules/.bin/cockpit init . --target <tool> --registry ./env/lib/instance.sh --interactive
 ```
 
-The first command writes nothing; the second needs a terminal and the exact preview digest.
-Accepted answers keep their source, and re-running resumes where it stopped. When `init` finds
+The first command writes nothing; the second needs a terminal and the exact preview digest. init
+reads the registry's repositories, marks every value the registry did not state with its source and
+the reason it was inferred or defaulted, and asks for the rest, such as
+<!-- cockpit:ref schema=ports.bases --> `ports.bases`, which no registry dialect records. A missing
+registry file is refused with `REGISTRY_NOT_FOUND`. Accepted answers keep their source, and
+re-running resumes where it stopped. When `init` finds
 repositories directly beneath the cockpit root instead of reading a registry, it records
 `siblings_root = "."` as an inference for you to confirm.
 

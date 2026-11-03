@@ -1,7 +1,7 @@
 # Tier dialect — seven fields: slug|dir|remote|branch|tier|var|purpose
 #
 # A registry written by a cockpit that recorded how each checkout REACHES THE DISK and left
-# the mount implicit. `document` must infer every mount here, and say so.
+# the mount implicit. A registry read must infer every mount here, and say so.
 #
 # Deliberate properties, each one a real failure this fixture exists to keep tested:
 #   renderer     exports ENGINE_DIR — a var that flatly contradicts its slug, kept because

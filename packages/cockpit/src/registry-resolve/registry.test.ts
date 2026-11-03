@@ -15,7 +15,7 @@ const fixture = (name: string) =>
 /**
  * Build a config from documented rows, so the round-trip is asserted end to end.
  *
- * `answers` stands in for the operator confirming the gaps `document` reports. Nothing here
+ * `answers` stands in for the operator confirming the gaps a registry draft reports. Nothing here
  * invents one: a test that filled them silently would prove the opposite of the point.
  */
 function toConfig(

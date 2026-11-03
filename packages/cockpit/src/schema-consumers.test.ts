@@ -17,7 +17,7 @@ const SCHEMA_JSON = fileURLToPath(new URL('../cockpit.schema.json', import.meta.
 
 // Modules that define, publish or author configuration rather than act on it. A field read only
 // here reaches no behaviour: echoing a default into a draft is how cockpit.guide looked alive.
-const AUTHORING_MODULES = ['schema.ts', 'schema-json.ts', 'document/', 'init/']
+const AUTHORING_MODULES = ['schema.ts', 'schema-json.ts', 'init/']
 // This module reassembles the effective configuration from sibling derivations; a spread there
 // moves fields into the configuration every consumer reads, so it is not itself a read.
 const REASSEMBLY_MODULE = 'registry-derivation.ts'

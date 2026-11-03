@@ -10,7 +10,7 @@ const KERNEL_LEAVES = new Set([
     'packages/cockpit/src/diagnostics.ts',
     'packages/cockpit/src/command-table.ts',
     'packages/cockpit/src/schema.ts',
-    'packages/cockpit/src/document/registry.ts',
+    'packages/cockpit/src/registry-resolve/registry.ts',
     'packages/cockpit/src/config/load.ts',
     'packages/cockpit/src/environment/contract.ts',
     'packages/cockpit/src/environment/runtime.ts',
@@ -1241,7 +1241,7 @@ function hasDecisionSyntax(source: string): boolean {
 
 function boundaryViolations(sources: Sources): string[] {
     const violations = new Set<string>()
-    const command = sources.get('packages/cockpit/src/document/command.ts') ?? ''
+    const command = sources.get('packages/cockpit/src/init/draft.ts') ?? ''
     const cli = sources.get('packages/cockpit/src/cli.ts') ?? ''
     const outcome = /interface\s+OutcomeBase\s*\{(?<body>[\s\S]*?)\n\}/.exec(command)?.groups?.body ?? ''
     const cliSource = parseModule(cli)
@@ -1861,7 +1861,7 @@ const RESOLVER_IMPORT_CONTRACT = new Map<string, readonly string[]>([
     ['node:path', ['isAbsolute', 'relative', 'resolve', 'sep']],
     ['node:url', ['fileURLToPath']],
     ['../diagnostics.js', ['type Diagnostic']],
-    ['../document/registry.js', ['parseRegistry', 'type DocumentedSibling', 'type RegistryReadResult']],
+    ['./registry.js', ['parseRegistry', 'type DocumentedSibling', 'type RegistryReadResult']],
     ['./render-shell.js', ['renderResolvedRegistryShell']],
 ])
 
@@ -1872,7 +1872,7 @@ const RESOLVER_IMPORT_FIXTURE = [
     "import { isAbsolute, relative, resolve, sep } from 'node:path'",
     "import { fileURLToPath } from 'node:url'",
     "import type { Diagnostic } from '../diagnostics.js'",
-    "import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from '../document/registry.js'",
+    "import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from './registry.js'",
     "import { renderResolvedRegistryShell } from './render-shell.js'",
 ].join('; ')
 const RESOLVER_TRANSFORM_FIXTURE =
@@ -1886,7 +1886,7 @@ const RESOLVER_CONTEXT_FIXTURE =
 
 function registryParserViolations(sources: Sources): string[] {
     const violations = new Set<string>()
-    const canonicalParser = 'packages/cockpit/src/document/registry.ts'
+    const canonicalParser = 'packages/cockpit/src/registry-resolve/registry.ts'
     const resolver = 'packages/cockpit/src/registry-resolve/command.ts'
 
     const locallyExportsParserImplementation = (source: string): boolean => {
@@ -2043,7 +2043,7 @@ function registryParserViolations(sources: Sources): string[] {
         const canonicalImport =
             parserImports.length === 1 &&
             parserImports[0].imported === 'parseRegistry' &&
-            parserImports[0].source === '../document/registry.js'
+            parserImports[0].source === './registry.js'
         const transforms = sourceFile.statements.filter(
             (statement): statement is ts.FunctionDeclaration =>
                 ts.isFunctionDeclaration(statement) && statement.name?.text === 'resolveRegistry' && !!statement.body,
@@ -2541,7 +2541,7 @@ function initBoundaryViolations(sources: Sources): string[] {
                 'node:crypto', 'node:path',
                 'packages/cockpit/src/diagnostics.ts',
                 'packages/cockpit/src/fix-catalogue.ts',
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 'packages/cockpit/src/surfaces/contract.ts',
                 'packages/cockpit/src/environment/contract.ts',
                 'packages/cockpit/src/environment/identity.ts',
@@ -2743,7 +2743,7 @@ function guardArchitectureViolations(
             && ts.isNamedImports(statement.importClause.namedBindings)
             && statement.importClause.namedBindings.elements.length > 0
             && statement.importClause.namedBindings.elements.every(binding => (binding.propertyName ?? binding.name).text === 'GUARD_INPUT_LIMITS'))
-        const forbidden = canonical === `${base}schema.ts` || canonical === `${base}registry-derivation.ts` || canonical === `${base}document/registry.ts`
+        const forbidden = canonical === `${base}schema.ts` || canonical === `${base}registry-derivation.ts` || canonical === `${base}registry-resolve/registry.ts`
             ? [table, APPLICATION_MODULE, generated, `${base}cli.ts`]
             : canonical === `${base}cli.ts` || canonical === generated ? [evaluator, ...(!onlyParserLimits ? [parser] : [])]
             : canonical === evaluator ? [APPLICATION_MODULE, generated, `${base}cli.ts`, adapter, table]
@@ -5020,8 +5020,8 @@ describe('product architecture contract', () => {
     it('does not mistake a duplicate mechanism claim for a second parser implementation', () => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/registry.ts',
-                "export const mechanism = { id: 'registry-parsing', module: 'packages/cockpit/src/document/registry.ts', exports: ['parseRegistry'] }; export function parseRegistry() { return [] }",
+                'packages/cockpit/src/registry-resolve/registry.ts',
+                "export const mechanism = { id: 'registry-parsing', module: 'packages/cockpit/src/registry-resolve/registry.ts', exports: ['parseRegistry'] }; export function parseRegistry() { return [] }",
             ],
             [
                 'packages/cockpit/src/registry-resolve/parser.ts',
@@ -5035,8 +5035,8 @@ describe('product architecture contract', () => {
     it('detects a second parser implementation exported under a different mechanism', () => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/registry.ts',
-                "export const mechanism = { id: 'registry-parsing', module: 'packages/cockpit/src/document/registry.ts', exports: ['parseRegistry'] }; export function parseRegistry() { return [] }",
+                'packages/cockpit/src/registry-resolve/registry.ts',
+                "export const mechanism = { id: 'registry-parsing', module: 'packages/cockpit/src/registry-resolve/registry.ts', exports: ['parseRegistry'] }; export function parseRegistry() { return [] }",
             ],
             [
                 'packages/cockpit/src/registry-resolve/other-parser.ts',
@@ -5050,12 +5050,12 @@ describe('product architecture contract', () => {
     it('does not classify a harmless registry parser re-export as a second implementation', () => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/registry.ts',
-                "export const mechanism = { id: 'registry-parsing', module: 'packages/cockpit/src/document/registry.ts', exports: ['parseRegistry'] }; export function parseRegistry() { return [] }",
+                'packages/cockpit/src/registry-resolve/registry.ts',
+                "export const mechanism = { id: 'registry-parsing', module: 'packages/cockpit/src/registry-resolve/registry.ts', exports: ['parseRegistry'] }; export function parseRegistry() { return [] }",
             ],
             [
                 'packages/cockpit/src/public-registry.ts',
-                "export { parseRegistry } from './document/registry.js'",
+                "export { parseRegistry } from './registry-resolve/registry.js'",
             ],
         ])
 
@@ -5072,7 +5072,7 @@ describe('product architecture contract', () => {
         const substituted = new Map([
             [
                 'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE.replace("import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from '../document/registry.js'", "import { parseRegistry as parseSiblingTable, type DocumentedSibling, type RegistryReadResult } from './other-parser.js'")}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; return resolveRegistry(parseSiblingTable(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) }`,
+                `${RESOLVER_IMPORT_FIXTURE.replace("import { parseRegistry, type DocumentedSibling, type RegistryReadResult } from './registry.js'", "import { parseRegistry as parseSiblingTable, type DocumentedSibling, type RegistryReadResult } from './other-parser.js'")}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; return resolveRegistry(parseSiblingTable(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) }`,
             ],
         ])
 
@@ -5208,7 +5208,7 @@ describe('product architecture contract', () => {
     it('names command writers and execution-edge reclassification', () => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 "import { writeFile } from 'node:fs/promises'; interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }",
             ],
             [
@@ -5253,7 +5253,7 @@ describe('product architecture contract', () => {
     ])('rejects post-dispatch reclassification or a missing dispatch contract in the CLI: %s', (cli) => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
             ],
             ['packages/cockpit/src/cli.ts', cli],
@@ -5273,7 +5273,7 @@ describe('product architecture contract', () => {
     ])('rejects a plain or disguised decision helper at the execution edge: %s', (decision) => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
             ],
             [
@@ -5291,7 +5291,7 @@ describe('product architecture contract', () => {
     ])('rejects execution-edge policy without a helper call: %s', (decision) => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
             ],
             [
@@ -5310,7 +5310,7 @@ describe('product architecture contract', () => {
     ])('rejects marker text or replacement bytes at the execution edge: %s', (execution) => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
             ],
             ['packages/cockpit/src/cli.ts', `async function executeOutcome(outcome: any) { ${execution} }`],
@@ -5322,7 +5322,7 @@ describe('product architecture contract', () => {
     it('ignores braces in string literals while locating the real mechanical write', () => {
         const sources = new Map([
             [
-                'packages/cockpit/src/document/command.ts',
+                'packages/cockpit/src/init/draft.ts',
                 'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
             ],
             [
@@ -5800,11 +5800,11 @@ describe('init application boundary', () => {
     it('rejects direct, aliased, dynamic and computed imports of private decisions or filesystem writers', () => {
         const sources = productionSources()
         for (const [owner, addition] of [
-            ['init/command.ts', "import { parseRegistry } from '../document/registry.js'"],
+            ['init/command.ts', "import { parseRegistry } from '../registry-resolve/registry.js'"],
             ['init/command.ts', "import { writeFile as save } from 'node:fs/promises'"],
-            ['init/command.ts', "void import('../document/registry.js')"],
+            ['init/command.ts', "void import('../registry-resolve/registry.js')"],
             ['init/command.ts', 'void import(selectedModule)'],
-            ['environment/init-application.ts', "import { parseRegistry as decide } from '../document/registry.js'"],
+            ['environment/init-application.ts', "import { parseRegistry as decide } from '../registry-resolve/registry.js'"],
             ['environment/init-application.ts', "void import('node:fs/promises')"],
             ['environment/init-application.ts', "import { resolveInstallPolicies as decide } from './install-policy.js'"],
             ['environment/init-application.ts', "void import('./lifecycle.js')"],

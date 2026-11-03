@@ -121,12 +121,12 @@ describe('diagnostic inventory', () => {
     it('derives conditional and fallback diagnostic codes from production owners', () => {
         const found = diagnosticInventory(ROOT)
         const expectedOwners = new Map<string, readonly string[]>([
-            ['DOCUMENT_DEFAULT', ['packages/cockpit/src/document/command.ts']],
-            ['DOCUMENT_INFERRED', ['packages/cockpit/src/document/command.ts']],
+            ['DOCUMENT_DEFAULT', ['packages/cockpit/src/init/draft.ts']],
+            ['DOCUMENT_INFERRED', ['packages/cockpit/src/init/draft.ts']],
             ['ADOPTION_STATE_INVALID', ['packages/cockpit/src/registry-resolve/command.ts']],
             ['ADOPTION_RECORD_INVALID', ['packages/cockpit/src/registry-resolve/command.ts']],
-            ['REGISTRY_ENCODING_INVALID', ['packages/cockpit/src/document/command.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
-            ['REGISTRY_ROW_SKIPPED', ['packages/cockpit/src/document/command.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
+            ['REGISTRY_ENCODING_INVALID', ['packages/cockpit/src/init/draft.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
+            ['REGISTRY_ROW_SKIPPED', ['packages/cockpit/src/init/draft.ts', 'packages/cockpit/src/registry-resolve/command.ts']],
             ['SURFACE_OVERRIDE_INSPECTION_REFUSED', ['packages/cockpit/src/environment/health-composition.ts']],
             ['REGISTRY_GENERATED_BASELINE_MISSING', ['packages/cockpit/src/registry-derivation.ts']],
             ['COCKPIT_VERSION_MISMATCH', ['packages/cockpit/src/environment/contract.ts', 'packages/cockpit/src/team-metadata.ts']],
@@ -258,7 +258,7 @@ describe('reference pages', () => {
         const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}\n`), cli.indexOf(`## cockpit ${next}\n`))
         expect(section('sync', 'check')).toContain('| `--adopt` | string | unset |')
         expect(section('sync', 'check')).toContain('Reads `cockpit.toml` from `--config`.')
-        expect(section('document', 'setup')).toContain('Does not read `cockpit.toml`.')
+        expect(section('init', 'setup')).toContain('Does not read `cockpit.toml`.')
         expect(section('baseline-record', 'test-run')).toContain('Status: experimental. This interface may change before a stable release.')
         expect(cli).toContain('| 0 | success |\n| 2 | failure |\n| 130 | cancelled |')
         expect(cli).toContain('[Troubleshooting](troubleshooting.md#codes-with-a-fixed-remedy)')

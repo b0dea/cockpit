@@ -61,16 +61,17 @@ describe('invocation publication', () => {
     it('retains artifact bytes and uses floored monotonic elapsed milliseconds', async () => {
         let stdout = '', stderr = ''
         const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
-        const document = async () => ({ status: 0, result: null, diagnostics: [], artifact: 'exact artifact bytes\n' })
+        const resolver = async () => ({ status: 0, result: null, diagnostics: [], artifact: 'exact artifact bytes\n' })
+        const args = ['registry-resolve', '--registry', 'synthetic.sh', '--siblings-root', '.', '--adoption', 'adoption.toml']
         const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(10.25).mockReturnValueOnce(19.99)
         try {
-            const status = await runCli(['document', '--registry', 'synthetic.sh'], io, { document })
+            const status = await runCli(args, io, { 'registry-resolve': resolver })
             expect(status).toBe(0)
             expect(stdout).toBe('exact artifact bytes\n')
             expect(humanStderr(stderr)).toBe('')
             stdout = ''
             clock.mockReset().mockReturnValueOnce(10.25).mockReturnValueOnce(19.99)
-            await runCli(['document', '--registry', 'synthetic.sh', '--json'], io, { document })
+            await runCli([...args, '--json'], io, { 'registry-resolve': resolver })
             expect(JSON.parse(stdout).invocation.durationMs).toBe(9)
         } finally { clock.mockRestore() }
     })
@@ -163,7 +164,6 @@ describe('closed ordinary invocation metadata', () => {
 
     it('admits exactly the public ordinary profiles with bounded roles', () => {
         const cases = [
-            ['document', '.'], ['document', '--registry', 'registry.sh', '--json'],
             ['registry-resolve', '--registry', 'registry.sh', '--siblings-root', '/workspace/app', '--adoption', 'adoption.toml'],
             ['setup'], ['sync', '--dry-run'], ['check'],
             ['selftest', '--probe-specifications', 'probes.json'],
@@ -183,7 +183,7 @@ describe('closed ordinary invocation metadata', () => {
             ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'screenshot', '--role', 'admin', '--json'],
         ]
         for (const args of cases) {
-            const argv = ['document', 'registry-resolve'].includes(args[0]!) ? args : [...args, '--config', authority.configPath]
+            const argv = args[0] === 'registry-resolve' ? args : [...args, '--config', authority.configPath]
             const { reads: _reads, ...profile } = ordinary(argv) ?? {}
             expect(profile, argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
         }
@@ -219,8 +219,6 @@ describe('closed ordinary invocation metadata', () => {
 
     it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
         const cases = [
-            ['document'], ['document', '.', '--registry', 'registry.sh'], ['document', '.', '--output', 'out.toml'], ['document', '.', 'other'],
-            ['document', '../escape'], ['document', '--registry', '/outside/registry'],
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
             ['sync', '--interactive'], ['sync', '--interactive=false'], ['sync', '--adopt', '.claude/settings.json'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
@@ -245,17 +243,17 @@ describe('closed ordinary invocation metadata', () => {
             ['work', 'status', 'WO-001'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'],
         ]
         for (const args of cases) {
-            const argv = ['document', 'registry-resolve'].includes(args[0]!) || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
+            const argv = args[0] === 'registry-resolve' || args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
             expect(ordinary(argv), argv.join(' ')).toBeUndefined()
         }
         for (const row of commands) {
             if (row.ordinary.availability !== 'available') continue
-            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
+            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
                     : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : 'path']
                 let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
-                if (row.name === 'document' && name === 'registry' || row.name === 'work intake' && name === 'work-order') baseline = baseline.filter(arg => !['.', '--intent', 'intents/task.json'].includes(arg))
+                if (row.name === 'work intake' && name === 'work-order') baseline = baseline.filter(arg => !['.', '--intent', 'intents/task.json'].includes(arg))
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value]), `${row.name} single ${name}`).toBeDefined()
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
             }
@@ -271,7 +269,6 @@ describe('closed ordinary invocation metadata', () => {
 
 const root = resolve(import.meta.dirname, '../../..')
 const cli = join(root, 'packages/cockpit/src/cli.ts')
-const laneFixture = readFileSync(join(root, 'fixtures/registries/lane-dialect.sh'), 'utf8')
 const scratch: string[] = []
 
 function renderSetupConfig({
@@ -336,7 +333,6 @@ describe('CLI help', () => {
     it.each([
         ['session', 'Usage: cockpit session [options] -- <command> [args...]'],
         ['init', 'Usage: cockpit init <root> [options]'],
-        ['document', 'Usage: cockpit document [<root>] [options]'],
         ['runtime', 'Usage: cockpit runtime measure [options]'],
         ['sibling', 'Usage: cockpit sibling add|remove <slug> [options]'],
     ])('prints the operands `%s` takes besides its options', async (verb, usage) => {
@@ -435,20 +431,6 @@ describe('CLI help', () => {
         expect(refused.stderr).toContain('failed unexpectedly (synthetic handler refusal)')
     })
 
-    it('refuses document --output with --json instead of exiting 0 without writing', async () => {
-        const directory = mkdtempSync(join(tmpdir(), 'cockpit-document-output-'))
-        try {
-            const destination = join(directory, 'out.toml')
-            const result = await runInProcess(['document', '--registry', 'synthetic.sh', '--output', destination, '--json'], {
-                document: async () => ({ status: 0, result: null, diagnostics: [], artifact: 'document bytes\n', destination }),
-            })
-
-            expect(result.status).toBe(2)
-            expect(JSON.parse(result.stdout).diagnostics[0]).toMatchObject({ code: 'DOCUMENT_OUTPUT_JSON_UNSUPPORTED', target: '--output' })
-            expect(existsSync(destination)).toBe(false)
-        } finally { rmSync(directory, { recursive: true, force: true }) }
-    })
-
     it('prints the collected log records in human mode', async () => {
         const record = { timestamp: '2026-01-01T00:00:00Z', stream: 'stdout', message: 'synthetic log line' }
         const result = await runInProcess(['logs', '--config', 'cockpit.toml', '--service', 'app'], {
@@ -459,17 +441,6 @@ describe('CLI help', () => {
         expect(result.stdout).toBe('2026-01-01T00:00:00Z stdout synthetic log line\n')
     })
 
-    it.each(['registry', 'output'])('refuses duplicate document --%s options before accessing files', (option) => {
-        const result = run(['document', `--${option}=first`, `--${option}`, 'second', '--json'])
-
-        expect(result.status).toBe(2)
-        expect(JSON.parse(result.stdout)).toMatchObject({
-            result: null,
-            diagnostics: [expect.objectContaining({ code: 'DOCUMENT_OPTION_DUPLICATE', target: `--${option}` })],
-        })
-        expect(result.stderr).toBe('')
-    })
-
     it('renders root help by stage, with each command group as one entry', () => {
         const result = run(['--help'])
 
@@ -478,7 +449,6 @@ describe('CLI help', () => {
             'Usage: cockpit <command> [options]\n\n' +
             'Set up:\n' +
             '  init              Preview, then accept, a first cockpit setup for one agent tool\n' +
-            '  document          Draft cockpit.toml from an existing cockpit, marking every inferred value\n' +
             '  setup             Clone or locate the declared sibling repositories and link them\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n\n' +
@@ -1786,257 +1756,8 @@ describe('terminal-safe diagnostics', () => {
     })
 })
 
-function makeCockpit() {
-    const parent = mkdtempSync(join(tmpdir(), 'cockpit-document-'))
-    const cockpitRoot = join(parent, 'sample-cockpit')
-    const registry = join(cockpitRoot, 'env/lib/instance.sh')
-    mkdirSync(dirname(registry), { recursive: true })
-    writeFileSync(registry, laneFixture)
-    scratch.push(parent)
-    return { cockpitRoot, registry }
-}
-
-function makeRegistry(source: string) {
-    const directory = mkdtempSync(join(tmpdir(), 'cockpit-registry-'))
-    const registry = join(directory, 'instance.sh')
-    writeFileSync(registry, source)
-    scratch.push(directory)
-    return { directory, registry }
-}
-
 afterEach(() => {
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
-})
-
-describe('document process contract', () => {
-    it('reports an unexpected command failure as an internal operation error', async () => {
-        let stdout = ''
-        let stderr = ''
-        const io = {
-            stdout: { write: (text: string) => ((stdout += text), true) },
-            stderr: { write: (text: string) => ((stderr += text), true) },
-        } as unknown as CliIo
-
-        const status = await runCli(['document', '--registry', 'unused', '--json'], io, {
-            document: async () => {
-                throw new Error('synthetic handler defect')
-            },
-        })
-        const response = JSON.parse(stdout) as {
-            diagnostics: { code: string; target?: string }[]
-        }
-
-        expect(status).not.toBe(0)
-        expect(response.diagnostics).toEqual([
-            expect.objectContaining({ code: 'CLI_INTERNAL_ERROR', target: 'document' }),
-        ])
-        expect(response.diagnostics).not.toEqual([
-            expect.objectContaining({ code: 'CLI_USAGE_INVALID' }),
-        ])
-        expect(stderr).toBe('')
-    })
-
-    it('escapes terminal controls from a rejected registry row in the spawned process', () => {
-        const { registry } = makeRegistry('X_SIBLINGS=(\n  "bad|bad|bad|profile:web\u202e|BAD_DIR|purpose"\n)\n')
-        const result = run(['document', '--registry', registry])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stderr).toContain('profile:web\\u202e')
-        expect(result.stderr).not.toContain('\u202e')
-    })
-
-    it('resolves a cockpit root and emits an attributed incomplete draft', () => {
-        const { cockpitRoot } = makeCockpit()
-        const result = run(['document', cockpitRoot])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toMatch(/^#:schema \.\/node_modules\/@b00dea\/cockpit\/cockpit\.schema\.json\n/)
-        expect(result.stdout).toContain('# COCKPIT DOCUMENT: INCOMPLETE DRAFT')
-        expect(result.stdout).toContain('[inferred] cockpit.name')
-        expect(result.stdout).toContain('sample-cockpit')
-        expect(result.stderr).toContain('DOCUMENT_GAP')
-        expect(result.stderr).not.toMatch(/\?\s*$/m)
-    })
-
-    it('accepts an explicit registry without inventing a cockpit root', () => {
-        const { registry } = makeCockpit()
-        const result = run(['document', '--registry', registry])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toContain('# COCKPIT DOCUMENT: INCOMPLETE DRAFT')
-        expect(result.stdout).toContain('[REQUIRED] cockpit.name')
-        expect(result.stdout).not.toContain('[inferred] cockpit.name')
-        expect(result.stderr).toContain('DOCUMENT_GAP')
-    })
-
-    it('materialises every sibling guide default with separate attribution', () => {
-        const { cockpitRoot } = makeCockpit()
-        const result = run(['document', cockpitRoot])
-
-        const guideNotices = result.stdout.match(/\[default\] sibling\.[a-z0-9-]+\.guides/g) ?? []
-        expect(guideNotices).toHaveLength(5)
-        expect(result.stdout).toContain('registry dialect does not record guide filenames')
-        expect(result.stdout).toContain('guides = [ "CLAUDE.md", "AGENTS.md" ]')
-    })
-
-    it.each([
-        [['document'], 'DOCUMENT_SOURCE_REQUIRED'],
-        [['document', 'one', 'two'], 'DOCUMENT_ROOT_COUNT'],
-    ])('refuses invalid positional source forms with a stable code', (args, code) => {
-        const result = run(args)
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain(code)
-        expect(result.stderr).not.toMatch(/\?\s*$/m)
-    })
-
-    it('refuses a root and registry together', () => {
-        const { cockpitRoot, registry } = makeCockpit()
-        const result = run(['document', cockpitRoot, '--registry', registry])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain('DOCUMENT_SOURCE_CONFLICT')
-    })
-
-    it('reports an invalid positional basename from its actual source', () => {
-        const parent = mkdtempSync(join(tmpdir(), 'cockpit-document-'))
-        const cockpitRoot = join(parent, 'Invalid_Name')
-        const registry = join(cockpitRoot, 'env/lib/instance.sh')
-        mkdirSync(dirname(registry), { recursive: true })
-        writeFileSync(registry, laneFixture)
-        scratch.push(parent)
-
-        const result = run(['document', cockpitRoot])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stderr).toContain('positional cockpit root basename')
-        expect(result.stderr).toContain('rename the cockpit root')
-        expect(result.stderr).not.toContain('an explicit registry cannot establish the cockpit name')
-    })
-
-    it('emits exactly one JSON value carrying the incomplete draft and no stderr prose', () => {
-        const { cockpitRoot } = makeCockpit()
-        const result = run(['document', cockpitRoot, '--json'])
-        const response = JSON.parse(result.stdout) as {
-            result: { document: string } | null
-            diagnostics: { code: string }[]
-        }
-
-        expect(result.status).not.toBe(0)
-        expect(response.result?.document).toBe(run(['document', cockpitRoot]).stdout)
-        expect(response.result?.document).toContain('INCOMPLETE DRAFT')
-        expect(response.diagnostics.some((diagnostic) => diagnostic.code === 'DOCUMENT_GAP')).toBe(true)
-        expect(result.stdout.trimEnd().split('\n')).toHaveLength(1)
-        expect(result.stderr).toBe('')
-    })
-
-    it('keeps usage refusals machine-readable when --json is present', () => {
-        const { cockpitRoot } = makeCockpit()
-        const result = run(['document', cockpitRoot, '--json', '--unknown'])
-        const response = JSON.parse(result.stdout) as {
-            result: unknown
-            diagnostics: { code: string }[]
-        }
-
-        expect(result.status).not.toBe(0)
-        expect(response.result).toBeNull()
-        expect(response.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(['CLI_USAGE_INVALID'])
-        expect(result.stderr).toBe('')
-    })
-
-    it('treats --json after the option terminator as a positional cockpit root', () => {
-        const result = run(['document', '--', '--json'])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain('REGISTRY_NOT_FOUND')
-        expect(result.stderr).toContain(`${sep}--json${sep}env${sep}lib${sep}instance.sh`)
-    })
-
-    it('states that stdout bytes target the canonical cockpit.toml location', () => {
-        const { cockpitRoot } = makeCockpit()
-        const result = run(['document', cockpitRoot])
-
-        expect(result.stderr).toContain('DOCUMENT_STDOUT_TARGET')
-        expect(result.stderr).toContain('<cockpit-root>/cockpit.toml')
-        expect(result.stderr).not.toContain(cockpitRoot)
-    })
-})
-
-describe('document output execution', () => {
-    it('refuses an empty output path without emitting artifact bytes', () => {
-        const { cockpitRoot } = makeCockpit()
-
-        const result = run(['document', cockpitRoot, '--output='])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain('CLI_USAGE_INVALID')
-        expect(result.stderr).toContain('--output requires a non-empty path')
-        expect(result.stderr).not.toContain('DOCUMENT_STDOUT_TARGET')
-    })
-
-    it('exclusively creates a marked gap draft and keeps stdout empty', () => {
-        const { cockpitRoot } = makeCockpit()
-        const output = join(dirname(cockpitRoot), 'generated', 'cockpit.toml')
-        mkdirSync(dirname(output))
-        const result = run(['document', cockpitRoot, '--output', output])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        // The file is committed, so the directive names the cockpit's own install, never this machine's package path.
-        expect(readFileSync(output, 'utf8')).toMatch(/^#:schema \.\/node_modules\/@b00dea\/cockpit\/cockpit\.schema\.json\n/)
-        expect(readFileSync(output, 'utf8')).toContain('INCOMPLETE DRAFT')
-    })
-
-    it('leaves an existing output byte-identical', () => {
-        const { cockpitRoot } = makeCockpit()
-        const output = join(dirname(cockpitRoot), 'existing.toml')
-        const original = 'operator-owned bytes\n'
-        writeFileSync(output, original)
-
-        const result = run(['document', cockpitRoot, '--output', output])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain('OUTPUT_EXISTS')
-        expect(readFileSync(output, 'utf8')).toBe(original)
-    })
-
-    it('suppresses stdout and destination artifacts when any row is skipped', () => {
-        const source = [
-            'X_SIBLINGS=(',
-            '  "ok|ok|ok|host|OK_DIR|make local — host lane"',
-            '  "broken|too|few"',
-            ')',
-            '',
-        ].join('\n')
-        const { directory, registry } = makeRegistry(source)
-        const output = join(directory, 'cockpit.toml')
-
-        const result = run(['document', '--registry', registry, '--output', output])
-
-        expect(result.status).not.toBe(0)
-        expect(result.stdout).toBe('')
-        expect(result.stderr).toContain('REGISTRY_ROW_SKIPPED')
-        expect(result.stderr).toContain('DOCUMENT_GAP')
-        expect(() => readFileSync(output, 'utf8')).toThrow()
-    })
-
-    it('does not write a draft in JSON mode even when --output is supplied', () => {
-        const { cockpitRoot } = makeCockpit()
-        const output = join(dirname(cockpitRoot), 'json-output.toml')
-
-        const result = run(['document', cockpitRoot, '--json', '--output', output])
-        const response = JSON.parse(result.stdout) as { result: unknown }
-
-        expect(result.status).not.toBe(0)
-        expect(response.result).toBeNull()
-        expect(() => readFileSync(output, 'utf8')).toThrow()
-        expect(result.stderr).toBe('')
-    })
 })
 
 describe('generated sync operator admission', () => {

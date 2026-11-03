@@ -10,17 +10,17 @@ import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
 import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
-import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
+import { gaps, parseRegistry, type DocumentedSibling, type Gap } from '../registry-resolve/registry.js'
 import {
     ANSWER_PROVENANCES, renderCompleteDocument, renderIncompleteDocument, UNCONFIRMED_FIX, unconfirmedReason,
     type AnswerProvenance, type Attribution, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
 } from './render.js'
-import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from '../init/derive.js'
+import { COMPOSE_NAMES, NODE_LOCKFILE_NAMES, deriveInferredFacts, readDockerfileFacts, type InferenceResult } from './derive.js'
 import { productPackageManifest } from '../team-metadata.js'
 
 export const mechanism = {
     id: 'document-outcome',
-    module: 'packages/cockpit/src/document/command.ts',
+    module: 'packages/cockpit/src/init/draft.ts',
     exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'observeCockpitRoot', 'plannedGreenfieldQuestions', 'isAnswerProvenance'],
 } as const
 
@@ -99,10 +99,11 @@ export type DocumentOutcome =
     | RefusedDocumentOutcome
 
 export interface DocumentCommandInput {
-    root?: string
+    root: string
     registry?: string
+    /** Where init will write cockpit.toml; it is reported back as the outcome's destination. */
     output?: string
-    configuration?: DocumentConfigurationInput
+    configuration: DocumentConfigurationInput
     /** How init observed the estate when it is not the cockpit root's children: a dedicated or an in-repo cockpit. */
     estate?: EstateObservationInput
 }
@@ -710,39 +711,23 @@ function cockpitName(root?: string): string | undefined {
 const inferredValue = (inference: InferenceResult | undefined, target: string) =>
     inference?.facts.find(fact => fact.target === target)
 
-function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined, rootProvided: boolean, inference?: InferenceResult): Gap[] {
+function unresolvedGaps(siblings: DocumentedSibling[], name: string | undefined): Gap[] {
     return [
         ...(!name
             ? [{
                 slug: 'cockpit',
                 field: 'name',
-                why: rootProvided
-                    ? 'the positional cockpit root basename is not a valid cockpit name'
-                    : 'an explicit registry cannot establish the cockpit name',
+                why: 'the positional cockpit root basename is not a valid cockpit name',
                 blocking: true,
-                fix: rootProvided
-                    ? 'rename the cockpit root to lowercase letters, digits, and hyphens, or supply the name in the draft'
-                    : 'supply this value before treating the draft as valid',
+                fix: 'rename the cockpit root to lowercase letters, digits, and hyphens, or supply the name in the draft',
             }]
             : []),
-        ...(inferredValue(inference, 'ports.bases') ? []
-            : [{ slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map and no Compose file at the cockpit root publishes a host port from a variable with a default', blocking: true }]),
-        // A Compose file whose host ports cannot all be read leaves bases that check would refuse.
-        ...(inference?.skipped ?? []).filter(row => (COMPOSE_NAMES as readonly string[]).includes(row.source))
-            .map(row => ({ slug: 'ports', field: 'bases', why: `${row.source} ${row.reason}`, blocking: true })),
+        { slug: 'ports', field: 'bases', why: 'no registry dialect records the product port map', blocking: true },
         ...(['hosted_db_hosts', 'vendor_endpoint_hosts'] as const).map(field => ({ slug: 'guards', field, blocking: false,
             why: 'the registry dialect does not record the non-local hosts the guard denies, so the key is left unwritten and doctor warns GUARD_HOSTS_UNDECLARED',
             fix: 'list the database and live vendor API hosts of every non-local environment under [guards], or write both hosted_db_hosts = [] and vendor_endpoint_hosts = [] to record that none exists' })),
         ...gaps(siblings),
     ]
-}
-
-/** The registry draft's values read from the cockpit root's own Compose file. */
-function composeAttributions(inference: InferenceResult | undefined): Attribution[] {
-    return (['ports.bases', 'environment.compose_files'] as const).flatMap(target => {
-        const fact = inferredValue(inference, target)
-        return fact ? [{ target, value: fact.value, from: 'inferred' as const, because: `${fact.provenance.source}: ${fact.provenance.reason}` }] : []
-    })
 }
 
 type ConfigurationContext = Readonly<{
@@ -975,7 +960,7 @@ function documentedRows(rows: CockpitConfig['sibling']): DocumentedSibling[] {
 
 async function completeConfigurationDocument(
     input: DocumentCommandInput,
-    root: string | undefined,
+    root: string,
     registrySha256: string | null,
     detected: readonly DocumentedSibling[],
     estateGaps: EstateClassificationResult['gaps'] = [],
@@ -991,8 +976,6 @@ async function completeConfigurationDocument(
         'DOCUMENT_ESTATE_INCOMPLETE',
         'resolve every named repository runnable gap before scaffolding a cockpit configuration',
     )
-    if (detected.length === 0 && !root) return refusal(
-        'DOCUMENT_SOURCE_REQUIRED', 'greenfield configuration completion requires one canonical root')
 
     const context: ConfigurationContext = Object.freeze({ root, registrySha256,
         sourceObservationSha256: configuration.sourceObservationSha256,
@@ -1361,9 +1344,6 @@ async function completeConfigurationDocument(
     if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
         fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml>' })
-    if (!destination) diagnostics.unshift({ severity: 'info', code: 'DOCUMENT_STDOUT_TARGET',
-        message: 'stdout bytes are intended for the canonical cockpit.toml location; arbitrary redirection has no schema-location guarantee',
-        target: '<cockpit-root>/cockpit.toml' })
     return { kind: 'complete', artifact, destination, diagnostics,
         result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed: Object.freeze(unconfirmed) }) },
         status: 0, question: null }
@@ -1374,9 +1354,8 @@ async function documentCommandOwned(
     estateGaps: EstateClassificationResult['gaps'],
     estateRunnable: EstateClassificationResult['runnable'],
 ): Promise<DocumentOutcome> {
-    const root = input.root ? resolve(input.root) : undefined
-    const registry = input.registry ? resolve(input.registry) : root ? resolve(root, 'env/lib/instance.sh') : undefined
-    if (!registry) return refusal('DOCUMENT_SOURCE_REQUIRED', 'provide one cockpit root or --registry <file>')
+    const root = resolve(input.root)
+    const registry = input.registry ? resolve(input.registry) : resolve(root, 'env/lib/instance.sh')
 
     let bytes: Buffer
     try {
@@ -1386,13 +1365,13 @@ async function documentCommandOwned(
         bytes = read.bytes
     } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT' && input.configuration !== undefined && root !== undefined && input.registry === undefined) {
+        if (code === 'ENOENT' && input.registry === undefined) {
             return completeConfigurationDocument(input, root, null, [], estateGaps, estateRunnable)
         }
         if (code === 'ENOENT') {
             return refusal('REGISTRY_NOT_FOUND',
-                'the registry file does not exist; document inventories an existing shell-registry cockpit (env/lib/instance.sh)',
-                registry, `for a new product run: ${initCommand()}; otherwise check the cockpit root or registry path`)
+                'the registry file does not exist; --registry names an existing shell-registry cockpit (env/lib/instance.sh)',
+                registry, `for a new product run: ${initCommand()}; otherwise check the registry path`)
         }
         return refusal('REGISTRY_UNREADABLE', `the registry file could not be read (${code ?? 'unknown I/O error'})`, registry)
     }
@@ -1407,11 +1386,8 @@ async function documentCommandOwned(
     if (source.trim() === '') return refusal('REGISTRY_EMPTY', 'the registry file is empty', registry)
 
     const parsed = parseRegistry(source)
-    // A registry cockpit runs a Compose file of its own beside the registry; its published host
-    // ports are the port map the registry dialect does not record.
-    const inference = root && input.configuration === undefined ? await deriveInferredFacts({ root, repositories: [] }) : undefined
     if (parsed.skipped.length > 0) {
-        const knownGaps = diagnosticsFor([], unresolvedGaps(parsed.siblings, cockpitName(root), root !== undefined, inference))
+        const knownGaps = diagnosticsFor([], unresolvedGaps(parsed.siblings, cockpitName(root)))
         return {
             kind: 'skipped-scope',
             artifact: null,
@@ -1434,48 +1410,14 @@ async function documentCommandOwned(
         return refusal(
             parsed.found ? 'REGISTRY_EMPTY' : 'REGISTRY_NOT_FOUND',
             parsed.found ? 'the registry contains no usable rows'
-                : 'the file contains no sibling registry; document inventories an existing shell-registry cockpit',
+                : 'the file contains no sibling registry; --registry names an existing shell-registry cockpit',
             registry,
             parsed.found ? undefined : `for a new product run: ${initCommand()}`,
         )
     }
 
-    if (input.configuration !== undefined) {
-        return completeConfigurationDocument(input, root,
-            createHash('sha256').update(bytes).digest('hex'), parsed.siblings, estateGaps, estateRunnable)
-    }
-
-    const validName = cockpitName(root)
-    const unresolved = unresolvedGaps(parsed.siblings, validName, root !== undefined, inference)
-    const inferred = composeAttributions(inference)
-    const model: DocumentModel = {
-        name: validName,
-        defaults: configurationDefaults(),
-        siblings: parsed.siblings,
-        attributions: [],
-        gaps: unresolved,
-        inferred: Object.fromEntries(inferred.map(row => [row.target, row.value])),
-    }
-    model.attributions = [...buildAttributions(model, root, 'registry'), ...inferred]
-    const destination = input.output ? resolve(input.output) : null
-    const artifact = renderIncompleteDocument(model, SCHEMA_DIRECTIVE)
-    const diagnostics = diagnosticsFor(model.attributions, unresolved)
-    if (!destination) {
-        diagnostics.unshift({
-            severity: 'info',
-            code: 'DOCUMENT_STDOUT_TARGET',
-            message: 'stdout bytes are intended for the canonical cockpit.toml location; arbitrary redirection has no schema-location guarantee',
-            target: '<cockpit-root>/cockpit.toml',
-        })
-    }
-    return {
-        kind: 'gap-draft',
-        artifact,
-        destination,
-        diagnostics,
-        result: { document: artifact },
-        status: 2,
-    }
+    return completeConfigurationDocument(input, root,
+        createHash('sha256').update(bytes).digest('hex'), parsed.siblings, estateGaps, estateRunnable)
 }
 
 export async function documentCommand(input: DocumentCommandInput): Promise<DocumentOutcome> {
@@ -1483,8 +1425,7 @@ export async function documentCommand(input: DocumentCommandInput): Promise<Docu
 }
 
 export async function documentObservedCommand(input: DocumentCommandInput): Promise<DocumentOutcome> {
-    if (input.registry !== undefined || input.configuration === undefined) return documentCommand(input)
-    if (!input.root) return refusal('DOCUMENT_SOURCE_REQUIRED', 'greenfield configuration completion requires one canonical root')
+    if (input.registry !== undefined) return documentCommand(input)
     const classified = await classifyEstateObservation(input.estate ?? { root: resolve(input.root) }, { observe: observePublicEstate })
     if (classified.kind !== 'complete') return {
         kind: 'refusal', status: 2, artifact: null, destination: null, result: null,

@@ -7,7 +7,7 @@ import { runInitApplication, type InitApplicationAdapters, type InitApplicationI
 import { deriveInferredFacts } from '../init/derive.js'
 import { runInitOperatorCommand, type InitCommandIo } from '../init/command.js'
 import { initCommand } from '../fix-catalogue.js'
-import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
+import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../init/draft.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
 import { digest, fixture, removeInitApplicationFixtures } from '../../test-support/init-application-fixture.js'
 

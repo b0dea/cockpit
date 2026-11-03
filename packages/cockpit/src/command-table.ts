@@ -26,7 +26,6 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'baseline-record'
     | 'check'
     | 'doctor'
-    | 'document'
     | 'down'
     | 'init'
     | 'logs'
@@ -116,7 +115,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     lock: 'Interrupted work lock identifier',
     mode: 'Declared gate execution mode',
     mount: 'How the stack uses the sibling: always, none or profile:<name>',
-    output: 'Write the generated artifact to this new file',
     'probe-specifications': 'Path to the harness probe specifications; with --write-probe-specifications, the earlier file whose filled rows for unchanged cells carry forward',
     programme: 'Declared programme identifier',
     purpose: 'Short purpose of the sibling repository',
@@ -161,7 +159,7 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[] }>
-    selection?: 'root-xor-registry' | 'intent-xor-work-order'
+    selection?: 'intent-xor-work-order'
     // Admitted only where cockpit.toml sets browser.request_preapproval, which the schema grants only
     // on isolated data that cannot reach production.
     requires?: 'browser-preapproval'
@@ -210,23 +208,6 @@ export const commands: readonly CommandDefinition[] = [
             interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
             answers: { type: 'string' }, 'accept-preview': { type: 'string' }, 'accept-defaults': { type: 'string' },
             'reset-answer': { type: 'string' }, 'accept-reset': { type: 'string' } },
-    },
-    {
-        name: 'document',
-        stage: 'set-up',
-        summary: 'Draft cockpit.toml from an existing cockpit, marking every inferred value',
-        usage: '[<root>] [options]',
-        handler: 'document',
-        visibility: 'public',
-        ordinary: ordinary('document', { registry: value('confined-path'), json: flag }, {
-            configuration: 'none', positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['confined-root'] as const) }),
-            selection: 'root-xor-registry', forbidden: Object.freeze({ presence: Object.freeze(['output']) }),
-        }),
-        options: {
-            registry: { type: 'string' },
-            output: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
     },
     {
         name: 'setup',
@@ -672,7 +653,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             ? !grammar.positional.operations?.includes(word)
             : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
-        || grammar.selection === 'root-xor-registry' && (positionals.length === 1) === options.has('registry')
         || grammar.selection === 'intent-xor-work-order' && (options.has('intent') === options.has('work-order') || options.has('candidate') && !options.has('intent'))
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
     return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]),

@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { classifyEstateObservation, documentCommand, documentObservedCommand, observeCockpitRoot, observePublicEstate,
-    type DocumentConfigurationAnswer } from './command.js'
+    type DocumentConfigurationAnswer } from './draft.js'
 import { CockpitConfig } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
 
@@ -41,31 +41,12 @@ function temporaryPath(name: string) {
     return join(directory, name)
 }
 
-function sourceInput(source: string, mode: 'root' | 'registry') {
-    if (mode === 'registry') {
-        const registry = temporaryPath('instance.sh')
-        writeFileSync(registry, source)
-        return { input: { registry }, expectedName: undefined }
-    }
-
+function sourceInput(source: string) {
     const cockpitRoot = temporaryPath('synthetic-cockpit')
     mkdirSync(join(cockpitRoot, 'env/lib'), { recursive: true })
     writeFileSync(join(cockpitRoot, 'env/lib/instance.sh'), source)
-    return { input: { root: cockpitRoot }, expectedName: 'synthetic-cockpit' }
+    return { input: { root: cockpitRoot } }
 }
-
-const schemaDefaultTargets = [
-    'cockpit.siblings_root',
-    'cockpit.guide_cap',
-    'ports.step',
-    'ports.count',
-    'guards.protected_branches',
-    'guards.allow',
-    'guards.deny',
-    'mcp.approved',
-    'workorders.attempt_cap',
-    'workorders.wip_cap',
-] as const
 
 afterEach(() => {
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
@@ -478,6 +459,11 @@ describe('public estate observation', () => {
     })
 })
 
+// A draft from a registry before any answer: the registry is read before the first question.
+const pendingAnswers = { sourceObservationSha256: 'a'.repeat(64), answers: [] }
+const draftFrom = (input: { root?: string; registry?: string }) =>
+    documentCommand({ root: input.root ?? temporaryPath('synthetic-cockpit'), ...input, configuration: pendingAnswers })
+
 describe('document source classification', () => {
     it('refuses invalid UTF-8 instead of changing registry content in the draft', async () => {
         const registry = temporaryPath('invalid-encoding.sh')
@@ -487,7 +473,7 @@ describe('document source classification', () => {
             Buffer.from('"\n)\n'),
         ]))
 
-        const outcome = await documentCommand({ registry })
+        const outcome = await draftFrom({ registry })
 
         expect(outcome.kind).toBe('refusal')
         expect(outcome.status).toBe(2)
@@ -499,8 +485,8 @@ describe('document source classification', () => {
     })
 
     it('attributes a root-derived name without publishing the machine-local root', async () => {
-        const { input } = sourceInput(laneFixture, 'root')
-        const outcome = await documentCommand(input)
+        const { input } = sourceInput(laneFixture)
+        const outcome = await draftFrom(input)
         const absoluteRoot = input.root as string
 
         expect(outcome.artifact).not.toContain(absoluteRoot)
@@ -508,47 +494,31 @@ describe('document source classification', () => {
         expect(outcome.artifact).toContain('the positional cockpit root basename')
     })
 
-    it('reports an invalid positional basename as a root-derived gap', async () => {
-        const invalidRoot = temporaryPath('Invalid_Name')
-        mkdirSync(join(invalidRoot, 'env/lib'), { recursive: true })
-        writeFileSync(join(invalidRoot, 'env/lib/instance.sh'), laneFixture)
-
-        const outcome = await documentCommand({ root: invalidRoot })
-        const nameGap = outcome.diagnostics.find((item) => item.target === 'cockpit.name')
-
-        expect(nameGap).toEqual(expect.objectContaining({
-            code: 'DOCUMENT_GAP',
-            message: expect.stringContaining('positional cockpit root basename'),
-            fix: expect.stringContaining('rename the cockpit root'),
-        }))
-        expect(nameGap?.message).not.toContain('explicit registry')
-    })
-
     it('distinguishes missing, unreadable, empty, absent, and ambiguous registries', async () => {
-        const missing = await documentCommand({ registry: temporaryPath('missing.sh') })
+        const missing = await draftFrom({ registry: temporaryPath('missing.sh') })
 
         const directory = temporaryPath('directory')
         mkdirSync(directory)
-        const unreadable = await documentCommand({ registry: directory })
+        const unreadable = await draftFrom({ registry: directory })
 
         const emptyPath = temporaryPath('empty.sh')
         writeFileSync(emptyPath, '')
-        const empty = await documentCommand({ registry: emptyPath })
+        const empty = await draftFrom({ registry: emptyPath })
 
         const absentPath = temporaryPath('absent.sh')
         writeFileSync(absentPath, 'export EXAMPLE=value\n')
-        const absent = await documentCommand({ registry: absentPath })
+        const absent = await draftFrom({ registry: absentPath })
 
         const ambiguousPath = temporaryPath('ambiguous.sh')
         writeFileSync(
             ambiguousPath,
             'X_SIBLINGS=(\n  "a|a|a|app|A_DIR|purpose"\n  "b|b|b|main|auto|B_DIR|purpose"\n)\n',
         )
-        const ambiguous = await documentCommand({ registry: ambiguousPath })
+        const ambiguous = await draftFrom({ registry: ambiguousPath })
 
         expect(missing.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
         expect(missing.diagnostics[0]).toMatchObject({
-            message: expect.stringContaining('document inventories an existing shell-registry cockpit'),
+            message: expect.stringContaining('--registry names an existing shell-registry cockpit'),
             fix: expect.stringContaining(`for a new product run: ${initCommand()}`),
         })
         expect(unreadable.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_UNREADABLE'])
@@ -567,7 +537,7 @@ describe('document source classification', () => {
         const registry = temporaryPath('oversized.sh')
         writeFileSync(registry, Buffer.alloc(1_048_577, 0x20))
 
-        const outcome = await documentCommand({ registry })
+        const outcome = await draftFrom({ registry })
 
         expect(outcome).toMatchObject({
             kind: 'refusal', artifact: null, result: null,
@@ -586,7 +556,7 @@ describe('document source classification', () => {
             ')',
         ].join('\n'))
 
-        const outcome = await documentCommand({ registry })
+        const outcome = await draftFrom({ registry })
         const registryDiagnostics = outcome.diagnostics.filter((item) => item.code.startsWith('REGISTRY_'))
 
         expect(registryDiagnostics).toEqual([
@@ -604,7 +574,7 @@ describe('document source classification', () => {
             'X_SIBLINGS=(\n  "app|app|app|main|auto|APP_DIR|EXTRA_PROFILES=web,api make run"\n)\n',
         )
 
-        const outcome = await documentCommand({ registry })
+        const outcome = await draftFrom({ registry })
 
         expect(outcome.kind).toBe('skipped-scope')
         expect(outcome.artifact).toBeNull()
@@ -630,7 +600,7 @@ describe('document source classification', () => {
             ].join('\n'),
         )
 
-        const outcome = await documentCommand({ registry })
+        const outcome = await draftFrom({ registry })
         const artifact = outcome.artifact ?? ''
 
         expect(artifact.match(/no profile and no make target in purpose/g)).toHaveLength(2)
@@ -643,8 +613,8 @@ describe('document source classification', () => {
         const rawRow = 'private-row-token|too|few'
         writeFileSync(registry, `X_SIBLINGS=(\n  "ok|ok|ok|app|OK_DIR|purpose"\n  "${rawRow}"\n)\n`)
 
-        const outcome = await documentCommand({ registry })
-        const commandSource = readFileSync(join(root, 'packages/cockpit/src/document/command.ts'), 'utf8')
+        const outcome = await draftFrom({ registry })
+        const commandSource = readFileSync(join(root, 'packages/cockpit/src/init/draft.ts'), 'utf8')
         const cliSource = readFileSync(join(root, 'packages/cockpit/src/cli.ts'), 'utf8')
         const commandTableSource = readFileSync(join(root, 'packages/cockpit/src/command-table.ts'), 'utf8')
 
@@ -655,7 +625,7 @@ describe('document source classification', () => {
         expect(commandSource).not.toMatch(/\bwriteFile\b/)
         expect(commandSource).not.toMatch(/command-table|\.\.\/cli/)
         expect(cliSource).not.toMatch(/\bparseRegistry\b|\bgaps\s*\(/)
-        expect(commandTableSource).not.toMatch(/document\/command|\.\/cli/)
+        expect(commandTableSource).not.toMatch(/init\/draft|\.\/cli/)
         expect(commandSource).not.toMatch(/_SIBLINGS.*test\(source\)/)
     })
 
@@ -663,170 +633,12 @@ describe('document source classification', () => {
         const registry = temporaryPath('tier.sh')
         writeFileSync(registry, tierFixture)
 
-        const outcome = await documentCommand({ registry })
-        const inferred = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_INFERRED')
+        const outcome = await draftFrom({ registry })
+        const inferred = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_INFERRED' && item.target?.startsWith('sibling.'))
 
         expect(inferred).toHaveLength(9)
         expect(inferred.every((item) => item.message.length > 0)).toBe(true)
     })
-
-    it('names the required operator gate and its exact repair for a risky lane', async () => {
-        const { input } = sourceInput(
-            'X_SIBLINGS=(\n  "runner|runner|runner|main|auto|RUNNER_DIR|production hardware runner"\n)\n',
-            'root',
-        )
-
-        const outcome = await documentCommand(input)
-        const gate = outcome.diagnostics.find((item) => item.target === 'runner.gate')
-
-        expect(gate).toMatchObject({
-            severity: 'error',
-            code: 'DOCUMENT_GAP',
-            fix: 'set gate = "operator" before running this lane',
-        })
-        expect(outcome.artifact).toContain('# [REQUIRED] runner.gate:')
-        expect(outcome.artifact).not.toMatch(/^gate\s*=/m)
-    })
-})
-
-describe('document round trip inventory', () => {
-    it('materializes the same defaults as runtime validation and attributes their actual values', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "api|api|api|app|API_DIR|API"\n)\n', 'root')
-        const outcome = await documentCommand(input)
-        const draft = parseToml(outcome.artifact!)
-        const runtime = CockpitConfig.parse({
-            cockpit: { name: 'synthetic-cockpit' },
-            sibling: [{ slug: 'api', dir: 'api', remote: 'api', mount: 'always', acquire: 'auto', var: 'API_DIR', purpose: 'API' }],
-            ports: { bases: { API_PORT: 8080 } },
-        })
-
-        // The guard hosts are left unwritten: written as the schema default [], doctor would read them
-        // as a decision that no non-local host exists and stop warning GUARD_HOSTS_UNDECLARED.
-        expect(draft.guards).not.toHaveProperty('hosted_db_hosts')
-        expect(draft.guards).not.toHaveProperty('vendor_endpoint_hosts')
-        // The work-order time budgets are left unwritten too: no dialect records them, and written
-        // they would read as this product's. The loader applies the same defaults.
-        expect(draft.workorders).not.toHaveProperty('verification_timeout_seconds')
-        expect(draft.workorders).not.toHaveProperty('evaluator_timeout_seconds')
-        const { verification_timeout_seconds: _verification, evaluator_timeout_seconds: _evaluator, ...workorders } = runtime.workorders
-        expect({ ...draft, ports: { ...draft.ports as object, bases: { API_PORT: 8080 } } })
-            .toEqual({ ...runtime, guards: { protected_branches: runtime.guards.protected_branches, allow: [], deny: [] }, workorders })
-        const configPath = temporaryPath('cockpit.toml')
-        writeFileSync(configPath, outcome.artifact!.replace('[ports]', '[ports]\nbases = { API_PORT = 8080 }'))
-        expect(await loadCockpitConfig(configPath)).toMatchObject({ kind: 'complete', result: { guardHostsStated: false } })
-        for (const target of schemaDefaultTargets) {
-            const [section, key] = target.split('.')
-            const values = runtime[section as keyof typeof runtime] as Record<string, unknown>
-            expect(outcome.artifact).toContain(`# [default] ${target} = ${JSON.stringify(values[key])}:`)
-        }
-        for (const field of ['toolchain', 'guides'] as const) {
-            expect(outcome.artifact).toContain(`# [default] sibling.api.${field} = ${JSON.stringify(runtime.sibling[0][field])}:`)
-        }
-    })
-
-    it('reads the port map and Compose file a registry cockpit runs from its own root', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "web|web|web|app|WEB_DIR|Storefront"\n)\n', 'root')
-        writeFileSync(join(input.root!, 'compose.yml'),
-            'services:\n  web:\n    build: ${WEB_DIR}\n    ports: ["${WEB_HOST_PORT:-3000}:3000", "${ADMIN_HOST_PORT}:9000", "8080:80"]\n')
-        const outcome = await documentCommand(input)
-        const draft = parseToml(outcome.artifact!) as { ports: Record<string, unknown>; environment: Record<string, unknown> }
-        expect(draft.ports.bases).toEqual({ WEB_HOST_PORT: 3000 })
-        expect(draft.environment.compose_files).toEqual(['compose.yml'])
-        expect(outcome.artifact).toContain('# [inferred] ports.bases = {"WEB_HOST_PORT":3000}: compose.yml: compose.yml publishes WEB_HOST_PORT from variables')
-        expect(outcome.artifact).toContain('# [inferred] environment.compose_files = ["compose.yml"]: compose.yml: a Compose file already exists')
-        // The variable with no default and the literal host port are still required gaps; the map itself is no longer one.
-        expect(outcome.diagnostics.filter(item => item.code === 'DOCUMENT_GAP' && item.target === 'ports.bases')).toEqual([
-            expect.objectContaining({ severity: 'error', message: expect.stringMatching(/^compose\.yml publishes a host port from \$\{ADMIN_HOST_PORT\} with no default/) }),
-            expect.objectContaining({ severity: 'error', message: expect.stringMatching(/^compose\.yml publishes host port 8080 that is not read from a variable/) })])
-
-        // A Compose file that publishes only literal host ports is named as the reason, not passed over as publishing none.
-        writeFileSync(join(input.root!, 'compose.yml'), 'services:\n  web:\n    build: ${WEB_DIR}\n    ports: ["8080:80"]\n')
-        const literal = await documentCommand(input)
-        expect(literal.diagnostics.filter(item => item.code === 'DOCUMENT_GAP' && item.target === 'ports.bases').map(item => item.message)).toEqual([
-            expect.stringContaining('no Compose file at the cockpit root publishes a host port from a variable with a default'),
-            expect.stringMatching(/^compose\.yml publishes host port 8080 that is not read from a variable/)])
-    })
-
-    const dialects = [
-        {
-            name: 'lane',
-            source: laneFixture,
-            expected: [
-                ['api', 'example-api', 'api-service', undefined, 'always', 'auto'],
-                ['web-client', 'example-web', 'web-frontend', undefined, 'always', 'auto'],
-                ['dispatch', 'example-dispatch', 'dispatch', undefined, 'profile:dispatch', 'auto'],
-                ['mobile', 'example-mobile', 'mobile-app', undefined, 'host', 'auto'],
-                ['storefront', 'example-shop', 'shop-theme', undefined, 'host', 'auto'],
-            ],
-        },
-        {
-            name: 'tier',
-            source: tierFixture,
-            expected: [
-                ['app', 'example-app', 'app', 'develop', 'always', 'auto'],
-                ['booking', 'example-booking', 'booking-companion', 'main', 'profile:booking', 'manual'],
-                ['infra', 'example-infra', 'infra', 'main', 'none', 'auto'],
-                ['docs', 'example-docs', 'docs', 'main', 'host', 'auto'],
-                ['renderer', 'example-renderer', 'render-engine', 'main', 'host', 'auto'],
-                ['marketing', 'example-marketing', 'marketing-site', 'main', 'none', 'auto'],
-                ['desktop', 'example-desktop', 'desktop', 'main', 'none', 'auto'],
-                ['local-dumps', 'example-local', undefined, undefined, 'none', 'none'],
-            ],
-        },
-    ] as const
-
-    for (const dialect of dialects) {
-        for (const mode of ['root', 'registry'] as const) {
-            it(`preserves ${dialect.name} meaning and attributes every unread field in ${mode} mode`, async () => {
-                const { input, expectedName } = sourceInput(dialect.source, mode)
-                const outcome = await documentCommand(input)
-                const draft = parseToml(outcome.artifact ?? '') as {
-                    cockpit: Record<string, unknown>
-                    sibling: Array<Record<string, unknown>>
-                    ports: Record<string, unknown>
-                    guards: Record<string, unknown>
-                    mcp: Record<string, unknown>
-                    workorders: Record<string, unknown>
-                }
-
-                expect(outcome.kind).toBe('gap-draft')
-                expect(draft.cockpit.name).toBe(expectedName)
-                expect(draft.sibling.map((s) => [s.slug, s.dir, s.remote, s.branch, s.mount, s.acquire])).toEqual(
-                    dialect.expected,
-                )
-                expect(draft.sibling.every((s) => JSON.stringify(s.guides) === JSON.stringify(['CLAUDE.md', 'AGENTS.md']))).toBe(true)
-                expect(draft.ports).toEqual({ step: 100, count: 27 })
-                expect(draft.guards).toEqual({
-                    protected_branches: ['main', 'master'],
-                    allow: [],
-                    deny: [],
-                })
-                expect(draft.mcp).toEqual({ approved: {} })
-                expect(draft.workorders).toEqual({ attempt_cap: 2, wip_cap: 3 })
-
-                const defaults = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_DEFAULT')
-                for (const target of schemaDefaultTargets) {
-                    const diagnostic = defaults.find((item) => item.target === target)
-                    expect(diagnostic?.message, target).toMatch(/CockpitConfig schema default/)
-                }
-                for (const sibling of draft.sibling) {
-                    for (const field of ['toolchain', 'guides']) {
-                        const target = `sibling.${String(sibling.slug)}.${field}`
-                        const diagnostic = defaults.find((item) => item.target === target)
-                        expect(diagnostic?.message, target).toMatch(/CockpitConfig schema default/)
-                    }
-                }
-
-                const gaps = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_GAP')
-                expect(gaps.some((item) => item.target === 'ports.bases' && item.severity === 'error')).toBe(true)
-                expect(gaps.filter((item) => item.target?.startsWith('guards.')).map((item) => [item.target, item.severity]))
-                    .toEqual([['guards.hosted_db_hosts', 'warning'], ['guards.vendor_endpoint_hosts', 'warning']])
-                expect(gaps.some((item) => item.target === 'cockpit.name')).toBe(mode === 'registry')
-                expect(outcome.diagnostics.some((item) => item.target === 'cockpit.name' && item.code === 'DOCUMENT_INFERRED'))
-                    .toBe(mode === 'root')
-            })
-        }
-    }
 })
 
 describe('operator-confirmed document completion', () => {
@@ -839,11 +651,11 @@ describe('operator-confirmed document completion', () => {
     const confirmDefaults = (question: NonNullable<Awaited<ReturnType<typeof documentCommand>>['question']>) =>
         answer(question, { confirmed: true, sha256: question.expectedSha256 })
     // The cockpit name is always asked first; these cases are about the answers after it.
-    const answerName = async (input: Parameters<typeof documentCommand>[0]) => answer((await documentCommand({ ...input,
+    const answerName = async (input: { root: string }) => answer((await documentCommand({ ...input,
         configuration: { sourceObservationSha256, answers: [] } })).question!, 'app-cockpit')
 
     it('advances a real registry draft through explicit ports and defaults to a loadable document', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n', 'root')
+        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
         const nameAnswer = await answerName(input)
         const configuration = { sourceObservationSha256, answers: [nameAnswer] }
         const ports = await documentCommand({ ...input, configuration })
@@ -915,7 +727,7 @@ describe('operator-confirmed document completion', () => {
     })
 
     it('completes compose-first from a Compose file the checkout already has instead of a generated environment', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n', 'root')
+        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
         const nameAnswer = await answerName(input)
         const configuration = { sourceObservationSha256, answers: [nameAnswer] }
         const portAnswer = answer((await documentCommand({ ...input, configuration }))!.question!, {})
@@ -1097,7 +909,6 @@ describe('operator-confirmed document completion', () => {
     it('fills only registry sibling gaps and refuses changes to detected facts', async () => {
         const { input } = sourceInput(
             'X_SIBLINGS=(\n  "runner|runner|runner|host|RUNNER_DIR|production hardware runner"\n)\n',
-            'root',
         )
         const nameAnswer = await answerName(input)
         const pending = await documentCommand({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
@@ -1116,7 +927,7 @@ describe('operator-confirmed document completion', () => {
     })
 
     it('refuses wrong, extra, malformed, sensitive and stale answers', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n', 'root')
+        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
         const nameAnswer = await answerName(input)
         const pending = await documentCommand({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
         const valid = answer(pending.question!, { APP_HOST_PORT: 4100 })
@@ -1161,14 +972,14 @@ describe('operator-confirmed document completion', () => {
             .toMatchObject({ kind: 'refusal', status: 2,
                 diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
 
-        writeFileSync(input.registry ?? join(input.root!, 'env/lib/instance.sh'),
+        writeFileSync(join(input.root, 'env/lib/instance.sh'),
             'X_SIBLINGS=(\n  "api|api|api|app|API_DIR|Changed purpose"\n)\n')
         expect(await documentCommand({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer, valid] } }))
             .toMatchObject({ kind: 'refusal', status: 2 })
     })
 
     it('rejects missing or changed explicit confirmation of the surfaced defaults', async () => {
-        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n', 'root')
+        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n')
         const nameAnswer = await answerName(input)
         const ports = await documentCommand({ ...input, configuration: { sourceObservationSha256, answers: [nameAnswer] } })
         const portAnswer = answer(ports.question!, { APP_HOST_PORT: 4100 })
