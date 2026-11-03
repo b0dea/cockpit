@@ -5,7 +5,6 @@ import { createHash } from 'node:crypto'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, normalize, relative, sep } from 'node:path'
-import { isProxy } from 'node:util/types'
 import { loadCockpitConfig } from '../config/load.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type AddressingPosture, type AuthPosture } from '../schema.js'
 import { ENVIRONMENT_CODES, errorCause, snapshotJson, type CockpitId, type EnvironmentObservation,
@@ -20,26 +19,8 @@ export const POSTURE_REQUIREMENT_OWNER = 'posture-requirements'
 
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
-function boundedDenseArray(value: unknown): readonly unknown[] | undefined {
-    try {
-        if (isProxy(value)) return undefined
-        if (!Array.isArray(value)) return undefined
-        const length = Object.getOwnPropertyDescriptor(value, 'length')
-        const count = length && 'value' in length ? length.value : undefined
-        if (typeof count !== 'number' || !Number.isSafeInteger(count)
-            || count < 0 || count > STRUCTURED_INPUT_ENTRY_LIMIT) return undefined
-        const keys = Reflect.ownKeys(value)
-        if (keys.length !== count + 1) return undefined
-        const items: unknown[] = []
-        for (let index = 0; index < count; index += 1) {
-            const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-            if (!descriptor || !('value' in descriptor)) return undefined
-            items.push(descriptor.value)
-        }
-        return items
-    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
-        return undefined
-    }
+function boundedArray(value: unknown): readonly unknown[] | undefined {
+    return Array.isArray(value) && value.length <= STRUCTURED_INPUT_ENTRY_LIMIT ? value : undefined
 }
 
 const issuedPostureAuthorities = new WeakMap<object, CockpitId>()
@@ -111,10 +92,7 @@ async function issueObservationPostures(
     input: ObservationPostureInput,
     previous?: ResolvedPostureAuthority,
 ): Promise<ResolvedPostureAuthority> {
-    const descriptor = input && typeof input === 'object'
-        ? Object.getOwnPropertyDescriptor(input, 'configuration')
-        : undefined
-    const configuration = descriptor && 'value' in descriptor ? descriptor.value : undefined
+    const configuration = input?.configuration
     const owned = snapshotJson({ cockpitId: input.cockpitId, checkoutPath: input.checkoutPath, variant: input.variant })
     const identity = owned && typeof owned === 'object' && !Array.isArray(owned)
         ? owned as Readonly<Record<string, JsonSnapshot>>
@@ -199,8 +177,7 @@ export async function resolveObservationPostures(input: ObservationPostureInput)
 export async function refreshObservationPostures(input: ObservationPostureInput & {
     readonly previous: ResolvedPostureAuthority
 }): Promise<ResolvedPostureAuthority> {
-    const descriptor = input && typeof input === 'object' ? Object.getOwnPropertyDescriptor(input, 'previous') : undefined
-    const previous = descriptor && 'value' in descriptor ? descriptor.value as ResolvedPostureAuthority : undefined
+    const previous = input?.previous
     if (!previous) throw new RefusalError('resolved posture refresh requires initial authority')
     return issueObservationPostures(input, previous)
 }
@@ -258,8 +235,8 @@ export function judgePostureDeclaration(
 
 export function authenticateObservationPostureContext(context: PreflightContext) {
     const evaluationInstant = Date.now()
-    const authorityInputs = boundedDenseArray(context?.authorities)
-    const stageInputs = boundedDenseArray(context?.stages)
+    const authorityInputs = boundedArray(context?.authorities)
+    const stageInputs = boundedArray(context?.stages)
     if (!authorityInputs || authorityInputs.length === 0) throw new RefusalError('preflight needs resolved posture authority')
     const authorities = new Map<StackId, ResolvedPostureAuthority>()
     let windowStart = Number.NEGATIVE_INFINITY
@@ -283,9 +260,8 @@ export function authenticateObservationPostureContext(context: PreflightContext)
     if (!stageInputs || stageInputs.length !== authorityInputs.length) throw new RefusalError('preflight needs lifecycle stage authority')
     const stages = new Map<StackId, ObservationLifecycleStage>()
     for (const stageInput of stageInputs) {
-        if (isProxy(stageInput) || stageInput === null || typeof stageInput !== 'object') throw new RefusalError('preflight needs lifecycle stage authority')
-        const stackDescriptor = Object.getOwnPropertyDescriptor(stageInput, 'stackId')
-        const stageStackId = stackDescriptor && 'value' in stackDescriptor ? stackDescriptor.value : undefined
+        if (stageInput === null || typeof stageInput !== 'object') throw new RefusalError('preflight needs lifecycle stage authority')
+        const stageStackId = (stageInput as { stackId?: unknown }).stackId
         const authority = typeof stageStackId === 'string' ? authorities.get(stageStackId as StackId) : undefined
         if (!authority || stages.has(authority.stackId)) throw new RefusalError('preflight needs one matching lifecycle stage authority per stack')
         const stage = authenticateLifecycleStageAuthority(
