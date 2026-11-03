@@ -704,7 +704,7 @@
           ]
         },
         "evaluators": {
-          "description": "Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order.",
+          "description": "Agent tools that run the independent grader for work grade and cockpit grade, tried in order: codexcli, claudecode, opencode. Defaults to the tools surfaces.tools lists that can evaluate, in that order, with the tool running the command moved last when it is detected (Claude Code or Codex), so another tool grades first. A list given here is used exactly as written.",
           "minItems": 1,
           "maxItems": 3,
           "type": "array",

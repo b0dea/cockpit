@@ -1,4 +1,3 @@
-import { EVALUATOR_COMMANDS } from './schema.js'
 import { SURFACE_TARGETS } from './surfaces/contract.js'
 import type { ParseArgsConfig } from 'node:util'
 import { isAbsolute, normalize, resolve } from 'node:path'
@@ -164,6 +163,8 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     requires?: OrdinaryGrant
 }>
 
+// Mirrors EvaluatorTool in schema.ts, which this data table may not import.
+const EVALUATOR_TOOLS: readonly string[] = ['codexcli', 'claudecode', 'opencode']
 const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
 function value(role: OrdinaryValueRole, required = false): OrdinaryOption {
@@ -583,7 +584,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
             : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
-            : option.role === 'evaluator-tool' ? Object.hasOwn(EVALUATOR_COMMANDS, text)
+            : option.role === 'evaluator-tool' ? EVALUATOR_TOOLS.includes(text)
             : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined

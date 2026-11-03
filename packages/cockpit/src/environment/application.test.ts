@@ -289,10 +289,11 @@ describe('guard policy construction', () => {
                 { action: 'read-file', segments: [], name: 'cockpit.toml', maxBytes: 1_048_576 },
             ] })
         }
+        // The first module read starts together with the configuration load, so both count as checkpoint 1.
         const module = steps.filter(({ step }) => step.cwd !== root)
         const moduleRoot = realpathSync(new URL('../../dist', import.meta.url))
         expect(module.map(({ checkpoint, step }) => ({ checkpoint, cwd: step.cwd, action: step.labels.action }))).toEqual([
-            { checkpoint: 0, cwd: moduleRoot, action: 'read-file' },
+            { checkpoint: 1, cwd: moduleRoot, action: 'read-file' },
             { checkpoint: 2, cwd: moduleRoot, action: 'read-file' },
         ])
         for (const { step } of module) expect(JSON.parse(step.argv[3]!)).toMatchObject({ action: 'read-file', name: 'cli.js', maxBytes: 16_777_216 })
