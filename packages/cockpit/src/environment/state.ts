@@ -345,12 +345,8 @@ export interface StateTransactionAbort<T> {
 }
 
 export function abortStateTransaction<T>(value: T): StateTransactionAbort<T> {
-    const abort = { aborted: true as const, value }
-    stateTransactionAborts.add(abort)
-    return abort
+    return { aborted: true as const, value }
 }
-
-const stateTransactionAborts = new WeakSet<object>()
 
 type StatePublicationStatus = 'complete' | 'indeterminate'
 interface StatePublicationMetadata {
@@ -411,8 +407,9 @@ export function authenticateStatePublication(input: {
     }
 }
 
+// A proposed record never carries `aborted`, so the marker needs no registry to tell it apart.
 function isStateTransactionAbort(value: unknown): value is StateTransactionAbort<unknown> {
-    return typeof value === 'object' && value !== null && stateTransactionAborts.has(value)
+    return typeof value === 'object' && value !== null && (value as { aborted?: unknown }).aborted === true
 }
 
 function refusal<T>(

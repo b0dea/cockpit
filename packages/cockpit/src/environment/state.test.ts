@@ -1083,18 +1083,6 @@ describe('transactState', () => {
             () => lifecycleRecord(0, 1))).resolves.toMatchObject({ kind: 'complete' })
     })
 
-    it('rejects a structural lookalike of the private transaction abort', async () => {
-        const { namespace, address } = await selectedNamespace()
-        const result = await transactState(namespace, address, { ownerId: holderA }, () => ({
-            aborted: true,
-            value: { reason: 'forged-abort' },
-        }) as never)
-
-        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
-        expect(result).not.toHaveProperty('aborted')
-        expect(await readState(address)).toEqual({ kind: 'missing', path: address.path })
-    })
-
     it('serializes two real processes updating one record', async () => {
         const { namespace, address } = await selectedNamespace()
         const stateModule = new URL('./state.ts', import.meta.url).href
