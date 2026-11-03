@@ -29,18 +29,19 @@ describe('the installed launcher runtime floor', () => {
         ['empty', ''],
         ['malformed', 'twenty-two'],
         ['below the floor', '21.99.0'],
+        ['below the minor floor', '22.21.9'],
     ])('refuses %s runtime data before importing compiled code', (_name, version) => {
         const result = runWithVersion(version, true)
 
         expect(result.error, `launcher child failed: ${result.error?.message}`).toBeUndefined()
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('COCKPIT_NODE_VERSION_UNSUPPORTED')
-        expect(result.stderr).toContain('22')
+        expect(result.stderr).toContain('^22.22.0')
         expect(result.stderr).not.toContain('dist/cli.js')
     })
 
     it('imports the compiled CLI only after a supported runtime value', () => {
-        const result = runWithVersion('22.0.0', false)
+        const result = runWithVersion('22.22.0', false)
 
         expect(result.error, `launcher child failed: ${result.error?.message}`).toBeUndefined()
         expect(result.status).toBe(0)
