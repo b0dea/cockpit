@@ -14,7 +14,7 @@ export const mechanism = {
 // supplied one.
 const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
 
-export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'up' | 'sleep' | 'session' | 'down'
+export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
     | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove'
 
 export interface FixContext {

@@ -134,7 +134,7 @@ describe('closed ordinary invocation metadata', () => {
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
-        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'], sync: ['--dry-run'],
+        selftest: ['--probe-specifications', 'probes.json'], logs: ['--service', 'app'], runtime: ['measure', '--image', 'node:22-alpine'], sync: ['--dry-run'], upgrade: ['--dry-run'],
         'test-run': ['--gate', 'quick'], 'work intake': ['--intent', 'intents/task.json'], 'work recover': ['--lock', 'WO-001'],
         'work execute': ['--work-order', 'WO-001', '--approach', 'first-try'], 'work record': ['--work-order', 'WO-001', '--event-file', 'workorders/events/progress.json'],
         'work review': ['--work-order', 'WO-001'], 'work grade': ['--work-order', 'WO-001'], 'work programme-mint': ['--programme', 'release'],
@@ -198,7 +198,7 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
+        expect(rows.map(row => row.name)).toEqual(['setup', 'upgrade', 'sync', 'check', 'selftest', 'runtime', 'up', 'preflight', 'logs', 'sleep', 'down', 'doctor',
             'test-run', 'work intake', 'work status', 'work resume', 'work recover', 'work execute', 'work record', 'work review', 'work sweep',
             'work programme-mint', 'work metrics', 'work grade', 'browser drive', 'browser screenshot'])
         for (const row of rows) {
@@ -223,7 +223,7 @@ describe('closed ordinary invocation metadata', () => {
             ['selftest', '--probe-specifications', 'probe', '--write-probe-specifications', 'draft'],
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
-            ['sync'], ['reset'], ['guard-evaluate', '--harness', 'claudecode'],
+            ['sync'], ['upgrade'], ['upgrade', '1.2.3', '--dry-run'], ['reset'], ['guard-evaluate', '--harness', 'claudecode'],
             ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
             ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
@@ -442,7 +442,8 @@ describe('CLI help', () => {
             '  init              Preview, then accept, a first cockpit setup for one agent tool\n' +
             '  setup             Clone or locate the declared sibling repositories and link them\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
-            '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n\n' +
+            '  registry-resolve  Turn a validated shell registry into data shell scripts can source\n' +
+            '  upgrade           Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +
             '  sync              Write the generated stack and agent files from cockpit.toml\n' +
             '  check             Report generated files that no longer match cockpit.toml\n' +

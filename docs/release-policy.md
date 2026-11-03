@@ -45,6 +45,5 @@ for whoever performs the upgrade: what changed, the observable failure or diagno
 replacement, and any rollback boundary. When the edit is mechanical, the release includes a codemod
 or script rather than prose.
 
-To upgrade, move the exact pin with `npm install --save-dev --save-exact @b00dea/cockpit@<version>`,
-then preview and apply the regenerated files with `sync`, as
-[Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) describes.
+To upgrade, run `npx --no cockpit upgrade --config cockpit.toml`: it moves the exact pin and applies
+the regenerated files with `sync`, as [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) describes.

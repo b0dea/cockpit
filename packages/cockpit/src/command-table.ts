@@ -39,6 +39,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'sleep'
     | 'sync'
     | 'up'
+    | 'upgrade'
 
 export type CommandStage = 'set-up' | 'generate-and-verify' | 'run-the-stack' | 'diagnose' | 'test-and-grade'
 
@@ -99,7 +100,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     config: 'Path to cockpit.toml',
     create: 'Create a new local sibling repository',
     dir: 'Directory for the sibling checkout',
-    'dry-run': 'Preview generated changes without writing them',
+    'dry-run': 'Preview without writing or installing anything',
     'event-file': 'Path to the work event file',
     follow: 'Continue collecting logs until cancelled',
     from: 'Path to an existing local repository',
@@ -254,6 +255,21 @@ export const commands: readonly CommandDefinition[] = [
             'siblings-root': { type: 'string' },
             adoption: { type: 'string' },
             json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'upgrade',
+        stage: 'set-up',
+        summary: 'Move the exact cockpit pin to a newer version and re-run sync',
+        usage: '[<version>] [options]',
+        handler: 'upgrade',
+        visibility: 'public',
+        // A real upgrade installs a package and rewrites the guard's own files, so only the dry run is an
+        // ordinary agent invocation.
+        ordinary: ordinary('upgrade', { config: configured.config, 'dry-run': Object.freeze({ ...flag, required: true as const }) }),
+        options: {
+            config: { type: 'string' },
+            'dry-run': { type: 'boolean', default: false },
         },
     },
     {

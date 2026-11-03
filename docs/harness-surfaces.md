@@ -377,16 +377,34 @@ original capability strength; passing the validator does not promote a native ca
 ## Upgrade cockpit
 
 An upgrade replaces the generated files that guard and instruct every agent, so a person reads
-what `sync` would change before it writes.
+what `sync` would change before it writes. One command does the whole move:
 
-1. Move the pin with `npm install --save-dev --save-exact @b00dea/cockpit@<version>`; `npm update`
-   does not move an exact pin.
-2. Read the newly installed `./node_modules/@b00dea/cockpit/CHANGELOG.md` between the old and new
-   version. A line starting `Upgrade:` names a step `sync` does not do.
-3. Preview the generated changes with `npx --no cockpit sync --config cockpit.toml --dry-run`.
-4. In a terminal outside the agent, run `npx --no cockpit sync --config cockpit.toml`. Until it
-   runs, the guard holds every agent tool call, because it trusts only the cockpit it was generated
-   for. A built-in that one of your overlays replaces and that the new release changed is reported
-   as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override before updating its
-   recorded hash.
-5. Commit the lockfile and the regenerated files together.
+```sh
+npx --no cockpit upgrade --config cockpit.toml            # latest published release
+npx --no cockpit upgrade 1.4.0 --config cockpit.toml      # a named version, including an older one
+npx --no cockpit upgrade --config cockpit.toml --dry-run  # resolve the target, print the commands, run nothing
+```
+
+`upgrade` resolves the target (`npm view @b00dea/cockpit version`), refuses one that is not newer
+than the installed version unless you name it, detects the package manager from the one lockfile at
+the cockpit root (`package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`), installs the exact version as
+a dev dependency, then runs `npx --no cockpit sync --config <path>` in a new process so the new
+version renders. Sync's output and exit code pass through, so its own refusals stand: when it asks to
+approve stale removals, run `sync --interactive` in a terminal. It ends by printing the `Upgrade:`
+lines from the installed `CHANGELOG.md` between the two versions (a line there names a step `sync`
+does not do), or the npm page when the package has no changelog.
+
+Only the dry run is an agent invocation: until `sync` runs, the guard holds every agent tool call,
+because it trusts only the cockpit it was generated for, so a person runs the real upgrade in a
+terminal outside the agent. A built-in that one of your overlays replaces and that the new release
+changed is reported as `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your override
+before updating its recorded hash. Then review `git diff` and commit `package.json`, the lockfile and
+the regenerated files together.
+
+Dependabot and Renovate can bump the exact pin on their own. The `cockpit-check` CI action then reports
+drift until someone runs `npx --no cockpit sync --config cockpit.toml` (or `upgrade <version>`) and
+commits the regenerated files.
+
+By hand: `npm install --save-dev --save-exact @b00dea/cockpit@<version>` (`npm update` does not move an
+exact pin), read `./node_modules/@b00dea/cockpit/CHANGELOG.md`, preview with
+`npx --no cockpit sync --config cockpit.toml --dry-run`, then run `sync` in a terminal.

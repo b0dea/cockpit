@@ -104,6 +104,7 @@ import type {
     GeneratedStaleRemovalApproval,
     GeneratedStaleRemovalApprovalRequest,
 } from './environment/generated-application.js'
+import { runUpgrade } from './environment/upgrade-application.js'
 import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
 import {
     runConfiguredSurfaceSelftestOutcome,
@@ -193,6 +194,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
         ) => Promise<GeneratedStaleRemovalApproval | undefined>
     }>
     up: UpCommandInput
+    upgrade: Readonly<{ configPath: string; version?: string; dryRun: boolean }>
 }
 
 export type CommandHandlers = {
@@ -615,6 +617,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 : outcome.result }
         },
         selftest: runConfiguredSurfaceSelftestOutcome,
+        upgrade: input => runUpgrade({ ...input, env: concreteEnvironment(env) }, { execute: executeProbe, executeForeground: executeForegroundProcess }),
         up: async (input) => {
             const sessionId = ordinarySessionId
             if (sessionId === null) return usageOutcome(
@@ -985,6 +988,14 @@ async function decodeRequest(
             ...(values.adopt ? { adopt: Object.freeze([...values.adopt]) } : {}) } }
     }
 
+    if (handler === 'upgrade') {
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean }
+        if (parsed.positionals.length > 1) return usageOutcome('CLI_USAGE_INVALID', 'upgrade accepts at most one version')
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        return { handler, input: { configPath: values.config, dryRun: values['dry-run'] === true,
+            ...(parsed.positionals[0] === undefined ? {} : { version: parsed.positionals[0] }) } }
+    }
+
     if (handler === 'selftest') {
         const values = parsed.values as { config?: string; 'probe-specifications'?: string; 'write-probe-specifications'?: string; interactive?: boolean; json?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
@@ -1237,6 +1248,7 @@ async function dispatchHandler(
         return 'writeProbeSpecificationsPath' in request.input ? selftest(request.input)
             : runSelftestOperatorCommand(request.input, options, io, selftest)
     }
+    if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
     if (request.handler === 'session') return handlers.session?.(request.input) ?? unavailable()

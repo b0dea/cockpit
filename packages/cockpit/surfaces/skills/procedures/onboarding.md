@@ -253,6 +253,12 @@ you read for the human to approve. Never delete a team's instruction file yourse
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
 applied silently. `npm update` does not move the exact pin, so install the new release by version.
 
+`npx --no cockpit upgrade --config cockpit.toml` does steps 1 and 3 in one go: it installs the latest
+release (or `upgrade <version>`) with the package manager the lockfile names, runs `sync` in a new
+process and prints the `Upgrade:` lines. An agent previews it with `--dry-run`; a human runs it for
+real in a terminal, and runs `sync --interactive` afterwards if sync reports stale removals needing
+approval. The steps below are the same path by hand.
+
 1. Run `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
 2. Preview the generated changes without writing:

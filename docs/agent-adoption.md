@@ -540,7 +540,9 @@ The guard trusts only the cockpit, Node and `cockpit.toml` it was generated for.
 a Node switch or an edit to `cockpit.toml`, it holds every agent tool call, `cockpit sync` run
 through the agent included, until a human regenerates. That is deliberate: guard policy comes from
 `cockpit.toml`, and an agent able to apply its own edit could loosen its guard. The refusal names
-what changed and the command to run. The upgrade sequence:
+what changed and the command to run. `npx --no cockpit upgrade --config cockpit.toml --dry-run` previews
+the move; a human runs it without `--dry-run` in a terminal (see
+[Upgrade cockpit](harness-surfaces.md#upgrade-cockpit)). By hand, the sequence is:
 
 1. Select the reviewed version and run
    `npm install --save-dev --save-exact @b00dea/cockpit@<version>`.
