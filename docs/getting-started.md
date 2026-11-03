@@ -1,9 +1,13 @@
 # Getting started
 
-This guide takes you from installing cockpit to your own product running under it. It is for
-developers, and for the AI agents they ask to set cockpit up. The first chapter needs one
-repository, one agent tool and no Docker. The second adds more repositories and a Compose stack.
-To watch cockpit work on a throwaway example first, follow the [tutorial](tutorial.md).
+By the end of chapter 1, one repository has a reviewed `cockpit.toml`, every agent tool you listed
+loads the same instructions and skills, the guard refuses a push to `main` in each of them (in Codex
+once a person trusts its hook), and `cockpit check` fails the moment a generated file drifts. That
+needs one repository, Node.js and Git; no Docker. Chapter 2 adds more repositories and a Compose
+stack each agent can bring up on its own ports.
+
+This guide is for developers and for the AI agents they ask to do the setup. To watch cockpit work on
+a throwaway example first, follow the [tutorial](tutorial.md).
 
 | Your situation | Go to |
 |---|---|

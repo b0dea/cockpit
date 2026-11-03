@@ -1,5 +1,10 @@
 # Cockpit documentation
 
+cockpit gives every coding agent on a team the same instructions, skills and guard from one
+`cockpit.toml`, checks that the generated files still match, and can run the product's stack for each
+agent and grade the finished work independently. New here: read [Getting started](getting-started.md)
+chapter 1, which needs one repository and no Docker.
+
 This index lists every page for people using cockpit on their own products, grouped by what you
 are trying to do. To work on cockpit itself, start with [CONTRIBUTING.md](../CONTRIBUTING.md); the
 contributor pages live separately under docs/contributing/.
