@@ -127,7 +127,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'siblings-root': 'Root directory containing sibling checkouts',
     since: 'Collect logs no older than this duration',
     tail: 'Maximum number of log records to collect',
-    target: 'Agent surface target to initialize',
+    target: 'Agent tool to set up; comma-separate several (claudecode,opencode)',
     var: 'Environment variable mapping for the sibling',
     'work-order': 'Work-order identifier',
     'write-probe-specifications': 'Write a probe-specification file for the current manifest to this new path, with the probe fields left for you',
@@ -195,7 +195,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'init',
         stage: 'set-up',
-        summary: 'Preview, then accept, a first cockpit setup for one agent tool',
+        summary: 'Preview, then accept, a first cockpit setup for one or more agent tools',
         usage: '<root> [options]',
         handler: 'init',
         visibility: 'public',
@@ -660,7 +660,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
-            : option.role === 'surface-target' ? SURFACE_TARGETS.some(target => target === text)
+            : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
             : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined

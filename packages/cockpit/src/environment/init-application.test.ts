@@ -747,7 +747,7 @@ describe('init application', () => {
         const f = fixture()
         await runInitApplication({ ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }, f.adapters)
 
-        const changed = await runInitApplication({ ...f.input, target: 'claudecode', accepted: true,
+        const changed = await runInitApplication({ ...f.input, target: 'claudecode', tools: ['claudecode'], accepted: true,
             acceptedPreviewSha256: digest('3') }, f.adapters)
 
         expect(changed).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))

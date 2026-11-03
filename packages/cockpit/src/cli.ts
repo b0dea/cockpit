@@ -13,7 +13,7 @@ import { commandGroups, commandSpelling, commandStages, commands, describePublic
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
-import { isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
+import { GUARD_SURFACE_TARGETS, isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, documentObservedCommand, observeCockpitRoot, observePublicEstate } from './init/draft.js'
@@ -929,11 +929,21 @@ async function decodeRequest(
     }
     if (handler === 'init') {
         const [root, ...extraRoots] = parsed.positionals
-        const target = parsed.values.target, registry = parsed.values.registry
-        if (!root || extraRoots.length || !SURFACE_TARGETS.some(value => value === target)
+        const registry = parsed.values.registry
+        // `--target a,b` chooses several tools; the first is the one whose setup skill init publishes
+        // before the interview. One comma list rather than a repeated flag keeps the guard's
+        // single-value grammar for --target.
+        const tools = typeof parsed.values.target === 'string' ? parsed.values.target.split(',') : []
+        if (!root || extraRoots.length || tools.length === 0 || !tools.every(tool => SURFACE_TARGETS.some(value => value === tool))
+            || new Set(tools).size !== tools.length
             || registry !== undefined && (typeof registry !== 'string' || registry.length === 0)) {
-            return usageOutcome('CLI_USAGE_INVALID', `init requires one explicit root and --target ${SURFACE_TARGETS.join('|')}`)
+            return usageOutcome('CLI_USAGE_INVALID', `init requires one explicit root and --target with one or more distinct tools, comma-separated: ${SURFACE_TARGETS.join('|')}`)
         }
+        if (!tools.some(tool => isGuardSurfaceTarget(tool))) {
+            return usageOutcome('CLI_USAGE_INVALID', `--target must include a tool cockpit has a guard for (${GUARD_SURFACE_TARGETS.join(', ')})`, '--target')
+        }
+        const target = tools[0] as SurfaceTarget
+        const chosen = tools as SurfaceTarget[]
         const absoluteRoot = resolve(root)
         try {
             if (await realpath(absoluteRoot) !== absoluteRoot) return usageOutcome('CLI_USAGE_INVALID', 'init root must name its canonical directory')
@@ -952,7 +962,7 @@ async function decodeRequest(
                 || parsed.values['accept-defaults'] !== undefined) {
                 return usageOutcome('CLI_USAGE_INVALID', '--reset-answer is a standalone preview or exact acceptance operation')
             }
-            return { handler, input: { root: absoluteRoot, target: target as SurfaceTarget,
+            return { handler, input: { root: absoluteRoot, target, tools: chosen,
                 ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
                 accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
                 ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
@@ -962,7 +972,7 @@ async function decodeRequest(
         const unattended = await decodeUnattendedInit(parsed.values as {
             interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string })
         if ('status' in unattended) return unattended
-        return { handler, input: { root: absoluteRoot, target: target as SurfaceTarget,
+        return { handler, input: { root: absoluteRoot, target, tools: chosen,
             ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
             accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
             ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),

@@ -5305,7 +5305,7 @@ export async function runDoctor(
     if (loaded.kind === 'complete') {
         const state = declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' as const : 'runtime' as const
         return Object.freeze({ ...reported, result: Object.freeze({ ...reported.result,
-            readiness: readinessReport(state, reported.diagnostics) }) })
+            readiness: readinessReport(state, reported.diagnostics, loaded.result.config.surfaces.tools) }) })
     }
     const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
     return Object.freeze({

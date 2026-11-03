@@ -15,7 +15,7 @@ import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from
 import type { SetupResult } from './environment/setup.js'
 import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './environment/selftest-application.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
-import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
+import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
 
@@ -446,7 +446,7 @@ describe('CLI help', () => {
         expect(result.stdout).toBe(
             'Usage: cockpit <command> [options]\n\n' +
             'Set up:\n' +
-            '  init              Preview, then accept, a first cockpit setup for one agent tool\n' +
+            '  init              Preview, then accept, a first cockpit setup for one or more agent tools\n' +
             '  setup             Clone or locate the declared sibling repositories and link them\n' +
             '  sibling           Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  tool              Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
@@ -2027,8 +2027,12 @@ describe('init command admission', () => {
         }
     })
 
-    it('binds one explicit root and target and keeps JSON preview read-only', async () => {
-        for (const target of SURFACE_TARGETS) {
+    it('binds one explicit root and one or more tools, the first as the target, and keeps JSON preview read-only', async () => {
+        for (const [args, target, tools] of [
+            ...GUARD_SURFACE_TARGETS.map(tool => [['--target', tool], tool, [tool]] as const),
+            [['--target', 'claudecode,cursor'], 'claudecode', ['claudecode', 'cursor']],
+            [['--target', 'cursor,opencode'], 'cursor', ['cursor', 'opencode']],
+        ] as const) {
             let stdout = ''
             const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
                 kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
@@ -2037,9 +2041,9 @@ describe('init command admission', () => {
             }))
             const confirmInit = vi.fn(async () => 'a'.repeat(64))
             const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true }, confirmInit }
-            expect(await runCli(['init', process.cwd(), '--target', target, '--interactive', '--json'], io, { init: application })).toBe(0)
+            expect(await runCli(['init', process.cwd(), ...args, '--interactive', '--json'], io, { init: application })).toBe(0)
             expect(application).toHaveBeenCalledOnce()
-            expect(application.mock.calls[0]![0]).toMatchObject({ root: process.cwd(), target, accepted: false })
+            expect(application.mock.calls[0]![0]).toMatchObject({ root: process.cwd(), target, tools, accepted: false })
             expect(confirmInit).not.toHaveBeenCalled()
             expect(JSON.parse(stdout).result).toMatchObject({ root: process.cwd(), target })
             expect(stdout.split('\n')).toHaveLength(2)
@@ -2205,7 +2209,8 @@ describe('init command admission', () => {
     it('refuses missing, extra or duplicate root and target before dispatch', async () => {
         for (const args of [
             [], ['--target', 'codexcli'], ['.'], ['.', '.', '--target', 'codexcli'],
-            ['.', '--target', 'unknown'], ['.', '--target', 'codexcli', '--target', 'opencode'],
+            ['.', '--target', 'unknown'], ['.', '--target', 'codexcli', '--target', 'opencode'], ['.', '--target', 'codexcli,codexcli'], ['.', '--target', 'codexcli,unknown'],
+            ['.', '--target', 'cursor,grokcli'],
             ['.', '--target', 'codexcli', '--registry', 'a', '--registry', 'b'],
         ]) {
             const application = vi.fn()

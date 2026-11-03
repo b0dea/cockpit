@@ -56,7 +56,8 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
         check: checkGeneratedEnvironment,
     }
     const greenfieldInput: InitApplicationInput = {
-        root: f.root, target: f.input.target, accepted: false, sessionId: f.input.sessionId,
+        // Two tools chosen: the first gets the setup skill before the interview, and both are written once it ends.
+        root: f.root, target: f.input.target, tools: [f.input.target, 'claudecode'], accepted: false, sessionId: f.input.sessionId,
         platform: f.input.platform, home: f.input.home, xdgStateHome: f.input.xdgStateHome,
     }
     const preview = await runInitApplication(greenfieldInput, adapters)
@@ -144,6 +145,9 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     expect(completed, JSON.stringify(completed)).toMatchObject({ kind: 'complete', status: 0,
         result: { stage: 'environment-verified' } })
     expect(synchronizeInputs).toEqual([true])
+    expect(await loadCockpitConfig(f.destination)).toMatchObject({ result: { config: { surfaces: { tools: ['codexcli', 'claudecode'] } } } })
+    for (const skill of ['.agents/skills/cockpit-setup/SKILL.md', '.claude/skills/cockpit-setup/SKILL.md']) expect(existsSync(join(f.root, skill)), skill).toBe(true)
+    expect(existsSync(join(f.root, '.opencode'))).toBe(false)
 }, 120_000)
 
 // Sync writes the cockpit's package pin and scripts into the root package.json, editing the
@@ -176,7 +180,7 @@ it.each([
         preflight: input => preflight(input),
     }
     // A plain sync finds init's state where this machine keeps it, so init records it there too.
-    const input: InitApplicationInput = { root: f.root, target: f.input.target, accepted: false, sessionId: f.input.sessionId,
+    const input: InitApplicationInput = { root: f.root, target: f.input.target, tools: [f.input.target], accepted: false, sessionId: f.input.sessionId,
         platform: process.platform as 'darwin' | 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome, cockpitRoot: { kind: 'in-repo' } }
     const preview = await runInitApplication(input, adapters)
     const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }

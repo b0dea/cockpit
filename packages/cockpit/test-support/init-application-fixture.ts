@@ -83,7 +83,7 @@ export function fixture() {
         preflight: async () => { calls.push('preflight'); return { kind: 'complete', status: 0, diagnostics: [], result: { verdict: 'pass' } } },
     }
     const input: InitApplicationInput = {
-        root: resolve(root), target: 'codexcli', registry: join(root, 'env/registry.sh'), accepted: false,
+        root: resolve(root), target: 'codexcli', tools: ['codexcli'], registry: join(root, 'env/registry.sh'), accepted: false,
         sessionId: 'synthetic-session', platform: 'linux', home, xdgStateHome: join(home, 'state'),
     }
     return {

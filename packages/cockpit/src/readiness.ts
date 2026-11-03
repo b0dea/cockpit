@@ -28,6 +28,8 @@ export interface ReadinessEntry {
     readonly refusedBy?: Readonly<{ command: string; code: string }>
     /** What to do when a finding carries no fix of its own. */
     readonly fix: string
+    /** The agent tools the prerequisite concerns; it applies only while one of them is listed. */
+    readonly tools?: readonly string[]
 }
 
 const C = ENVIRONMENT_CODES
@@ -86,7 +88,7 @@ export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
     { id: 'harness-path-absolute', level: 'recommended', appliesTo: BOTH, codes: [C.GUARD_SEARCH_PATH_RELATIVE],
         needs: 'the guard asks a person before every agent command while the PATH the agent harness runs with holds a relative entry, and Codex and OpenCode refuse what it asks about',
         fix: 'remove relative and empty entries from the PATH the agent harness starts with' },
-    { id: 'codex-hook-trusted', level: 'recommended', appliesTo: BOTH, codes: [C.CODEX_HOOK_UNTRUSTED],
+    { id: 'codex-hook-trusted', level: 'recommended', appliesTo: BOTH, codes: [C.CODEX_HOOK_UNTRUSTED], tools: ['codexcli'],
         needs: 'Codex runs the guard hook only once a person on this machine has trusted it',
         fix: 'a person trusts the hook from codex in a terminal in the cockpit root' },
     { id: 'work-evaluator', level: 'recommended', appliesTo: BOTH, codes: [C.EVALUATOR_UNAVAILABLE],
@@ -120,11 +122,12 @@ export interface ReadinessReport {
 
 type ReportedDiagnostic = Readonly<{ code: string; severity: string; message: string; target?: string; fix?: string }>
 
-/** Groups the diagnostics a command reported under the prerequisites they name. */
-export function readinessReport(state: ReadinessReport['state'], diagnostics: readonly ReportedDiagnostic[]): ReadinessReport {
+/** Groups the diagnostics a command reported under the prerequisites they name, for the listed tools. */
+export function readinessReport(state: ReadinessReport['state'], diagnostics: readonly ReportedDiagnostic[], tools: readonly string[]): ReadinessReport {
     const gaps: ReadinessGap[] = []
     const noFinding: string[] = []
     for (const entry of READINESS_CATALOGUE) {
+        if (entry.tools && !entry.tools.some(tool => tools.includes(tool))) continue
         const findings = diagnostics.filter(({ code }) => entry.codes.includes(code))
         if (findings.length > 0) {
             gaps.push(Object.freeze({ id: entry.id, level: entry.level, needs: entry.needs,

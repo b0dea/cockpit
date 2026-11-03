@@ -133,6 +133,8 @@ export interface DocumentConfigurationInput {
     readonly sourceObservationSha256: string
     readonly classification?: EstateClassification
     readonly answers: readonly DocumentConfigurationAnswer[]
+    /** The agent tools the person chose for init; written as surfaces.tools. */
+    readonly tools?: readonly string[]
 }
 
 /** Where an unrecorded value was looked for: a shell registry, or the repositories init observed. */
@@ -741,8 +743,9 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
     const candidate = snapshotJson(value)
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined
     const record = candidate as Record<string, unknown>
-    const keys = Object.keys(record).sort().join(',')
+    const keys = Object.keys(record).filter(key => key !== 'tools').sort().join(',')
     if (keys !== 'answers,sourceObservationSha256' && keys !== 'answers,classification,sourceObservationSha256'
+        || record.tools !== undefined && (!Array.isArray(record.tools) || !record.tools.every(tool => typeof tool === 'string'))
         || typeof record.sourceObservationSha256 !== 'string' || !SHA256.test(record.sourceObservationSha256)
         || record.classification !== undefined && !['one-sibling', 'incomplete-multi-repository',
             'no-runnable-product', 'ready-multi-repository'].includes(record.classification as string)
@@ -763,6 +766,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
     }
     return Object.freeze({ sourceObservationSha256: record.sourceObservationSha256,
         ...(record.classification === undefined ? {} : { classification: record.classification as EstateClassification }),
+        ...(record.tools === undefined ? {} : { tools: Object.freeze([...record.tools as string[]]) }),
         answers: Object.freeze(answers) })
 }
 
@@ -1292,7 +1296,8 @@ async function completeConfigurationDocument(
     const candidate = CockpitConfig.safeParse({ ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map(row => row.field) }),
         ...defaults, cockpit: { ...defaults.cockpit, name,
         ...(siblingsRoot === undefined ? {} : { siblings_root: siblingsRoot }) },
-        sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment, ...(testing ? { testing } : {}) })
+        sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment, ...(testing ? { testing } : {}),
+        ...(configuration.tools === undefined ? {} : { surfaces: { ...defaults.surfaces, tools: configuration.tools } }) })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)
     if (configuration.classification === 'one-sibling' && candidate.data.sibling.length !== 1

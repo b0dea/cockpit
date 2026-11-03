@@ -25,7 +25,7 @@ describe('readiness catalogue', () => {
             { severity: 'error', code: 'GIT_STATE_UNHEALTHY', message: 'no commits yet', target: 'cockpit.toml', fix: 'commit it' },
             { severity: 'warning', code: 'COCKPIT_NOT_INSTALLED', message: 'not installed' },
             { severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED', message: 'no runtime' },
-        ])
+        ], ['claudecode', 'codexcli', 'opencode'])
         expect(report.gaps.map(({ id }) => id)).toEqual(['cockpit-committed', 'cockpit-installed'])
         expect(report.gaps[0]!.findings).toEqual([{ code: 'GIT_STATE_UNHEALTHY', severity: 'error', target: 'cockpit.toml',
             message: 'no commits yet', fix: 'commit it' }])
@@ -33,5 +33,8 @@ describe('readiness catalogue', () => {
         // A runtime prerequisite does not apply where none is declared.
         expect(report.noFinding).not.toContain('machine-floor')
         expect(report.noFinding).toContain('siblings-present')
+        // A prerequisite of one tool is reported only while that tool is listed.
+        expect(report.noFinding).toContain('codex-hook-trusted')
+        expect(readinessReport('surfaces-only', [], ['claudecode']).noFinding).not.toContain('codex-hook-trusted')
     })
 })

@@ -18,6 +18,8 @@ export const mechanism = {
 export interface InitCommandInput {
     readonly root: string
     readonly target: SurfaceTarget
+    /** Every chosen tool, target first; just the target when only one was given. */
+    readonly tools?: readonly SurfaceTarget[]
     readonly registry?: string
     readonly sessionId?: string
     readonly platform?: 'darwin' | 'linux'
@@ -182,7 +184,7 @@ const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${val
  * accepted quietly: the person approved the file's bytes, not the recorded ones.
  */
 function recordedAnswerConflict(
-    input: Pick<InitCommandInput, 'root' | 'target'>,
+    input: Pick<InitCommandInput, 'root' | 'target' | 'tools'>,
     preview: InitApplicationOutcome,
     supplied: ReadonlyMap<string, unknown>,
     marks: ReadonlyMap<string, AnswerProvenance>,
@@ -205,7 +207,7 @@ function recordedAnswerConflict(
         try { same = canonicalJson(JSON.parse(now.bytes)) === canonicalJson(JSON.parse(recorded[index]!.bytes)) } catch { same = false }
         if (same && provenanceFor(field, marks) !== recorded[index]!.provenance) same = false
         if (!same) return refusal('INIT_ANSWER_CONFLICT',
-            `the answers file gives a different value for ${field} than the answer an earlier run recorded; drop ${field} from the answers file to keep the recorded answer, or, before cockpit.toml is prepared, preview a reset with npx --no cockpit init ${input.root} --target ${input.target} --reset-answer ${field} --json`)
+            `the answers file gives a different value for ${field} than the answer an earlier run recorded; drop ${field} from the answers file to keep the recorded answer, or, before cockpit.toml is prepared, preview a reset with ${initCommand({ root: input.root, target: (input.tools ?? [input.target]).join(','), args: `--reset-answer ${field} --json` })}`)
     }
     return undefined
 }
@@ -239,6 +241,7 @@ async function drive(
     let shared: Omit<InitApplicationInput, 'accepted'> = {
         root: input.root,
         target: input.target,
+        tools: input.tools ?? [input.target],
         ...(input.registry === undefined ? {} : { registry: input.registry }),
         sessionId: input.sessionId ?? randomUUID(),
         platform: input.platform,
@@ -328,7 +331,7 @@ async function drive(
     else outcome = preview
     for (let answered = 0; outcome.kind === 'pending' && outcome.result?.question !== undefined; answered += 1) {
         if (answered >= MAX_INTERVIEW_ANSWERS) return refusal('INIT_INTERVIEW_LIMIT_EXCEEDED',
-            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun ${initCommand({ root: input.root, target: input.target })} with the same options to resume from the persisted answers`)
+            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun ${initCommand({ root: input.root, target: (input.tools ?? [input.target]).join(',') })} with the same options to resume from the persisted answers`)
         const question = outcome.result.question
         let bytes: string | undefined
         // A person typing at the terminal states their own answer.

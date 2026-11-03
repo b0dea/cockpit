@@ -40,7 +40,10 @@ const SHA256 = /^[a-f0-9]{64}$/
 
 export interface InitApplicationInput {
     readonly root: string
+    /** The tool whose setup skill init publishes before the interview; the first of tools. */
     readonly target: SurfaceTarget
+    /** Every tool the person chose, written as surfaces.tools; the final sync renders each one. */
+    readonly tools: readonly SurfaceTarget[]
     readonly registry?: string
     readonly accepted: boolean
     readonly acceptedPreviewSha256?: string
@@ -168,6 +171,7 @@ export interface InitApplicationAdapters {
         configPath?: string
         repositories: readonly Readonly<{ slug: string; root: string }>[]
         checkRoot: boolean
+        tools: readonly string[]
         classification?: string
     }>) => Promise<Readonly<{ state: ReadinessReport['state']; findings: readonly Diagnostic[] }>>
 }
@@ -364,7 +368,7 @@ function nameProposal(root: string): readonly InferredItem[] {
 }
 
 function commandDigest(input: InitApplicationInput): string {
-    return sha256(JSON.stringify({ root: input.root, target: input.target, registry: input.registry ?? null,
+    return sha256(JSON.stringify({ root: input.root, target: input.target, tools: input.tools, registry: input.registry ?? null,
         ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
         ...(input.cockpitRoot?.kind === 'dedicated' ? { firstSibling: input.cockpitRoot.firstSibling } : {}) }))
 }
@@ -475,11 +479,12 @@ async function withReadiness(
             .map(({ slug, path }) => Object.freeze({ slug, root: resolve(estateRoot, path) }))),
         // A dedicated cockpit folder is created as a Git repository by init itself.
         checkRoot: input.cockpitRoot?.kind !== 'dedicated',
+        tools: input.tools,
         ...(result.estate === undefined ? {} : { classification: result.estate.classification }),
     }))
     const diagnostics = [...outcome.diagnostics, ...inspected.findings]
     return Object.freeze({ ...outcome, diagnostics,
-        result: Object.freeze({ ...result, readiness: readinessReport(inspected.state, diagnostics) }) }) as InitApplicationOutcome
+        result: Object.freeze({ ...result, readiness: readinessReport(inspected.state, diagnostics, input.tools) }) }) as InitApplicationOutcome
 }
 
 async function runInitStages(
@@ -488,6 +493,9 @@ async function runInitStages(
 ): Promise<InitApplicationOutcome> {
     if (!isAbsolute(input.root) || resolve(input.root) !== input.root) {
         return refused('INIT_ROOT_INVALID', 'init requires one canonical absolute checkout root', input.root)
+    }
+    if (input.tools[0] !== input.target || new Set(input.tools).size !== input.tools.length) {
+        return refused('CLI_USAGE_INVALID', 'init requires distinct tools whose first is the target', '--target')
     }
     if (input.resetAnswer !== undefined && (input.greenfieldAnswer !== undefined || input.accepted)) {
         return refused('INIT_ANSWER_RESET_CONFLICT', 'resetting a recorded answer is a standalone operation')
@@ -510,7 +518,7 @@ async function runInitStages(
         if (prior.kind === 'complete') {
             return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null, diagnostics: [{
                 ...diagnostic('INIT_TARGET_CHANGED', `bootstrap state is already bound to ${target}`, input.root),
-                fix: `to resume the init started for ${target}, run ${initCommand({ root: input.root, target })} with the options you started it with (a root that was removed and recreated starts again from the preview); to use --target ${input.target} instead, ask the person who owns this machine before you delete ${formatShellCommand([priorAddress.path])}, which holds only that init's progress, then run ${initCommand({ root: input.root, target: input.target })}` }] }
+                fix: `to resume the init started for ${target}, run ${initCommand({ root: input.root, target })} with the options you started it with (a root that was removed and recreated starts again from the preview); to use --target ${input.tools.join(',')} instead, ask the person who owns this machine before you delete ${formatShellCommand([priorAddress.path])}, which holds only that init's progress, then run ${initCommand({ root: input.root, target: input.tools.join(',') })}` }] }
         }
         if (prior.kind === 'refusal') return stateFailure(prior)
     }
@@ -531,7 +539,7 @@ async function runInitStages(
         // A reset would rewrite answers that the restart is about to discard.
         if (input.resetAnswer !== undefined) return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
             diagnostics: [{ ...diagnostic('INIT_ANSWER_RESET_UNAVAILABLE', `none of the files init published into ${input.root}, nor cockpit.toml, exist any more, so its recorded answers no longer apply`, address.path),
-                fix: `run ${initCommand({ root: input.root, target: input.target, args: '--json' })} without --reset-answer: init starts again from the preview` }] }
+                fix: `run ${initCommand({ root: input.root, target: input.tools.join(','), args: '--json' })} without --reset-answer: init starts again from the preview` }] }
         restarted = { severity: 'info', code: 'INIT_STATE_RESTARTED', target: address.path,
             message: `none of the files init published into ${input.root}, nor cockpit.toml, exist any more (the directory was removed or recreated, or they were deleted), so init starts again from the preview; the answers recorded there are discarded once the fresh preview is accepted` }
         discarded = current
@@ -568,7 +576,7 @@ async function initStagesFrom(
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
         try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
         catch (error) {
-            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${errorCause(error)}); fix the named file and rerun ${initCommand({ root: input.root, target: input.target })}`, input.root)
+            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${errorCause(error)}); fix the named file and rerun ${initCommand({ root: input.root, target: input.tools.join(',') })}`, input.root)
         }
         if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
     }
@@ -576,7 +584,7 @@ async function initStagesFrom(
     // --accept-preview and --accept-defaults consent to bytes, never to a location. Every durable
     // bootstrap stage follows accepted placement, which init-created files must not reopen on resume.
     if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
-        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run ${initCommand({ root: input.root, target: input.target, args: '--interactive' })}`, 'cockpit.root')
+        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run ${initCommand({ root: input.root, target: input.tools.join(','), args: '--interactive' })}`, 'cockpit.root')
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'
@@ -679,7 +687,7 @@ async function initStagesFrom(
         sources: [...projection.sources], previewSha256: projection.previewSha256, published: [...projection.files],
         updatedAt: adapters.now() })
         if (refreshed.kind === 'refusal' && 'reason' in refreshed) return refused('INIT_STATE_STALE',
-            `${refreshed.message}; rerun ${initCommand({ root: input.root, target: input.target })} to review the current preview`, address.path)
+            `${refreshed.message}; rerun ${initCommand({ root: input.root, target: input.tools.join(',') })} to review the current preview`, address.path)
         if (refreshed.kind !== 'complete') return stateFailure(refreshed)
         current = refreshed.value
     }
@@ -691,7 +699,7 @@ async function initStagesFrom(
                 sessionId: input.sessionId }), expectedRevision: discarded.revision, updatedAt: adapters.now(),
             value: { commandSha256: commandDigest(boundInput), previewSha256: projection.previewSha256, sources: projection.sources } })
         if (previewed.kind === 'stale') return refused('INIT_STATE_STALE',
-            `bootstrap state changed while init was restarting it; rerun ${initCommand({ root: input.root, target: input.target })} to review the current preview`, address.path)
+            `bootstrap state changed while init was restarting it; rerun ${initCommand({ root: input.root, target: input.tools.join(',') })} to review the current preview`, address.path)
         if (previewed.kind !== 'complete') return stateFailure(previewed)
         current = previewed.value
     }
@@ -742,11 +750,11 @@ async function initStagesFrom(
             }
             if (state.sourceObservationSha256 === sourceObservationSha256) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED',
-                    `configuration classification changed while its source observation digest stayed the same; rerun ${initCommand({ root: input.root, target: input.target })} to re-observe the current interview, and report the invariant failure if it persists`, address.path)
+                    `configuration classification changed while its source observation digest stayed the same; rerun ${initCommand({ root: input.root, target: input.tools.join(',') })} to re-observe the current interview, and report the invariant failure if it persists`, address.path)
             }
             if (input.greenfieldAnswer !== undefined) {
                 return refused('GREENFIELD_ANSWER_INVALID',
-                    `configuration source changed, so the answer for the earlier pending question was not applied; rerun ${initCommand({ root: input.root, target: input.target })} to review the fresh observation before answering again`, address.path)
+                    `configuration source changed, so the answer for the earlier pending question was not applied; rerun ${initCommand({ root: input.root, target: input.tools.join(',') })} to review the fresh observation before answering again`, address.path)
             }
             staleSourceObservationSha256 = state.sourceObservationSha256
             state = undefined
@@ -760,7 +768,7 @@ async function initStagesFrom(
         }
         const answers = proposed ? [...priorAnswers, { ...proposed, sha256: sha256(proposed.bytes) }] : [...priorAnswers]
         const documented = await adapters.document({ root: boundInput.root, registry: boundInput.registry, output: destination, ...documentEstate(boundInput),
-            configuration: { sourceObservationSha256, ...(classification ? { classification: classification.classification } : {}), answers } })
+            configuration: { sourceObservationSha256, ...(classification ? { classification: classification.classification } : {}), answers, tools: input.tools } })
         if (documented.artifact === null) {
             if (proposed && documented.diagnostics.some(row => row.code.startsWith('DOCUMENT_CONFIGURATION_ANSWER')
                 || row.code === 'DOCUMENT_DEFAULT_CONFIRMATION_INVALID')) {
@@ -771,7 +779,7 @@ async function initStagesFrom(
             }
             return ownerRefusal(documented, current.value.stage, projection)
         }
-        const draftRemedy = `shorten the answers; for a saved answer, from the cockpit root, preview its reset with ${initCommand({ root: input.root, target: input.target, args: '--reset-answer <field> --json' })}, then repeat with --accept-reset <previewSha256> before answering again`
+        const draftRemedy = `shorten the answers; for a saved answer, from the cockpit root, preview its reset with ${initCommand({ root: input.root, target: input.tools.join(','), args: '--reset-answer <field> --json' })}, then repeat with --accept-reset <previewSha256> before answering again`
         if (Buffer.byteLength(documented.artifact, 'utf8') > DRAFT_BYTE_LIMIT) {
             return refused('INIT_DRAFT_INVALID', `cockpit.toml exceeds the draft byte limit and cannot be offered for confirmation; ${draftRemedy}`, destination)
         }
@@ -809,7 +817,7 @@ async function initStagesFrom(
                 })
             if (recorded.kind === 'refusal' && 'reason' in recorded) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED',
-                    `${recorded.message}; rerun ${initCommand({ root: input.root, target: input.target })} to review the fresh observation before answering again`, address.path)
+                    `${recorded.message}; rerun ${initCommand({ root: input.root, target: input.tools.join(',') })} to review the fresh observation before answering again`, address.path)
             }
             if (recorded.kind !== 'complete') return stateFailure(recorded)
             return { kind: 'pending', status: 0, artifact: null, destination: null,
@@ -839,7 +847,7 @@ async function initStagesFrom(
             })
             if (refreshed.kind === 'refusal' && 'reason' in refreshed) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED',
-                    `${refreshed.message}; rerun ${initCommand({ root: input.root, target: input.target })} to review the fresh observation before answering again`, address.path)
+                    `${refreshed.message}; rerun ${initCommand({ root: input.root, target: input.tools.join(',') })} to review the fresh observation before answering again`, address.path)
             }
             if (refreshed.kind !== 'complete') return stateFailure(refreshed)
             current = refreshed.value
@@ -861,12 +869,12 @@ async function initStagesFrom(
     const currentDocument = await adapters.document({ root: boundInput.root, registry: boundInput.registry, output: destination, ...documentEstate(boundInput),
         configuration: { sourceObservationSha256: persistedConfiguration.sourceObservationSha256,
             ...(persistedConfiguration.classification ? { classification: persistedConfiguration.classification } : {}),
-            answers: persistedConfiguration.answers } })
+            answers: persistedConfiguration.answers, tools: input.tools } })
     if (currentDocument.kind !== 'complete') {
         // The answers are bound to the estate init observed; a product edit after the draft breaks
         // that binding, and replaying the same answers cannot rebind it, so a bare rerun refuses again.
         const observed = current.value.stage !== 'draft-prepared'
-        const fix = `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: input.root, target: input.target,
+        const fix = `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: input.root, target: input.tools.join(','),
             args: `--accept-preview ${projection.previewSha256}` })}${observed
             ? `; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: destination })}, then ${cockpitCommand('check', { config: destination })}` : ''}`
         return ownerRefusal({ ...currentDocument, diagnostics: currentDocument.diagnostics.map(row =>
@@ -929,7 +937,7 @@ async function initStagesFrom(
         return { ...stopped, diagnostics: [...stopped.diagnostics, { severity: 'info', code: 'INIT_VERIFICATION_INCOMPLETE', target: destination,
             message: 'cockpit.toml is written, so its recorded answers can no longer be reset; init stopped while verifying it',
             fix: `correct what the errors above name, changing a cockpit.toml value in cockpit.toml itself, then rerun ${initCommand({ root: input.root,
-                target: input.target, args: `--accept-preview ${projection.previewSha256}` })} to finish verifying it` }] } as InitApplicationOutcome
+                target: input.tools.join(','), args: `--accept-preview ${projection.previewSha256}` })} to finish verifying it` }] } as InitApplicationOutcome
     }
     const validation = await adapters.validateConfig(destination)
     if (validation.status !== 0) return verificationStop(validation)
@@ -954,7 +962,7 @@ async function initStagesFrom(
 
 // A reset rewrites the interview, which only exists until cockpit.toml is written from it.
 function resetUnavailableFix(input: InitApplicationInput, current: BootstrapStateRecord | null): string {
-    const resume = (args: string) => initCommand({ root: input.root, target: input.target, args })
+    const resume = (args: string) => initCommand({ root: input.root, target: input.tools.join(','), args })
     switch (current?.value.stage) {
         case 'draft-prepared':
             return `cockpit.toml is already drafted from the recorded answers: rerun ${resume(`--accept-preview ${current.value.previewSha256}`)} to write it, then change the value in cockpit.toml itself and rerun the same command`
