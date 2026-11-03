@@ -544,43 +544,16 @@ describe('paired harness evidence', () => {
         }
     })
 
-    it('rejects evidence spliced across programs behind the same generic launcher', () => {
-        const versionCommand = [ENV_LAUNCHER, 'another-program', '--version']
+    // The harness is identified by argv[0] alone, so a launcher there is refused before anything it
+    // launches is read: an assignment prefix or a nested shell behind env cannot change the verdict.
+    it.each([
+        ['another program', [ENV_LAUNCHER, 'another-program', '--version']],
+        ['an environment assignment prefix', [ENV_LAUNCHER, 'MODE=synthetic', 'version-tool', '--version']],
+        ['a nested shell', [ENV_LAUNCHER, 'sh', '-c', 'version-tool --version']],
+    ])('rejects evidence spliced across programs behind env with %s', (_label, versionCommand) => {
         const events = { ...EVENTS, version: { ...EVENTS.version, command: versionCommand } }
 
         expect(validateEvidenceManifest(row({ versionCommand, events }), ROOT)).toContain(
-            'versionCommand must invoke the harness binary directly; env is a generic command launcher',
-        )
-    })
-
-    it('rejects ambiguous environment prefixes before they can hide different programs', () => {
-        const versionCommand = [ENV_LAUNCHER, 'MODE=synthetic', 'version-tool', '--version']
-        const helpCommand = [ENV_LAUNCHER, 'MODE=synthetic', 'help-tool', '--help']
-        const invocation = [
-            ENV_LAUNCHER,
-            'MODE=synthetic',
-            'probe-tool',
-            '--config',
-            '{control}',
-            'synthetic',
-            'forbidden',
-            'attempt',
-        ]
-        const events = {
-            ...EVENTS,
-            version: { ...EVENTS.version, command: versionCommand },
-            help: { ...EVENTS.help, command: helpCommand },
-            brokenControl: {
-                ...EVENTS.brokenControl,
-                command: invocation.map((argument) => (argument === '{control}' ? BROKEN : argument)),
-            },
-            candidateControl: {
-                ...EVENTS.candidateControl,
-                command: invocation.map((argument) => (argument === '{control}' ? CANDIDATE : argument)),
-            },
-        }
-
-        expect(validateEvidenceManifest(row({ versionCommand, helpCommand, invocation, events }), ROOT)).toContain(
             'versionCommand must invoke the harness binary directly; env is a generic command launcher',
         )
     })
@@ -601,30 +574,6 @@ describe('paired harness evidence', () => {
                     root,
                 ),
             ).toContain(`versionCommand must invoke the harness binary directly; ${shellName} is a generic command launcher`)
-        } finally {
-            rmSync(root, { recursive: true, force: true })
-        }
-    })
-
-    it('rejects a nested environment and shell launcher as harness identity', () => {
-        const root = probeEvidenceRoot()
-        try {
-            const versionCommand = ['/usr/bin/env', 'sh', '-c', 'version-tool --version']
-            const helpCommand = ['/usr/bin/env', 'sh', '-c', 'help-tool --help']
-            const invocation = [
-                '/usr/bin/env',
-                'sh',
-                '-c',
-                'probe-tool --config "$1"',
-                'probe-shell',
-                '{control}',
-            ]
-            expect(
-                validateEvidenceManifest(
-                    probeManifestWithCommands(root, versionCommand, helpCommand, invocation),
-                    root,
-                ),
-            ).toContain('versionCommand must invoke the harness binary directly; env is a generic command launcher')
         } finally {
             rmSync(root, { recursive: true, force: true })
         }
@@ -659,17 +608,19 @@ describe('paired harness evidence', () => {
                 mkdirSync(join(root, '.cockpit/local/probes', directory))
                 writeFileSync(join(root, '.cockpit/local/probes', directory, 'harness'), '#!/bin/sh\n')
             }
-            const versionCommand = [ENV_LAUNCHER, './harness', '--version']
-            const helpCommand = [ENV_LAUNCHER, './harness', '--help']
-            const invocation = [ENV_LAUNCHER, './harness', '--config', '{control}']
+            const versionCommand = ['./harness', '--version']
+            const helpCommand = ['./harness', '--help']
+            const invocation = ['./harness', '--config', '{control}']
             const manifest = probeManifestWithCommands(root, versionCommand, helpCommand, invocation, {
                 version: '.cockpit/local/probes/version-tool',
                 help: '.cockpit/local/probes/help-tool',
             })
 
-            expect(validateEvidenceManifest(manifest, root)).toContain(
-                'versionCommand must invoke the harness binary directly; env is a generic command launcher',
-            )
+            expect(validateEvidenceManifest(manifest, root)).toEqual(expect.arrayContaining([
+                'versionCommand executable must use an absolute path',
+                'version.command executable must use an absolute path',
+                'help.command executable must use an absolute path',
+            ]))
         } finally {
             rmSync(root, { recursive: true, force: true })
         }
