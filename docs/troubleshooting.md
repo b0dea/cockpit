@@ -245,7 +245,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `BOOTSTRAP_ANSWER_RESET_STALE` | see the message |
 | `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` | see the message |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` | see the message |
-| `CLAIM_CO_TENANT` | see the message |
+| `CLAIM_CO_TENANT` | depends on what failed; see the message |
 | `CLAIM_LIVENESS_UNKNOWN` | see the message |
 | `CLAIM_STATE_UNHEALTHY` | see the message |
 | `CLI_COMMAND_REQUIRED` | see the message |
