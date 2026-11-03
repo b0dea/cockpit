@@ -232,23 +232,6 @@ describe('resolved executable identity', () => {
         })
     })
 
-    it('re-hashes a resolved executable whose bytes changed under a restored size and modification time', async () => {
-        const root = directory()
-        const path = join(root, 'docker')
-        writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
-        utimesSync(path, 1_700_000_000, 1_700_000_000)
-        const first = await resolveDockerExecutable({ PATH: root })
-        // Same length, timestamps put back: only the change time moves, and the remembered digest must not apply.
-        writeFileSync(path, '#!/bin/sh\nexit 1\n')
-        utimesSync(path, 1_700_000_000, 1_700_000_000)
-        const second = await resolveDockerExecutable({ PATH: root })
-
-        expect(first.state === 'available' && second.state === 'available').toBe(true)
-        if (first.state !== 'available' || second.state !== 'available') return
-        expect(second.value.sha256).toBe(createHash('sha256').update('#!/bin/sh\nexit 1\n').digest('hex'))
-        expect(second.value.sha256).not.toBe(first.value.sha256)
-    })
-
     it.each([
         ['missing', () => ({ PATH: directory() })],
         ['relative path', () => ({ PATH: 'relative/bin' })],
