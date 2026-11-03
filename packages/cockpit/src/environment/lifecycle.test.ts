@@ -187,19 +187,12 @@ describe('lifecycle planning', () => {
         expect(noop).toMatchObject({ kind: 'noop', plan: { resumeBoundary: { nextStepId: null } } })
     })
 
-    it('fails closed on copied, replayed, accessor, stale-prefix, and changed-basis inputs', () => {
+    it('fails closed on copied, replayed, stale-prefix, and changed-basis inputs', () => {
         const copied = projections()
         expect(planUp({
             lifecycleStage: { ...copied.stage } as never, runtime: copied.runtime as never, ports: copied.ports as never,
             progress: null, completedServices: [], operationGeneration: generation,
         })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-
-        const accessor = projections()
-        let reads = 0
-        const hostile = { runtime: accessor.runtime, ports: accessor.ports, progress: null, completedServices: [], operationGeneration: generation } as Record<string, unknown>
-        Object.defineProperty(hostile, 'lifecycleStage', { enumerable: true, get: () => { reads += 1; return accessor.stage } })
-        expect(planUp(hostile as never)).toMatchObject({ kind: 'refusal' })
-        expect(reads).toBe(0)
 
         const replayed = projections()
         const replayInput = {
@@ -215,20 +208,6 @@ describe('lifecycle planning', () => {
             progress: { workBasisSha256: '9'.repeat(64), operationGeneration: generation, completedServices: [] },
             completedServices: [], operationGeneration: generation,
         })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID' }] })
-
-        let coercions = 0
-        for (const malicious of [
-            { workBasisSha256: Symbol('digest'), operationGeneration: generation, completedServices: [] },
-            { workBasisSha256: { toString: () => { coercions += 1; return generation } }, operationGeneration: generation, completedServices: [] },
-        ]) {
-            const hostileProgress = projections({ change: 'unchanged' })
-            expect(planUp({
-                lifecycleStage: hostileProgress.stage as never, runtime: hostileProgress.runtime as never,
-                ports: hostileProgress.ports as never, progress: malicious as never,
-                completedServices: [], operationGeneration: generation,
-            })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID' }] })
-        }
-        expect(coercions).toBe(0)
 
         const prefix = projections({ change: 'unchanged' })
         const authentic = serviceEvidence('db')
@@ -305,7 +284,7 @@ describe('lifecycle planning', () => {
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
 
-    it.each(['missing', 'wrong-container', 'wrong-batch', 'copy', 'accessor', 'extra-field'] as const)(
+    it.each(['missing', 'wrong-container', 'wrong-batch', 'copy'] as const)(
         'consumes authority when finalization refuses %s completed evidence', (invalid) => {
             const seed = projections()
             const initial = planUp({ lifecycleStage: seed.stage as never, runtime: seed.runtime as never,
@@ -321,13 +300,8 @@ describe('lifecycle planning', () => {
             owners.services.add(wrongBatch)
             const evidence = invalid === 'missing' ? [] : [invalid === 'wrong-container' ? serviceEvidence('db', 'f'.repeat(64))
                 : invalid === 'wrong-batch' ? wrongBatch : invalid === 'copy' ? { ...db } : db]
-            let reads = 0
-            const input = { authority: admitted.authority, completedServices: evidence }
-            if (invalid === 'accessor') Object.defineProperty(input, 'completedServices', { get() { reads += 1; return [db] } })
-            if (invalid === 'extra-field') Object.assign(input, { unexpected: true })
-            expect(planAdmittedUp(input)).toMatchObject({ kind: 'refusal', diagnostics: [{ code:
-                ['copy', 'accessor', 'extra-field'].includes(invalid) ? 'LIFECYCLE_EVIDENCE_INVALID' : 'LIFECYCLE_PROGRESS_INVALID' }] })
-            expect(reads).toBe(0)
+            expect(planAdmittedUp({ authority: admitted.authority, completedServices: evidence })).toMatchObject({ kind: 'refusal', diagnostics: [{ code:
+                invalid === 'copy' ? 'LIFECYCLE_EVIDENCE_INVALID' : 'LIFECYCLE_PROGRESS_INVALID' }] })
             expect(planAdmittedUp({ authority: admitted.authority, completedServices: [db] }))
                 .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         },
@@ -503,40 +477,6 @@ describe('lifecycle planning', () => {
             .toMatchObject({ kind: 'refusal' })
     })
 
-    it('rejects extra outer fields and revoked outer proxies for every planner', () => {
-        const inputs = [
-            () => {
-                const value = projections()
-                return [admitUpProgress, {
-                    lifecycleStage: value.stage, runtime: value.runtime, ports: value.ports,
-                    progress: null, operationGeneration: generation,
-                }] as const
-            },
-            () => {
-                const value = projections({ change: 'unchanged' })
-                return [planSleep, {
-                    runtime: value.runtime, ports: value.ports, operationGeneration: generation,
-                    runtimeStopValidForMs: 30_000,
-                }] as const
-            },
-            ...([['down', planDown], ['reset', planResetLifecycle]] as const).map(([purpose, planner]) => () => {
-                const value = projections({ change: 'unchanged' })
-                return [planner, {
-                    runtime: value.runtime, ports: value.ports, reclaim: reclaim(purpose),
-                    operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-                }] as const
-            }),
-        ]
-        for (const makeInput of inputs) {
-            const [extraPlanner, extraInput] = makeInput()
-            expect(extraPlanner({ ...extraInput, extra: true } as never)).toMatchObject({ kind: 'refusal' })
-            const [proxyPlanner, proxyInput] = makeInput()
-            const revoked = Proxy.revocable(proxyInput, {})
-            revoked.revoke()
-            expect(proxyPlanner(revoked.proxy as never)).toMatchObject({ kind: 'refusal' })
-        }
-    })
-
     it.each([
         ['down', planDown, 'down'],
         ['reset', planResetLifecycle, 'reset'],
@@ -553,15 +493,8 @@ describe('lifecycle planning', () => {
             },
         })
         if (result.kind === 'drain') {
-            expect(Object.isFrozen(result.request)).toBe(true)
-            expect(Object.isFrozen(result.request.targetIds)).toBe(true)
-            expect(Object.isFrozen(result.request.actions)).toBe(true)
-            expect(Object.isFrozen(result.request.actions[1])).toBe(true)
-            expect(Object.isFrozen(result.request.actions[1]?.stage === 'reclaim'
-                ? result.request.actions[1].targetCommitment : null)).toBe(true)
             const issuance = consumeLifecycleIssuance(result.plan)
             expect(issuance).toMatchObject({ reclaim: { purpose }, drainRequest: result.request })
-            expect(Object.isFrozen(issuance)).toBe(true)
             expect(consumeLifecycleIssuance(result.plan)).toBeUndefined()
         }
 

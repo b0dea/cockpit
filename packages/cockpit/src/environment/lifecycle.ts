@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { isProxy } from 'node:util/types'
 import {
     ENVIRONMENT_CODES,
     snapshotLifecyclePlan,
@@ -82,41 +81,6 @@ function refusal(code: EnvironmentDiagnostic['code'], message: string, target: s
     return {
         kind: 'refusal',
         diagnostics: [{ severity: 'error' as const, code, message, target }],
-    }
-}
-
-function ownData(input: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> | undefined {
-    try {
-        if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== keys.length
-            || keys.some((key) => !('value' in (descriptors[key] ?? {})))) return undefined
-        return Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value]))
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
-    }
-}
-
-function arrayData(value: unknown, maximum: number): readonly unknown[] | undefined {
-    try {
-        if (!Array.isArray(value) || isProxy(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<PropertyKey, PropertyDescriptor>
-        const length = descriptors.length
-        const count: unknown = length && 'value' in length ? length.value : undefined
-        if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0 || count > maximum
-            || Reflect.ownKeys(descriptors).length !== count + 1) return undefined
-        const itemCount = count as number
-        const result: unknown[] = []
-        for (let index = 0; index < itemCount; index += 1) {
-            const item = descriptors[String(index)]
-            if (!item || !('value' in item)) return undefined
-            result.push(item.value)
-        }
-        return result
-    } catch {
-        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
-        return undefined
     }
 }
 
@@ -240,28 +204,10 @@ function consumePlannerEvidence(runtimeProjection: RuntimeLifecycleProjection, p
     return { runtime, ports }
 }
 
-function progressValue(value: unknown): LifecycleProgress | null | undefined {
-    if (value === null) return null
-    const captured = ownData(value, ['workBasisSha256', 'operationGeneration', 'completedServices'])
-    const completed = arrayData(captured?.completedServices, MAX_SERVICES)
-    if (!captured || typeof captured.workBasisSha256 !== 'string' || !SHA256.test(captured.workBasisSha256)
-        || typeof captured.operationGeneration !== 'string' || !SHA256.test(captured.operationGeneration)
-        || !completed) return undefined
-    const values = completed.map((item) => ownData(item, ['service', 'containerId']))
-    if (values.some((item) => !item || typeof item.service !== 'string' || !SERVICE_ID.test(item.service)
-        || typeof item.containerId !== 'string' || !SHA256.test(item.containerId))) return undefined
-    return {
-        workBasisSha256: captured.workBasisSha256 as string,
-        operationGeneration: captured.operationGeneration as string,
-        completedServices: values.map((item) => ({
-            service: item!.service as string, containerId: item!.containerId as string,
-        })),
-    }
-}
-
-function authenticatedCompletedServices(values: unknown): readonly RuntimeServiceEvidence[] | undefined {
-    const evidence = arrayData(values, MAX_SERVICES) as readonly RuntimeServiceEvidence[] | undefined
-    return evidence?.every((item) => isRuntimeServiceEvidence(item)) ? evidence : undefined
+function validProgress(progress: LifecycleProgress | null): boolean {
+    return progress === null || SHA256.test(progress.workBasisSha256) && SHA256.test(progress.operationGeneration)
+        && progress.completedServices.length <= MAX_SERVICES
+        && progress.completedServices.every((item) => SERVICE_ID.test(item.service) && SHA256.test(item.containerId))
 }
 
 function completedPrefix(
@@ -305,19 +251,11 @@ function lifecyclePlan(
         compensation,
         diagnostics: [],
     })
-    return plan ? deepFreeze(plan) : undefined
-}
-
-function deepFreeze<Value>(value: Value): Value {
-    if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-        for (const child of Object.values(value)) deepFreeze(child)
-        Object.freeze(value)
-    }
-    return value
+    return plan
 }
 
 function issue(plan: LifecyclePlan, issuance: LifecycleIssuance): LifecyclePlan {
-    issuedPlans.set(plan, Object.freeze(issuance))
+    issuedPlans.set(plan, issuance)
     return plan
 }
 
@@ -336,29 +274,28 @@ export function admitUpProgress(input: {
     readonly progress: LifecycleProgress | null
     readonly operationGeneration: string
 }): { readonly kind: 'admitted'; readonly authority: UpPlanningAuthority } | LifecycleRefusal {
-    const captured = ownData(input, ['lifecycleStage', 'runtime', 'ports', 'progress', 'operationGeneration'])
-    if (!captured || typeof captured.operationGeneration !== 'string' || !SHA256.test(captured.operationGeneration)) {
+    if (!SHA256.test(input.operationGeneration)) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning evidence is invalid', 'up')
     }
-    const stage = consumeLifecycleStageProjection(captured.lifecycleStage as LifecycleStageProjection)
-    const evidence = consumePlannerEvidence(captured.runtime as RuntimeLifecycleProjection, captured.ports as PortLeaseProjection)
+    const stage = consumeLifecycleStageProjection(input.lifecycleStage)
+    const evidence = consumePlannerEvidence(input.runtime, input.ports)
     if (!stage || !evidence || stage.stackId !== evidence.runtime.semantics.stackId) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning evidence is invalid', 'up')
     }
     const basis = workBasis('up', evidence.runtime.semantics, evidence.ports)
     if (!basis) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle work evidence is invalid', 'up')
-    const prior = progressValue(captured.progress)
-    if (prior === undefined || prior !== null && (prior.workBasisSha256 !== basis
-        || prior.operationGeneration !== captured.operationGeneration)) {
+    const prior = input.progress
+    if (!validProgress(prior) || prior !== null && (prior.workBasisSha256 !== basis
+        || prior.operationGeneration !== input.operationGeneration)) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID, 'lifecycle progress does not match the current work', 'up-progress')
     }
     const progress = prior ?? {
         workBasisSha256: basis,
-        operationGeneration: captured.operationGeneration,
+        operationGeneration: input.operationGeneration,
         completedServices: [],
     }
     const authority = {} as UpPlanningAuthority
-    admittedUpPlans.set(authority, Object.freeze({ ...evidence, progress, mode: prior === null ? 'start' : 'resume' }))
+    admittedUpPlans.set(authority, { ...evidence, progress, mode: prior === null ? 'start' : 'resume' })
     return { kind: 'admitted', authority }
 }
 
@@ -366,31 +303,18 @@ export function planAdmittedUp(input: {
     readonly authority: UpPlanningAuthority
     readonly completedServices: readonly RuntimeServiceEvidence[]
 }): UpLifecycleResult {
-    let evidence: UpPlanningRecord | undefined
-    try {
-        if (input !== null && typeof input === 'object' && !isProxy(input)) {
-            const descriptor = Object.getOwnPropertyDescriptor(input, 'authority')
-            const authority: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined
-            if (authority !== null && typeof authority === 'object') {
-                evidence = admittedUpPlans.get(authority)
-                admittedUpPlans.delete(authority)
-            }
-        }
-    } catch {
-        // A throwing accessor or proxy trap makes the authority invalid; the refusal below says so.
-        return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning authority is invalid', 'up')
-    }
-    const captured = ownData(input, ['authority', 'completedServices'])
+    const evidence = admittedUpPlans.get(input.authority)
+    admittedUpPlans.delete(input.authority)
     const now = Date.now()
     const window = evidence?.runtime.topology.observationWindow
-    if (!captured || !evidence || !window
+    if (!evidence || !window
         || !Number.isFinite(Date.parse(window.startedAt)) || !Number.isFinite(Date.parse(window.expiresAt))
         || now < Date.parse(window.startedAt) || now > Date.parse(window.expiresAt)) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning authority is unavailable or expired', 'up')
     }
     const { progress } = evidence
-    const completedEvidence = authenticatedCompletedServices(captured.completedServices)
-    if (!completedEvidence) {
+    const completedEvidence = input.completedServices
+    if (completedEvidence.length > MAX_SERVICES || !completedEvidence.every((item) => isRuntimeServiceEvidence(item))) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
             'completed service evidence is invalid', 'up-evidence')
     }
@@ -429,12 +353,10 @@ export function planAdmittedUp(input: {
     return { kind: 'execute', mode: evidence.mode, plan }
 }
 
-function validDrainInputs(generation: unknown, runtimeStopValidForMs: unknown, reclaimValidForMs?: unknown): boolean {
-    return typeof generation === 'string' && SHA256.test(generation)
-        && Number.isSafeInteger(runtimeStopValidForMs) && (runtimeStopValidForMs as number) >= 1
-        && (runtimeStopValidForMs as number) <= MAX_VALIDITY_MS
-        && (reclaimValidForMs === undefined || Number.isSafeInteger(reclaimValidForMs)
-            && (reclaimValidForMs as number) >= 1 && (reclaimValidForMs as number) <= MAX_VALIDITY_MS)
+function validDrainInputs(generation: string, runtimeStopValidForMs: number, reclaimValidForMs?: number): boolean {
+    const validity = (ms: number) => Number.isSafeInteger(ms) && ms >= 1 && ms <= MAX_VALIDITY_MS
+    return SHA256.test(generation) && validity(runtimeStopValidForMs)
+        && (reclaimValidForMs === undefined || validity(reclaimValidForMs))
 }
 
 function drainRequest(
@@ -457,14 +379,14 @@ function drainRequest(
             stage: 'reclaim' as const, targetId, validForMs: reclaimValidForMs!, targetCommitment: { ...targetCommitment },
         })) ?? []),
     ]
-    return deepFreeze({
+    return {
         purpose, stackId: evidence.runtime.semantics.stackId,
         holderId: evidence.ports.ownership.holderId, requesterId: evidence.ports.ownership.holderId,
         configSha256: evidence.runtime.semantics.configSha256,
         planDigest: reclaim?.planDigest ?? operationBasis,
         operationBasis, generation,
         targetIds, actions, expectedCoordinationRevision: evidence.ports.ownership.recordRevision,
-    })
+    }
 }
 
 function passivePlan(
@@ -488,20 +410,19 @@ export function planSleep(input: {
     readonly operationGeneration: string
     readonly runtimeStopValidForMs: number
 }): SleepLifecycleResult {
-    const captured = ownData(input, ['runtime', 'ports', 'operationGeneration', 'runtimeStopValidForMs'])
-    if (!captured || !validDrainInputs(captured.operationGeneration, captured.runtimeStopValidForMs)) {
+    if (!validDrainInputs(input.operationGeneration, input.runtimeStopValidForMs)) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep planning evidence is invalid', 'sleep')
     }
-    const evidence = consumePlannerEvidence(captured.runtime as RuntimeLifecycleProjection, captured.ports as PortLeaseProjection)
+    const evidence = consumePlannerEvidence(input.runtime, input.ports)
     if (!evidence) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep planning evidence is invalid', 'sleep')
     if (evidence.ports.ownership.holderCount > 1) {
         const steps = [{ id: 'lifecycle:claim:release', kind: 'claim' as const, action: 'release' as const }]
-        const plan = passivePlan('sleep', evidence, captured.operationGeneration as string, steps, null, null)
+        const plan = passivePlan('sleep', evidence, input.operationGeneration, steps, null, null)
         return plan ? { kind: 'release-only', plan }
             : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep plan could not be represented', 'sleep')
     }
-    const request = drainRequest('sleep', evidence, captured.operationGeneration as string, captured.runtimeStopValidForMs as number)
-    const plan = passivePlan('sleep', evidence, captured.operationGeneration as string,
+    const request = drainRequest('sleep', evidence, input.operationGeneration, input.runtimeStopValidForMs)
+    const plan = passivePlan('sleep', evidence, input.operationGeneration,
         [{ id: 'lifecycle:preflight', kind: 'preflight' as const }], request, null)
     return plan ? { kind: 'drain', plan, request }
         : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep plan could not be represented', 'sleep')
@@ -509,14 +430,13 @@ export function planSleep(input: {
 
 function planDestructive(
     verb: 'down' | 'reset',
-    input: unknown,
+    input: DestructivePlanningInput,
 ): DestructiveLifecycleResult {
-    const captured = ownData(input, ['runtime', 'ports', 'reclaim', 'operationGeneration', 'runtimeStopValidForMs', 'reclaimValidForMs'])
-    if (!captured || !validDrainInputs(captured.operationGeneration, captured.runtimeStopValidForMs, captured.reclaimValidForMs)) {
+    if (!validDrainInputs(input.operationGeneration, input.runtimeStopValidForMs, input.reclaimValidForMs)) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, `${verb} planning evidence is invalid`, verb)
     }
-    const evidence = consumePlannerEvidence(captured.runtime as RuntimeLifecycleProjection, captured.ports as PortLeaseProjection)
-    const reclaim = consumeReclaimTargetProjection(captured.reclaim as ReclaimTargetProjection)
+    const evidence = consumePlannerEvidence(input.runtime, input.ports)
+    const reclaim = consumeReclaimTargetProjection(input.reclaim)
     if (!evidence || !reclaim || reclaim.purpose !== verb || reclaim.stackId !== evidence.runtime.semantics.stackId
         || reclaim.configSha256 !== evidence.runtime.semantics.configSha256
         || verb === 'reset' && reclaim.commitments.length === 0
@@ -531,33 +451,28 @@ function planDestructive(
         return refusal(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `${verb} requires exact exclusive ownership`, verb)
     }
     const request = drainRequest(
-        verb, evidence, captured.operationGeneration as string, captured.runtimeStopValidForMs as number,
-        captured.reclaimValidForMs as number, reclaim,
+        verb, evidence, input.operationGeneration, input.runtimeStopValidForMs,
+        input.reclaimValidForMs, reclaim,
     )
-    const plan = passivePlan(verb, evidence, captured.operationGeneration as string,
+    const plan = passivePlan(verb, evidence, input.operationGeneration,
         [{ id: 'lifecycle:preflight', kind: 'preflight' as const }], request, reclaim)
     return plan ? { kind: 'drain', plan, request }
         : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, `${verb} plan could not be represented`, verb)
 }
 
-export function planDown(input: {
+interface DestructivePlanningInput {
     readonly runtime: RuntimeLifecycleProjection
     readonly ports: PortLeaseProjection
     readonly reclaim: ReclaimTargetProjection
     readonly operationGeneration: string
     readonly runtimeStopValidForMs: number
     readonly reclaimValidForMs: number
-}): DestructiveLifecycleResult {
+}
+
+export function planDown(input: DestructivePlanningInput): DestructiveLifecycleResult {
     return planDestructive('down', input)
 }
 
-export function planResetLifecycle(input: {
-    readonly runtime: RuntimeLifecycleProjection
-    readonly ports: PortLeaseProjection
-    readonly reclaim: ReclaimTargetProjection
-    readonly operationGeneration: string
-    readonly runtimeStopValidForMs: number
-    readonly reclaimValidForMs: number
-}): DestructiveLifecycleResult {
+export function planResetLifecycle(input: DestructivePlanningInput): DestructiveLifecycleResult {
     return planDestructive('reset', input)
 }
