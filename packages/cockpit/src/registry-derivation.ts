@@ -1,4 +1,3 @@
-import { snapshotJson } from './environment/contract.js'
 import {
     CockpitConfig,
     type CockpitConfig as CockpitConfigValue,
@@ -45,14 +44,6 @@ function refusal(code: Extract<RegistryDerivationResult, { kind: 'refusal' }>['c
     return { kind: 'refusal', code, message }
 }
 
-function freezeData<T>(value: T): DeepReadonly<T> {
-    if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-        for (const child of Object.values(value)) freezeData(child)
-        Object.freeze(value)
-    }
-    return value as DeepReadonly<T>
-}
-
 function zodMessage(prefix: string, issues: readonly { readonly path: PropertyKey[]; readonly message: string }[]): string {
     const issue = issues[0]
     if (!issue) return prefix
@@ -61,11 +52,7 @@ function zodMessage(prefix: string, issues: readonly { readonly path: PropertyKe
 }
 
 export function deriveRegistry(input: unknown): RegistryDerivationResult {
-    const snapshot = snapshotJson(input)
-    if (snapshot === undefined) {
-        return refusal('REGISTRY_INPUT_INVALID', 'registry derivation input is not bounded own data')
-    }
-    const parsed = CockpitConfig.safeParse(snapshot)
+    const parsed = CockpitConfig.safeParse(input)
     if (!parsed.success) {
         return refusal('REGISTRY_INPUT_INVALID', zodMessage('registry derivation input is not a canonical cockpit configuration', parsed.error.issues))
     }
@@ -84,8 +71,5 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
         path: file.instance,
         kind: 'instance' as const,
     })))
-    return freezeData({
-        kind: 'complete' as const,
-        result: { config, mcpSources, secretPaths },
-    })
+    return { kind: 'complete', result: { config, mcpSources, secretPaths } }
 }

@@ -46,8 +46,6 @@ describe('registry derivation', () => {
             { slug: 'worker', siblingDir: 'worker', path: '.env.worker', kind: 'instance' },
         ])
         expect(result.result.config.sibling[1]).not.toHaveProperty('derives')
-        expect(Object.isFrozen(result.result)).toBe(true)
-        expect(Object.isFrozen(result.result.config)).toBe(true)
     })
 
     it.each([
@@ -62,13 +60,5 @@ describe('registry derivation', () => {
         const result = deriveRegistry(config)
         expect(result).toMatchObject({ kind: 'refusal', code: 'REGISTRY_INPUT_INVALID' })
         expect(result).not.toHaveProperty('result')
-    })
-
-    it.each([
-        ['accessor', () => Object.defineProperty(derivedConfig(), 'cockpit', { enumerable: true, get: () => ({ name: 'synthetic' }) })],
-        ['proxy', () => new Proxy(derivedConfig(), {})],
-        ['oversize', () => ({ ...derivedConfig(), oversized: 'x'.repeat(1_048_577) })],
-    ])('refuses %s input before reading derivation authority', (_label, input) => {
-        expect(deriveRegistry(input())).toMatchObject({ kind: 'refusal', code: 'REGISTRY_INPUT_INVALID' })
     })
 })
