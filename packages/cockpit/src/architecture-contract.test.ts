@@ -1726,7 +1726,7 @@ const WORK_OWNER_CONTRACTS = [
     },
     {
         id: 'browser-runtime', module: 'packages/cockpit/src/browser/runtime.ts',
-        facets: ['assertBrowserArtifactRegistration', 'assertBrowserStorageStateCurrent', 'browserRuntimeCoordination', 'resolveBrowserRuntime'],
+        facets: ['assertBrowserStorageStateCurrent', 'browserRuntimeCoordination', 'resolveBrowserRuntime'],
     },
     {
         id: 'testing-gate-registry', module: 'packages/cockpit/src/testing/gates.ts',

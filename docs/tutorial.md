@@ -30,8 +30,9 @@ npm install --save-dev --save-exact @b00dea/cockpit
 
 Now run the bootstrap block of [examples/synthetic/README.md](../examples/synthetic/README.md) in
 this directory. It creates the product's two repositories under **repositories/**: **app**, a tiny
-Node package with one commit, and **web**, an empty repository whose remote is a local bare
-repository. The configuration declares both as siblings.
+Node package with one commit, and **web**, an empty repository. The configuration declares both as
+siblings that already exist on disk (`acquire = "none"`); a sibling that `setup` clones needs a
+hosted https or ssh `remote`, which `preflight` compares with the checkout.
 
 ## Preview the generated files
 
@@ -39,7 +40,7 @@ repository. The configuration declares both as siblings.
 ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run
 ```
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
+<!-- cockpit:capture date=2026-11-03 version=0.0.0 -->
 ```console
 $ cockpit sync --config cockpit.toml --dry-run
 write "package.json"
@@ -66,13 +67,13 @@ write "env/.secrets/.gitignore"
 write "fixtures/personas.generated.ts"
 write "repositories/app/.env.example"
 write ".cockpit/generated-environment-ownership.json"
-WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook ...
+WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook ... 'permissions.additionalDirectories' — moves the boundary of what Claude Code may read and edit outside the project: "repositories/app"; 'permissions.allow' — lets Claude Code run 40 command patterns without asking; the file lists each one.
 ```
 
 Nothing is written yet. `package.json` and `.gitignore` get the `cockpit:*` scripts and a marked
-ignore block. The warning is deliberate: the generated Claude Code settings grant
-access to the sibling directory and name the approved MCP servers, which deserves the same review
-as a hook. Add `--json` to get the result, diagnostics and invocation metadata as
+ignore block. The warning is deliberate: the generated Claude Code settings grant access to the app
+repository and let Claude Code run cockpit's own commands without asking, which deserves the same
+review as a hook. It appears only when a sync writes those settings. Add `--json` to get the result, diagnostics and invocation metadata as
 one JSON document on stdout.
 
 ## Apply the sync and set up
@@ -91,10 +92,9 @@ it there; `setup` refuses an untracked template. `setup` then verifies both repo
 creates the ignored **.env** from the template. `check` recomputes every generated file and
 compares it with disk:
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
+<!-- cockpit:capture date=2026-11-03 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
-WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: ...
 WARNING CODEX_HOOK_UNTRUSTED [.codex/hooks.json]: Codex has not trusted the guard hook in …/cockpit-demo/.codex/hooks.json on this machine, ...
 ```
 
@@ -127,7 +127,7 @@ echo "# edited by hand" >> compose.generated.yml
 ./node_modules/.bin/cockpit check --config cockpit.toml
 ```
 
-<!-- cockpit:capture date=2026-11-02 version=0.0.0 -->
+<!-- cockpit:capture date=2026-11-03 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
 ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]
@@ -140,7 +140,8 @@ Fix: npx --no cockpit sync --config …/cockpit-demo/cockpit.toml
 `check` exits 2, names the file and prints the fix; it never repairs anything itself. Run the
 suggested `sync`, which rewrites the file, and `check` passes again. A changed skill file reports
 `SURFACE_STATE_CONFLICT` instead, and `sync` refuses it too, because cockpit will not overwrite a
-surface it can no longer prove it owns: undo that edit. Your own text outside a cockpit-owned
+hand edit: move the change into `cockpit.toml` or a surface overlay, and ask the person who owns the
+cockpit before you discard it. Your own text outside a cockpit-owned
 region, such as notes at the end of AGENTS.md, is not drift.
 
 ## Read the configuration
@@ -173,8 +174,7 @@ instance = ".env"                 # ignored file setup creates from it
 slug = "web"
 dir = "web"
 mount = "none"                    # read by agents, never mounted
-acquire = "auto"                  # setup clones it from remote when missing
-remote = "synthetic-web.git"
+acquire = "none"                  # local only: no hosted remote for preflight to compare
 var = "WEB_DIR"
 purpose = "Synthetic web repository"
 

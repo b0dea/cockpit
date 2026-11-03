@@ -1,7 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseToml } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
+import { repositoryIdentity } from './environment/repository-identity.js'
 import { classifyMarkdownPath, repositoryMarkdownPaths, walkMarkdownProse } from '../../../scripts/docs-lint.mjs'
 import { inventory } from '../test-support/example-inventory.js'
 
@@ -76,6 +78,14 @@ describe('the public synthetic cockpit', () => {
             const cockpitExecutables = [...commands.executable, ...commands.humanOnly].flat()
                 .filter(token => token === 'cockpit' || !token.startsWith('@') && token.endsWith('/cockpit'))
             expect(new Set(cockpitExecutables), example).toEqual(new Set(['./node_modules/.bin/cockpit']))
+            // preflight compares a declared remote with the checkout only through a hosted https or
+            // ssh identity, and refuses a local path; an example must not teach a remote it refuses.
+            for (const file of readdirSync(join(repositoryRoot, 'examples', example)).filter(name => /^cockpit.*\.toml$/.test(name))) {
+                const declared = parseToml(readFileSync(join(repositoryRoot, 'examples', example, file), 'utf8')) as { sibling?: { slug: string; remote?: string }[] }
+                for (const sibling of declared.sibling ?? []) {
+                    if (sibling.remote !== undefined) expect(repositoryIdentity(sibling.remote).kind, `${example}/${file} ${sibling.slug}`).toBe('known')
+                }
+            }
         }
     })
 

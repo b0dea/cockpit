@@ -83,13 +83,17 @@ function inventory(root, limits) {
 }
 
 const describeEntries = entries => entries.map(({ label, reason }) => `'${label}' — ${reason}`).join('; ')
+const quoteValues = values => values.map(value => JSON.stringify(value)).join(', ')
+// Cockpit's wording names each value the person is trusting, and only settings that grant something:
+// an empty list grants nothing, and warning about it on every sync taught people to skip the warning.
 function warningMessage(entries) {
     const one = entries.length === 1
     return `Claude Code permissions: writing ${entries.length} trust-affecting ${one ? 'setting' : 'settings'} to .claude/settings.json; `
-        + `review ${one ? 'it' : 'them'} as you would a hook because synced agent settings can widen filesystem access or approve project servers. `
+        + `review ${one ? 'it' : 'them'} as you would a hook because synced agent settings can widen filesystem access, approve project servers or run commands without asking. `
         + `${describeEntries(entries)}.`
 }
-// Rulesync's own spelling of the same warning; accepted and replaced by cockpit's wording above.
+// Rulesync's own spelling of its warning, which counts a present empty server list; it is accepted
+// only to authenticate the generated settings and is replaced by cockpit's wording above.
 function nativeWarningMessage(entries) {
     const one = entries.length === 1
     return `Claude Code permissions: writing ${entries.length} trust-affecting ${one ? 'setting' : 'settings'} to .claude/settings.json; `
@@ -132,14 +136,21 @@ function authenticateWarnings({ job, captured, actualFiles }) {
     const enabledMcpjsonServers = settings.enabledMcpjsonServers
     if ((additionalDirectories !== undefined || sourceAdditionalDirectories !== undefined) && !sameStrings(additionalDirectories, sourceAdditionalDirectories)
         || (enabledMcpjsonServers !== undefined || sourceEnabledMcpjsonServers !== undefined) && !sameStrings(enabledMcpjsonServers, sourceEnabledMcpjsonServers)) return undefined
+    const allow = record(settings.permissions) ? settings.permissions.allow : undefined
     const entries = []
     if (Array.isArray(additionalDirectories) && additionalDirectories.length > 0) entries.push(knownWarningEntries[0])
     if (Array.isArray(enabledMcpjsonServers)) entries.push(knownWarningEntries[1])
     if (entries.length === 0 || additionalDirectories !== undefined && !stringList(additionalDirectories)
-        || enabledMcpjsonServers !== undefined && !stringList(enabledMcpjsonServers)) return undefined
-    const expected = warningMessage(entries)
-    if (captured.length !== 1 || captured[0] !== expected && captured[0] !== nativeWarningMessage(entries)) return undefined
-    return [{ severity: 'warning', code: 'SURFACE_GENERATOR_TRUST_WARNING', target: job.target, path: '.claude/settings.json', message: expected }]
+        || enabledMcpjsonServers !== undefined && !stringList(enabledMcpjsonServers)
+        || allow !== undefined && !stringList(allow)) return undefined
+    if (captured.length !== 1 || captured[0] !== nativeWarningMessage(entries)) return undefined
+    const granted = [
+        ...additionalDirectories?.length ? [{ label: 'permissions.additionalDirectories', reason: `${knownWarningEntries[0].reason}: ${quoteValues(additionalDirectories)}` }] : [],
+        ...enabledMcpjsonServers?.length ? [{ label: 'enabledMcpjsonServers', reason: `${knownWarningEntries[1].reason}: ${quoteValues(enabledMcpjsonServers)}` }] : [],
+        ...allow?.length ? [{ label: 'permissions.allow', reason: `lets Claude Code run ${allow.length} command ${allow.length === 1 ? 'pattern' : 'patterns'} without asking; the file lists each one` }] : [],
+    ]
+    return granted.length === 0 ? []
+        : [{ severity: 'warning', code: 'SURFACE_GENERATOR_TRUST_WARNING', target: job.target, path: '.claude/settings.json', message: warningMessage(granted) }]
 }
 
 function writeReceipt(target, value, limits) {

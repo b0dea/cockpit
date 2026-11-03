@@ -14,7 +14,7 @@ import {
 import { configurationDefaults } from '../schema.js'
 import { renderCockpitSchema } from '../schema-json.js'
 import { SURFACE_TARGETS } from '../surfaces/contract.js'
-import { harnessFact, type SurfaceTarget } from '../surfaces/harness-registry.js'
+import { GUARD_SURFACE_TARGETS, harnessFact, type SurfaceTarget } from '../surfaces/harness-registry.js'
 import { surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { inspectSkillSet, isAdmittedSkillCollection, type AdmittedSkillCollection } from '../surfaces/skill-contract.js'
 import { shippedInstructionCapabilities, type StandingCost } from '../surfaces/projection.js'
@@ -157,8 +157,8 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
             cells.push(native.state === 'generated'
                 ? Object.freeze({ target, capability: 'skill-parity', state: native.state, evidence: 'pending_evidence',
                     provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location })
-                : Object.freeze({ target, capability: 'skill-parity', state: 'instructed', evidence: 'human_needed',
-                    provenance: 'a person has not yet reviewed whether the tool loads and triggers them as written', measuredOn: NEVER_PROBED, measuredVersion: null, location }))
+                : Object.freeze({ target, capability: 'skill-parity', state: native.state, evidence: 'human_needed',
+                    provenance: native.reason, measuredOn: NEVER_PROBED, measuredVersion: null, location }))
         }
         // The rendered skill digests stay out of the table but in the manifest, so editing a skill
         // still changes the published source manifest.
@@ -343,6 +343,10 @@ function renderCapabilityMatrix(cells: readonly CapabilityCell[], manifestSha256
         pending.set(key, group)
     }
     const unmeasured = [...pending.values()].map(({ label, provenance, targets }) => `- ${label} in ${listed(targets.map(cell))}: ${cell(provenance)}.\n`)
+    // Browser native transports are no matrix column: the browser skill declares them for each
+    // harness the guard covers, and no command can run or record the paired call that would measure them.
+    unmeasured.push(`- Browser native transports (the playwright MCP tools and the pinned Playwright CLI) in ${listed(GUARD_SURFACE_TARGETS.map(target => cell(name(target))))}: `
+        + 'cockpit declares them and the browser skill says each still needs a person\'s paired call beside a broken control; no cockpit command runs or records that call, so the browser commands drive the browser through cockpit\'s own project client instead.\n')
     // Readers have no use for the manifest, but it changes with any shipped skill or guard byte, so
     // the reference check reports this page stale until it is regenerated.
     return documentHeading('Capability matrix')

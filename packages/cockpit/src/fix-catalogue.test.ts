@@ -113,12 +113,10 @@ describe('executable remedy catalogue', () => {
             env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` } })
         expect(executed.error).toBeUndefined()
         expect(executed.status, executed.stderr).toBe(0)
-        // Human mode prints only the warning; the invocation record belongs to the --json envelope.
-        const lines = executed.stderr.match(/[^\n]*\n/g) ?? []
-        expect(lines).toHaveLength(1)
-        expect(lines[0]).toMatch(/^WARNING SURFACE_GENERATOR_TRUST_WARNING \[claudecode:\.claude\/settings\.json\]: [^\n]+\n$/)
-        expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0,
-            diagnostics: [expect.objectContaining({ severity: 'warning', code: 'SURFACE_GENERATOR_TRUST_WARNING' })] })
+        // Human mode prints nothing: the invocation record belongs to the --json envelope, and the
+        // Claude settings trust warning belongs to a run that writes those settings, which this one does not.
+        expect(executed.stderr).toBe('')
+        expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0, diagnostics: [] })
         expect(await readFile(join(root, diagnostic.target), 'utf8')).toContain('"changed"')
     })
 })

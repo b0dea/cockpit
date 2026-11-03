@@ -61,7 +61,7 @@ describe('surface rendering', () => {
         const value = input()
         const browser = {
             rows: [{ target: 'codexcli', transport: 'mcp', declaration: 'unavailable', callable: 'unavailable' }],
-            files: [], probes: [], clients: [], graderBrowserAccess: 'retained',
+            files: [], clients: [], graderBrowserAccess: 'retained',
             mcp: { kind: 'complete', result: { servers: [], wrappers: [], harnesses: [] }, diagnostics: [] },
         }
         const rendering = { ...value, browser, browserReference: '# Browser reference\n' }
@@ -301,7 +301,7 @@ describe('surface rendering', () => {
         const hookBytes = '#!/bin/sh\nexit 0\n'
         const browser = {
             files: [file('claudecode', '.mcp.json', browserMcp), file('claudecode', '.claude/skills/cockpit-browser/SKILL.md', skill)],
-            rows: [], probes: [], clients: [], graderBrowserAccess: 'retained',
+            rows: [], clients: [], graderBrowserAccess: 'retained',
             mcp: { kind: 'complete', result: { servers: [{ name: 'playwright', enabled: true, sources: [] }], wrappers: [], harnesses: [] }, diagnostics: [] },
         }
         const costs = (['claudecode', 'codexcli', 'opencode'] as const).map(target => ({ target, status: 'within_cap', metric: 'lines',

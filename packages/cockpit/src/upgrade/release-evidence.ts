@@ -6,7 +6,7 @@ import { readBoundedInput } from '../config/load.js'
 import { validReleaseIntegrity } from './command.js'
 import { CORE_SURFACE_ASSET_PATHS, coreSurfaceDeclarations } from '../surfaces/core-declarations.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
-import { errorCause } from '../environment/contract.js'
+import { errorCause, parseJsonText } from '../environment/contract.js'
 import type { SurfaceFeature } from '../surfaces/contract.js'
 import type {
     AffectedOverrideOriginal,
@@ -240,12 +240,10 @@ export async function createReleaseRecord(input: InstalledUpgradeIdentity): Prom
     const supplied = captureInstalledIdentity(input)
     if (!supplied?.integrity) return publicationRefusal('published package identity is invalid')
     const manifestText = await readPackageText(join(PACKAGE_ROOT, 'package.json'))
-    let manifest: unknown
-    let manifestCause = typeof manifestText === 'string' ? '' : causeSuffix(manifestText)
-    try { manifest = typeof manifestText === 'string' ? JSON.parse(manifestText) : undefined } catch (error) {
-        manifest = undefined
-        manifestCause = `: ${errorCause(error)}`
-    }
+    const parsedManifest = typeof manifestText === 'string' ? parseJsonText(manifestText, 'the source package manifest', 'a package.json object') : undefined
+    const manifest = parsedManifest && 'value' in parsedManifest ? parsedManifest.value : undefined
+    const manifestCause = typeof manifestText !== 'string' ? causeSuffix(manifestText)
+        : parsedManifest && 'refusal' in parsedManifest ? `: ${parsedManifest.refusal}` : ''
     const packageManifest = ownRecord(manifest)
     if (!packageManifest || packageManifest.name !== supplied.package || packageManifest.version !== supplied.version) {
         return publicationRefusal(`published package identity does not match the source package manifest${manifestCause}`)
@@ -279,12 +277,12 @@ export async function assembleReleaseEvidence(input: Readonly<{
     if (typeof currentText !== 'string') return publicationRefusal(`current release record could not be authenticated${causeSuffix(currentText)}`)
     const candidateText = await readEvidence(resolve(input.candidatePath), input.candidateSha256)
     if (typeof candidateText !== 'string') return publicationRefusal(`candidate release record could not be authenticated${causeSuffix(candidateText)}`)
-    let currentValue: unknown
-    let candidateValue: unknown
-    try { currentValue = JSON.parse(currentText) } catch (error) { return publicationRefusal(`current release record is not valid JSON: ${errorCause(error)}`) }
-    try { candidateValue = JSON.parse(candidateText) } catch (error) { return publicationRefusal(`candidate release record is not valid JSON: ${errorCause(error)}`) }
-    const current = captureReleaseRecord(currentValue)
-    const candidate = captureReleaseRecord(candidateValue)
+    const currentValue = parseJsonText(currentText, 'current release record', 'a cockpit-upgrade-release-record/v1 document')
+    if ('refusal' in currentValue) return publicationRefusal(currentValue.refusal)
+    const candidateValue = parseJsonText(candidateText, 'candidate release record', 'a cockpit-upgrade-release-record/v1 document')
+    if ('refusal' in candidateValue) return publicationRefusal(candidateValue.refusal)
+    const current = captureReleaseRecord(currentValue.value)
+    const candidate = captureReleaseRecord(candidateValue.value)
     if (!current) return publicationRefusal('current release record does not match the exact release schema')
     if (!candidate) return publicationRefusal('candidate release record does not match the exact release schema')
     if (current.release.package !== candidate.release.package) {
@@ -367,9 +365,9 @@ export function createReleaseEvidenceDiscovery(
         }
         const bytes = await readEvidence(evidencePath, expectedSha256)
         if (typeof bytes !== 'string') return refusal('UPGRADE_AUTH_FAILED', `release evidence could not be authenticated${causeSuffix(bytes)}`)
-        let parsed: unknown
-        try { parsed = JSON.parse(bytes) } catch (error) { return refusal('UPGRADE_REPAIR_UNVERIFIED', `release evidence is not valid JSON: ${errorCause(error)}`) }
-        const evidence = captureEvidence(parsed)
+        const parsed = parseJsonText(bytes, 'release evidence', 'a cockpit-upgrade-release-evidence/v1 document')
+        if ('refusal' in parsed) return refusal('UPGRADE_REPAIR_UNVERIFIED', parsed.refusal)
+        const evidence = captureEvidence(parsed.value)
         if (!evidence) return refusal('UPGRADE_REPAIR_UNVERIFIED', 'release evidence does not match the exact release schema')
         if (evidence.current.package !== installed.package || evidence.current.version !== installed.version
             || installed.integrity !== undefined && evidence.current.integrity !== installed.integrity) {

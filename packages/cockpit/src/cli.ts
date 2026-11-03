@@ -1238,6 +1238,13 @@ async function decodeRequest(
 type InvocationOptions = { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined;
     readonly env: Readonly<Record<string, string | undefined>> }
 
+// `sibling` nests its arguments under the operation it runs; every other configured command carries
+// configPath at the top of its input.
+function requestConfigPath(request: HandlerRequest): string | undefined {
+    const input: unknown = request.handler === 'sibling' ? request.input.input : request.input
+    return input !== null && typeof input === 'object' && 'configPath' in input && typeof input.configPath === 'string' ? input.configPath : undefined
+}
+
 // Printed remedies name a configuration placeholder; every outcome of a configured command binds it
 // to the path this invocation was given, not only the outcomes whose handler built a fix context.
 async function invokeHandler(
@@ -1248,10 +1255,9 @@ async function invokeHandler(
     io: CliIo,
 ): Promise<CommandOutcome> {
     const outcome = await dispatchHandler(request, handlers, operators, options, io)
-    const input: unknown = request.input
-    const configPath = input !== null && typeof input === 'object' && 'configPath' in input && typeof input.configPath === 'string'
-        ? resolve(input.configPath) : null
-    if (configPath === null) return outcome
+    const configured = requestConfigPath(request)
+    if (configured === undefined) return outcome
+    const configPath = resolve(configured)
     return { ...outcome, fixContext: outcome.fixContext
         ? { ...outcome.fixContext, resolvedConfigPath: outcome.fixContext.resolvedConfigPath ?? configPath }
         : { resolvedConfigPath: configPath, generatedTargets: [] } }
@@ -1579,10 +1585,11 @@ export async function runCli(
         if (parsed) {
             jsonRequested = parsed.values.json === true
             let decoded = await decodeRequest(definition.handler, parsed, runtime.env ?? process.env)
-            if ('handler' in decoded && 'configPath' in decoded.input && typeof decoded.input.configPath === 'string') {
+            const configured = 'handler' in decoded ? requestConfigPath(decoded) : undefined
+            if (configured !== undefined) {
                 try {
                     resolvedConfigPath = createInvocationRecord({ verb, durationMs: 0, exitCode: EXIT_CODES.success,
-                        resolvedConfigPath: resolve(decoded.input.configPath) }).resolvedConfigPath
+                        resolvedConfigPath: resolve(configured) }).resolvedConfigPath
                 } catch { // createInvocationRecord throws only for control characters, which the message names.
                     decoded = usageOutcome('CLI_USAGE_INVALID', 'config path must be recordable without control characters', '--config')
                 }

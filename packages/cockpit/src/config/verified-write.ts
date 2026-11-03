@@ -20,17 +20,23 @@ export const mechanism = {
     exports: ['writeVerifiedConfig'],
 } as const
 
+/** What failed and the remedy, kept apart so the remedy reaches the reader as the diagnostic's fix. */
+export interface VerifiedWriteRefusal {
+    readonly message: string
+    readonly fix: string
+}
+
 export interface VerifiedWriteMessages {
     /** Said when the file changed between the caller's read and the write. */
-    readonly changedBefore: string
+    readonly changedBefore: VerifiedWriteRefusal
     /** Said when the file changed while the candidate was being prepared. */
-    readonly changedDuring: string
+    readonly changedDuring: VerifiedWriteRefusal
     /** Said when the candidate does not parse; `reason` is the loader's own summary. */
-    readonly invalid: (reason: string) => string
+    readonly invalid: (reason: string) => VerifiedWriteRefusal
     /** Said when the candidate parses but is more than the intended change. */
-    readonly notExact: string
+    readonly notExact: VerifiedWriteRefusal
     /** Said when re-reading the written file shows more than the intended change. */
-    readonly writtenMismatch: string
+    readonly writtenMismatch: VerifiedWriteRefusal
 }
 
 export interface VerifiedWriteInput {
@@ -47,7 +53,7 @@ export interface VerifiedWriteInput {
 
 export type VerifiedWriteResult =
     | Readonly<{ kind: 'complete' }>
-    | Readonly<{ kind: 'refused'; code: string; message: string }>
+    | Readonly<{ kind: 'refused'; code: string; message: string; fix: string }>
 
 /**
  * Write through a sibling temporary file and an atomic rename, so a reader sees the old or the new
@@ -57,11 +63,13 @@ export type VerifiedWriteResult =
  */
 export async function writeVerifiedConfig(input: VerifiedWriteInput): Promise<VerifiedWriteResult> {
     const { path, expectedSha256, messages } = input
-    const refuse = (code: string, message: string): VerifiedWriteResult => ({ kind: 'refused', code, message })
+    const refuse = (code: string, refusal: VerifiedWriteRefusal): VerifiedWriteResult => ({ kind: 'refused', code, ...refusal })
     const before = await lstat(path)
-    if (!before.isFile() || before.isSymbolicLink()) return refuse(ENVIRONMENT_CODES.CONFIG_UNREADABLE, 'cockpit.toml is not a regular file; nothing was written')
+    if (!before.isFile() || before.isSymbolicLink()) return refuse(ENVIRONMENT_CODES.CONFIG_UNREADABLE, { message: 'cockpit.toml is not a regular file; nothing was written',
+        fix: 'replace the link or special file at the --config path with the cockpit.toml file itself, then run the command again' })
     const read = await readBoundedInput(path)
-    if (read.kind !== 'complete') return refuse(ENVIRONMENT_CODES.CONFIG_UNREADABLE, 'cockpit.toml exceeds the input limit; nothing was written')
+    if (read.kind !== 'complete') return refuse(ENVIRONMENT_CODES.CONFIG_UNREADABLE, { message: 'cockpit.toml exceeds the input limit; nothing was written',
+        fix: 'cut cockpit.toml below the input limit by moving embedded data into the files it names, then run the command again' })
     if (createHash('sha256').update(read.bytes).digest('hex') !== expectedSha256) {
         return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, messages.changedBefore)
     }

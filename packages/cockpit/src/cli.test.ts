@@ -1847,6 +1847,19 @@ describe('terminal-safe diagnostics', () => {
         } finally { projector.mockRestore() }
     })
 
+    it('binds the configuration placeholder in a sibling refusal, whose arguments sit under the operation', async () => {
+        let stdout = ''
+        const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true } }
+        const status = await runCli(['sibling', 'remove', 'web', '--config', '/synthetic/cockpit.toml', '--json'], io, {
+            sibling: async () => ({ status: 2, result: null, diagnostics: [{ severity: 'error', code: 'SYNTHETIC_REFUSAL', message: 'refused',
+                fix: 'make the change by hand, then run npx --no cockpit sync --config <your cockpit.toml> --dry-run' }] }),
+        })
+        expect(status).toBe(2)
+        const envelope = JSON.parse(stdout)
+        expect(envelope.guidance).toEqual([{ code: 'SYNTHETIC_REFUSAL', text: 'make the change by hand, then run npx --no cockpit sync --config /synthetic/cockpit.toml --dry-run' }])
+        expect(envelope.invocation.resolvedConfigPath).toBe('/synthetic/cockpit.toml')
+    })
+
     it('reads bounded fatal UTF-8 private input once and publishes one projected closed refusal', async () => {
         for (const input of [Buffer.from('{'), Buffer.from([0xc3, 0x28]), Buffer.alloc(65_537, 32)]) {
             const projector = vi.spyOn(fixCatalogue, 'admitDiagnosticFix').mockImplementationOnce(() => undefined)

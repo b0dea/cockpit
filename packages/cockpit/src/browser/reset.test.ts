@@ -11,7 +11,7 @@ import { createLifecycleCommandAdapters } from '../environment/lifecycle-composi
 import { resolveObservationPostures } from '../environment/observations.js'
 import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { observeConfiguration } from '../environment/state.js'
-import { assertBrowserArtifactRegistration, resolveBrowserRuntime } from './runtime.js'
+import { resolveBrowserRuntime } from './runtime.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
@@ -95,10 +95,8 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         data: { mode: 'seeded', isolated: true, reachesProduction: false }, requestPreapproval: false, headed: false, artifacts,
     })
     expect(runtime.generatedHostPaths).toEqual(declarations)
-    expect(() => assertBrowserArtifactRegistration(runtime, produced)).not.toThrow()
     const control = 'unregistered-output.json'
     await writeFile(join(root, control), '{"synthetic":"undeclared control"}')
-    expect(() => assertBrowserArtifactRegistration(runtime, [...produced, control])).toThrow('unregistered')
 
     const adapters = createDestructiveCommandAdapters(input, executeProbe)
     const preview = await runReset({ configPath }, adapters)
@@ -113,6 +111,5 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', result: { change: 'reset' } })
     for (const declaration of runtime.generatedHostPaths) await expect(access(join(root, declaration))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readFile(join(root, control), 'utf8')).toBe('{"synthetic":"undeclared control"}')
-    expect(() => assertBrowserArtifactRegistration(runtime, [control])).toThrow('unregistered')
     await expect(session.decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
 }, 30_000)

@@ -60,6 +60,7 @@ import {
     type EnvironmentOwnershipEntry,
     type OwnershipManifest,
     type SurfaceDesiredEntry,
+    type SurfaceDiagnostic,
     type SurfacePriorOwnedEntry,
 } from '../surfaces/ownership.js'
 import { codexWritableRoot, observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
@@ -763,9 +764,12 @@ function complete(
     return Object.freeze({
         kind: 'complete', artifact: null, destination: null,
         diagnostics: Object.freeze([
-            ...prepared.warnings.map(({ severity, code, target, path, message }) => Object.freeze({
-                severity, code, target: `${target}:${path}`, message,
-            })),
+            // A trust warning is a review prompt for settings being written; repeating it for an
+            // unchanged file on every sync and check trained people to ignore it.
+            ...prepared.warnings.filter(warning => changes.some(change => change.operation === 'write' && change.path === warning.path))
+                .map(({ severity, code, target, path, message }) => Object.freeze({
+                    severity, code, target: `${target}:${path}`, message,
+                })),
             ...prepared.unapprovedMcpServers.map(server => Object.freeze({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current command, arguments, working directory and environment names (sha256 ${server.sha256}), so every harness keeps it disabled`,
@@ -1121,16 +1125,25 @@ async function unfinishedInitSurfaces(
     root: string,
     node: ResolvedExecutable,
     adapters: GeneratedEnvironmentCommandAdapters,
-): Promise<readonly SurfacePriorOwnedEntry[] | undefined> {
+): Promise<UnfinishedInit | undefined> {
     if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined
     for (const target of SURFACE_TARGETS) {
         const namespace = await selectBootstrapStateRoot({ platform: process.platform, home: process.env.HOME,
             xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoot: root, target })
         if (namespace.kind !== 'complete') return undefined
         const read = await readState(namespace.value.paths.bootstrap(target))
-        if (read.kind === 'complete') return bootstrapPublishedSurfaces(root, read.value, node, adapters)
+        if (read.kind === 'complete') return Object.freeze({ root, target, published: read.value.value.published.map(row => row.path),
+            surfaces: await bootstrapPublishedSurfaces(root, read.value, node, adapters) })
     }
     return undefined
+}
+
+interface UnfinishedInit {
+    readonly root: string
+    readonly target: SurfaceTarget
+    readonly published: readonly string[]
+    /** Absent when the files no longer hold what init recorded, so sync cannot take them over. */
+    readonly surfaces: readonly SurfacePriorOwnedEntry[] | undefined
 }
 
 async function bootstrapPublishedSurfaces(
@@ -3545,12 +3558,20 @@ function planObservedSurfaces(
 }
 
 /** A hand edit to a merged adopted file belongs in its adopted copy; say so where the conflict is reported. */
-function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Readonly<{ code: string; message: string; target?: string }>): RefusalOutcome {
+function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: SurfaceDiagnostic, unfinishedInit?: UnfinishedInit): RefusalOutcome {
     const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
         ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
-    return refuse(diagnostic.code, adopted
-        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, then ask the person who owns the cockpit before you delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`
-        : diagnostic.message, diagnostic.target)
+    // Plain sync met a setup file an unfinished init published and can no longer vouch for; the
+    // person needs to hear about that init, not only that the file is unrecorded.
+    if (diagnostic.code === 'SURFACE_STATE_CONFLICT' && unfinishedInit && !unfinishedInit.surfaces
+        && diagnostic.target !== undefined && unfinishedInit.published.includes(diagnostic.target)) {
+        return refuse(diagnostic.code, `${diagnostic.message}; an unfinished init for this root (--target ${unfinishedInit.target}) published it, and it no longer holds the bytes that init recorded or the installed cockpit package changed since`,
+            diagnostic.target, `resume that init with ${initCommand({ root: unfinishedInit.root, target: unfinishedInit.target })} and the options you started it with, which shows its current preview; or ask the person who ran init before you remove cockpit.toml and the files it published so init starts again`)
+    }
+    return adopted
+        ? refuse(diagnostic.code, `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}`, diagnostic.target,
+            `make the change in ${adopted.source}, then ask the person who owns the cockpit before you delete ${adopted.path}, and run npx --no cockpit sync --config <your cockpit.toml>`)
+        : refuse(diagnostic.code, diagnostic.message, diagnostic.target, diagnostic.fix)
 }
 
 function surfaceMutations(
@@ -3652,9 +3673,11 @@ async function preparePublication(
         const recorded = await renamedStackRefusal(base)
         if (recorded) return recorded
     }
+    const unfinishedInit = ownership.kind === 'missing' && !request.bootstrapState
+        ? await unfinishedInitSurfaces(base.root, base.node, adapters) : undefined
     const adoptedBootstrap = ownership.kind !== 'missing' ? undefined : request.bootstrapState
         ? await authenticatedBootstrapPriorSurfaces(base.root, request.bootstrapState, base.node, adapters)
-        : await unfinishedInitSurfaces(base.root, base.node, adapters)
+        : unfinishedInit?.surfaces
     if (ownership.kind === 'missing' && request.bootstrapState && !adoptedBootstrap) return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'the setup skill files init published no longer hold the bytes it recorded, or the installed cockpit package changed since init published them, so sync cannot take them over as cockpit\'s own', 'bootstrap',
         `if the cockpit package was upgraded, run ${initCommand({ args: '--json' })} and accept its fresh preview; otherwise restore the setup skill files init published (its --json preview lists them under result.files), or ask the person who ran init before you remove cockpit.toml and those files so init starts again`,
@@ -3698,7 +3721,7 @@ async function preparePublication(
         'GENERATED_STALE_ARTIFACT_DRIFT', 'a generated whole-file path is unmanaged, changed, or unsafe', environment.path,
     ) })
     const plan = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
-    if (plan.kind !== 'complete') return surfacePlanRefusal(prepared, plan.diagnostic)
+    if (plan.kind !== 'complete') return surfacePlanRefusal(prepared, plan.diagnostic, unfinishedInit)
     const surface = surfaceMutations(plan.actions, surfaceState.raw, prepared.compactSurfacePaths)
     if (!surface) return refuse('SURFACE_STATE_CONFLICT', 'surface change plan could not be admitted', 'surfaces')
     const all = [...environment.mutations, ...surface]

@@ -1,7 +1,7 @@
 # Synthetic cockpit
 
 The example the [tutorial](../../docs/tutorial.md) walks through: a product of two synthetic
-repositories, one with a local bare remote, and a stubbed vendor. It exercises `sync`, `setup` and
+local repositories and a stubbed vendor. It exercises `sync`, `setup` and
 `check` with no credentials and no Docker.
 
 <!-- cockpit:verified version=0.0.0 -->
@@ -26,8 +26,6 @@ printf 'process.exitCode = 0\n' > repositories/app/probe.mjs
 git init --quiet .
 git init --quiet repositories/app
 git init --quiet repositories/web
-git init --quiet --bare repositories/synthetic-web.git
-git -C repositories/web remote add origin synthetic-web.git
 git -C repositories/app add .gitignore package.json package-lock.json probe.mjs
 git -C repositories/app -c user.name=Synthetic -c user.email=synthetic@example.invalid commit --quiet -m 'synthetic fixture'
 ```

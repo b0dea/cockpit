@@ -35,6 +35,19 @@ describe('surface change planning', () => {
         })).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_STATE_CONFLICT', target: 'stale.txt' } })
     })
 
+    it('tells the reader where a hand edit belongs and to ask before discarding it or an unrecorded file', () => {
+        const desired = [desiredFile('skill.md', 'generated')]
+        const observed = (bytes: string) => [{ path: 'skill.md', kind: 'file', bytes, sha256: digest(bytes), identity: 'file:5' }]
+        expect(planSurfaceChanges({ configuredHarnesses: ['codexcli'], desired, priorOwned: [priorFile('skill.md', 'generated')], observed: observed('hand edit') }))
+            .toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_STATE_CONFLICT', target: 'skill.md',
+                message: expect.stringContaining('edited by hand'), fix: expect.stringContaining('ask the person who owns the cockpit before you discard the hand edit') } })
+        for (const bytes of ['someone else', 'generated']) {
+            expect(planSurfaceChanges({ configuredHarnesses: ['codexcli'], desired, priorOwned: [], observed: observed(bytes) }))
+                .toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_STATE_CONFLICT', target: 'skill.md',
+                    fix: expect.stringContaining('only with their approval move the file away or delete it') } })
+        }
+    })
+
     it('preserves shared outside bytes and refuses an unmanaged alternate OpenCode config', () => {
         const body = 'generated\n'
         const desired: SurfaceDesiredEntry = { ...base, kind: 'shared-region', ownership: 'shared-region', path: 'AGENTS.md', regionId: 'cockpit-instructions',

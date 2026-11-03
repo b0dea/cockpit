@@ -751,7 +751,8 @@ describe('init application', () => {
             acceptedPreviewSha256: digest('3') }, f.adapters)
 
         expect(changed).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
-        expect(changed.diagnostics).toEqual([expect.objectContaining({ code: 'INIT_TARGET_CHANGED' })])
+        expect(changed.diagnostics).toEqual([expect.objectContaining({ code: 'INIT_TARGET_CHANGED',
+            fix: expect.stringMatching(/^to resume the init started for codexcli, run npx --no cockpit init .+ --target codexcli .*ask the person who owns this machine before you delete .+codexcli\.json.* --target claudecode$/) })])
     })
 
     it('refuses when the accepted preview changes before publication', async () => {

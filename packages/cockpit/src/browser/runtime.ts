@@ -12,7 +12,7 @@ import { RefusalError } from '../environment/contract.js'
 export const mechanism = {
     id: 'browser-runtime',
     module: 'packages/cockpit/src/browser/runtime.ts',
-    exports: ['assertBrowserArtifactRegistration', 'assertBrowserStorageStateCurrent', 'bindBrowserRuntimePortLease', 'browserClientLimit', 'browserRuntimeControlAuthorities', 'browserRuntimeControlPorts', 'browserRuntimeCoordination', 'browserRuntimeExecutionReady', 'resolveBrowserRuntime'],
+    exports: ['assertBrowserStorageStateCurrent', 'bindBrowserRuntimePortLease', 'browserClientLimit', 'browserRuntimeControlAuthorities', 'browserRuntimeControlPorts', 'browserRuntimeCoordination', 'browserRuntimeExecutionReady', 'resolveBrowserRuntime'],
 } as const
 
 interface BrowserImage {
@@ -276,23 +276,6 @@ export function bindBrowserRuntimePortLease(runtime: BrowserRuntimeProjection,
 
 export function browserRuntimeCoordination(runtime: BrowserRuntimeProjection): Readonly<{ namespace: StateNamespace; stackId: import('../environment/contract.js').StackId }> | undefined {
     return issuedRuntimes.get(runtime)?.coordination
-}
-
-export function assertBrowserArtifactRegistration(runtime: BrowserRuntimeProjection, producedPaths: readonly string[]): void {
-    if (!issuedRuntimes.has(runtime)) throw new RefusalError('browser artifact registration requires an issued runtime')
-    assertPlainData(producedPaths)
-    if (!Array.isArray(producedPaths) || producedPaths.length === 0 || producedPaths.length > 1024) {
-        throw new RefusalError('browser artifact registration needs a bounded nonempty output inventory')
-    }
-    for (const path of producedPaths) {
-        if (!GeneratedHostPath.safeParse(path).success
-            || !runtime.generatedHostPaths.some((root) => path === root || path.startsWith(`${root}/`))) {
-            throw new RefusalError('browser output is unregistered with reset artifact ownership')
-        }
-    }
-    if (runtime.generatedHostPaths.some((root) => !producedPaths.some((path) => path === root || path.startsWith(`${root}/`)))) {
-        throw new RefusalError('each browser transport artifact root requires a produced output')
-    }
 }
 
 export function assertBrowserStorageStateCurrent(runtime: BrowserRuntimeProjection): void {

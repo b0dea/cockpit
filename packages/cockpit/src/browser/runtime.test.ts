@@ -8,7 +8,7 @@ import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { resolveObservationPostures } from '../environment/observations.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
-import { assertBrowserStorageStateCurrent, assertBrowserArtifactRegistration, browserRuntimeControlAuthorities, browserRuntimeCoordination, resolveBrowserRuntime, type BrowserRuntimeInput } from './runtime.js'
+import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeCoordination, resolveBrowserRuntime, type BrowserRuntimeInput } from './runtime.js'
 import { bindBrowserRuntimePortLease, browserRuntimeExecutionReady } from './runtime.js'
 
 const roots: string[] = []
@@ -248,16 +248,6 @@ describe('shared browser runtime', () => {
         const images = { ...input.images, get runner() { calls += 1; return input.images.runner } }
         await expect(attempt({ ...input, images })).rejects.toThrow('data')
         expect(calls).toBe(0)
-    })
-
-    it('requires an issued runtime and a produced output for each transport root', async () => {
-        const { input } = await fixture()
-        const runtime = await attempt(input)
-        const produced = runtime.generatedHostPaths.map((root) => `${root}/output.json`)
-        expect(() => assertBrowserArtifactRegistration(runtime, produced)).not.toThrow()
-        expect(() => assertBrowserArtifactRegistration({ ...runtime }, produced)).toThrow('issued')
-        expect(() => assertBrowserArtifactRegistration(runtime, produced.slice(1))).toThrow('produced')
-        expect(() => assertBrowserArtifactRegistration(runtime, [...produced, '.playwright-mcp-neighbor/output.json'])).toThrow('unregistered')
     })
 
     it('revalidates auth file identity before use without reading its contents', async () => {

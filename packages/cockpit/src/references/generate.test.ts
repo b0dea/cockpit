@@ -331,6 +331,7 @@ describe('reference generation', () => {
         expect(unmeasured).toContain('- Guard firing in Cursor and Grok Build: no guard adapter is checked in, so cockpit generates no guard hook.\n')
         expect(unmeasured).toContain('- Skills in Claude Code (`.claude/skills`), Codex (`.agents/skills`) and OpenCode (`.opencode/skills`): ')
         expect(unmeasured).toContain('- Skills in Cursor (`.cursor/skills`) and Grok Build (`.grok/skills`): ')
+        expect(unmeasured).toContain('- Browser native transports (the playwright MCP tools and the pinned Playwright CLI) in Claude Code, Codex and OpenCode: ')
         expect(matrix).not.toMatch(/cockpit-setup\/SKILL\.md|pending_evidence|human_needed|not_applicable|inspectSkillSet|operator parity|unmeasured/)
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')
