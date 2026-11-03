@@ -501,7 +501,7 @@ interface Reference { readonly where: string; readonly detail: string }
 
 const siblingVariable = (row: Sibling) => new RegExp(`(?<![A-Z0-9_])${row.var}(?![A-Z0-9_])`)
 
-/** Every place outside the row itself that names the sibling by slug, exported variable or projection file. */
+/** Every place outside the row itself that names the sibling by slug or exported variable. */
 function referencesTo(config: CockpitConfig, index: number): Reference[] {
     const row = config.sibling[index]!
     const variable = siblingVariable(row)
@@ -509,7 +509,6 @@ function referencesTo(config: CockpitConfig, index: number): Reference[] {
     const walk = (value: unknown, path: string) => {
         if (typeof value === 'string') {
             if (variable.test(value)) found.push({ where: path, detail: `mentions ${row.var}` })
-            if (value.includes(`.sibling-${row.slug}-`)) found.push({ where: path, detail: `names a .sibling-${row.slug}-* projection file` })
         } else if (Array.isArray(value)) {
             value.forEach((item, position) => walk(item, `${path}[${position}]`))
         } else if (value !== null && typeof value === 'object') {
@@ -546,22 +545,6 @@ async function composeReferencesTo(configDir: string, config: CockpitConfig, row
     return found
 }
 
-/** Projections exist only for guides a mounted sibling actually had, so the list is read from disk. */
-async function existingGuideProjections(configDir: string, row: Sibling): Promise<string[]> {
-    const flagged: string[] = []
-    for (const guide of row.guides) {
-        const name = `.sibling-${row.slug}-${guide.replaceAll('/', '-')}`
-        try {
-            await lstat(resolve(configDir, name))
-            flagged.push(`${name} (guide projection)`)
-        } catch (error) {
-            if (hasErrorCode(error, 'ENOENT')) continue
-            flagged.push(`${name} (guide projection; could not be inspected: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`)
-        }
-    }
-    return flagged
-}
-
 export async function runSiblingRemove(input: SiblingRemoveInput): Promise<SiblingOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
@@ -591,7 +574,6 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
     if (failure) return failure
 
     const flagged = [
-        ...await existingGuideProjections(dirname(configPath), row),
         ...(row.derives?.generated ? [`the generated environment files derived from ${row.slug}'s generated row`] : []),
     ]
     const message = `removed sibling "${row.slug}" from ${configPath}. The checkout at ${resolve(dirname(configPath), config.cockpit.siblings_root, row.dir)} and every generated file were left alone.\n`

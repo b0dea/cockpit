@@ -1,15 +1,16 @@
 import { createHash } from 'node:crypto'
 import { lstat, open, readlink, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
+import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 
 import { errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject, RefusalError, hasErrorCode } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
-import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, isMeasurementDate, type GuardSurfaceTarget, type HarnessRegistryRow } from './harness-registry.js'
+import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type HarnessRegistryRow } from './harness-registry.js'
+import { INSTRUCTION_POINTER_MARKERS } from '../environment/instruction-pointer.js'
 
 export const mechanism = {
     id: 'sibling-projection',
     module: 'packages/cockpit/src/surfaces/projection.ts',
-    exports: ['codexWritableRoot', 'observeSiblingGuides', 'planSiblingProjection', 'shippedInstructionCapabilities'],
+    exports: ['codexWritableRoot', 'observeSiblingGuides', 'planSiblingProjection', 'shippedInstructionCapabilities', 'SIBLING_GUIDE_MARKER'],
 } as const
 
 const GUIDE_BYTE_LIMIT = 65_536
@@ -21,7 +22,6 @@ const SLUG = /^[a-z0-9][a-z0-9-]*$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 
 type Mount = 'always' | 'host' | 'none' | `profile:${string}`
-type EntryType = 'file' | 'symlink' | 'directory' | 'other'
 
 export interface GuideObservationRequest {
     readonly slug: string
@@ -63,8 +63,6 @@ export interface ProjectionPlannerInput {
     mountedPaths: Array<{ slug: string; path: string }>
     directoryGrants: Array<{ slug: string; target: SurfaceTarget; path: string }>
     guideObservations: readonly GuideObservation[]
-    existingEntries: Array<{ path: string; type: EntryType; target?: string }>
-    priorOwnedLinks: Array<{ path: string; target: string }>
     standingSources: Array<{ target: SurfaceTarget; path: string; content: string; scope: 'always' | 'scoped' }>
     loadCharacterizations: Partial<Record<SurfaceTarget, LoadCostCharacterization | undefined>>
 }
@@ -87,39 +85,24 @@ export interface ProjectionDiagnostic {
     readonly actual?: string
 }
 
-export interface ProjectionLink {
+/** A sibling guide copied into the region of the root AGENTS.md that cockpit owns. */
+export interface ProjectedGuide {
     readonly sibling: string
-    readonly path: string
-    readonly target: string
+    /** The guide's path inside its sibling, as declared. */
+    readonly guide: string
     readonly sourceGuidePath: string
-    readonly sourceContentPath: string
-    readonly sourceEntryType: 'file' | 'symlink'
-    readonly sourceLinkTarget?: string
     readonly sourceContentIdentity: string
     readonly sourceContentSha256: string
-    readonly sourceContentBytes: number
-    readonly ownership: 'whole-file'
-}
-
-export interface NativeProjection {
-    readonly target: SurfaceTarget
-    readonly path: 'CLAUDE.local.md' | 'AGENTS.md' | 'opencode.jsonc'
-    readonly mechanism: 'claude-relative-import' | 'codex-root-instruction' | 'opencode-instructions'
-    readonly spelling: string
-    readonly linkPath: string
-    readonly ownership: 'shared-region'
-    readonly capability: 'instructed'
-    // `not_applicable`: the dated run settled the cell; `pending_evidence`: part of it is still unmeasured.
-    readonly evidence: 'pending_evidence' | 'not_applicable'
-    readonly characterizedOn: string
-    readonly provenance: string
+    /** The block written into the root AGENTS.md: a heading, a provenance marker and the guide's text. */
+    readonly bytes: string
 }
 
 export interface ShippedInstructionCapability {
     readonly target: SurfaceTarget
-    readonly mechanism: NativeProjection['mechanism'] | 'rulesync-rules'
-    readonly capability: NativeProjection['capability'] | 'generated'
-    readonly evidence: NativeProjection['evidence']
+    readonly mechanism: 'root-agents-guide' | 'rulesync-rules'
+    readonly capability: 'instructed' | 'generated'
+    // `not_applicable`: the dated run settled the cell; `pending_evidence`: part of it is still unmeasured.
+    readonly evidence: 'pending_evidence' | 'not_applicable'
     readonly characterizedOn: string
     readonly measuredVersion: string | null
     readonly provenance: string
@@ -132,15 +115,6 @@ export interface DirectoryGrant {
     readonly spelling: string
     readonly capability: 'instructed'
     readonly evidence: 'pending_evidence'
-}
-
-export interface ProjectionComparison {
-    readonly path: string
-    readonly state: 'current' | 'missing' | 'drift'
-    readonly expectedType: 'symlink'
-    readonly actualType?: EntryType
-    readonly expectedTarget: string
-    readonly actualTarget?: string
 }
 
 export type StandingCost =
@@ -160,11 +134,8 @@ export type StandingCost =
 export type ProjectionPlanResult =
     | {
           readonly kind: 'complete'
-          readonly links: readonly ProjectionLink[]
-          readonly native: readonly NativeProjection[]
+          readonly guides: readonly ProjectedGuide[]
           readonly grants: readonly DirectoryGrant[]
-          readonly comparisons: readonly ProjectionComparison[]
-          readonly staleLinks: readonly { readonly path: string; readonly target: string }[]
           readonly costs: readonly StandingCost[]
           readonly headline?: { readonly metric: 'lines'; readonly value: number; readonly target: SurfaceTarget }
       }
@@ -217,10 +188,6 @@ function safeGuidePath(path: string): boolean {
     if (path.length === 0 || path.length > 4096 || path.startsWith('/') || /^[a-z]:[/\\]/i.test(path)
         || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path)) return false
     return path.split('/').every(segment => segment.length > 0 && segment !== '.' && segment !== '..')
-}
-
-function safeOwnedLinkPath(path: string): boolean {
-    return /^\.sibling-[a-z0-9][a-z0-9-]*-[A-Za-z0-9._-]+\.md$/.test(path)
 }
 
 function contained(root: string, path: string): boolean {
@@ -539,8 +506,6 @@ interface CapturedInput {
     readonly mountedPaths: readonly { readonly slug: string; readonly path: string }[]
     readonly directoryGrants: readonly { readonly slug: string; readonly target: SurfaceTarget; readonly path: string }[]
     readonly guideObservations: readonly GuideObservation[]
-    readonly existingEntries: readonly { readonly path: string; readonly type: EntryType; readonly target?: string }[]
-    readonly priorOwnedLinks: readonly { readonly path: string; readonly target: string }[]
     readonly standingSources: readonly { readonly target: SurfaceTarget; readonly path: string; readonly content: string; readonly scope: 'always' | 'scoped' }[]
     readonly loadCharacterizations: Readonly<Partial<Record<SurfaceTarget, LoadCostCharacterization>>>
 }
@@ -557,8 +522,7 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
     const value = snapshotJson(input)
     if (!isObject(value) || !exactKeys(value, [
         'canonicalMainCheckout', 'siblingsRoot', 'activeProfiles', 'guideCapLines', 'siblings',
-        'mountedPaths', 'directoryGrants', 'guideObservations', 'existingEntries',
-        'priorOwnedLinks', 'standingSources', 'loadCharacterizations',
+        'mountedPaths', 'directoryGrants', 'guideObservations', 'standingSources', 'loadCharacterizations',
     ], ['invocationCwd'])
         || typeof value.canonicalMainCheckout !== 'string' || !isAbsolute(value.canonicalMainCheckout)
         || typeof value.siblingsRoot !== 'string' || value.siblingsRoot.length === 0
@@ -566,11 +530,9 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
         || !Array.isArray(value.siblings) || value.siblings.length > GUIDE_COUNT_LIMIT
         || !Array.isArray(value.mountedPaths) || value.mountedPaths.length > GUIDE_COUNT_LIMIT
         || !Array.isArray(value.directoryGrants) || !Array.isArray(value.guideObservations)
-        || !Array.isArray(value.existingEntries) || !Array.isArray(value.priorOwnedLinks)
         || !Array.isArray(value.standingSources) || !isObject(value.loadCharacterizations)
         || value.directoryGrants.length > GUIDE_COUNT_LIMIT * SURFACE_TARGETS.length
-        || value.guideObservations.length > GUIDE_COUNT_LIMIT || value.existingEntries.length > GUIDE_COUNT_LIMIT * 2
-        || value.priorOwnedLinks.length > GUIDE_COUNT_LIMIT || value.standingSources.length > GUIDE_COUNT_LIMIT * SURFACE_TARGETS.length) return undefined
+        || value.guideObservations.length > GUIDE_COUNT_LIMIT || value.standingSources.length > GUIDE_COUNT_LIMIT * SURFACE_TARGETS.length) return undefined
     const activeProfiles = stringArray(value.activeProfiles)
     if (!activeProfiles || new Set(activeProfiles).size !== activeProfiles.length
         || activeProfiles.some(profile => !/^[a-z0-9][a-z0-9.-]*$/.test(profile))) return undefined
@@ -633,26 +595,6 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
         guideObservations.push(row as unknown as GuideObservation)
     }
 
-    const existingEntries: Array<{ path: string; type: EntryType; target?: string }> = []
-    const entryPaths = new Set<string>()
-    for (const row of value.existingEntries) {
-        if (!isObject(row) || !exactKeys(row, ['path', 'type'], ['target']) || typeof row.path !== 'string' || entryPaths.has(row.path)
-            || !['file', 'symlink', 'directory', 'other'].includes(String(row.type))
-            || row.target !== undefined && typeof row.target !== 'string'
-            || row.type === 'symlink' && typeof row.target !== 'string') return undefined
-        entryPaths.add(row.path)
-        existingEntries.push(row as unknown as { path: string; type: EntryType; target?: string })
-    }
-
-    const priorOwnedLinks: Array<{ path: string; target: string }> = []
-    const priorPaths = new Set<string>()
-    for (const row of value.priorOwnedLinks) {
-        if (!isObject(row) || !exactKeys(row, ['path', 'target']) || typeof row.path !== 'string' || !safeOwnedLinkPath(row.path)
-            || priorPaths.has(row.path) || typeof row.target !== 'string') return undefined
-        priorPaths.add(row.path)
-        priorOwnedLinks.push({ path: row.path, target: row.target })
-    }
-
     const standingSources: Array<{ target: SurfaceTarget; path: string; content: string; scope: 'always' | 'scoped' }> = []
     const standingIds = new Set<string>()
     for (const row of value.standingSources) {
@@ -684,8 +626,6 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
         mountedPaths,
         directoryGrants,
         guideObservations,
-        existingEntries,
-        priorOwnedLinks,
         standingSources,
         loadCharacterizations,
     }
@@ -701,33 +641,66 @@ function siblingDirectory(input: CapturedInput, row: ProjectionSiblingInput): st
     return resolve(input.canonicalMainCheckout, input.siblingsRoot, row.directoryAuthority)
 }
 
-function linkPath(slug: string, guide: string): string {
-    return `.sibling-${slug}-${guide.replaceAll('/', '-')}`
+// The region and owner markers ownership parses in the root AGENTS.md.
+const REGION_MARKER_PREFIXES = ['<!-- cockpit:instructions:', '<!-- cockpit:owner:'] as const
+const POINTER_BLOCK = new RegExp(`${INSTRUCTION_POINTER_MARKERS.begin}[\\s\\S]*?${INSTRUCTION_POINTER_MARKERS.end}\\n?`, 'g')
+const AGENTS_IMPORT_LINE = /^[ \t]*@(?:\.\/)?AGENTS\.md[ \t]*$/gm
+
+/**
+ * The text of a guide as the root AGENTS.md carries it. The pointer setup appends to a sibling guide
+ * points back at this cockpit, so the copy drops it; a CLAUDE.md line importing the sibling's own
+ * AGENTS.md is dropped when that AGENTS.md is copied too, since in the cockpit root the import would
+ * name the cockpit's AGENTS.md instead. Undefined when the guide holds cockpit's own region or owner
+ * markers, which would end or split the generated region.
+ */
+function guideText(content: string, dropAgentsImport: boolean): string | undefined {
+    if (REGION_MARKER_PREFIXES.some(marker => content.includes(marker))) return undefined
+    let text = content.replace(POINTER_BLOCK, '')
+    if (dropAgentsImport) text = text.replace(AGENTS_IMPORT_LINE, '')
+    return text.replace(/^\s*\n/, '').trimEnd()
+}
+
+/** The marker records which guide, at which digest, the block was copied from, so check can name a stale copy. */
+function siblingGuideMarker(sibling: string, guide: string, sha256: string): string {
+    return `<!-- cockpit:sibling-guide sibling=${sibling} guide=${guide} sha256=${sha256} -->`
+}
+
+export const SIBLING_GUIDE_MARKER = /<!-- cockpit:sibling-guide sibling=([a-z0-9][a-z0-9-]*) guide=(.+?) sha256=([a-f0-9]{64}) -->/g
+
+function guideBlock(sibling: string, guide: string, sha256: string, text: string): string {
+    // Shared Markdown contributions are joined by one newline; the leading one separates the heading.
+    return `\n## Instructions for sibling \`${sibling}\` (its ${guide})\n\n${siblingGuideMarker(sibling, guide, sha256)}\n\n${text}`
 }
 
 const GENERATED_ONLY_HARNESSES = HARNESS_REGISTRY.filter((row): row is Extract<HarnessRegistryRow, { readonly native: { readonly state: 'generated' } }> =>
     row.native.state === 'generated')
 const INSTRUCTION_CAPABILITIES = Object.freeze([
-    // Each probe ran the tool headless in a checkout laid out the way sync writes one, with the sibling
-    // guide behind a symlink and an unreferenced or decoy guide beside it as the broken control.
+    // Each probe ran the tool headless in a cockpit beside two siblings. The declared sibling's guide
+    // gave a word the tool could state only if it had loaded the guide; an undeclared sibling's guide
+    // and a decoy file beside the guide gave words it must not state, the broken controls. Copying the
+    // guide into the root AGENTS.md is the one route every tool loaded; each route that left the guide
+    // in its sibling failed in Claude Code or Codex, so sync no longer writes one.
     Object.freeze({
-        // Pending: whether a trusted workspace loads a guide whose link leaves the checkout.
-        target: 'claudecode', mechanism: 'claude-relative-import', capability: 'instructed', evidence: 'pending_evidence',
-        characterizedOn: '2026-11-02', measuredVersion: '2.1.316',
-        provenance: 'in a workspace Claude Code had not trusted, CLAUDE.local.md loaded an @-import whose link stayed inside the cockpit checkout '
-            + 'but silently skipped one whose link resolved to a sibling beside the checkout, as it skips a missing import; a trusted workspace was not measured',
+        target: 'claudecode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable',
+        characterizedOn: '2026-11-03', measuredVersion: '2.1.317',
+        provenance: 'in a workspace Claude Code had not trusted, a sibling guide copied into the root AGENTS.md that CLAUDE.md imports loaded, '
+            + 'with or without Claude Code\'s user option for reading AGENTS.md, while the undeclared sibling\'s guide and the decoy did not; '
+            + 'nothing loaded through a committed CLAUDE.md @-import of a link to the guide or of its relative path, through '
+            + 'permissions.additionalDirectories with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD in the settings env (ignored until a person trusts the workspace), '
+            + 'or through --add-dir with that variable set',
     }),
     Object.freeze({
-        target: 'codexcli', mechanism: 'codex-root-instruction', capability: 'instructed', evidence: 'not_applicable',
-        characterizedOn: '2026-11-02', measuredVersion: '0.165.0',
-        provenance: 'Codex loaded the root AGENTS.md carrying cockpit\'s line telling the agent to read the sibling guide, but not the guide itself '
-            + 'nor a decoy file beside it; reading the guide is left to the agent',
+        target: 'codexcli', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable',
+        characterizedOn: '2026-11-03', measuredVersion: '0.166.0',
+        provenance: 'a sibling guide copied into the root AGENTS.md loaded while the undeclared sibling\'s guide and the decoy did not; '
+            + 'nothing loaded through a line in AGENTS.md telling the agent to read a link to the guide, through --add-dir naming the sibling, '
+            + 'or through project_doc_fallback_filenames naming the link, and Codex dropped the end of a project AGENTS.md past 32 KiB',
     }),
     Object.freeze({
-        target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'not_applicable',
-        characterizedOn: '2026-11-02', measuredVersion: '1.19.4',
-        provenance: 'OpenCode loaded the sibling guide named in the opencode.jsonc instructions list through its link, '
-            + 'while a linked guide beside it that the list did not name stayed out',
+        target: 'opencode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable',
+        characterizedOn: '2026-11-03', measuredVersion: '1.19.5',
+        provenance: 'a sibling guide copied into the root AGENTS.md loaded, as did a guide named through a link in the opencode.jsonc instructions list, '
+            + 'while the undeclared sibling\'s guide and the decoy did not',
     }),
     // Sync writes Cursor no rules file of its own for cockpit's instructions: they reach it only
     // through the root AGENTS.md, and `.cursor/rules/` holds rules overlays alone.
@@ -735,63 +708,13 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
         target: row.target, mechanism: 'rulesync-rules' as const, capability: row.native.state, evidence: 'pending_evidence' as const,
         characterizedOn: row.native.measuredOn, measuredVersion: null,
         provenance: row.target === 'cursor'
-            ? 'cockpit\'s instructions reach Cursor only through the root AGENTS.md, and .cursor/rules holds only rules overlays; no run of the tool beside a broken control has shown that it loads either'
+            ? 'cockpit\'s instructions and the sibling guides it copies reach Cursor only through the root AGENTS.md, and .cursor/rules holds only rules overlays; no run of the tool beside a broken control has shown that it loads either'
             : row.native.reason,
     })),
 ] as const satisfies readonly ShippedInstructionCapability[])
-const issuedInstructionCapabilities = new WeakSet<object>()
 
 export function shippedInstructionCapabilities(): readonly ShippedInstructionCapability[] {
-    const rows = Object.freeze(INSTRUCTION_CAPABILITIES.map(row => Object.freeze({ ...row })))
-    for (const row of rows) issuedInstructionCapabilities.add(row)
-    issuedInstructionCapabilities.add(rows)
-    return rows
-}
-
-function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, slug: string): NativeProjection {
-    const capabilities = shippedInstructionCapabilities()
-    const fact = issuedInstructionCapabilities.has(capabilities)
-        ? capabilities.find(row => row.target === targetName) : undefined
-    if (!fact || !issuedInstructionCapabilities.has(fact) || fact.capability !== 'instructed'
-        || fact.mechanism === 'rulesync-rules' || !isMeasurementDate(fact.characterizedOn)) {
-        throw new RefusalError(`instruction capability is unavailable for ${targetName}`)
-    }
-    if (targetName === 'claudecode') return {
-        target: targetName,
-        path: 'CLAUDE.local.md',
-        mechanism: fact.mechanism,
-        spelling: `@./${link.path}`,
-        linkPath: link.path,
-        ownership: 'shared-region',
-        capability: fact.capability,
-        evidence: fact.evidence,
-        characterizedOn: fact.characterizedOn,
-        provenance: fact.provenance,
-    }
-    if (targetName === 'codexcli') return {
-        target: targetName,
-        path: 'AGENTS.md',
-        mechanism: fact.mechanism,
-        spelling: `Read ./${link.path} before editing ${slug}.`,
-        linkPath: link.path,
-        ownership: 'shared-region',
-        capability: fact.capability,
-        evidence: fact.evidence,
-        characterizedOn: fact.characterizedOn,
-        provenance: fact.provenance,
-    }
-    return {
-        target: targetName,
-        path: 'opencode.jsonc',
-        mechanism: fact.mechanism,
-        spelling: link.path,
-        linkPath: link.path,
-        ownership: 'shared-region',
-        capability: fact.capability,
-        evidence: fact.evidence,
-        characterizedOn: fact.characterizedOn,
-        provenance: fact.provenance,
-    }
+    return Object.freeze(INSTRUCTION_CAPABILITIES.map(row => Object.freeze({ ...row })))
 }
 
 // `.codex/` sits one level below the cockpit root, so a root-relative path gains one `..`. This is
@@ -829,7 +752,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
         return refuse(diagnostic('PROJECTION_INPUT_INVALID', 'mounted paths and grants must exactly cover active sibling rows'))
     }
 
-    const links: ProjectionLink[] = []
+    const guides: ProjectedGuide[] = []
     const grants: DirectoryGrant[] = []
     for (const sibling of active) {
         const resolvedDirectory = siblingDirectory(captured, sibling)
@@ -858,64 +781,35 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
             })
         }
 
+        const observed = (guide: string) => captured.guideObservations.find(row => row.slug === sibling.slug && row.sourcePath === join(resolvedDirectory, guide))
+        const declaredGuides = sibling.guides ?? ['CLAUDE.md', 'AGENTS.md']
+        const agentsCopied = declaredGuides.includes('AGENTS.md') && observed('AGENTS.md') !== undefined
         const seenContent = new Set<string>()
-        const seenPaths = new Set<string>()
-        for (const guide of sibling.guides ?? ['CLAUDE.md', 'AGENTS.md']) {
-            const sourceGuidePath = join(resolvedDirectory, guide)
-            const observation = captured.guideObservations.find(row => row.slug === sibling.slug && row.sourcePath === sourceGuidePath)
+        for (const guide of declaredGuides) {
+            const observation = observed(guide)
             if (!observation || seenContent.has(observation.contentSha256)) continue
             seenContent.add(observation.contentSha256)
-            const path = linkPath(sibling.slug, guide)
-            if (!safeOwnedLinkPath(path) || seenPaths.has(path) || links.some(link => link.path === path)) {
-                return refuse(diagnostic('PROJECTION_INPUT_INVALID', `guide projection path collides: ${path}`, { target: path }))
+            const text = guideText(observation.content, guide === 'CLAUDE.md' && agentsCopied)
+            if (text === undefined) {
+                return refuse(diagnostic('PROJECTION_INPUT_INVALID', `guide holds cockpit's own instruction region or owner markers: ${observation.sourcePath}`, { target: observation.sourcePath }))
             }
-            seenPaths.add(path)
-            const targetPath = relative(dirname(join(captured.canonicalMainCheckout, path)), sourceGuidePath)
-            links.push({
+            if (text.length === 0) continue
+            guides.push({
                 sibling: sibling.slug,
-                path,
-                target: targetPath,
-                sourceGuidePath,
-                sourceContentPath: observation.contentPath,
-                sourceEntryType: observation.sourceEntryType,
-                ...(observation.sourceLinkTarget === undefined ? {} : { sourceLinkTarget: observation.sourceLinkTarget }),
+                guide,
+                sourceGuidePath: observation.sourcePath,
                 sourceContentIdentity: observation.contentIdentity,
                 sourceContentSha256: observation.contentSha256,
-                sourceContentBytes: observation.contentBytes,
-                ownership: 'whole-file',
+                bytes: guideBlock(sibling.slug, guide, observation.contentSha256, text),
             })
         }
     }
 
-    links.sort((left, right) => left.path.localeCompare(right.path))
     grants.sort((left, right) => left.slug.localeCompare(right.slug)
         || SURFACE_TARGETS.indexOf(left.target) - SURFACE_TARGETS.indexOf(right.target))
-    const projectedEntries = links.length * (INSTRUCTION_TARGETS.length + 2) + grants.length
-        + captured.priorOwnedLinks.length + INSTRUCTION_TARGETS.length
-    if (projectedEntries > PROJECTION_RESULT_ENTRY_LIMIT) return PLANNER_RESULT_BOUNDS
-    const native = links.flatMap(link => INSTRUCTION_TARGETS.map(harness => nativeProjection(harness, link, link.sibling)))
-        .sort((left, right) => INSTRUCTION_TARGETS.indexOf(left.target as GuardSurfaceTarget)
-            - INSTRUCTION_TARGETS.indexOf(right.target as GuardSurfaceTarget) || left.linkPath.localeCompare(right.linkPath))
-
-    const current = new Map(captured.existingEntries.map(entry => [entry.path, entry]))
-    const comparisons: ProjectionComparison[] = links.map(link => {
-        const actual = current.get(link.path)
-        if (!actual) return { path: link.path, state: 'missing', expectedType: 'symlink', expectedTarget: link.target }
-        const state = actual.type === 'symlink' && actual.target === link.target ? 'current' : 'drift'
-        return {
-            path: link.path,
-            state,
-            expectedType: 'symlink',
-            actualType: actual.type,
-            expectedTarget: link.target,
-            ...(actual.target === undefined ? {} : { actualTarget: actual.target }),
-        }
-    })
-    const desiredPaths = new Set(links.map(link => link.path))
-    const staleLinks = captured.priorOwnedLinks.filter(link => {
-        const entry = current.get(link.path)
-        return !desiredPaths.has(link.path) && entry?.type === 'symlink' && entry.target === link.target
-    })
+    if (guides.length + grants.length > PROJECTION_RESULT_ENTRY_LIMIT) return PLANNER_RESULT_BOUNDS
+    // Every instruction target loads the root AGENTS.md, so each pays for every copied guide.
+    const guideCost = guides.reduce((sum, guide) => sum + lines(guide.bytes), 0)
 
     const costs: StandingCost[] = []
     for (const harness of INSTRUCTION_TARGETS) {
@@ -924,12 +818,6 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
             costs.push({ target: harness, status: 'unavailable', reason: 'load cost is not characterized' })
             continue
         }
-        const guideCost = native.filter(row => row.target === harness).reduce((sum, row) => {
-            if (harness === 'codexcli') return sum + lines(row.spelling)
-            const link = links.find(candidate => candidate.path === row.linkPath)!
-            const observation = captured.guideObservations.find(candidate => candidate.sourcePath === link.sourceGuidePath)!
-            return sum + lines(observation.content)
-        }, 0)
         let always = guideCost
         let scoped = 0
         for (const source of captured.standingSources.filter(source => source.target === harness)) {
@@ -952,11 +840,8 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
     const headlineCost = available.reduce<(typeof available)[number] | undefined>((maximum, cost) => !maximum || cost.value > maximum.value ? cost : maximum, undefined)
     return capturedValue<ProjectionPlanResult>({
         kind: 'complete',
-        links,
-        native,
+        guides,
         grants,
-        comparisons,
-        staleLinks,
         costs,
         ...(headlineCost ? { headline: { metric: 'lines', value: headlineCost.value, target: headlineCost.target } } : {}),
     }) ?? PLANNER_RESULT_BOUNDS

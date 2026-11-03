@@ -383,7 +383,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(unavailableProjection.entries.some(row => row.harnesses.includes('synthetic-harness'))).toBe(false)
         }, 180_000)
 
-        it('reconciles generated whole files and sibling symlinks and removes exact stale ownership', async () => {
+        it('reconciles generated whole files and copied sibling guides and removes exact stale ownership', async () => {
             const module = 'adapters/synthetic.mjs'
             const first = await surfaceConsumer('surface-reconcile', { rules: true, custom: customHarness(module) })
             await writeCustomModule(first.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nfirst\n' }])
@@ -391,48 +391,42 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const synced = await syncGeneratedEnvironment({ configPath: first.configPath })
             expect(synced).toMatchObject({ kind: 'complete' })
             if (synced.kind !== 'complete') return
-            expect(synced.result.paths).toEqual(expect.arrayContaining(['custom/rules.md', '.sibling-app-AGENTS.md']))
+            expect(synced.result.paths).toEqual(expect.arrayContaining(['custom/rules.md', 'AGENTS.md']))
+            expect(synced.result.paths.some(path => path.startsWith('.sibling-'))).toBe(false)
             const customRules = await readFile(join(first.root, 'custom/rules.md'))
-            expect((await lstat(join(first.root, '.sibling-app-AGENTS.md'))).isSymbolicLink()).toBe(true)
-            expect(await readlink(join(first.root, '.sibling-app-AGENTS.md'))).toBe('app/AGENTS.md')
+            expect(await readFile(join(first.root, 'AGENTS.md'), 'utf8')).toContain('## Instructions for sibling `app` (its AGENTS.md)')
             const ledger = await ownership(first.root)
-            const reconciledPaths = new Set(['custom/rules.md', '.sibling-app-AGENTS.md'])
+            const reconciledPaths = new Set(['custom/rules.md'])
             const reconciledOwnership = (ledger.entries as readonly { path: string }[])
                 .filter(({ path }) => reconciledPaths.has(path))
             expect(ledger).toMatchObject({ format: 'cockpit-generated-ownership/v3' })
             expect(JSON.stringify(ledger)).toContain('custom/rules.md')
-            expect(JSON.stringify(ledger)).toContain('.sibling-app-AGENTS.md')
             expect((await readdir(join(first.root, '.cockpit'))).filter((path) => path.includes('ownership'))).toEqual([
                 'generated-environment-ownership.json',
             ])
 
-            await Promise.all([
-                rm(join(first.root, 'custom/rules.md')),
-                rm(join(first.root, '.sibling-app-AGENTS.md')),
-            ])
+            await rm(join(first.root, 'custom/rules.md'))
             await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-            await expect(lstat(join(first.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
             const repaired = await syncGeneratedEnvironment({ configPath: first.configPath })
             expect(repaired, JSON.stringify(repaired.diagnostics)).toMatchObject({ kind: 'complete' })
             await expect(readFile(join(first.root, 'custom/rules.md'))).resolves.toEqual(customRules)
-            expect((await lstat(join(first.root, '.sibling-app-AGENTS.md'))).isSymbolicLink()).toBe(true)
-            expect(await readlink(join(first.root, '.sibling-app-AGENTS.md'))).toBe('app/AGENTS.md')
             const repairedLedger = await ownership(first.root)
             expect((repairedLedger.entries as readonly { path: string }[]).filter(({ path }) => reconciledPaths.has(path)))
                 .toEqual(reconciledOwnership)
             expect(JSON.stringify(repairedLedger)).not.toContain(first.root)
 
-            // The guide is the sibling team's file: edits to it, a checkout that replaces it, and a
-            // clone of the whole workspace at another path leave cockpit's link and record current.
-            const ledgerBytes = await readFile(join(first.root, '.cockpit/generated-environment-ownership.json'), 'utf8')
-            await writeFile(join(first.root, 'app/AGENTS.md'), 'Synthetic sibling guide.\nA rule the sibling team added.\n')
+            // The guide is the sibling team's file, and what every agent session loads: its edit makes
+            // check name the stale copy until a person syncs, and the copy names no machine path, so a
+            // clone of the whole workspace at another path stays current.
             await writeFile(join(first.root, 'app/AGENTS.md.next'), 'Synthetic sibling guide.\nA rule from a checkout.\n')
             await rename(join(first.root, 'app/AGENTS.md.next'), join(first.root, 'app/AGENTS.md'))
-            const edited = await checkGeneratedEnvironment({ configPath: first.configPath })
-            expect(edited, JSON.stringify(edited.diagnostics)).toMatchObject({ kind: 'complete' })
-            expect(await readFile(join(first.root, '.sibling-app-AGENTS.md'), 'utf8')).toContain('A rule from a checkout.')
+            expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({
+                    code: 'GENERATED_ARTIFACT_DRIFT', target: 'AGENTS.md', message: expect.stringContaining('app/AGENTS.md') })],
+            })
             expect(await syncGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'complete' })
-            expect(await readFile(join(first.root, '.cockpit/generated-environment-ownership.json'), 'utf8')).toBe(ledgerBytes)
+            expect(await readFile(join(first.root, 'AGENTS.md'), 'utf8')).toContain('A rule from a checkout.')
+            expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'complete' })
             const clone = `${first.root}-clone`
             await rename(first.root, clone)
             try {
@@ -441,16 +435,6 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             } finally {
                 await rename(clone, first.root)
             }
-            await rm(join(first.root, '.sibling-app-AGENTS.md'))
-            await writeFile(join(first.root, '.sibling-app-AGENTS.md'), 'Synthetic sibling guide.\nA rule from a checkout.\n')
-            expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({
-                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_STATE_CONFLICT', target: '.sibling-app-AGENTS.md' })],
-            })
-            await rm(join(first.root, '.sibling-app-AGENTS.md'))
-            await symlink('app/CLAUDE.md', join(first.root, '.sibling-app-AGENTS.md'))
-            expect((await checkGeneratedEnvironment({ configPath: first.configPath })).kind).toBe('refusal')
-            await rm(join(first.root, '.sibling-app-AGENTS.md'))
-            expect(await syncGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'complete' })
 
             const active = await readFile(first.configPath, 'utf8')
             const withoutSurfaces = active
@@ -461,7 +445,6 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(await checkGeneratedEnvironment({ configPath: first.configPath })).toMatchObject({ kind: 'refusal',
                 diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', fix: expect.stringContaining('sync --config <your cockpit.toml> --interactive') })] })
             const staleCustom = await readFile(join(first.root, 'custom/rules.md'))
-            const staleClaudeLocal = await readFile(join(first.root, 'CLAUDE.local.md'))
             let staleApprovalRequest: GeneratedStaleRemovalApprovalRequest | undefined
             const removed = await syncGeneratedEnvironment({ configPath: first.configPath }, {
                 authorizeStaleRemoval: async request => {
@@ -471,20 +454,10 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             })
             expect(removed, JSON.stringify(removed.diagnostics)).toMatchObject({ kind: 'complete' })
             expect(staleApprovalRequest).toMatchObject({
-                entries: [
-                    { path: '.sibling-app-AGENTS.md', current: { kind: 'symlink', target: 'app/AGENTS.md' } },
-                    {
-                        path: 'CLAUDE.local.md',
-                        operation: 'write-file',
-                        current: { kind: 'file', sha256: digest(staleClaudeLocal) },
-                        resultSha256: digest('\n'),
-                    },
-                    { path: 'custom/rules.md', current: { kind: 'file', sha256: digest(staleCustom) } },
-                ],
+                entries: [{ path: 'custom/rules.md', current: { kind: 'file', sha256: digest(staleCustom) } }],
             })
             await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-            await expect(lstat(join(first.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-
+            expect(await readFile(join(first.root, 'AGENTS.md'), 'utf8')).not.toContain('Instructions for sibling `app`')
         }, 180_000)
 
         it('keeps an active in-repo sibling runnable without projecting root instruction files into themselves', async () => {
@@ -495,7 +468,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             const declare = (guides: string) => writeFile(fixture.configPath, declaration
                 .replace('dir = "app"', 'dir = "."')
                 .replace('guides = ["AGENTS.md"]', `guides = ${guides}`))
-            // A misspelled guide links nothing, so it is refused rather than skipped like an absent default.
+            // A misspelled guide copies nothing, so it is refused rather than skipped like an absent default.
             await declare('["CLAUDE.md", "AGENTS.md", "docs/CONVENTONS.md"]')
             for (const result of [await syncGeneratedEnvironment({ configPath: fixture.configPath }), await checkGeneratedEnvironment({ configPath: fixture.configPath })]) {
                 expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
@@ -509,9 +482,11 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
             expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
 
-            await expect(lstat(join(fixture.root, '.sibling-app-CLAUDE.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-            await expect(lstat(join(fixture.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-            expect(await readlink(join(fixture.root, '.sibling-app-docs-CONVENTIONS.md'))).toBe('docs/CONVENTIONS.md')
+            const rootGuide = await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')
+            expect(rootGuide).toContain('## Instructions for sibling `app` (its docs/CONVENTIONS.md)')
+            expect(rootGuide).toContain('Synthetic product conventions.')
+            expect(rootGuide).not.toContain('(its AGENTS.md)')
+            expect(rootGuide).not.toContain('(its CLAUDE.md)')
             expect(parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8'))).toEqual({
                 sandbox_mode: 'workspace-write',
                 sandbox_workspace_write: { writable_roots: ['..'] },
@@ -581,7 +556,8 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             ])
             const candidates = [
                 ['opencode.jsonc', '{"theme":"dark","theme":"light"}\n'],
-                ['opencode.jsonc', '{"instructions":[]}\n'],
+                // cockpit owns `permission`; a team's own key with that name is ambiguous ownership.
+                ['opencode.jsonc', '{"permission":{}}\n'],
                 ['opencode.json', '{}\n'],
             ] as const
             await Promise.all(controls.map((control, index) =>

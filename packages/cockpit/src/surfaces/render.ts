@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { isAbsolute, relative } from 'node:path'
+import { isAbsolute } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject, tryParseJson } from '../environment/contract.js'
@@ -15,8 +15,6 @@ import { stripDevelopmentMarkers } from './development-markers.js'
 import {
     captureOpenCodeRootMembers,
     classifySurfaceOwnership,
-    symlinkSource,
-    type OpenCodeRootMember,
     type SurfaceDesiredEntry,
     type SurfaceDiagnostic,
 } from './ownership.js'
@@ -312,8 +310,8 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         || !exact(captured.generated.mechanism, ['package', 'version', 'role']) || captured.generated.mechanism.package !== 'rulesync'
         || captured.generated.mechanism.version !== '43.1.2' || captured.generated.mechanism.role !== 'spelling'
         || !Array.isArray(captured.generated.files)
-        || !object(captured.projection) || captured.projection.kind !== 'complete' || !Array.isArray(captured.projection.links)
-        || !Array.isArray(captured.projection.native) || !Array.isArray(captured.projection.grants)
+        || !object(captured.projection) || captured.projection.kind !== 'complete' || !Array.isArray(captured.projection.guides)
+        || !Array.isArray(captured.projection.grants)
         || !object(captured.mcp) || captured.mcp.kind !== 'complete' || !object(captured.mcp.result)
         || !Array.isArray(captured.mcp.result.servers) || !Array.isArray(captured.mcp.result.wrappers) || !Array.isArray(captured.mcp.result.harnesses)
         || !object(captured.restrictions) || captured.restrictions.kind !== 'complete' || !validFile(captured.restrictions.sharedGuard)
@@ -412,10 +410,11 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         && new Set(captured.sourceEvidence.map(row => JSON.stringify(row))).size === captured.sourceEvidence.length
         ? captured.sourceEvidence as unknown as SurfaceInputEvidence[] : undefined
     if (!evidence) return refuse('SURFACE_INPUT_INVALID', 'guide and MCP evidence must be authenticated bounded data')
-    for (const link of captured.projection.links) {
-        if (!object(link) || typeof link.sourceGuidePath !== 'string' || typeof link.sourceContentSha256 !== 'string'
-            || typeof link.sourceContentIdentity !== 'string' || !evidence.some(row => row.kind === 'guide' && row.path === link.sourceGuidePath
-                && row.sha256 === link.sourceContentSha256 && row.identity === link.sourceContentIdentity)) {
+    for (const guide of captured.projection.guides) {
+        if (!object(guide) || typeof guide.sourceGuidePath !== 'string' || typeof guide.sourceContentSha256 !== 'string'
+            || typeof guide.sourceContentIdentity !== 'string' || typeof guide.bytes !== 'string' || guide.bytes.length === 0
+            || !evidence.some(row => row.kind === 'guide' && row.path === guide.sourceGuidePath
+                && row.sha256 === guide.sourceContentSha256 && row.identity === guide.sourceContentIdentity)) {
             return refuse('SURFACE_INPUT_INVALID', 'projection guide output is not bound to matching evidence')
         }
     }
@@ -454,11 +453,9 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
 
     const whole = new Map<string, Contribution[]>()
     const markdown = new Map<string, Contribution[]>()
-    const openCodeLines: Contribution[] = []
     const native = new Map<string, NativeSurfaceFragment[]>()
     const browserMcp = new Map<string, Contribution>()
     const readonly = new Map<string, string>()
-    const symlinks: SurfaceDesiredEntry[] = []
     const add = (map: Map<string, Contribution[]>, path: string, contribution: Contribution) => map.set(path, [...map.get(path) ?? [], contribution])
     if (browserRunner) add(whole, '.cockpit/browser/runner.sh', {
         harnesses: [...configuredSet], scope: 'always', capability: 'instructed', bytes: browserRunner.bytes as string,
@@ -537,28 +534,9 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         if (harnesses.length === 0) return refuse('SURFACE_INPUT_INVALID', 'MCP wrapper has no matching native transport')
         add(whole, wrapper.path as string, { harnesses, scope: 'always', capability: 'instructed', bytes: wrapper.bytes as string })
     }
-    for (const link of captured.projection.links) {
-        if (!object(link) || typeof link.path !== 'string' || typeof link.target !== 'string' || typeof link.sourceContentPath !== 'string'
-            || typeof link.sourceContentSha256 !== 'string' || typeof link.sourceContentIdentity !== 'string') return refuse('SURFACE_INPUT_INVALID', 'projection link is malformed')
-        const owners = sorted(captured.projection.native.filter(row => object(row) && row.linkPath === link.path).map(row => (row as JsonSnapshotObject).target as string))
-        if (!owners) return refuse('SURFACE_INPUT_INVALID', 'projection link has no configured native consumer', link.path)
-        const guide = evidence.find(row => row.kind === 'guide' && row.path === link.sourceGuidePath
-            && row.sha256 === link.sourceContentSha256 && row.identity === link.sourceContentIdentity)
-        if (!guide || guide.kind !== 'guide') return refuse('SURFACE_INPUT_INVALID', 'projection link lost its guide evidence', link.path)
-        const guidePath = relative(guide.root, link.sourceGuidePath as string)
-        if (typeof link.sibling !== 'string' || !symlinkSource({ sibling: link.sibling, path: guidePath })) {
-            return refuse('SURFACE_INPUT_INVALID', 'projection link does not name a guide inside its sibling', link.path)
-        }
-        symlinks.push({ kind: 'symlink', path: link.path, harnesses: owners, scope: 'scoped', capability: 'instructed', writer: 'cockpit', schemaVersion: 1,
-            ownership: 'symlink', target: link.target, source: { sibling: link.sibling, path: guidePath } })
-    }
-    for (const native of captured.projection.native) {
-        if (!object(native) || typeof native.target !== 'string' || !configuredSet.has(native.target) || typeof native.path !== 'string'
-            || typeof native.spelling !== 'string' || native.capability !== 'instructed') return refuse('SURFACE_INPUT_INVALID', 'native projection is malformed')
-        const contribution = { harnesses: [native.target], scope: 'always' as const, capability: 'instructed' as const, bytes: native.spelling }
-        if (native.path === 'opencode.jsonc') openCodeLines.push(contribution)
-        else if (MARKDOWN_PATHS.has(native.path)) add(markdown, native.path, contribution)
-        else return refuse('SURFACE_OWNERSHIP_INVALID', 'native projection names an unsupported shared path', native.path)
+    // Every tool reads the root AGENTS.md, so the copied sibling guides follow cockpit's own instructions there.
+    for (const guide of captured.projection.guides) for (const [target, path] of instructionPaths) {
+        add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: (guide as JsonSnapshotObject).bytes as string })
     }
     const restrictedHarnesses = captured.restrictions.targets.filter(row => object(row) && row.capability === 'instructed')
         .map(row => (row as JsonSnapshotObject).target as string)
@@ -622,7 +600,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         whole.set(path, [{ ...bases[0]!, bytes: combined }])
     }
 
-    const entries: SurfaceDesiredEntry[] = [...symlinks]
+    const entries: SurfaceDesiredEntry[] = []
     for (const [path, contributions] of whole) {
         if (path === 'opencode.jsonc') continue
         const distinct = [...new Set(contributions.map(row => row.bytes))]
@@ -655,22 +633,13 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     }
 
     const openCode = whole.get('opencode.jsonc') ?? []
-    if (openCode.length > 0 || openCodeLines.length > 0) {
+    if (openCode.length > 0) {
         const distinct = [...new Set(openCode.map(row => row.bytes))]
         if (distinct.length !== 1) return refuse('SURFACE_PATH_CONFLICT', 'OpenCode native producers emitted divergent base bytes', 'opencode.jsonc')
         const members = captureOpenCodeRootMembers(distinct[0]!)
         if (!members) return refuse('SURFACE_OWNERSHIP_INVALID', 'OpenCode base must be strict JSON containing only admitted native root keys', 'opencode.jsonc')
-        const byKey = new Map(members.map(member => [member.key, member]))
-        if (openCodeLines.length > 0) {
-            const current = byKey.get('instructions')
-            const instructions = current ? tryParseJson(current.valueBytes) : []
-            if (instructions === undefined) return refuse('SURFACE_INPUT_INVALID', 'OpenCode instructions are malformed')
-            if (!Array.isArray(instructions) || instructions.some(value => typeof value !== 'string')) return refuse('SURFACE_PATH_CONFLICT', 'OpenCode instructions are not a string array')
-            const values = [...new Set([...instructions, ...openCodeLines.map(row => row.bytes)])]
-            byKey.set('instructions', { key: 'instructions', valueBytes: JSON.stringify(values) })
-        }
-        const grouped = [...byKey.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
-        const contributions = [...openCode, ...openCodeLines]
+        const grouped = [...members].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+        const contributions = openCode
         const harnesses = sorted(contributions.flatMap(row => row.harnesses))
         if (!harnesses) return refuse('SURFACE_INPUT_INVALID', 'OpenCode output has no configured harness')
         const scope = sharedScope(contributions)

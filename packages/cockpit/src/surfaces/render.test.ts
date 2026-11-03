@@ -21,10 +21,7 @@ function input() {
             file('cursor', '.cursor/rules/base.mdc', 'base instructions\n'),
             file('grokcli', 'AGENTS.md', 'base instructions\n'),
         ] },
-        projection: { kind: 'complete', links: [], native: [
-            { target: 'codexcli', path: 'AGENTS.md', spelling: 'Read ./peer.md before editing peer.', capability: 'instructed' },
-            { target: 'opencode', path: 'opencode.jsonc', spelling: 'peer.md', capability: 'instructed' },
-        ], grants },
+        projection: { kind: 'complete', guides: [] as unknown[], grants },
         mcp: { kind: 'complete', result: mcpResult, diagnostics: [] },
         restrictions: { kind: 'complete', sharedGuard: guard, targets: [
             { target: 'claudecode', capability: 'instructed', files: [], readonly: { fragment: null } },
@@ -126,27 +123,28 @@ describe('surface rendering', () => {
         expect(renderSurfaceSet(noSettings)).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
     })
 
-    it('records a projected guide by sibling and in-sibling path, never by its machine path or content', () => {
+    it('copies a projected guide into the shared AGENTS.md region of every harness only while it is bound to its guide evidence', () => {
         const value = input()
-        const path = '.cockpit/siblings/peer.md'
         const guide = '/workspace/peer/AGENTS.md'
         const sha256 = digest('peer guide\n')
         const identity = 'file:peer-guide'
-        const result = renderSurfaceSet({
+        const block = '\n## Instructions for sibling `peer` (its AGENTS.md)\n\npeer guide'
+        const projected = { sibling: 'peer', guide: 'AGENTS.md', sourceGuidePath: guide, sourceContentSha256: sha256, sourceContentIdentity: identity, bytes: block }
+        const render = (evidenceSha256: string) => renderSurfaceSet({
             ...value,
-            projection: {
-                ...value.projection,
-                links: [{ sibling: 'peer', path, target: '../../../peer/AGENTS.md', sourceGuidePath: guide,
-                    sourceContentPath: guide, sourceContentSha256: sha256, sourceContentIdentity: identity }],
-                native: value.projection.native.map(row => ({ ...row, linkPath: path })),
-            },
-            sourceEvidence: [{ kind: 'guide', root: '/workspace/peer', path: guide, sha256, identity }],
+            projection: { ...value.projection, guides: [projected] },
+            sourceEvidence: [{ kind: 'guide', root: '/workspace/peer', path: guide, sha256: evidenceSha256, identity }],
         })
+
+        const result = render(sha256)
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind !== 'complete') return
-        expect(result.entries.find(entry => entry.path === path)).toMatchObject({
-            kind: 'symlink', source: { sibling: 'peer', path: 'AGENTS.md' },
+        expect(result.entries.find(entry => entry.path === 'AGENTS.md')).toMatchObject({
+            kind: 'shared-region', harnesses: [...input().configuredHarnesses].sort(),
+            region: { bytes: `base instructions\n${block}\n` },
         })
+        expect(result.entries.some(entry => entry.kind === 'symlink')).toBe(false)
+        expect(render(digest('other guide\n'))).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
     })
 
     it('deduplicates identical physical instruction bases and combines narrow shared contributions', () => {
@@ -156,13 +154,13 @@ describe('surface rendering', () => {
         const agents = result.entries.find(entry => entry.path === 'AGENTS.md')
         expect(agents).toMatchObject({
             kind: 'shared-region', harnesses: ['codexcli', 'grokcli', 'opencode'],
-            region: { bytes: 'base instructions\nRead ./peer.md before editing peer.\n' },
+            region: { bytes: 'base instructions\n' },
         })
         expect(result.entries.find(entry => entry.path === 'opencode.jsonc')).toMatchObject({
             kind: 'shared-region', harnesses: ['opencode'],
             region: { format: 'opencode-json-root-properties', members: [
                 { key: '$schema', valueBytes: '"schema.json"' },
-                { key: 'instructions', valueBytes: '["peer.md"]' },
+                { key: 'instructions', valueBytes: '[]' },
             ] },
         })
     })

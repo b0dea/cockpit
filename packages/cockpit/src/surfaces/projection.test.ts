@@ -145,8 +145,6 @@ async function validInput(options: { override?: string } = {}): Promise<Projecti
             { slug: 'api', target: 'grokcli', path: resolvedApi },
         ],
         guideObservations: observations.observations,
-        existingEntries: [],
-        priorOwnedLinks: [],
         standingSources: [
             { target: 'claudecode', path: '.claude/rules/scoped.md', content: 'one\ntwo\nthree\n', scope: 'scoped' },
             { target: 'codexcli', path: 'AGENTS.md#rules', content: 'one\ntwo\nthree\n', scope: 'scoped' },
@@ -157,55 +155,35 @@ async function validInput(options: { override?: string } = {}): Promise<Projecti
 }
 
 describe('live sibling projection planner', () => {
-    it('issues the exact frozen instruction facts consumed by native projection', async () => {
+    it('issues the exact frozen instruction facts the capability matrix publishes', () => {
         const capabilities = shippedInstructionCapabilities()
         expect(capabilities).toEqual([
-            { target: 'claudecode', mechanism: 'claude-relative-import', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-11-02', measuredVersion: '2.1.316',
-                provenance: 'in a workspace Claude Code had not trusted, CLAUDE.local.md loaded an @-import whose link stayed inside the cockpit checkout but silently skipped one whose link resolved to a sibling beside the checkout, as it skips a missing import; a trusted workspace was not measured' },
-            { target: 'codexcli', mechanism: 'codex-root-instruction', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-02', measuredVersion: '0.165.0',
-                provenance: 'Codex loaded the root AGENTS.md carrying cockpit\'s line telling the agent to read the sibling guide, but not the guide itself nor a decoy file beside it; reading the guide is left to the agent' },
-            { target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-02', measuredVersion: '1.19.4',
-                provenance: 'OpenCode loaded the sibling guide named in the opencode.jsonc instructions list through its link, while a linked guide beside it that the list did not name stayed out' },
-            { target: 'cursor', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit\'s instructions reach Cursor only through the root AGENTS.md, and .cursor/rules holds only rules overlays; no run of the tool beside a broken control has shown that it loads either' },
+            { target: 'claudecode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-03', measuredVersion: '2.1.317',
+                provenance: 'in a workspace Claude Code had not trusted, a sibling guide copied into the root AGENTS.md that CLAUDE.md imports loaded, with or without Claude Code\'s user option for reading AGENTS.md, while the undeclared sibling\'s guide and the decoy did not; nothing loaded through a committed CLAUDE.md @-import of a link to the guide or of its relative path, through permissions.additionalDirectories with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD in the settings env (ignored until a person trusts the workspace), or through --add-dir with that variable set' },
+            { target: 'codexcli', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-03', measuredVersion: '0.166.0',
+                provenance: 'a sibling guide copied into the root AGENTS.md loaded while the undeclared sibling\'s guide and the decoy did not; nothing loaded through a line in AGENTS.md telling the agent to read a link to the guide, through --add-dir naming the sibling, or through project_doc_fallback_filenames naming the link, and Codex dropped the end of a project AGENTS.md past 32 KiB' },
+            { target: 'opencode', mechanism: 'root-agents-guide', capability: 'instructed', evidence: 'not_applicable', characterizedOn: '2026-11-03', measuredVersion: '1.19.5',
+                provenance: 'a sibling guide copied into the root AGENTS.md loaded, as did a guide named through a link in the opencode.jsonc instructions list, while the undeclared sibling\'s guide and the decoy did not' },
+            { target: 'cursor', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit\'s instructions and the sibling guides it copies reach Cursor only through the root AGENTS.md, and .cursor/rules holds only rules overlays; no run of the tool beside a broken control has shown that it loads either' },
             { target: 'grokcli', mechanism: 'rulesync-rules', capability: 'generated', evidence: 'pending_evidence', characterizedOn: '2026-10-28', measuredVersion: null, provenance: 'cockpit writes the files, but no run of the tool beside a broken control has shown that it loads them' },
         ])
         expect(Object.isFrozen(capabilities)).toBe(true)
         expect(capabilities.every(Object.isFrozen)).toBe(true)
-
-        const result = planSiblingProjection(await validInput())
-        expect(result.kind).toBe('complete')
-        if (result.kind !== 'complete') return
-        for (const capability of capabilities.filter(row => row.capability === 'instructed')) {
-            const native = result.native.find(row => row.target === capability.target)!
-            expect(native).toMatchObject({
-                mechanism: capability.mechanism,
-                capability: capability.capability,
-                evidence: capability.evidence,
-                characterizedOn: capability.characterizedOn,
-                provenance: capability.provenance,
-            })
-        }
     })
 
-    it('projects one active sibling through all native harness spellings', async () => {
+    it('copies an active sibling\'s guide once, labelled with its sibling and digest, and grants every harness its directory', async () => {
         const input = await validInput()
         const result = planSiblingProjection(input)
 
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
-        expect(result.links).toHaveLength(1)
-        expect(result.links[0]).toMatchObject({
-            path: '.sibling-api-CLAUDE.md',
-            sourceGuidePath: resolve(input.canonicalMainCheckout, '..', 'api', 'CLAUDE.md'),
-            sourceEntryType: 'file',
-            ownership: 'whole-file',
-        })
-        expect(result.links[0]!.target).toBe(relative(input.canonicalMainCheckout, result.links[0]!.sourceGuidePath))
-        expect(result.native).toEqual([
-            expect.objectContaining({ target: 'claudecode', path: 'CLAUDE.local.md', spelling: '@./.sibling-api-CLAUDE.md', ownership: 'shared-region', capability: 'instructed', evidence: 'pending_evidence' }),
-            expect.objectContaining({ target: 'codexcli', path: 'AGENTS.md', spelling: 'Read ./.sibling-api-CLAUDE.md before editing api.', ownership: 'shared-region', capability: 'instructed', evidence: 'not_applicable' }),
-            expect.objectContaining({ target: 'opencode', path: 'opencode.jsonc', spelling: '.sibling-api-CLAUDE.md', ownership: 'shared-region', capability: 'instructed', evidence: 'not_applicable' }),
-        ])
+        // AGENTS.md links to CLAUDE.md, so the one text is copied once, under the first declared name.
+        const sourceGuidePath = resolve(input.canonicalMainCheckout, '..', 'api', 'CLAUDE.md')
+        const sha256 = input.guideObservations.find(row => row.sourcePath === sourceGuidePath)!.contentSha256
+        expect(result.guides).toEqual([{
+            sibling: 'api', guide: 'CLAUDE.md', sourceGuidePath, sourceContentIdentity: expect.any(String), sourceContentSha256: sha256,
+            bytes: `\n## Instructions for sibling \`api\` (its CLAUDE.md)\n\n<!-- cockpit:sibling-guide sibling=api guide=CLAUDE.md sha256=${sha256} -->\n\nshared guide\nsecond line`,
+        }])
         expect(result.grants.map(grant => [grant.target, grant.spelling])).toEqual([
             ['claudecode', 'permissions.additionalDirectories:../api'],
             ['codexcli', 'sandbox_workspace_write.writable_roots:../../api'],
@@ -213,16 +191,50 @@ describe('live sibling projection planner', () => {
             ['cursor', 'permission.read+write:../api/**=allow'],
             ['grokcli', 'permission.read+edit:../api/**=allow'],
         ])
-        expect(result.links.every(link => !link.sourceGuidePath.includes('mobile') && !link.sourceGuidePath.includes('docs') && !link.sourceGuidePath.includes('data'))).toBe(true)
         expect(Object.isFrozen(result)).toBe(true)
-        expect(Object.isFrozen(result.native)).toBe(true)
+        expect(Object.isFrozen(result.guides)).toBe(true)
+    })
+
+    // A guide set up the way setup leaves it (AGENTS.md shared, CLAUDE.md importing it) must reach
+    // every tool once, without the pointer back to this cockpit or an import that would name the
+    // cockpit's own AGENTS.md from the root.
+    it('copies a guide without the cockpit pointer block or an import of the sibling\'s own AGENTS.md, and refuses cockpit region markers', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-projection-text-'))
+        roots.push(root)
+        const main = join(root, 'cockpit')
+        const api = join(root, 'api')
+        await Promise.all([main, api].map(path => mkdir(path)))
+        await writeFile(join(api, 'AGENTS.md'), '# API\n\nRun the tests.\n<!-- cockpit:instruction-pointer:start -->\nRead [the cockpit instructions](<../cockpit/AGENTS.md>) before editing this repository.\n<!-- cockpit:instruction-pointer:end -->\n')
+        await writeFile(join(api, 'CLAUDE.md'), '@AGENTS.md\n\nUse the Bash tool for git.\n')
+        const plan = async () => {
+            const observed = await observeSiblingGuides({ allowedRoots: [api], requests: ['CLAUDE.md', 'AGENTS.md'].map(guide => ({ slug: 'api', root: api, sourcePath: join(api, guide) })) })
+            if (observed.kind !== 'complete') throw new Error(`guide observation failed: ${JSON.stringify(observed)}`)
+            return planSiblingProjection({
+                canonicalMainCheckout: main, siblingsRoot: '..', activeProfiles: [], guideCapLines: 200,
+                siblings: [{ slug: 'api', mount: 'always', directoryAuthority: 'api', guides: ['CLAUDE.md', 'AGENTS.md'] }],
+                mountedPaths: [{ slug: 'api', path: api }], directoryGrants: SURFACE_TARGETS.map(target => ({ slug: 'api', target, path: api })),
+                guideObservations: observed.observations, standingSources: [], loadCharacterizations: characterizations,
+            })
+        }
+
+        const copied = await plan()
+        expect(copied.kind).toBe('complete')
+        if (copied.kind !== 'complete') return
+        expect(copied.guides.map(guide => guide.bytes.split('\n\n').slice(2).join('\n\n'))).toEqual(['Use the Bash tool for git.', '# API\n\nRun the tests.'])
+
+        await writeFile(join(api, 'CLAUDE.md'), '@AGENTS.md\n')
+        const importOnly = await plan()
+        expect(importOnly.kind === 'complete' && importOnly.guides.map(guide => guide.guide)).toEqual(['AGENTS.md'])
+
+        await writeFile(join(api, 'AGENTS.md'), '# API\n<!-- cockpit:instructions:end -->\n')
+        expect(await plan()).toMatchObject({ kind: 'refusal', diagnostic: { code: 'PROJECTION_INPUT_INVALID', target: join(api, 'AGENTS.md') } })
     })
 
     it('uses canonical main authority in a nested worktree and lets an explicit override win', async () => {
         const first = await validInput()
         const nestedCwd = join(first.canonicalMainCheckout, '.worktrees', 'nested', 'deeper')
         const firstResult = planSiblingProjection({ ...first, invocationCwd: nestedCwd })
-        expect(firstResult).toMatchObject({ kind: 'complete', links: [{ sourceGuidePath: resolve(first.canonicalMainCheckout, '..', 'api', 'CLAUDE.md') }] })
+        expect(firstResult).toMatchObject({ kind: 'complete', guides: [{ sourceGuidePath: resolve(first.canonicalMainCheckout, '..', 'api', 'CLAUDE.md') }] })
 
         const overrideRoot = await mkdtemp(join(tmpdir(), 'cockpit-projection-override-'))
         roots.push(overrideRoot)
@@ -230,7 +242,7 @@ describe('live sibling projection planner', () => {
         await writeFile(join(overrideRoot, 'AGENTS.md'), 'override guide\n')
         const overridden = await validInput({ override: overrideRoot })
         const overrideResult = planSiblingProjection(overridden)
-        expect(overrideResult).toMatchObject({ kind: 'complete', links: [{ sourceGuidePath: join(overrideRoot, 'CLAUDE.md') }] })
+        expect(overrideResult).toMatchObject({ kind: 'complete', guides: [{ sourceGuidePath: join(overrideRoot, 'CLAUDE.md') }] })
     })
 
     it('keeps a configured live guide symlink as the projection source', async () => {
@@ -239,11 +251,9 @@ describe('live sibling projection planner', () => {
         const result = planSiblingProjection(input)
         expect(result).toMatchObject({
             kind: 'complete',
-            links: [{
-                path: '.sibling-api-AGENTS.md',
+            guides: [{
+                guide: 'AGENTS.md',
                 sourceGuidePath: resolve(input.canonicalMainCheckout, '..', 'api', 'AGENTS.md'),
-                sourceEntryType: 'symlink',
-                sourceLinkTarget: 'CLAUDE.md',
             }],
         })
     })
@@ -264,8 +274,8 @@ describe('live sibling projection planner', () => {
         const result = planSiblingProjection(input)
         expect(result.kind).toBe('complete')
         if (result.kind === 'complete') {
-            expect(result.links).toEqual(expect.arrayContaining([
-                expect.objectContaining({ sibling: 'mobile', path: '.sibling-mobile-AGENTS.md' }),
+            expect(result.guides).toEqual(expect.arrayContaining([
+                expect.objectContaining({ sibling: 'mobile', guide: 'AGENTS.md' }),
             ]))
         }
     })
@@ -394,26 +404,6 @@ describe('live sibling projection planner', () => {
             .toMatchObject({ kind: 'refusal', diagnostic: { code: 'PROJECTION_GUIDE_CHANGED' } })
     })
 
-    it('reports target-only drift and only exact prior-owned stale links', async () => {
-        const input = await validInput()
-        input.existingEntries = [{ path: '.sibling-api-CLAUDE.md', type: 'symlink', target: '../wrong/CLAUDE.md' }]
-        input.priorOwnedLinks = [
-            { path: '.sibling-old-AGENTS.md', target: '../old/AGENTS.md' },
-        ]
-        input.existingEntries.push(
-            { path: '.sibling-old-AGENTS.md', type: 'symlink', target: '../old/AGENTS.md' },
-            { path: '.sibling-unmanaged-AGENTS.md', type: 'symlink', target: '../unmanaged/AGENTS.md' },
-        )
-
-        const result = planSiblingProjection(input)
-        expect(result).toMatchObject({
-            kind: 'complete',
-            comparisons: [{ path: '.sibling-api-CLAUDE.md', state: 'drift', expectedType: 'symlink', actualType: 'symlink', expectedTarget: '../api/CLAUDE.md', actualTarget: '../wrong/CLAUDE.md' }],
-            staleLinks: [{ path: '.sibling-old-AGENTS.md', target: '../old/AGENTS.md' }],
-        })
-        if (result.kind === 'complete') expect(result.staleLinks.some(link => link.path.includes('unmanaged'))).toBe(false)
-    })
-
     it.each([
         ['generated mount', (input: ProjectionPlannerInput) => { input.mountedPaths[0] = { slug: 'api', path: '/wrong/mount' } }, 'PROJECTION_MOUNT_MISMATCH'],
         ['native grant', (input: ProjectionPlannerInput) => { input.directoryGrants[1] = { slug: 'api', target: 'codexcli', path: '/wrong/grant' } }, 'PROJECTION_GRANT_MISMATCH'],
@@ -430,16 +420,17 @@ describe('live sibling projection planner', () => {
 
     it('accounts each harness with its own scoped semantics and cap', async () => {
         const input = await validInput()
-        input.guideCapLines = 4
+        input.guideCapLines = 8
         const result = planSiblingProjection(input)
+        // Each harness pays the seven lines of the copied guide; only Claude Code defers the scoped three.
         expect(result).toMatchObject({
             kind: 'complete',
             costs: [
-                { target: 'claudecode', status: 'within_cap', metric: 'lines', value: 2, conditionalValue: 3, cap: 4 },
-                { target: 'codexcli', status: 'within_cap', metric: 'lines', value: 4, conditionalValue: 0, cap: 4 },
-                { target: 'opencode', status: 'exceeded', metric: 'lines', value: 5, conditionalValue: 0, cap: 4 },
+                { target: 'claudecode', status: 'within_cap', metric: 'lines', value: 7, conditionalValue: 3, cap: 8 },
+                { target: 'codexcli', status: 'exceeded', metric: 'lines', value: 10, conditionalValue: 0, cap: 8 },
+                { target: 'opencode', status: 'exceeded', metric: 'lines', value: 10, conditionalValue: 0, cap: 8 },
             ],
-            headline: { metric: 'lines', value: 5, target: 'opencode' },
+            headline: { metric: 'lines', value: 10, target: 'codexcli' },
         })
 
         input.loadCharacterizations = { ...characterizations }

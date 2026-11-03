@@ -245,8 +245,8 @@ partial or duplicate marked blocks are refused so a person can reconcile them. S
 redirected directories and invalid UTF-8 rather than replace the product's bytes.
 
 An agent started inside a sibling loads only the instruction files its own tool reads: Codex and
-OpenCode read **AGENTS.md**, while Claude Code reads **CLAUDE.md** (the
-[capability matrix](capability-matrix.md) has the dated measurements). Every tool gets the same
+OpenCode read **AGENTS.md**, while Claude Code reads **CLAUDE.md**, as runs of each tool beside a
+decoy file showed. Every tool gets the same
 instructions only when AGENTS.md holds them and CLAUDE.md imports it with a line reading
 `@AGENTS.md`. `doctor` warns for every sibling laid out otherwise:
 `SIBLING_INSTRUCTIONS_AGENTS_ONLY`, `SIBLING_INSTRUCTIONS_CLAUDE_ONLY`,
@@ -608,7 +608,7 @@ transaction plans its helper steps before staging and keeps time in reserve to r
 work reaches its deadline. If cockpit cannot confirm that writing or rollback finished, it keeps the
 recovery inputs and refuses to report success.
 
-Capability states, overlay rules, MCP approval, sibling guide links, the skill contract, `selftest`
+Capability states, overlay rules, MCP approval, sibling guide copies, the skill contract, `selftest`
 and `upgrade` for the generated harness surfaces are in [Harness surfaces](harness-surfaces.md);
 see [Review an upgrade](harness-surfaces.md#review-an-upgrade) before changing the installed
 version.

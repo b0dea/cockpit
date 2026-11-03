@@ -561,6 +561,10 @@ marked block and keeps existing team text (a missing **AGENTS.md** becomes a new
 partial or duplicate pointer is refused. The root sibling (`dir = "."`) cannot opt in: its guide
 is the cockpit guide.
 
+Plain `setup` also proposes the **AGENTS.md** or **CLAUDE.md** a sibling needs so every agent tool
+started there loads its instructions, and `setup --write-instruction-files` writes it after review;
+[Lifecycle and ownership](environment.md#lifecycle-and-ownership) has the cases.
+
 ```sh
 ./node_modules/.bin/cockpit sibling remove api --config ./cockpit.toml
 ```

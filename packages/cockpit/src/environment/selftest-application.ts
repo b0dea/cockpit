@@ -355,9 +355,8 @@ function selectedEntryBytes(probe: PlannedSelftestProbe): string | undefined {
     const selected = probe.entries.find((entry) => {
         if (probe.cell.capability === 'skill-parity') return entry.path.includes(`/skills/${probe.cell.skill}/`)
         if (probe.harness.kind !== 'builtin') return false
-        if (probe.capability === 'instruction-loading') return probe.harness.target === 'claudecode'
-            ? entry.path === 'CLAUDE.md' || entry.path === 'CLAUDE.local.md'
-            : probe.harness.target === 'codexcli' ? entry.path === 'AGENTS.md' : entry.path === 'opencode.jsonc'
+        // Every built-in tool loads cockpit's instructions and the copied sibling guides from the root AGENTS.md.
+        if (probe.capability === 'instruction-loading') return entry.path === 'AGENTS.md'
         if (probe.harness.target === 'claudecode') return entry.path === '.claude/settings.json'
         if (probe.harness.target === 'codexcli') return entry.path === '.codex/config.toml'
             || entry.path.startsWith('.codex/rules/')

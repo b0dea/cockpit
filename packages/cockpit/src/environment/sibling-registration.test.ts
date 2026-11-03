@@ -402,19 +402,8 @@ describe('sibling remove', () => {
         expect(after).toContain('# Machine floor, measured once.')
         expect(after).toContain('# Port leases.\n[ports.bases]')
         expect(removed.artifact).toContain(`npx --no cockpit sync --config ${configPath} --dry-run`)
-        // docs is never mounted, so no guide projection of it exists and none is flagged.
+        // docs derives no generated row, so nothing is flagged.
         expect(removed.result).toMatchObject({ flaggedForReview: [] })
-        expect(removed.artifact).not.toContain('.sibling-docs-')
-    })
-
-    it('flags only the guide projections that exist beside cockpit.toml', async () => {
-        const { root, configPath } = await estate()
-        await writeFile(join(root, '.sibling-docs-AGENTS.md'), 'projected guide\n')
-
-        const removed = await runSiblingRemove({ configPath, env, slug: 'docs' })
-
-        expect(removed.status).toBe(0)
-        expect(removed.result).toMatchObject({ flaggedForReview: ['.sibling-docs-AGENTS.md (guide projection)'] })
     })
 
     it('refuses while the cockpit\'s own Compose file uses the sibling\'s variable', async () => {

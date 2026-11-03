@@ -54,7 +54,7 @@ as `SURFACE_RULE_SCOPE_UNSUPPORTED`.
 The generator uses a checked-in, SHA-pinned bundle of Rulesync only to spell the output for each
 harness. Packaging verifies the bundle against its source and includes its third-party notices,
 and cockpit checks the bundle's bytes before loading it. Cockpit itself handles declaration
-merging, restriction policy, MCP approval, sibling guide links, capability state, the output file
+merging, restriction policy, MCP approval, sibling guide copies, capability state, the output file
 list, ownership and publication. It accepts a generator result only when the files the generator
 reports match the files read back from its isolated output directory.
 
@@ -239,12 +239,26 @@ tool restriction.
 
 ## Sibling projection and standing cost
 
-Cockpit reads each sibling's guide from its declared root and links it into the generated root
-instructions through confined symlinks. It refuses a link if the guide changes between reading and
-planning within one `sync`, escapes its root, conflicts with the mount or directory grant, or would
-replace a link cockpit does not own. The guide belongs to the sibling team: the ownership manifest
-records only the sibling and the guide's path inside it, so an edit, checkout or clone leaves the
-link current, while a link replaced by a file or pointed elsewhere is still refused.
+Cockpit reads each sibling's guides (`sibling.guides`, by default **CLAUDE.md** and **AGENTS.md**)
+from its declared root and copies them into its region of the root **AGENTS.md**, after its own
+instructions. Every agent tool reads that file, Claude Code through the `@AGENTS.md` import in
+**CLAUDE.md**, so each tool starts with the same sibling instructions. Copying is the one route that
+loaded in Claude Code, Codex and OpenCode alike: a symlinked guide imported from **CLAUDE.md**, an
+extra directory handed to Claude Code or Codex, and a line telling Codex to read the guide each
+left Claude Code or Codex without it; the [capability matrix](capability-matrix.md) has the dated
+runs. Each copy starts with a heading naming the sibling and a comment recording the guide and the
+SHA-256 of the text copied. A copy leaves out the marked block `setup --write-instruction-pointers`
+appended to the guide, and a **CLAUDE.md** line importing the sibling's own **AGENTS.md** when that
+file is copied as well. Sync refuses a guide that changes while it is read, resolves outside its
+root, or contains cockpit's own instruction region or owner markers.
+
+A copy goes stale when the sibling's guide changes: `check` and `preflight` then report
+`GENERATED_ARTIFACT_DRIFT` naming each out-of-date `<sibling>/<guide>`, and a person runs `sync` and
+commits **AGENTS.md**. That is deliberate. An agent editing a sibling's guide cannot change what
+every later agent session in the cockpit loads until a person has reviewed the new text, the same
+review a change to **CLAUDE.md**'s imports gets. A Claude Code `@` import inside a copied guide
+resolves from the cockpit root, not the sibling, and no other tool follows it, so keep shared
+guides free of them.
 
 Codex sibling grants are `sandbox_workspace_write.writable_roots` entries under
 `sandbox_mode = "workspace-write"`. Codex resolves a relative root from `.codex/`, so cockpit writes
@@ -259,9 +273,10 @@ project root, so the committed pattern is `{file:.cockpit/local/opencode-grant-<
 substitutes the absolute sibling directory that `sync` writes to that machine-local, ignored file,
 and refuses to start, naming the file, until `sync` has run on the machine.
 
-The `[cockpit].guide_cap` limit applies to always-loaded guidance, linked sibling guides included;
+The `[cockpit].guide_cap` limit applies to always-loaded guidance, copied sibling guides included;
 going over it makes `sync`, `check` and `preflight` report `GUIDE_CAP_EXCEEDED` with the measured
-lines and the cap. Cockpit reports the line cost per
+lines and the cap. The same code reports cockpit's region of **AGENTS.md** passing 32768 bytes,
+because Codex silently drops the rest of a longer project **AGENTS.md**. Cockpit reports the line cost per
 harness only when it has a dated test of how that harness loads guidance; without one the cost is
 `unavailable`, not zero. When a harness loads every rule regardless of scope, scoped text still
 counts toward the total.

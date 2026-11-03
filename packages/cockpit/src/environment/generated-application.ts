@@ -63,7 +63,7 @@ import {
     type SurfaceDiagnostic,
     type SurfacePriorOwnedEntry,
 } from '../surfaces/ownership.js'
-import { codexWritableRoot, observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
+import { codexWritableRoot, observeSiblingGuides, planSiblingProjection, shippedInstructionCapabilities, SIBLING_GUIDE_MARKER, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
 import {
     renderSurfaceSet,
     surfaceModelSha256,
@@ -698,17 +698,34 @@ function overrideChanged(finding: SurfaceUpgradeFinding, severity: 'error' | 'wa
     })
 }
 
-// Linked sibling guides count toward the cap, so a sibling's own edit can push it over.
+// Copied sibling guides count toward the cap, so a sibling's own edit can push it over.
 function guideCapExceeded(cost: Readonly<{ target: string; value: number; cap: number }>): RefusalOutcome {
     return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
         diagnostics: Object.freeze([Object.freeze({
             severity: 'error' as const, code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, target: 'cockpit.guide_cap',
-            message: `the instructions ${cost.target} loads at start are ${cost.value} lines, over cockpit.guide_cap ${cost.cap}; the count includes each linked sibling guide`,
-            fix: 'shorten the root or linked sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
+            message: `the instructions ${cost.target} loads at start are ${cost.value} lines, over cockpit.guide_cap ${cost.cap}; the count includes each sibling guide copied into the root AGENTS.md`,
+            fix: 'shorten the root or sibling guides, or move conditional guidance into a skill, or raise cockpit.guide_cap in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>',
         })]) })
 }
 
-// The projection skips an absent guide, so a misspelled name otherwise links nothing and says nothing.
+// Codex 0.166.0 dropped the end of a project AGENTS.md past 32 KiB without saying so (measured
+// 2026-11-03), and the copied sibling guides sit at the end of cockpit's region. The team's own text
+// outside the region counts too, so this is the least the file holds.
+const CODEX_PROJECT_DOC_BYTES = 32_768
+
+function guideBytesExceeded(bytes: number): RefusalOutcome {
+    return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: Object.freeze([Object.freeze({
+            severity: 'error' as const,
+            // A literal, so the diagnostic inventory captures the fix beside the code.
+            code: 'GUIDE_CAP_EXCEEDED' as const satisfies typeof ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
+            target: 'AGENTS.md',
+            message: `cockpit's part of the root AGENTS.md, with the sibling guides it copies, is ${bytes} bytes; Codex drops whatever follows the first 32768 bytes of a project AGENTS.md without saying so`,
+            fix: 'shorten the root or sibling guides, or name fewer guides in sibling.guides, then run npx --no cockpit sync --config <your cockpit.toml>',
+        })]) })
+}
+
+// The projection skips an absent guide, so a misspelled name otherwise copies nothing and says nothing.
 function siblingGuideMissing(slug: string, guide: string, sourcePath: string): RefusalOutcome {
     return Object.freeze({ kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
         diagnostics: Object.freeze([Object.freeze({
@@ -2120,9 +2137,7 @@ const GUIDE_LOAD_CHARACTERIZATIONS = Object.freeze(Object.fromEntries(shippedIns
     .filter(fact => isGuardSurfaceTarget(fact.target))
     .map(fact => [fact.target, Object.freeze({
         measuredOn: fact.characterizedOn, metric: 'lines' as const, scopeSemantics: fact.target === 'claudecode' ? 'conditional' as const : 'full' as const,
-        provenance: fact.target === 'claudecode'
-            ? `${fact.provenance}; the count still includes each linked sibling guide, so it is an upper bound where Claude Code skips one`
-            : fact.provenance,
+        provenance: fact.provenance,
     })])))
 
 function nativeSources(
@@ -2565,8 +2580,8 @@ async function prepareSurfaces(
         return refuse('SURFACE_SOURCE_UNAVAILABLE', `an active sibling checkout could not be authenticated: ${errorCause(error)}`, 'surfaces')
     }
     // A root guide that projection also writes would become both an authenticated input and an
-    // owned output. Native harness loading already reaches these files, so a self-link adds no rule.
-    const rootInstructionOutputs = new Set(['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'opencode.jsonc'])
+    // owned output. Native harness loading already reaches these files, so a copy adds no rule.
+    const rootInstructionOutputs = new Set(['AGENTS.md', 'CLAUDE.md', 'opencode.jsonc'])
     const projectionGuides = (sibling: typeof config.sibling[number]): readonly string[] =>
         siblingRoots.get(sibling.slug) === prepared.root
             ? sibling.guides.filter(guide => !rootInstructionOutputs.has(guide))
@@ -2591,9 +2606,6 @@ async function prepareSurfaces(
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),
         directoryGrants: selected.flatMap(row => SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
         guideObservations: observedGuides.observations,
-        existingEntries: [],
-        priorOwnedLinks: priorOwned.filter((row): row is Extract<SurfacePriorOwnedEntry, { kind: 'symlink' }> => row.kind === 'symlink')
-            .map(row => ({ path: row.path, target: row.target })),
         standingSources: [],
         loadCharacterizations: GUIDE_LOAD_CHARACTERIZATIONS,
     }
@@ -3023,16 +3035,6 @@ async function prepareSurfaces(
             }
         }
     }
-    for (const entry of adoptedEntries) if (entry.kind === 'symlink') {
-        const root = siblingRoots.get(entry.source.sibling)
-        const sourcePath = root === undefined ? undefined : resolve(root, entry.source.path)
-        const offset = root === undefined || sourcePath === undefined ? '..' : relative(root, sourcePath)
-        if (offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset)
-            || resolve(prepared.root, dirname(entry.path), entry.target) !== sourcePath
-            || !evidence.some(row => row.kind === 'guide' && row.root === root && row.path === sourcePath)) {
-            return refuse('SURFACE_STATE_CONFLICT', 'a projected symlink target is not bound to its authenticated sibling source', entry.path)
-        }
-    }
     const bound = bindSurfaceOwnershipIdentity(adoptedEntries, prepared.cockpitId)
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
     const surfaceEntries = Object.freeze([...bound.entries, ...bundleEntries]
@@ -3070,24 +3072,12 @@ async function prepareSurfaces(
     if (characterizedGuideCosts.length !== tierGuide.costs.length) {
         return refuse('SURFACE_INPUT_INVALID', 'published instruction cost is not characterized', 'AGENTS.md')
     }
-    let missingLinkedGuide = false
+    // The root region carries the copied sibling guides, so every tool's start-up cost is that region.
     const rootGuideLines = guideLines(rootGuide.region.bytes)
-    const actualGuideCosts = characterizedGuideCosts.map(cost => {
-        const linkedGuideLines = cost.target === 'codexcli' ? 0 : projection.native
-            .filter(native => native.target === cost.target)
-            .reduce((sum, native) => {
-                const link = projection.links.find(candidate => candidate.path === native.linkPath)
-                const observation = link && observedGuides.observations.find(candidate => candidate.sourcePath === link.sourceGuidePath)
-                if (!observation) {
-                    missingLinkedGuide = true
-                    return sum
-                }
-                return sum + guideLines(observation.content)
-            }, 0)
-        const value = rootGuideLines + linkedGuideLines
-        return Object.freeze({ ...cost, value, status: value > cost.cap ? 'exceeded' as const : 'within_cap' as const })
-    })
-    if (missingLinkedGuide) return refuse('SURFACE_INPUT_INVALID', 'a published linked guide lost its authenticated measurement', 'AGENTS.md')
+    const actualGuideCosts = characterizedGuideCosts.map(cost =>
+        Object.freeze({ ...cost, value: rootGuideLines, status: rootGuideLines > cost.cap ? 'exceeded' as const : 'within_cap' as const }))
+    const rootGuideBytes = Buffer.byteLength(rootGuide.region.bytes)
+    if (rootGuideBytes > CODEX_PROJECT_DOC_BYTES) return guideBytesExceeded(rootGuideBytes)
     const overCap = actualGuideCosts.filter(cost => cost.status === 'exceeded').sort((left, right) => right.value - left.value)[0]
     if (overCap) return guideCapExceeded(overCap)
     if (explicitNativeHooks && !surfaceEntries.some(entry => entry.kind === 'file'
@@ -3925,6 +3915,17 @@ export async function applyGeneratedEnvironmentRepair(
     return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun ? outcome.staleRemoval : undefined)
 }
 
+// Each copied guide carries a marker naming its sibling, path and digest, so the guides whose copy in
+// the AGENTS.md on disk differs from the one sync would write can be named rather than the file alone.
+function staleSiblingGuides(prepared: PreparedEnvironment, observed: readonly SurfaceObservedEntry[]): readonly string[] {
+    const desired = prepared.surfaces.find(entry => entry.path === 'AGENTS.md')
+    const current = observed.find(entry => entry.path === 'AGENTS.md')
+    const markers = (text: string) => new Map([...text.matchAll(SIBLING_GUIDE_MARKER)].map(match => [`${match[1]}/${match[2]}`, match[3]]))
+    const want = markers(desired?.kind === 'shared-region' && desired.region.format === 'markdown-delimited' ? desired.region.bytes : '')
+    const have = markers(current?.kind === 'file' ? current.bytes : '')
+    return [...new Set([...want.keys(), ...have.keys()])].filter(key => want.get(key) !== have.get(key)).sort(compareCodeUnits)
+}
+
 async function checkCanonicalGeneratedEnvironment(
     input: GeneratedEnvironmentCommandInput,
     seed?: PreparedEnvironment,
@@ -4019,6 +4020,10 @@ async function checkCanonicalGeneratedEnvironment(
     const stale = comparison.actions.find(action => action.kind === 'remove')
     if (stale) return refuse('GENERATED_ARTIFACT_DRIFT', 'a formerly generated path is still on disk and in the ownership record', stale.path,
         'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal and approves the stale-removal digest it shows')
+    const staleGuides = drift.includes('AGENTS.md') ? staleSiblingGuides(prepared, surfaceState.observed) : []
+    if (staleGuides.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT',
+        `AGENTS.md holds an out-of-date copy of ${staleGuides.join(', ')}: the guide changed in its sibling, or the declared guides changed, since the last sync`,
+        'AGENTS.md', 'run npx --no cockpit sync --config <your cockpit.toml>, then review and commit AGENTS.md')
     if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run npx --no cockpit sync --config <your cockpit.toml>')
     if (ownership.bytes !== encodeOwnershipManifest(prepared).bytes) return refuse(
         'GENERATED_OWNERSHIP_DRIFT', 'generated ownership metadata differs from the current canonical manifest', OWNERSHIP_PATH,

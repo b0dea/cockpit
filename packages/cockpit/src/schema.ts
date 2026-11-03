@@ -659,16 +659,14 @@ export function deriveSiblingVariable(slug: string): string {
 }
 
 // Most repositories publish one or both of these, so an absent default guide is not an error; any
-// other declared name is one the row chose, and an absent one is a typo that would link nothing.
+// other declared name is one the row chose, and an absent one is a typo that would copy nothing.
 export const SIBLING_DEFAULT_GUIDES: readonly string[] = Object.freeze(['CLAUDE.md', 'AGENTS.md'])
 
 export const Sibling = z
     .object({
-        // Also the projection filename prefix (`.sibling-<slug>-CLAUDE.md`), which is why it
-        // is recorded rather than derived. Slug, directory and remote are routinely three
-        // different names for one repository, and every one of them is load-bearing
-        // somewhere.
-        slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Short name of the sibling; also the prefix of its projected guide files.'),
+        // Recorded rather than derived: slug, directory and remote are routinely three different
+        // names for one repository, and every one of them is load-bearing somewhere.
+        slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Short name of the sibling; also how the root AGENTS.md labels its copied guides.'),
         // Relative to the siblings root and resolved without further checks by several
         // consumers, so the schema is where a hostile cockpit.toml is stopped. `.` is the
         // siblings root itself: a single-repository stack whose one sibling is the cockpit root, or a
@@ -696,7 +694,7 @@ export const Sibling = z
         // to the live files — never copies, which are stale the moment the sibling edits its
         // own guide and report nothing. Defaulted rather than required: most repositories use
         // one or both of these, and one that does not is a row that says so.
-        guides: z.array(SafeRelativePath).default([...SIBLING_DEFAULT_GUIDES]).describe('Guide files the sibling publishes, linked into the cockpit as symlinks.'),
+        guides: z.array(SafeRelativePath).default([...SIBLING_DEFAULT_GUIDES]).describe('Guide files the sibling publishes, copied into the cockpit\'s root AGENTS.md by sync.'),
         // Setup writes this repository only when the declaration and its command-line approval agree.
         instruction_pointer: z.boolean().default(false).describe('Let setup add a pointer to the cockpit guide in this sibling, when the command line also approves it.'),
         // Printed when the checkout is missing, so it says what the absence costs.

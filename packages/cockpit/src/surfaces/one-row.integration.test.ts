@@ -127,7 +127,7 @@ describe('one-row generated surface integration', () => {
             canonicalMainCheckout: added.root,
             siblingsRoot: '.',
             activeProfiles: ['application', 'worker'],
-            guideCapLines: 4,
+            guideCapLines: 8,
             siblings: registry.result.config.sibling.map(sibling => ({
                 slug: sibling.slug, mount: sibling.mount, directoryAuthority: sibling.dir, guides: sibling.guides,
             })),
@@ -138,8 +138,6 @@ describe('one-row generated surface integration', () => {
                 slug: sibling.slug, target, path: join(added.root, sibling.dir),
             }))),
             guideObservations: guideObservation.observations,
-            existingEntries: [],
-            priorOwnedLinks: [],
             standingSources: targets.map(target => ({
                 target, path: `${target}.scoped`, content: 'scoped first\nscoped second\n', scope: 'scoped' as const,
             })),
@@ -152,13 +150,13 @@ describe('one-row generated surface integration', () => {
         const projection = planSiblingProjection(projectionInput)
         expect(projection).toMatchObject({
             kind: 'complete',
-            links: [expect.objectContaining({ path: '.sibling-worker-AGENTS.md' })],
+            guides: [expect.objectContaining({ sibling: 'worker', guide: 'AGENTS.md' })],
             costs: [
-                { target: 'claudecode', status: 'within_cap', metric: 'lines', value: 1, conditionalValue: 2, cap: 4,
+                { target: 'claudecode', status: 'within_cap', metric: 'lines', value: 6, conditionalValue: 2, cap: 8,
                     measuredOn: '2026-09-26', provenance: 'paired synthetic probe', scopeSemantics: 'conditional' },
-                { target: 'codexcli', status: 'within_cap', metric: 'lines', value: 3, conditionalValue: 0, cap: 4,
+                { target: 'codexcli', status: 'within_cap', metric: 'lines', value: 8, conditionalValue: 0, cap: 8,
                     measuredOn: '2026-09-26', provenance: 'paired synthetic probe', scopeSemantics: 'full' },
-                { target: 'opencode', status: 'within_cap', metric: 'lines', value: 3, conditionalValue: 0, cap: 4,
+                { target: 'opencode', status: 'within_cap', metric: 'lines', value: 8, conditionalValue: 0, cap: 8,
                     measuredOn: '2026-09-26', provenance: 'paired synthetic probe', scopeSemantics: 'full' },
             ],
         })
@@ -196,9 +194,7 @@ describe('one-row generated surface integration', () => {
             '.cursor/mcp.json',
             '.grok/config.toml',
             '.mcp.json',
-            '.sibling-worker-AGENTS.md',
             'AGENTS.md',
-            'CLAUDE.local.md',
             'compose.generated.yml',
             'docs/cockpit/environment-decisions.md',
             'opencode.jsonc',
@@ -210,9 +206,9 @@ describe('one-row generated surface integration', () => {
             'worker:volume:worker-dependencies:/workspace/node_modules',
             'worker:environment-file:.env.local:/workspace/.env',
         ]))
-        expect(addedSync.result.application.surfaceSelftest.entries).toEqual(expect.arrayContaining([
-            expect.objectContaining({ kind: 'symlink', path: '.sibling-worker-AGENTS.md' }),
-        ]))
+        expect(after['AGENTS.md']).toContain('## Instructions for sibling `worker` (its AGENTS.md)')
+        expect(after['AGENTS.md']).toContain('Synthetic worker guide.')
+        expect(before['AGENTS.md']).not.toContain('Synthetic worker guide.')
 
         const claudeMcp = JSON.parse(await readFile(join(added.root, '.mcp.json'), 'utf8')) as {
             mcpServers: Record<string, unknown>
@@ -268,12 +264,15 @@ describe('one-row generated surface integration', () => {
             expect(guarded.stdout + guarded.stderr).not.toContain(credentialCanary)
         }
 
-        const guideLink = '.sibling-worker-AGENTS.md'
-        await rm(join(added.root, guideLink))
-        await symlink('worker/CONTROL.md', join(added.root, guideLink))
-        await expectDrift(added.configPath, guideLink)
-        await rm(join(added.root, guideLink))
-        await symlink('worker/AGENTS.md', join(added.root, guideLink))
+        // A sibling's own guide edit leaves the committed copy stale; check names that guide until sync.
+        const guide = join(added.root, 'worker/AGENTS.md')
+        await writeFile(guide, 'Synthetic worker guide, edited.\n')
+        expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({
+            kind: 'refusal', status: 2, diagnostics: [expect.objectContaining({
+                code: 'GENERATED_ARTIFACT_DRIFT', target: 'AGENTS.md', message: expect.stringContaining('out-of-date copy of worker/AGENTS.md'),
+            })],
+        })
+        await writeFile(guide, 'Synthetic worker guide.\n')
         expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({ kind: 'complete' })
 
         const fileControls = [

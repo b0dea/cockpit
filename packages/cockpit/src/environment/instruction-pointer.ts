@@ -8,11 +8,12 @@ import { errorCause, hasErrorCode } from './contract.js'
 
 export const mechanism = {
     id: 'instruction-pointer', module: 'packages/cockpit/src/environment/instruction-pointer.ts',
-    exports: ['synchronizeInstructionPointer'],
+    exports: ['INSTRUCTION_POINTER_MARKERS', 'synchronizeInstructionPointer'],
 } as const
 
 const BEGIN = '<!-- cockpit:instruction-pointer:start -->'
 const END = '<!-- cockpit:instruction-pointer:end -->'
+export const INSTRUCTION_POINTER_MARKERS = Object.freeze({ begin: BEGIN, end: END })
 
 export type InstructionPointerResult = Readonly<{
     kind: 'offered' | 'written' | 'unchanged'

@@ -252,6 +252,19 @@ describe('generated environment command', () => {
             diagnostics: [expect.objectContaining({ code: 'GUIDE_CAP_EXCEEDED', message: expect.stringMatching(/ \d+ lines, over cockpit\.guide_cap 150;/) })] })
     })
 
+    // Codex 0.166.0 silently dropped what followed the first 32 KiB of a project AGENTS.md, so a copied
+    // guide past it would read as loaded and reach Codex only in part.
+    it('refuses copied sibling guides that push cockpit\'s AGENTS.md region past what Codex loads, naming its bytes', async () => {
+        const fixture = await surfaceConsumer('guide-bytes')
+        const config = await readFile(fixture.configPath, 'utf8')
+        await writeFile(fixture.configPath, config.replace('[cockpit]\n', '[cockpit]\nguide_cap = 10000\n'))
+        await writeFile(join(fixture.siblingDirectory, 'AGENTS.md'), `${'x'.repeat(199)}\n`.repeat(170))
+        expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })).toMatchObject({ kind: 'refusal',
+            diagnostics: [expect.objectContaining({ code: 'GUIDE_CAP_EXCEEDED', target: 'AGENTS.md', message: expect.stringContaining('the first 32768 bytes') })] })
+        await writeFile(join(fixture.siblingDirectory, 'AGENTS.md'), `${'x'.repeat(199)}\n`.repeat(100))
+        expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })).toMatchObject({ kind: 'complete' })
+    })
+
     it('writes a rules overlay with Rulesync frontmatter into the always-loaded guide and refuses a scoped one by name', async () => {
         const fixture = await surfaceConsumer('rules-frontmatter', { rules: true })
         const config = await readFile(fixture.configPath, 'utf8')

@@ -30,7 +30,7 @@ const dependencies = () => ({
 const guideInput = (): ProjectionPlannerInput => ({
     canonicalMainCheckout: '/synthetic/cockpit', siblingsRoot: '/synthetic', activeProfiles: [],
     guideCapLines: configurationDefaults().cockpit.guide_cap, siblings: [], mountedPaths: [], directoryGrants: [],
-    guideObservations: [], existingEntries: [], priorOwnedLinks: [],
+    guideObservations: [],
     standingSources: ['claudecode', 'codexcli', 'opencode'].map(target => ({
         target: target as 'claudecode' | 'codexcli' | 'opencode', path: 'AGENTS.md', content: 'Existing instruction\n', scope: 'always',
     })),

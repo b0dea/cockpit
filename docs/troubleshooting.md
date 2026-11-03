@@ -149,6 +149,9 @@ to agree. `PROJECTION_GUIDE_UNAVAILABLE`, `PROJECTION_GUIDE_ESCAPE`,
 `PROJECTION_GUIDE_READ_FAILED`, and `PROJECTION_GUIDE_CLOSE_FAILED` identify the named guide or
 its confined read. Restore a regular declared guide and safe root. `PROJECTION_GUIDE_CHANGED`
 means the guide changed after observation; stop the concurrent edit and retry from a fresh read.
+A sibling guide holding one of cockpit's own `<!-- cockpit:instructions:` or `<!-- cockpit:owner:`
+markers is refused as `PROJECTION_INPUT_INVALID`, because its copy would end or split cockpit's
+region of the root **AGENTS.md**; remove the marker from the guide.
 
 For `SKILL_INPUT_INVALID`, `SKILL_FRONTMATTER_INVALID`, `SKILL_CONTRACT_INVALID`,
 `SKILL_IDENTITY_INVALID`, `SKILL_NAME_DUPLICATE`, `SKILL_TOOL_EQUIVALENCE_MISSING`,
