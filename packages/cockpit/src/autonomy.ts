@@ -3,11 +3,12 @@
 // record of the policy the last sync accepted. Every command that gates a decision asks `decide`
 // here, so a field cannot mean one thing to sync and another to the guard.
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { parse as parseToml, TomlError } from 'smol-toml'
 
+import { type BoundedRead, readBoundedFile } from './bounded-read.js'
 import { hasErrorCode, RefusalError } from './environment/contract.js'
 import type { CockpitConfig, Decider, WorkGrading } from './schema.js'
 
@@ -95,15 +96,16 @@ function validPolicy(value: unknown): value is EffectivePolicy {
 /** The policy the last sync recorded, or undefined before the first; an unreadable record refuses. */
 export async function readRecordedPolicy(root: string): Promise<EffectivePolicy | undefined> {
     const path = join(root, POLICY_RECORD_PATH)
-    let bytes: Buffer
-    try {
-        const status = await lstat(path)
-        if (!status.isFile() || status.size > 65_536) throw new RefusalError(`${POLICY_RECORD_PATH} is not a regular file of at most 64 KiB; restore it with git restore -- ${POLICY_RECORD_PATH}`)
-        bytes = await readFile(path)
-    } catch (error) {
+    const unusable = `${POLICY_RECORD_PATH} is not a regular file of at most 64 KiB; restore it with git restore -- ${POLICY_RECORD_PATH}`
+    let read: BoundedRead
+    try { read = readBoundedFile(path, 65_536) }
+    catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return undefined
+        if (hasErrorCode(error, 'ELOOP', 'EISDIR', 'EIO')) throw new RefusalError(unusable)
         throw error
     }
+    if (read.kind === 'too-large') throw new RefusalError(unusable)
+    const bytes = read.bytes
     let parsed: unknown
     try { parsed = JSON.parse(bytes.toString('utf8')) }
     catch (error) {

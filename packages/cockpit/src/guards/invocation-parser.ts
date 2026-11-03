@@ -1,6 +1,7 @@
 import { posix } from 'node:path'
 import { isProxy, isUint8Array } from 'node:util/types'
 import { hasErrorCode, RefusalError, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { exactKeys } from '../exact-keys.js'
 
 export const GUARD_INPUT_LIMITS = Object.freeze({ inputBytes: 65_536, invocations: 256, words: 4_096, wordBytes: 4_096, paths: 256, pathBytes: 4_096 })
 
@@ -52,9 +53,6 @@ export function shownGuardWord(word: string): string {
 }
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-function keys(value: JsonSnapshotObject, required: string[], optional: string[] = []): boolean {
-    return required.every((key) => Object.hasOwn(value, key)) && Object.keys(value).every((key) => required.includes(key) || optional.includes(key))
 }
 function text(value: JsonSnapshot | undefined): value is string {
     return typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value) && !value.includes('\0')
@@ -475,7 +473,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
         }
         const captured = snapshotJson(decoded)
         if (!record(captured) || Buffer.byteLength(JSON.stringify(captured)) > GUARD_INPUT_LIMITS.inputBytes) refuse('Guard input must be bounded own data.')
-        if (!keys(captured, ['hook_event_name', 'tool_name', 'tool_input', 'cwd']) || captured.hook_event_name !== 'PreToolUse'
+        if (!exactKeys(captured, ['hook_event_name', 'tool_name', 'tool_input', 'cwd']) || captured.hook_event_name !== 'PreToolUse'
             || !text(captured.cwd) || !posix.isAbsolute(path(captured.cwd)) || !record(captured.tool_input)) refuse('Malformed normalized guard payload.')
         const cwd = captured.cwd
         const tool = captured.tool_name
@@ -491,7 +489,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
                 description: text, timeout: (value) => typeof value === 'number' && Number.isFinite(value),
                 run_in_background: (value) => typeof value === 'boolean', dangerouslyDisableSandbox: (value) => typeof value === 'boolean',
             } : {}
-            if (!keys(fields, ['command'], Object.keys(options)) || !text(fields.command) || !fields.command
+            if (!exactKeys(fields, ['command'], Object.keys(options)) || !text(fields.command) || !fields.command
                 || Object.entries(options).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
             if (tool === 'Bash') invocations = parseShell(fields.command, cwd)
             else {
@@ -499,14 +497,14 @@ export function parseGuardInput(input: unknown): GuardParseResult {
                 content = { kind: 'patch', text: fields.command }
             }
         } else if (tool === 'NotebookEdit') {
-            if (!keys(fields, ['notebook_path', 'new_source'], ['cell_id', 'cell_type', 'edit_mode'])
+            if (!exactKeys(fields, ['notebook_path', 'new_source'], ['cell_id', 'cell_type', 'edit_mode'])
                 || !text(fields.notebook_path) || !posix.isAbsolute(fields.notebook_path)
                 || Object.values(fields).some(value => !text(value))
                 || fields.cell_type !== undefined && !['code', 'markdown'].includes(String(fields.cell_type))
                 || fields.edit_mode !== undefined && !['replace', 'insert', 'delete'].includes(String(fields.edit_mode))) refuse('Malformed notebook payload.')
             paths = [path(fields.notebook_path)]
         } else if (tool === 'Edit' || tool === 'Write') {
-            if (!keys(fields, ['file_path'], tool === 'Edit' ? ['old_string', 'new_string', 'replace_all'] : ['content'])
+            if (!exactKeys(fields, ['file_path'], tool === 'Edit' ? ['old_string', 'new_string', 'replace_all'] : ['content'])
                 || !text(fields.file_path)) refuse('Malformed file payload.')
             if (Object.entries(fields).some(([key, value]) => key === 'replace_all' ? typeof value !== 'boolean' : !text(value))) refuse('Malformed file field.')
             paths = [path(fields.file_path)]

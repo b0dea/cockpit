@@ -79,6 +79,7 @@ import {
     type EnvironmentDiagnostic,
     type SetupRefusalEvidence,
 } from './environment/contract.js'
+import { refusalOutcome } from './refusal.js'
 import { loadCockpitConfig, observeConfigSource, readBoundedInput } from './config/load.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
@@ -564,10 +565,7 @@ function teamMetadataOutcome(result: Extract<TeamMetadataResult, { kind: 'refusa
 function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCommandOutcome | undefined
 function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCommandOutcome | undefined {
     if (result.kind === 'complete') return undefined
-    return {
-        kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
-        diagnostics: [{ severity: 'error', code: result.code, message: result.message, target: result.target }],
-    }
+    return refusalOutcome(result.code, result.message, result.target)
 }
 
 function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
@@ -1316,8 +1314,7 @@ async function dispatchHandler(
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
             try { return await prompt.question(`Enter a JSON value for ${question.field} (strings need quotes): `) } finally { prompt.close() }
         },
-    }, handlers.init ?? (async () => ({ kind: 'refusal', status: 2, artifact: null, destination: null,
-        diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))
+    }, handlers.init ?? (async () => refusalOutcome('INIT_UNAVAILABLE', 'init application is unavailable')))
     if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
     if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
