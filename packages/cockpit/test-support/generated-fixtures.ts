@@ -106,7 +106,7 @@ export function createGeneratedCommandFixture() {
     feature = "skills"
     source = ${JSON.stringify(`surfaces/synthetic-${name}.json`)}
     sources = [
-      { path = ${JSON.stringify(`skills/${name}/SKILL.md`)}, bytes = ${JSON.stringify(entryPoint.replace('name: cockpit-setup', `name: ${name}`))} },
+      { path = ${JSON.stringify(`skills/${name}/SKILL.md`)}, bytes = ${JSON.stringify(entryPoint.replace('{{tool-equivalence}}', 'Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.').replace('name: cockpit-setup', `name: ${name}`))} },
       { path = ${JSON.stringify(`skills/${name}/procedures/setup.md`)}, bytes = ${JSON.stringify(procedure)} },
     ]
     `).join('')

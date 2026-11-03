@@ -556,6 +556,9 @@ describe('work and browser declarations', () => {
         expect(Browser.safeParse({ ...browser, proxy: {
             ...browser.proxy, allowed_hosts: [browser.proxy.allowed_hosts[0], browser.proxy.allowed_hosts[0]],
         } }).success).toBe(false)
+        // The endpoint is a server on this machine: an allowed non-loopback host is still refused.
+        expect(Browser.safeParse({ ...browser, endpoint: 'ws://other.invalid:3001/', proxy: {
+            ...browser.proxy, allowed_hosts: ['other.invalid:3001'] } }).success).toBe(false)
         for (const authority of ['null:3001', 'undefined:3001']) {
             expect(Browser.safeParse({ ...browser, endpoint: `ws://${authority}/`, proxy: {
                 ...browser.proxy, allowed_hosts: [authority],

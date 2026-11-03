@@ -169,6 +169,13 @@ function longPort(value: Record<string, unknown>): ComposePublishedPort | undefi
     return { published: String(published), hostIp: ip, target: String(target) }
 }
 
+/** A service's raw `ports` entries, short or long form, or undefined when one cannot be read. */
+export function composePublishedPorts(rawPorts: unknown = []): readonly ComposePublishedPort[] | undefined {
+    if (!Array.isArray(rawPorts)) return undefined
+    const ports = rawPorts.map(port => typeof port === 'string' ? shortPort(port) : record(port) ? longPort(record(port)!) : undefined)
+    return ports.every(port => port !== undefined) ? ports : undefined
+}
+
 function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | undefined {
     let parsed: unknown
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(stdout)) } catch { return undefined } // The caller refuses output that is not UTF-8 JSON; parser text would quote it.
@@ -180,10 +187,8 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
     for (const id of names) {
         const service = record(services[id])
         if (!service) return undefined
-        const rawPorts = service.ports ?? []
-        if (!Array.isArray(rawPorts)) return undefined
-        const ports = rawPorts.map(port => typeof port === 'string' ? shortPort(port) : record(port) ? longPort(record(port)!) : undefined)
-        if (ports.some(port => port === undefined)) return undefined
+        const ports = composePublishedPorts(service.ports)
+        if (!ports) return undefined
         const health = service.healthcheck === undefined ? undefined : record(service.healthcheck)
         if (service.healthcheck !== undefined && !health) return undefined
         const test = health?.test
@@ -201,7 +206,7 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
             mountSources.push(source)
         }
         projected.push({
-            id, ports: ports as ComposePublishedPort[], healthcheck,
+            id, ports, healthcheck,
             image: image ?? null, build: service.build !== undefined, mountSources,
         })
     }
@@ -236,7 +241,7 @@ export async function observeComposeTopology(
     return services ? { kind: 'complete', services } : unavailable('docker compose config returned a topology this probe cannot read')
 }
 
-function variableName(value: string): string | undefined {
+export function variableName(value: string): string | undefined {
     return /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:]?[-?+][^}]*)?\}$/.exec(value)?.[1] ?? /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(value)?.[1]
 }
 

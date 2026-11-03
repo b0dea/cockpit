@@ -105,7 +105,7 @@ import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
-import { assessComposeTopology, composeProjectDirectory, observeComposeTopology } from './compose-topology.js'
+import { assessComposeTopology, composeProjectDirectory, composePublishedPorts, observeComposeTopology, variableName } from './compose-topology.js'
 import { declaredRuntime } from './declaration.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName, resolveLifecycleStage } from './lifecycle-stage.js'
@@ -1317,6 +1317,34 @@ async function renamedStackRefusal(prepared: PreparedEnvironment): Promise<Refus
         : refuse(ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME, earlierNameRefusalMessage(prepared.configPath, earlier.name), prepared.configPath)
 }
 
+const LOOPBACK_HOST_IPS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
+/** Why no single Compose service publishes the endpoint's port on loopback, or undefined when exactly one does. */
+export function browserEndpointUnpublished(
+    endpoint: string,
+    sources: readonly Readonly<{ reference: string; source: string }>[],
+    bases: Readonly<Record<string, number>>,
+): string | undefined {
+    const port = Number(new URL(endpoint).port || 80)
+    const publishers: string[] = []
+    for (const { reference, source } of sources) {
+        const document = parseDocument(source)
+        const services = document.errors.length === 0 ? (document.toJS() as { services?: Record<string, { ports?: unknown }> } | null)?.services : undefined
+        for (const [id, service] of Object.entries(services ?? {})) {
+            const ports = composePublishedPorts(service?.ports)
+            if (!ports) return `${reference} service ${id} has a ports entry cockpit cannot read, so it cannot tell whether it publishes browser.endpoint`
+            if (ports.some(published => {
+                if (published.hostIp === null || !LOOPBACK_HOST_IPS.has(published.hostIp) || published.published === null) return false
+                const name = variableName(published.published)
+                return (name === undefined ? Number(published.published) : bases[name]) === port
+            })) publishers.push(`${reference}:${id}`)
+        }
+    }
+    return publishers.length === 1 ? undefined
+        : publishers.length === 0 ? `browser.endpoint port ${port} is not published on loopback by any service in environment.compose_files`
+            : `browser.endpoint port ${port} is published on loopback by more than one service (${publishers.join(', ')})`
+}
+
 async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdapters): Promise<PreparedEnvironment | RefusalOutcome> {
     const request = commandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
@@ -1334,14 +1362,6 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const derived = deriveRegistry(loaded.result.config)
     if (derived.kind !== 'complete') return refuse(derived.code, derived.message, loaded.result.source.path)
     const config = derived.result.config
-    // A remote runner was a service cockpit rendered into its own Compose file, which it no longer
-    // writes; refusing here keeps browser.endpoint from reading as a runner that exists.
-    if (workEnvironment.browser && Object.hasOwn(workEnvironment.browser, 'endpoint')) return refuse(
-        'GENERATED_DECLARATION_MISSING',
-        'browser.endpoint names a remote browser runner, and cockpit renders no runner service',
-        'browser',
-        'remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml>',
-    )
     const root = dirname(loaded.result.source.path)
     const authenticatedSiblings = await authenticateSiblingRoots(root, derived.result.config, loaded.result.source.path)
     if (authenticatedSiblings.kind === 'refusal') return refuse(
@@ -1372,8 +1392,8 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     )
     let composeOwnership: OwnedBytes | undefined
     const composeSources: PreparedEnvironment['composeSources'][number][] = []
+    const sources: { reference: string; source: string }[] = []
     if (config.environment.compose_files.length > 0) {
-        const sources = []
         for (const reference of config.environment.compose_files) {
             const read = await readAnchoredFile(root, reference, COMPOSE_SOURCE_BYTES, node, adapters)
             if (read.kind !== 'complete') return refuse('GENERATED_PATH_UNSAFE',
@@ -1387,6 +1407,12 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target)
         composeOwnership = { path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) }
     }
+    // A browser endpoint is a server the project's own Compose files run, so it must be reachable
+    // only from this machine, by exactly the service that publishes its port.
+    const endpoint = workEnvironment.browser?.endpoint
+    const unpublished = endpoint === undefined ? undefined : browserEndpointUnpublished(endpoint, sources, config.ports.bases)
+    if (unpublished) return refuse('GENERATED_BROWSER_ENDPOINT_UNPUBLISHED', unpublished, 'browser',
+        'publish the endpoint port from exactly one service in environment.compose_files as "127.0.0.1:${VAR}:<container port>" with VAR under [ports.bases] set to the endpoint port, or remove browser.endpoint to drive a local browser, then run npx --no cockpit sync --config <your cockpit.toml>')
     const generated = composeOwnership ? [composeOwnership] : []
     // The anchored read of the configuration file pins the publication root's identity for the whole sync.
     const sourcePath = relative(root, loaded.result.source.path)

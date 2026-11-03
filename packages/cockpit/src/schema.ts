@@ -539,7 +539,7 @@ export const Browser = z.object({
         sha256: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 of the lockfile.'),
         driver_version: BrowserDriverVersion.describe('Playwright driver version the lockfile pins.'),
     }).strict().describe('Node project the browser commands load their Playwright driver from.'),
-    endpoint: z.string().url().optional().describe('WebSocket address of the browser server, using an allowed host.'),
+    endpoint: z.string().url().optional().describe('WebSocket address of the browser server, using an allowed loopback host.'),
     max_clients: z.number().int().min(1).max(64).describe('Most browser clients that may connect at once.'),
     proxy: z.object({
         host_variable: EnvironmentName.optional().describe('Port variable in [ports.bases] that leases the proxy port.'),
@@ -596,8 +596,8 @@ export const Browser = z.object({
             const endpoint = new URL(browser.endpoint)
             const spelling = /^ws:\/\/([^/?#]+)(\/[^?#]*)$/.exec(browser.endpoint)
             if (!spelling || spelling[2] !== endpoint.pathname || endpoint.protocol !== 'ws:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash
-                || !browser.proxy.allowed_hosts.includes(spelling[1]!)) throw new TypeError()
-        } catch { /* The issue names the rule; URL parser text adds nothing. */ ctx.addIssue({ code: 'custom', path: ['endpoint'], message: 'browser endpoint must use an allowed credential-free ws:// authority; TLS termination is unavailable' }) }
+                || !browser.proxy.allowed_hosts.includes(spelling[1]!) || !['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)) throw new TypeError()
+        } catch { /* The issue names the rule; URL parser text adds nothing. */ ctx.addIssue({ code: 'custom', path: ['endpoint'], message: 'browser endpoint must use an allowed credential-free loopback ws:// authority; TLS termination is unavailable' }) }
     }
     const workers = browser.authentication.states.map((state) => state.worker)
     const paths = browser.authentication.states.map((state) => state.path)
