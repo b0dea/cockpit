@@ -641,6 +641,24 @@ describe('reference generation', () => {
         expect((await lstat(join(root, wholePaths[0]!))).ino).toBe(before.ino)
     })
 
+    it('treats a ledger written by another package version like no ledger, and refuses a malformed one with a fix', async () => {
+        const { root, publicationFor, prior } = await fixture()
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
+        if (rendered.kind !== 'complete') throw new Error('render failed')
+        const ledgerPath = join(root, '.cockpit/generated-reference-ownership.json')
+        const malformed = prior.bytes.replace('"format":', '"forged":')
+        await writeFile(ledgerPath, malformed)
+        const refused = await writeReferences({ root, publication: await publicationFor(rendered), rendered }, { revalidate: async () => true })
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_REFERENCE_OWNERSHIP_INVALID', fix: expect.stringContaining('npm run references') }] })
+        expect(await readFile(ledgerPath, 'utf8')).toBe(malformed)
+        const raw = JSON.parse(prior.bytes)
+        raw.producer.version = '99.0.0'
+        delete raw.integrity
+        await writeFile(ledgerPath, JSON.stringify({ ...raw, integrity: digest(JSON.stringify(raw)) }))
+        const result = await writeReferences({ root, publication: await publicationFor(rendered), rendered }, { revalidate: async () => true })
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete' })
+    })
+
     it('keeps dry runs read-only and refuses a foreign prose change after render', async () => {
         const { root, publicationFor, prior } = await fixture()
         const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })

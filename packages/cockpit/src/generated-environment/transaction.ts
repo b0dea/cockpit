@@ -1641,6 +1641,14 @@ interface ReferenceManifestPayload {
 
 interface ReferenceManifest extends ReferenceManifestPayload { readonly integrity: string }
 
+function ledgerFromAnotherProducer(bytes: string): boolean {
+    const record = ownRecord(tryParseJson(bytes))
+    const producer = record ? ownRecord(record.producer) : undefined
+    return record?.format === 'cockpit-generated-references/v1' && producer !== undefined
+        && (producer.package !== installedPackageMetadata.name || producer.version !== installedPackageMetadata.version
+            || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision)
+}
+
 function parseReferenceManifest(bytes: string): ReferenceManifest | undefined {
     if (typeof bytes !== 'string' || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return undefined
     const record = ownRecord(tryParseJson(bytes))
@@ -1829,8 +1837,16 @@ async function admitReferencePlan(
     }
     let prior: ReferenceManifest | undefined
     if (ledger.kind === 'file') {
-        try { prior = parseReferenceManifest(new TextDecoder('utf-8', { fatal: true }).decode(ledger.bytes)) } catch { /* Refuse below. */ }
-        if (!prior) return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference publication requires authenticated reference metadata', REFERENCE_OWNERSHIP_PATH)
+        let text: string | undefined
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(ledger.bytes) } catch { /* Not UTF-8: refused below. */ }
+        prior = text === undefined ? undefined : parseReferenceManifest(text)
+        // A ledger another cockpit version wrote is no evidence about these pages, exactly like a
+        // fresh clone with no ledger, which publishes against the committed pages instead. Refusing
+        // it stopped every maintainer's references run after each version bump.
+        if (!prior && !(text !== undefined && ledgerFromAnotherProducer(text))) {
+            return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference publication requires authenticated reference metadata', REFERENCE_OWNERSHIP_PATH,
+                `${REFERENCE_OWNERSHIP_PATH} is a local, ignored file that no longer authenticates; move it out of the repository and run npm run references again, which then checks the pages against the committed ones`)
+        }
     } else if (ledger.kind !== 'missing') return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference ownership metadata is not a regular file', REFERENCE_OWNERSHIP_PATH)
     const next = parseReferenceManifest(captured.nextLedgerBytes)
     if (!next || next.generation !== captured.generation || next.source.sha256 !== captured.sourceSha256) {
