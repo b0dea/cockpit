@@ -672,9 +672,7 @@ export interface GuardEvaluationPolicyInput {
 }
 
 function guardPolicyRefusal(message: string): EnvironmentCommandOutcome<PreparedGuardEvaluationPolicy> {
-    return { kind: 'refusal', status: 2, result: null, diagnostics: [ownerDiagnostic(
-        ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, message, 'guard-policy',
-    )] }
+    return lifecycleRefusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, message, 'guard-policy')
 }
 
 /** Source projections share authenticated authority; installed consumption is admitted separately. */
@@ -2353,12 +2351,7 @@ function lifecycleRefusal(
     target: string,
     fix?: string,
 ): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
-    return {
-        kind: 'refusal',
-        status: 2,
-        result: null,
-        diagnostics: [ownerDiagnostic(code, message, target, fix)],
-    }
+    return forwardedRefusal([ownerDiagnostic(code, message, target, fix)])
 }
 
 // A compose-first stack starts from its Compose files as well as cockpit.toml; naming only
@@ -2387,7 +2380,7 @@ function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down
     return cockpitCommand(command, { config: context.source.path })
 }
 
-function forwardedRefusal(
+export function forwardedRefusal(
     diagnostics: readonly EnvironmentDiagnostic[],
 ): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
     return { kind: 'refusal', status: 2, result: null, diagnostics }
@@ -2402,9 +2395,7 @@ async function readLifecycleRecord(context: LifecycleRunContext): Promise<Curren
         const stage = await resolveLifecycleStage({
             namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString(),
         })
-        if (stage.kind !== 'complete') return {
-            kind: 'refusal', status: 2, result: null, diagnostics: stage.diagnostics,
-        }
+        if (stage.kind !== 'complete') return forwardedRefusal(stage.diagnostics)
         return stage.authority.stage === 'steady'
             ? lifecycleRefusal(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
                 'seeded lifecycle history requires persisted progress', address.path)
@@ -2809,9 +2800,7 @@ async function executeUpRound(
             }
             return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
-                : { kind: 'complete' as const, result: {
-                    kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: admission.diagnostics,
-                } }
+                : { kind: 'complete' as const, result: forwardedRefusal(admission.diagnostics) }
         }
 
         const revalidated = await revalidateCompletedServices()
@@ -2860,9 +2849,7 @@ async function executeUpRound(
             if (!stored) {
                 const started = await recordLifecycleStarted({ namespace: context.namespace, stackId: context.stackId,
                     holderId: context.holderId, observedAt: new Date().toISOString() })
-                if (started.kind === 'refusal') return { kind: 'complete' as const, result: {
-                    kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: started.diagnostics,
-                } }
+                if (started.kind === 'refusal') return { kind: 'complete' as const, result: forwardedRefusal(started.diagnostics) }
             }
             const publication = await publishLifecycleRecord(
                 context,
@@ -3078,7 +3065,7 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
     const rememberRuntimeStart = () => { runtimeStarted = true }
     const releasable = () => acquired !== undefined && !runtimeStarted
     const declaration = await inspectRecordedPortDeclaration({ namespace: context.namespace, stackId: context.stackId, config: context.ports })
-    if (declaration.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: declaration.diagnostics }
+    if (declaration.kind === 'refusal') return forwardedRefusal(declaration.diagnostics)
     if (declaration.changed) return runtimeChangedRefusal(context, `[ports] in ${basename(context.source.path)} changed since it started`)
     // Starting under the new name beside a stack recorded under the old one would run two stacks for
     // one checkout, the old one beyond the reach of down.
@@ -3097,7 +3084,7 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
         if (result.kind === 'complete') {
             const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
                 holderId: context.holderId, observedAt: new Date().toISOString() })
-            if (seeded.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: seeded.diagnostics }
+            if (seeded.kind === 'refusal') return forwardedRefusal(seeded.diagnostics)
             // The stack stays up when its seed fails: the containers are healthy, and the next up
             // runs the seed again because no success was recorded.
             const data = await adapters.seed?.(context, result.result)
@@ -3317,7 +3304,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             successor: { holderId: context.holderId, checkoutId: context.checkoutId },
             now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(adapters.execute)),
         })
-        if (reaped.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: reaped.diagnostics }
+        if (reaped.kind === 'refusal') return forwardedRefusal(reaped.diagnostics)
     }
     const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
     if (unheld) return unheld
@@ -3496,9 +3483,7 @@ async function invalidateCompletedLifecycle(
     purpose: 'sleep' | 'down',
 ): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
     const current = await readLifecycleRecord(context)
-    if (current !== null && 'kind' in current) return {
-        kind: 'refusal', status: 2, result: null, diagnostics: current.diagnostics,
-    }
+    if (current !== null && 'kind' in current) return forwardedRefusal(current.diagnostics)
     const stored = current as CurrentLifecycleRecord | null
     // `up` writes the lifecycle record before it starts a service, so without one nothing ever ran
     // and there is no identity to retire. Writing one here left a record without lifecycle history,
@@ -3519,9 +3504,7 @@ async function invalidateCompletedLifecycle(
         }),
     }
     const publication = await publishLifecycleRecord(context, stored.record, value)
-    if ('status' in publication) return {
-        kind: 'refusal', status: 2, result: null, diagnostics: publication.diagnostics,
-    }
+    if ('status' in publication) return forwardedRefusal(publication.diagnostics)
     if (publication.kind === 'indeterminate') return lifecycleRefusal(
         ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
         publication.message,
@@ -3547,7 +3530,7 @@ async function publishDrainOutcomeRecord(
         stackId: context.stackId,
     })
     if ('diagnostics' in publication) {
-        return { kind: 'refusal', status: 2, result: null, diagnostics: publication.diagnostics }
+        return forwardedRefusal(publication.diagnostics)
     }
     if (publication.kind === 'indeterminate') return lifecycleRefusal(
         ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
@@ -3598,12 +3581,6 @@ function exactCommandConfigPath(input: unknown): string | undefined {
 
 type DestructivePlan = Extract<TeardownPlanResult | ResetPlanResult, { kind: 'complete' }>
 
-function destructiveRefusal(
-    diagnostics: readonly EnvironmentDiagnostic[],
-): Extract<DownCommandResult, { kind: 'refusal' }> {
-    return { kind: 'refusal', status: 2, result: null, diagnostics }
-}
-
 function destructiveRepairRequired(context: DestructiveRunContext): Extract<DownCommandResult, { kind: 'refusal' }> {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
@@ -3625,7 +3602,7 @@ async function settleProvisionalClaim<Outcome extends Readonly<{ kind: string; d
     provisionalClaims.delete(context)
     const released = await compensateAcquiredPortHolder({ namespace: context.namespace, leaseResult: claim, now: new Date().toISOString() })
     if (released.kind === 'complete') return outcome
-    return destructiveRefusal(uniqueDiagnostics([...outcome.kind === 'refusal' ? outcome.diagnostics : [], ...released.diagnostics]))
+    return forwardedRefusal(uniqueDiagnostics([...outcome.kind === 'refusal' ? outcome.diagnostics : [], ...released.diagnostics]))
 }
 
 async function loadDestructiveContext(
@@ -3701,7 +3678,7 @@ function destructiveRepairAfterObservation(
     observed: DestructiveObservationRefusal | undefined,
 ): Extract<DownCommandResult, { kind: 'refusal' }> {
     const repair = destructiveRepairRequired(context)
-    return observed ? destructiveRefusal(uniqueDiagnostics([...repair.diagnostics, ...observed.diagnostics])) : repair
+    return observed ? forwardedRefusal(uniqueDiagnostics([...repair.diagnostics, ...observed.diagnostics])) : repair
 }
 
 async function publishDestructiveOutcome(
@@ -3719,7 +3696,7 @@ async function executeRuntimeDrain(
     topology: RuntimeTopologyEvidence,
     attempt: Awaited<ReturnType<typeof reserveDrainAttempt>>,
 ): Promise<{ readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence } | Extract<DownCommandResult, { kind: 'refusal' }>> {
-    if (attempt.kind !== 'complete') return destructiveRefusal(attempt.diagnostics)
+    if (attempt.kind !== 'complete') return forwardedRefusal(attempt.diagnostics)
     const stop = createRuntimeStopPlan({ topology, attempt: attempt.authority })
     if (stop.kind !== 'planned') return destructiveRepairRequired(context)
     const fence = stop.step.executionFence
@@ -3759,7 +3736,7 @@ function downKeptRefusal(
         context.stackId)
     if (kept.length === 0) return undefined
     const listed = kept.slice(0, 8).map(({ kind, id, name, reason }) => `${kind} ${name} (${id}): ${reason}`).join('; ')
-    return destructiveRefusal([{
+    return forwardedRefusal([{
         severity: 'error' as const, code: ENVIRONMENT_CODES.DOWN_RESOURCES_KEPT, target: context.stackId,
         message: `down removed what it could, but kept ${kept.length} of this stack's own resources: ${listed}${kept.length > 8 ? `; and ${kept.length - 8} more` : ''}`,
         fix: `release each kept resource as its reason says (remove the image's other tag, stop the container still attached to the network), then run \`${lifecycleSuggestion(context, 'down')}\``,
@@ -3776,7 +3753,7 @@ async function executeDestructivePlan(
     recoveredReservation?: Extract<Awaited<ReturnType<typeof recoverDrainReservation>>, { kind: 'complete' }>,
     recoveredRequest?: DrainReservationRequest,
 ): Promise<DownCommandResult | OperatorResetResult> {
-    if (lifecyclePlan.kind !== 'drain') return destructiveRefusal(lifecyclePlan.diagnostics)
+    if (lifecyclePlan.kind !== 'drain') return forwardedRefusal(lifecyclePlan.diagnostics)
     const issuance = consumeLifecycleIssuance(lifecyclePlan.plan)
     if (!issuance?.drainRequest || !issuance.reclaim || issuance.reclaim.purpose !== purpose) {
         return destructiveRepairRequired(context)
@@ -3785,7 +3762,7 @@ async function executeDestructivePlan(
     // From here the drain owns the stack's claim: it releases it on completion, and keeps it for repair.
     provisionalClaims.delete(context)
     const reserved = recoveredReservation ?? await reserveDrain({ namespace: context.namespace, request })
-    if (reserved.kind !== 'complete') return destructiveRefusal(reserved.diagnostics)
+    if (reserved.kind !== 'complete') return forwardedRefusal(reserved.diagnostics)
     let availableReservation = reserved.reservation.completedActionCount === 0 ? undefined : reserved
     if (reserved.reservation.completedActionCount === 0) {
         const runtimeAttempt = await reserveDrainAttempt({ namespace: context.namespace, authority: reserved.authority })
@@ -3801,9 +3778,9 @@ async function executeDestructivePlan(
     while (plan.actionAuthority !== null) {
         const recovered = availableReservation ?? await recoverDrainReservation({ namespace: context.namespace, request })
         availableReservation = undefined
-        if (recovered.kind !== 'complete') return destructiveRefusal(recovered.diagnostics)
+        if (recovered.kind !== 'complete') return forwardedRefusal(recovered.diagnostics)
         const attempt = await reserveDrainAttempt({ namespace: context.namespace, authority: recovered.authority })
-        if (attempt.kind !== 'complete') return destructiveRefusal(attempt.diagnostics)
+        if (attempt.kind !== 'complete') return forwardedRefusal(attempt.diagnostics)
         const absent = redeemAbsentReclaimAction({ actionAuthority: plan.actionAuthority, attempt: attempt.authority })
         if (absent) {
             const postAction = await observeDestructiveReclaim(context, adapters)
@@ -3812,7 +3789,7 @@ async function executeDestructivePlan(
             const reconciled = await reconcileAbsentReclaimAction({ authority: absent.authority,
                 discovery: purpose === 'down' ? postAction.down.discovery : postAction.reset.discovery })
             if (reconciled.kind !== 'complete' || !reconciled.authority) return reconciled.kind === 'refusal'
-                ? destructiveRefusal(reconciled.diagnostics) : destructiveRepairRequired(context)
+                ? forwardedRefusal(reconciled.diagnostics) : destructiveRepairRequired(context)
             const authority = consumeReclaimCompleted(reconciled.authority)
             if (!authority) return destructiveRepairRequired(context)
             if (purpose === 'down' && reconciled.continuation === null) {
@@ -3831,7 +3808,7 @@ async function executeDestructivePlan(
                     expectedCoordinationRevision: coordination.value.revision,
                     confirmationDigest: request.planDigest, continuation: reconciled.continuation })
             if (next.kind !== 'complete') return next.kind === 'refusal'
-                ? destructiveRefusal(next.diagnostics) : destructiveRepairRequired(context)
+                ? forwardedRefusal(next.diagnostics) : destructiveRepairRequired(context)
             plan = next
             continue
         }
@@ -3846,7 +3823,7 @@ async function executeDestructivePlan(
             const fence = execution.step.executionFence
             if (!fence) return destructiveRepairRequired(context)
             const published = await publishDestructiveOutcome(context, authority, fence)
-            return published ?? destructiveRefusal([{
+            return published ?? forwardedRefusal([{
                 severity: 'error', code: outcome.code,
                 message: 'destructive action did not start', target: context.stackId,
             }])
@@ -3885,7 +3862,7 @@ async function executeDestructivePlan(
                 expectedCoordinationRevision: coordination.value.revision,
                 confirmationDigest: request.planDigest, continuation: reconciled.continuation })
         if (next.kind !== 'complete') return next.kind === 'refusal'
-            ? destructiveRefusal(next.diagnostics) : destructiveRepairRequired(context)
+            ? forwardedRefusal(next.diagnostics) : destructiveRepairRequired(context)
         plan = next
     }
     return purpose === 'down'
@@ -3937,7 +3914,7 @@ async function prepareDown(
     if (!previewObservation || 'diagnostics' in previewObservation) return destructivePreconditionRefusal(context, previewObservation)
     const preview = await planTeardown({ ...previewObservation.down,
         ...(recovered ? { recoveryAuthority: recovered.authority } : {}) })
-    if (preview.kind !== 'complete') return destructiveRefusal(preview.diagnostics)
+    if (preview.kind !== 'complete') return forwardedRefusal(preview.diagnostics)
     // The plan needs a discovery after the preview's consent; the runtime the preview measured
     // seconds ago still stands for planning the drain.
     const observation = await observeDestructiveReclaim(context, adapters)
@@ -3972,12 +3949,12 @@ export async function runDown(
 
 async function downWithContext(context: DestructiveRunContext, adapters: DownCommandAdapters): Promise<DownCommandResult> {
     const inspection = await inspectDestructiveRecoveryWithRepair(context, 'down')
-    if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
+    if (inspection.kind === 'refusal') return forwardedRefusal(inspection.diagnostics)
     if (inspection.kind === 'repairable') return destructiveRepairRequired(context)
     const persistedRequest = inspection.kind === 'recoverable' ? inspection.request : undefined
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: context.namespace, request: persistedRequest })
-    if (recovered?.kind === 'refusal') return destructiveRefusal(recovered.diagnostics)
+    if (recovered?.kind === 'refusal') return forwardedRefusal(recovered.diagnostics)
     try {
         const prepared = await prepareDown(context, adapters, recovered)
         if ('diagnostics' in prepared) return prepared
@@ -3992,7 +3969,7 @@ async function downWithContext(context: DestructiveRunContext, adapters: DownCom
             runtimeStopValidForMs: basis.runtimeStopValidForMs,
             reclaimValidForMs: basis.reclaimValidForMs,
         })
-        if (lifecycle.kind !== 'drain') return destructiveRefusal(lifecycle.diagnostics)
+        if (lifecycle.kind !== 'drain') return forwardedRefusal(lifecycle.diagnostics)
         if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(context)
         const plan = await planTeardown({
             ...prepared.observation.down,
@@ -4001,7 +3978,7 @@ async function downWithContext(context: DestructiveRunContext, adapters: DownCom
                 ? { recoveryAuthority: recovered.authority }
                 : prepared.preview.consent === null ? {} : { consent: prepared.preview.consent }),
         })
-        if (plan.kind !== 'complete') return destructiveRefusal(plan.diagnostics)
+        if (plan.kind !== 'complete') return forwardedRefusal(plan.diagnostics)
         return await executeDestructivePlan(
             context, adapters, 'down', lifecycle, plan, prepared.observation,
             recovered?.kind === 'complete' ? recovered : undefined,
@@ -4028,7 +4005,7 @@ async function resetPreview(
     if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(context, observation)
     const preview = await planReset(observation.reset)
     return preview.kind === 'preview' ? preview : preview.kind === 'refusal'
-        ? destructiveRefusal(preview.diagnostics) : destructivePreconditionRefusal(context, undefined)
+        ? forwardedRefusal(preview.diagnostics) : destructivePreconditionRefusal(context, undefined)
 }
 
 function publicResetPreview(context: DestructiveRunContext, preview: ResetPreview): Extract<ResetCommandResult, { kind: 'preview' }> {
@@ -4074,7 +4051,7 @@ export async function beginOperatorReset(
 async function continueOperatorReset(token: object, decision: 'approve' | 'decline'): Promise<OperatorResetResult> {
     const session = privateResetSessions.get(token)
     privateResetSessions.delete(token)
-    const unapproved = destructiveRefusal([{
+    const unapproved = forwardedRefusal([{
         severity: 'error', code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
         message: decision === 'decline' ? 'reset was declined' : 'reset operator session is unavailable', target: 'reset',
     }])
@@ -4084,12 +4061,12 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
 
 async function approveOperatorReset(session: PrivateResetSession): Promise<OperatorResetResult> {
     const inspection = await inspectDestructiveRecoveryWithRepair(session.context, 'reset')
-    if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
+    if (inspection.kind === 'refusal') return forwardedRefusal(inspection.diagnostics)
     if (inspection.kind === 'repairable') return destructiveRepairRequired(session.context)
     const persistedRequest = inspection.kind === 'recoverable' ? inspection.request : undefined
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: session.context.namespace, request: persistedRequest })
-    if (recovered?.kind === 'refusal') return destructiveRefusal(recovered.diagnostics)
+    if (recovered?.kind === 'refusal') return forwardedRefusal(recovered.diagnostics)
     try {
         const observation = await observeDestructive(session.context, session.adapters)
         if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(session.context, observation)
@@ -4100,12 +4077,12 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
                 consent: session.preview.consent,
             })
             if (noop.kind !== 'complete' || !noop.noop || noop.actionAuthority !== null) {
-                return noop.kind === 'refusal' ? destructiveRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
+                return noop.kind === 'refusal' ? forwardedRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
             }
             const finalInspection = await inspectDestructiveDrainRecovery({ namespace: session.context.namespace,
                 stackId: session.context.stackId, holderId: session.context.holderId, purpose: 'reset' })
             if (finalInspection.kind !== 'none') return finalInspection.kind === 'refusal'
-                ? destructiveRefusal(finalInspection.diagnostics) : destructiveRepairRequired(session.context)
+                ? forwardedRefusal(finalInspection.diagnostics) : destructiveRepairRequired(session.context)
             return {
                 kind: 'complete', status: 0, diagnostics: [],
                 result: { stackId: session.context.stackId, change: 'unchanged' },
@@ -4115,7 +4092,7 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
             confirmationDigest: persistedRequest!.planDigest,
             recoveryAuthority: recovered.authority, operatorApproval: session.preview }) : undefined
         if (recoveryPlan && recoveryPlan.kind !== 'complete') return recoveryPlan.kind === 'refusal'
-            ? destructiveRefusal(recoveryPlan.diagnostics) : destructiveRepairRequired(session.context)
+            ? forwardedRefusal(recoveryPlan.diagnostics) : destructiveRepairRequired(session.context)
         const projection = recoveryPlan ? projectRecoveredResetActionTargets(recoveryPlan) : projectResetActionTargets(session.preview)
         if (!projection) return destructiveRepairRequired(session.context)
         const basis = destructivePlanningBasis(persistedRequest)
@@ -4127,7 +4104,7 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
             runtimeStopValidForMs: basis.runtimeStopValidForMs,
             reclaimValidForMs: basis.reclaimValidForMs,
         })
-        if (lifecycle.kind !== 'drain') return destructiveRefusal(lifecycle.diagnostics)
+        if (lifecycle.kind !== 'drain') return forwardedRefusal(lifecycle.diagnostics)
         if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(session.context)
         const actionablePlan = recoveryPlan ?? await planReset({
             ...observation.reset,
@@ -4137,7 +4114,7 @@ async function approveOperatorReset(session: PrivateResetSession): Promise<Opera
                 : { consent: session.preview.consent }),
         })
         if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
-            ? destructiveRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
+            ? forwardedRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
         const applied = await executeDestructivePlan(
             session.context, session.adapters, 'reset', lifecycle, actionablePlan, observation,
             recovered?.kind === 'complete' ? recovered : undefined,

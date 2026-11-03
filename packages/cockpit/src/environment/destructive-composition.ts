@@ -7,6 +7,7 @@ import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load
 import {
     issueDestructiveRunContext,
     noticeLifecycleRun,
+    forwardedRefusal,
     type DestructiveObservation,
     type DestructiveObservationRefusal,
     type DestructiveReclaimObservation,
@@ -141,26 +142,12 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
     }
 }
 
-function observationRefusal(diagnostics: readonly EnvironmentDiagnostic[]): DestructiveObservationRefusal {
-    return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics }
-}
-
 function refusal(
     target: string,
     message = 'destructive run authority is unavailable or does not match current state',
     code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
 ): EnvironmentCommandOutcome<DestructiveRunContext> {
-    return {
-        kind: 'refusal' as const,
-        status: 2 as const,
-        result: null,
-        diagnostics: [{
-            severity: 'error' as const,
-            code,
-            message,
-            target,
-        }],
-    }
+    return forwardedRefusal([{ severity: 'error', code, message, target }])
 }
 
 function sameSource(
@@ -241,7 +228,7 @@ async function inspectDiscovery(
     }>>).value)
     const overflow = evidence.map(({ step, outcome }) => inspectionOverflow(step, outcome)).find((message) => message !== undefined)
     if (overflow !== undefined) {
-        return observationRefusal([{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, message: overflow, target: kind }])
+        return forwardedRefusal([{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, message: overflow, target: kind }])
     }
     return kind === 'image'
         ? admitImageInspections(discovery, evidence)
@@ -435,7 +422,7 @@ export function createDestructiveCommandAdapters(
                 successor: { holderId: context.holderId, checkoutId: context.checkoutId },
                 now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
             })
-            if (reaped.kind === 'refusal') return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics }
+            if (reaped.kind === 'refusal') return forwardedRefusal(reaped.diagnostics)
             // A restore released above leaves data that may be half applied; the warning rides on
             // whatever this load returns.
             let claim: LeasePortFamilyResult | undefined
@@ -469,7 +456,7 @@ export function createDestructiveCommandAdapters(
                     let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
                     claim = await lifecycle.withAcquiredPorts(context, async ({ leaseResult }) => leaseResult,
                         (diagnostics) => { claimRefusal = diagnostics; return undefined })
-                    if (claimRefusal) return { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal }
+                    if (claimRefusal) return forwardedRefusal(claimRefusal)
                     if (claim?.kind !== 'complete' || claim.change !== 'acquired') return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
                     inventory = await readActiveStackInventory(context.namespace)
                     if (inventory.kind !== 'complete') return refusal(context.stackId)
@@ -503,17 +490,17 @@ export function createDestructiveCommandAdapters(
                 checkoutId: context.checkoutId,
                 config: 'recorded',
             })
-            if (retained.kind !== 'complete') return observationRefusal(retained.diagnostics)
+            if (retained.kind !== 'complete') return forwardedRefusal(retained.diagnostics)
             const entrypoints = deriveEntrypoints({
                 lease: retained.lease,
                 declarations: context.entrypointDerivatives,
             })
-            if (entrypoints.kind !== 'complete') return observationRefusal(entrypoints.diagnostics)
+            if (entrypoints.kind !== 'complete') return forwardedRefusal(entrypoints.diagnostics)
             const ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
             if (!ports) return undefined
             let runtimeRefusal: DestructiveObservationRefusal | undefined
             const readiness = await lifecycle.withRuntimeReadiness(lifecycleContext, async (value) => value, ports,
-                (diagnostics) => { runtimeRefusal = observationRefusal(diagnostics); return undefined }, 'teardown')
+                (diagnostics) => { runtimeRefusal = forwardedRefusal(diagnostics); return undefined }, 'teardown')
             if (runtimeRefusal) return runtimeRefusal
             if (!readiness) return undefined
             readinessRoots.set(context, readiness.topology.cwd)

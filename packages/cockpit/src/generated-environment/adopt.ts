@@ -23,6 +23,7 @@ import { CockpitConfig, SurfaceAdoption } from '../schema.js'
 import { adoptedCopyPath, inspectAdoptedSettings } from '../surfaces/adoption.js'
 import { ADOPTABLE_SURFACE_PATHS, SURFACE_FILE_MAX_BYTES, type AdoptableSurfacePath } from '../surfaces/contract.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
+import { refusalOutcome as refused } from '../refusal.js'
 import { nodeAuthority, readAnchoredEntry, readAnchoredFile, relocateAnchoredFile, restoreAnchoredFile,
     type PublicationAdapters } from './transaction.js'
 
@@ -45,11 +46,6 @@ const OWNERSHIP_PATH = '.cockpit/generated-environment-ownership.json'
 // not reach a refusal: name where parsing stopped, never the text there.
 function tomlFailure(error: unknown): string {
     return error instanceof TomlError ? `TOML error at line ${error.line}, column ${error.column}` : errorCause(error)
-}
-
-function refused(code: string, message: string, target?: string, fix?: string): SyncAdoptionOutcome {
-    return { status: 2, result: null, diagnostics: [{
-        severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }), ...(fix === undefined ? {} : { fix }) }] }
 }
 
 const ADOPT_BY_HAND_FIX = 'move the settings file to cockpit/adopted/<the same path>, add its [[surfaces.adopted]] row to cockpit.toml by hand with the fields the configuration reference lists, then run npx --no cockpit sync --config <your cockpit.toml>'

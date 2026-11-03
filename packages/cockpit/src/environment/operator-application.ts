@@ -3,6 +3,7 @@ import { loadAutonomyPolicy } from '../config/load.js'
 import type { Decider } from '../schema.js'
 import { ENVIRONMENT_CODES, type Diagnostic } from './contract.js'
 import { EXIT_CODES } from '../invocation.js'
+import { refusalOutcome as refusal } from '../refusal.js'
 import type {
     ResetCommandInput,
 } from './application.js'
@@ -56,17 +57,6 @@ export interface SyncOperatorApplicationAdapters {
     readonly confirmPolicyWeakening: (request: Readonly<{ weakened: readonly PolicyWeakening[]; digest: string }>) => Promise<string | undefined>
 }
 
-function refusal(
-    code: string,
-    message: string,
-    target: string,
-): OperatorCommandOutcome {
-    return {
-        status: 2 as const,
-        result: null,
-        diagnostics: [{ severity: 'error' as const, code, message, target }],
-    }
-}
 
 const isPolicy = (value: OperatorPolicy | OperatorCommandOutcome): value is OperatorPolicy => 'current' in value
 
