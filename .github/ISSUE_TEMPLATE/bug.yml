@@ -1,71 +1,47 @@
 name: Bug report
-description: Something cockpit does that it should not, or does not do that it should.
+description: cockpit does something it should not, or fails to do something it should.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        A vulnerability is **never** reported here. Follow the
-        [security policy](https://github.com/b0dea/cockpit/security/policy) to report it
-        privately.
-
-        Please file one defect per issue.
+        Security problems do not go here; see [SECURITY.md](https://github.com/b0dea/cockpit/blob/main/SECURITY.md).
+        One defect per issue. Use invented names: nothing that identifies a private deployment.
   - type: textarea
-    id: what-happened
+    id: command
     attributes:
-      label: What happened, and what you expected instead
-      description: Both halves. "It fails" without the expectation leaves the reader guessing which half is the bug.
-    validations:
-      required: true
-  - type: textarea
-    id: commands
-    attributes:
-      label: The exact commands
-      description: Copied from your shell, in the order you ran them.
+      label: Command you ran
       render: shell
     validations:
       required: true
   - type: textarea
-    id: output
+    id: actual
     attributes:
-      label: The actual output
-      description: Paste it rather than summarising it. The line people leave out is usually the one that says why.
+      label: Actual output
+      description: Pasted, not summarised.
       render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
     validations:
       required: true
   - type: textarea
     id: environment
     attributes:
       label: Environment
-      description: Versions and platform.
       placeholder: |
-        cockpit:
+        cockpit (npx --no cockpit --version):
         node -v:
-        OS and version:
-        agent tool, if it is involved:
-        container runtime, if it is involved:
+        OS:
+        agent tool (if involved):
     validations:
       required: true
   - type: textarea
-    id: reproduction
+    id: config
     attributes:
-      label: Smallest reproduction
-      description: >
-        Synthetic is preferred over redacted. If the real reproduction carries names you cannot
-        publish, rebuild it with invented ones — that is the same constraint every fixture in
-        this repository is built under, and it is the version that can be committed as a test.
-    validations:
-      required: false
-  - type: checkboxes
-    id: preflight
-    attributes:
-      label: Before submitting
-      options:
-        - label: I searched the existing issues.
-          required: true
-        - label: This report contains nothing identifying a private deployment — no client or employer names, no private hostnames, no internal URLs, no credentials.
-          required: true
-        - label: This is not a security vulnerability.
-          required: true
-        - label: The commands and output above are from a real run, not reconstructed from memory.
-          required: true
+      label: Minimal cockpit.toml excerpt
+      description: Only the relevant part, with secrets and private names removed.
+      render: toml

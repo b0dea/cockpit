@@ -2,8 +2,8 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page is for the maintainer and contributors: how a change becomes a published release,
-what is automated, and the manual steps the automation depends on.
+This page is for the maintainer: how a change becomes a published release, what is automated, and
+the manual steps the automation depends on.
 
 ## The release flow
 
@@ -21,19 +21,16 @@ Releases are automated with Changesets and GitHub Actions.
 4. **Merging the Version Packages pull request publishes.** The workflow's `publish` job
    publishes to npm through Trusted Publishing (OIDC, with provenance, no stored token), stamps
    the source commit into the package's `cockpitSourceRevision`, creates the GitHub release, and
-   uploads the release record that `cockpit upgrade` reads. It is the only job that can request
-   the OIDC token, and it runs in the `npm` deployment environment, which the trusted publisher
-   names, so a token from any other job or branch cannot publish.
+   uploads the release record that `cockpit upgrade` reads. Only that job runs in the `npm`
+   deployment environment the trusted publisher names, so no other job or branch can publish.
 
-After the [first publication](#first-publication), nobody runs `npm publish` by hand. A release
-is a merge of the Version Packages pull request.
+After the [first publication](#first-publication), nobody runs `npm publish` by hand.
 
 ## Merging the Version Packages pull request
 
-The release workflow opens that pull request with the workflow's own `GITHUB_TOKEN`, and GitHub
-starts no workflow for an event that token causes. So CI never runs on it by itself, and the
-required `ci-ok` check stays missing. Each later push to main rebuilds the pull request the same
-way and leaves its newest commit unchecked again.
+The release workflow opens that pull request with its own `GITHUB_TOKEN`, and GitHub starts no
+workflow for an event that token causes. CI never runs on it by itself, so the required `ci-ok`
+check stays missing, and each later push to main leaves the newest commit unchecked again.
 
 When you are ready to release:
 
@@ -102,9 +99,9 @@ without publishing anything. Do steps 1 and 2, then re-run that run with
 ## Dependency updates
 
 Dependabot opens patch and minor update pull requests. They merge automatically once the `ci-ok`
-check passes; major updates wait for review. A new npm release is offered only after a cooldown
-that grows with its semver level, so a hijacked publish is usually pulled before it reaches the
-lockfile; the days are in [.github/dependabot.yml](../../.github/dependabot.yml).
+check passes; major updates wait for review. A new npm release is offered only after a cooldown that grows with its semver level, so a hijacked
+publish is usually pulled before it reaches the lockfile; see
+[.github/dependabot.yml](../../.github/dependabot.yml).
 
 Some versions are pinned by a check, so their update cannot pass CI as Dependabot opens it. They
 arrive together in the `pinned-by-hand` group, which auto-merge skips; the group's list is in
@@ -175,13 +172,10 @@ node scripts/hygiene-scan.mjs --history
 npm audit --ignore-scripts
 ```
 
-The working tree, the package tarball and the reachable history are scanned separately. A
-history report with findings, binary gaps or exceeded limits is not clean. If old history
-contains private material, publish a fresh root from the scanned source export instead of the
-old Git directory, branches or tags, and keep the private repository until you decide what to
-do with it.
+The working tree, the package tarball and the reachable history are scanned separately. A history
+report with findings, binary gaps or exceeded limits is not clean. If old history contains private
+material, publish a fresh root from the scanned source export instead of the old Git directory,
+branches or tags.
 
-After the first publication, install the package from npm on a clean machine, run the
-[synthetic example](../../examples/synthetic/README.md), and read back the
-public repository. Before claiming cockpit generalises, use it for real on at least three
-differently shaped products: two established setups and one new one.
+After the first publication, install the package from npm on a clean machine and run the
+[synthetic example](../../examples/synthetic/README.md).

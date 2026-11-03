@@ -1,40 +1,22 @@
 name: Question
-description: How something works, or whether cockpit is the right tool for what you are doing.
+description: How something works, or whether cockpit fits what you are doing.
 labels: ["question"]
 body:
   - type: markdown
     attributes:
       value: |
-        A question that turns out to be a documentation defect is tracked as one, so this is a
-        useful thing to open rather than a nuisance.
+        Use invented names: nothing that identifies a private deployment. For vulnerabilities see
+        [SECURITY.md](https://github.com/b0dea/cockpit/blob/main/SECURITY.md).
   - type: textarea
     id: goal
     attributes:
       label: What are you trying to do?
-      description: The outcome you want, not only the step you are stuck on. The step is often the wrong one.
     validations:
       required: true
   - type: textarea
     id: tried
     attributes:
-      label: What you have read or tried
-      description: Which page you read and what you expected it to say. That is what makes this fixable rather than only answerable.
+      label: What you read or tried
+      description: Which page you read and what you expected it to say.
     validations:
       required: true
-  - type: input
-    id: versions
-    attributes:
-      label: Versions
-      description: Optional, if the answer might depend on them.
-      placeholder: "cockpit 0.0.0, node 22, macOS 15"
-    validations:
-      required: false
-  - type: checkboxes
-    id: preflight
-    attributes:
-      label: Before submitting
-      options:
-        - label: This question contains nothing identifying a private deployment.
-          required: true
-        - label: This question contains no vulnerability details.
-          required: true

@@ -2,10 +2,10 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This policy tells cockpit contributors which Markdown rules the linter enforces and which need
-a reviewer. The linter gates what a reader would trip over (a broken link, a code cockpit never
-prints, a stale capture) and leaves wording to review. Project documentation and executable
-agent instructions are governed separately, because the same prose rules do not fit both.
+This policy tells cockpit contributors which Markdown rules `npm run lint:docs` enforces and which
+need a reviewer. The linter gates what a reader would trip over (a broken link, a code cockpit
+never prints, a stale capture) and leaves wording to review. Documentation and executable agent
+instructions are governed separately, because the same prose rules do not fit both.
 
 ## Documentation estates
 
@@ -22,8 +22,8 @@ and an empty list is an error, not a clean result.
 
 ## Purpose and audience
 
-Human documentation has opening prose within its first twelve lines. The linter checks that the
-prose is there; a reviewer checks that it says what the page is for and who it is for.
+Human documentation opens with prose that says what the page is for and who it is for. The linter
+checks the prose is there; a reviewer checks what it says.
 
 Executable instructions are exempt. They may begin directly with commands or constraints, because
 rewriting them as explanation can change their behavior.

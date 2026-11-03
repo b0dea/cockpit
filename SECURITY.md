@@ -7,17 +7,13 @@ what response to expect, and what is in scope.
 
 ## Supported versions
 
-| Version | Supported |
-|---|---|
-| the newest minor | yes |
-| everything older | no |
-
-Fixes land on the newest minor release only. There is no long-term support branch and no
-backporting; upgrading to the newest minor is the fix.
+Fixes land on the newest minor release only; upgrading to it is the fix. There is no long-term
+support branch and no backporting.
 
 ## Reporting a vulnerability
 
-**Never report a vulnerability in a public issue, pull request or discussion.**
+**Never report a vulnerability in a public issue, pull request or discussion.** A public fix whose
+diff or message explains the problem is a disclosure too.
 
 <!-- cockpit:operator-evidence private-reporting-channel=pending -->
 
@@ -26,45 +22,35 @@ Report it privately through GitHub's private vulnerability reporting: open the r
 reporting is not enabled; open a public issue that asks for a private contact and contains no
 details of the problem.
 
-Do not open a pull request whose diff or message explains the vulnerability before a fix is
-released. A public fix is a disclosure.
-
-A useful report gives:
-
-- what an attacker can do;
-- the smallest reproduction you have, synthetic if possible: this project cannot accept material
-  that identifies someone's private deployment, even in a security report;
-- the versions involved (cockpit, Node, operating system, and the agent tool if relevant);
-- whether you intend to publish.
+A useful report gives what an attacker can do, the smallest synthetic reproduction (the project
+cannot accept material that identifies someone's private deployment, even in a security report),
+the versions involved, and whether you intend to publish.
 
 ## What to expect
 
-There is one maintainer and no on-call rotation, so these windows are in days, not hours:
+There is one maintainer and no on-call rotation, so these windows are in days:
 
 | | |
 |---|---|
 | Acknowledgement | within 7 days |
-| First assessment — is it a vulnerability, and how bad | within 14 days of acknowledgement |
-| Fix | no fixed window; a confirmed high-severity issue is the next thing worked on, lower severity ships with the next release |
+| First assessment: is it a vulnerability, and how bad | within 14 days of acknowledgement |
+| Fix | no fixed window; confirmed high severity is worked on next, lower severity ships with the next release |
 
-If you have had no acknowledgement after 14 days, send the report again: reports do get lost.
-You will be told the conclusion, including why when it is not a vulnerability.
+With no acknowledgement after 14 days, send the report again. You will be told the conclusion,
+including why when it is not a vulnerability.
 
 ## Disclosure
 
-Coordinated. Once a fix is released, the advisory is published and the changelog says a
-security fix landed and what it affected. If no fix has shipped **90 days** after
-acknowledgement, you are free to publish; ask sooner if you have a deadline and it will usually
-be agreed.
-
-Reporters are credited in the advisory unless you ask not to be.
+Coordinated. Once a fix is released the advisory is published, crediting the reporter unless they
+ask otherwise. If no fix has shipped **90 days** after acknowledgement, you are free to publish;
+ask sooner if you have a deadline.
 
 ## Consumer-identifying leaks
 
 Consumer-identifying material found in the published tree or history is handled as a
-vulnerability. The response removes it from the current tree, rotates any affected credentials or
-endpoints, and republishes from a clean root when repository history carries the material. Known
-downstream forks or vendored copies are notified through their private security routes.
+vulnerability: it is removed from the current tree, affected credentials or endpoints are rotated,
+and the repository is republished from a clean root when history carries it. Known downstream
+forks are notified through their private security routes.
 
 Registry retraction, Git rewrites and cache invalidation cannot guarantee that every downloaded or
 forked copy disappears, so the advisory promises no erasure. It states what was exposed, which
@@ -72,17 +58,12 @@ versions or commits carried it, what was rotated, and what consumers must replac
 
 ## Scope
 
-In scope — the parts of this project that run on someone else's machine:
-
-- the CLI and everything it writes;
-- the surfaces in `packages/cockpit/surfaces/` and the files rendered from them into a
-  consumer's repository;
-- the guards and hooks, and the generated per-harness configuration.
+In scope is what runs on someone else's machine: the CLI and everything it writes, the surfaces in
+`packages/cockpit/surfaces/` and the files rendered from them, and the guards, hooks and generated
+per-harness configuration.
 
 The highest-value place to look is anywhere cockpit writes into a repository or generates
-configuration that an agent tool then executes. That is a supply-chain persistence surface, which
-is why the write path is confined, allow-lists are enumerated, and deletion is by name rather than
-by pattern. These are security defects here, not merely bugs:
+configuration that an agent tool then executes. These are security defects here, not merely bugs:
 
 - a path that escapes its tree;
 - a generated permission that grants more than it reads as granting;
@@ -90,7 +71,7 @@ by pattern. These are security defects here, not merely bugs:
 
 Out of scope:
 
-- a consumer's own product repositories, their deployments and their secrets — cockpit boots
-  them, it does not own them;
+- a consumer's own product repositories, deployments and secrets: cockpit boots them, it does not
+  own them;
 - vulnerabilities in third-party agent tools, container runtimes or dependencies. Report those
-  upstream; tell us as well if we should pin, patch or route around them.
+  upstream, and tell us as well if we should pin, patch or route around them.

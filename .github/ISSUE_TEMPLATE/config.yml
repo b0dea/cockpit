@@ -1,10 +1,5 @@
-# Every issue arrives through one of the three forms. A blank issue is faster to open and
-# slower to act on: the fields on those forms are the ones that get asked for anyway.
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/b0dea/cockpit/security/policy
-    about: Never include details publicly. How to report privately, and the response windows.
-  - name: Contributing
-    url: https://github.com/b0dea/cockpit/blob/main/CONTRIBUTING.md
-    about: Setup, tests, commit and pull request conventions, and what will not be accepted.
+    url: https://github.com/b0dea/cockpit/blob/main/SECURITY.md
+    about: Do not post details publicly. SECURITY.md explains how to report privately.

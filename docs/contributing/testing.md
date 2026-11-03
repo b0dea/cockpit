@@ -8,31 +8,26 @@ failure.
 
 ## Test tiers
 
-A test file named `*.slow.test.ts` is in the slow tier; every other test file is in the fast tier.
-`npm test` runs both. `npm run test:changed -- <base-commit>` runs only the fast-tier owners of a
-change and prints the slow-tier owners it left out, with the `npm test -- <paths>` command that
-runs them. A file named with `--extra-test` runs whatever its tier. `--wide` is the selection CI
-runs for a pull request: both tiers, and every test that imports the change, directly or through
-other modules, instead of stopping at the first importer that has its own fast-tier adjacent tests.
+A test file named `*.slow.test.ts` is in the slow tier; every other file is in the fast tier.
+`npm test` runs both. `npm run test:changed -- <base-commit>` runs the fast-tier owners of a change
+and prints the slow-tier owners it left out; `--wide` runs both tiers and is what CI runs.
 
 A file belongs in the slow tier when its cost is set by something other than the code under test:
 
 - it packs or installs the package, or runs the installed tarball;
 - it runs the host Docker;
-- it drives end-to-end CLI or composition runs whose many real subprocesses take more than about
-  30 seconds for the file on an idle machine.
+- it drives end-to-end CLI or composition runs with many real subprocesses.
 
 `packages/cockpit/src/testing/test-tiers.test.ts` fails when a fast-tier file packs or installs a
 package with npm or resolves Docker from the host `PATH`. Subprocess-heavy files are a judgment no
-source pattern shows: measure the file alone with `npm test -- <path>` and read its duration in
+source pattern shows: run the file alone with `npm test -- <path>` and read its duration in
 **.vitest-reports/latest.json**. When only some cases of a file are slow, move those cases into a
-`<name>.slow.test.ts` file beside it and share their setup through `packages/cockpit/test-support/`,
-so the fast cases still run for every change to the module.
+`<name>.slow.test.ts` beside it and share their setup through `packages/cockpit/test-support/`, so
+the fast cases still run for every change to the module.
 
 ## Harness surface modules
 
-Every module below is under `packages/cockpit/src/`. Thin command adapters connect them through
-`packages/cockpit/src/cli.ts`; all process dispatch goes through
+Every module below is under `packages/cockpit/src/`. All process dispatch goes through
 [the single executor](../../packages/cockpit/src/environment-exec/execute.ts).
 
 | Responsibility | Module | Focused test file |
@@ -58,7 +53,7 @@ Repository tests check source behavior; they do not replace a selftest of the re
 ## Focused harness verification
 
 Run the command for the changed failure family from the repository root. These tests use
-synthetic data; they do not exercise a real harness. `npm test` is described in
+synthetic data; they do not exercise a real harness. See
 [Development loop](../../CONTRIBUTING.md#development-loop).
 
 | Failure family | Focused verification command |
