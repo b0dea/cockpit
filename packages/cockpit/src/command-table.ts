@@ -13,7 +13,7 @@ export function isRecordedAnswerField(value: string): boolean {
 
 export type WorkHandlerIdentifier =
     | 'work-status' | 'work-accept' | 'work-check' | 'work-note' | 'work-answer' | 'work-grade' | 'work-signoff' | 'work-recover' | 'work-verify' | 'grade-criteria'
-    | 'browser-drive' | 'browser-screenshot' | 'browser-debugger' | 'test-run'
+    | 'browser-drive' | 'browser-screenshot' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
@@ -508,9 +508,6 @@ export const commands: readonly CommandDefinition[] = [
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
         ordinary: ordinary('browser-screenshot', browserOptions, browserAdmission),
-        options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser debugger', handler: 'browser-debugger', stage: 'test-and-grade', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public',
-        ordinary: unavailable("the debugger opens a headed browser for a person at this machine's display, on that person's explicit request"),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
 ] as const satisfies readonly CommandDefinition[]
 

@@ -110,7 +110,7 @@ describe('public surface publication transaction', () => {
                 'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync *)',
                 'Bash(npx --no cockpit work accept *)', 'Bash(npx --no cockpit reset * --apply)',
             ]))
-            expect(settings.permissions.allow!.filter(rule => /cockpit (down|init|sibling|session|browser debugger)\b/.test(rule))).toEqual([])
+            expect(settings.permissions.allow!.filter(rule => /cockpit (down|init|sibling|session)\b/.test(rule))).toEqual([])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({

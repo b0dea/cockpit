@@ -977,7 +977,7 @@ async function decodeRequest(
         } else {
             const role = text('role')
             if (values.role !== undefined && !role) return usageOutcome('CLI_USAGE_INVALID', '--role requires a bounded identifier')
-            request = { operation: handler as 'browser-drive' | 'browser-screenshot' | 'browser-debugger', ...(role ? { role } : {}) }
+            request = { operation: handler as 'browser-drive' | 'browser-screenshot', ...(role ? { role } : {}) }
         }
         const { captureWorkApplicationRequest } = await import('./work-orders/application.js')
         const captured = captureWorkApplicationRequest(request)

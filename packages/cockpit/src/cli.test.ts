@@ -238,9 +238,9 @@ describe('closed ordinary invocation metadata', () => {
             ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
-            // A person types the displayed digest, takes a lock whose holder only looks dead, or opens the debugger.
+            // A person types the displayed digest, takes a lock whose holder only looks dead.
             ['work', 'accept', '--work-order', 'WO-1', '--interactive'], ['work', 'answer', '--work-order', 'WO-1', '--question', '1', '--text', 'yes', '--interactive'],
-            ['work', 'signoff', '--work-order', 'WO-1', '--interactive'], ['work', 'recover', '--work-order', 'WO-1', '--apply'], ['browser', 'debugger'],
+            ['work', 'signoff', '--work-order', 'WO-1', '--interactive'], ['work', 'recover', '--work-order', 'WO-1', '--apply'],
             ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
             ['test-run', '--gate', 'quick', '--select', 'file:--config=evil.ts'], ['test-run', '--gate', 'quick', '--select', 'src/cache.test.ts'],
             ['work', 'note', '--work-order', 'WO-1'], ['work', 'answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
@@ -515,8 +515,7 @@ describe('CLI help', () => {
         expect(browser.status).toBe(0)
         expect(browser.stdout).toContain('Subcommands:\n' +
             '  drive       Drive the declared application browser surfaces\n' +
-            '  screenshot  Capture the declared application surfaces\n' +
-            '  debugger    Prepare an explicitly requested browser debugger\n\n')
+            '  screenshot  Capture the declared application surfaces\n\n')
         expect((await runInProcess(['work', 'grade', '--help'])).stdout).toMatch(/^Usage: cockpit work grade \[options\]\n/)
 
         const envelope = async (args: string[]) => JSON.parse((await runInProcess([...args, '--json'])).stdout)
@@ -1886,7 +1885,6 @@ describe('work command routing', () => {
             ['browser-drive', ['--role', 'qa_user'], { operation: 'browser-drive', role: 'qa_user' }],
             ['browser-screenshot', ['--role', '1worker'], { operation: 'browser-screenshot', role: '1worker' }],
             ['browser-screenshot', [], { operation: 'browser-screenshot' }],
-            ['browser-debugger', [], { operation: 'browser-debugger' }],
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'file:src/example.ts'], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'file', value: 'src/example.ts' } }],
             ['test-run', ['--gate', 'unit', '--mode', 'canonical', '--select', 'test:' + 'é'.repeat(2048)], { operation: 'test-run', gate: 'unit', mode: 'canonical', select: { kind: 'test', value: 'é'.repeat(2048) } }],
         ]

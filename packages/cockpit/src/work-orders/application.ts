@@ -32,7 +32,7 @@ const Request = z.discriminatedUnion('operation', [
     z.object({ operation: z.literal('work-recover'), workOrderId: id, apply: z.boolean() }).strict(),
     z.object({ operation: z.literal('work-verify') }).strict(),
     z.object({ operation: z.literal('grade-criteria'), criteriaFile: relativeFile }).strict(),
-    z.object({ operation: z.enum(['browser-drive', 'browser-screenshot', 'browser-debugger']), role: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional() }).strict(),
+    z.object({ operation: z.enum(['browser-drive', 'browser-screenshot']), role: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional() }).strict(),
     z.object({ operation: z.literal('test-run'), gate: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), mode: z.enum(['canonical', 'full', 'staged']),
         select: z.object({ kind: z.enum(['spec', 'file', 'test', 'route']), value: z.string().min(1).refine(value => Buffer.byteLength(value) <= 4_096 && !/[\x00-\x1f\x7f]/.test(value)) }).strict().optional() }).strict(),
 ])
@@ -88,11 +88,6 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
     if (!isWorkApplicationComposition(composition)) return refusal('invalid', 'An issued work application composition is required')
     const operation = captured.operation
     try {
-        // The headed debugger was launched through the browser runner cockpit rendered into its own
-        // Compose file, which it no longer writes, so nothing can prepare one.
-        if (captured.operation === 'browser-debugger') {
-            return refusal(operation, 'the headed browser debugger needs the browser runner cockpit no longer renders; use browser drive or browser screenshot')
-        }
         if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
             const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
             const result = await executeBrowserCommand(await composition.browser(kind, captured.role))

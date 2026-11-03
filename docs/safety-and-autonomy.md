@@ -224,7 +224,6 @@ cockpit commands in
 | `npx --no cockpit browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is set, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration must declare before it can set preapproval. |
 | `work accept`, `work answer` and `work signoff` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
 | `work recover --apply` | a prompt, which Codex and OpenCode turn into a denial | It deletes a lock once a process probe calls its holder dead, and that probe sees only this machine's processes: a holder in a container or on another host that shares the checkout looks dead to it. |
-| `browser debugger` | a prompt, which Codex and OpenCode turn into a denial | It opens a headed browser for a person at this machine, on that person's explicit request. |
 | `sync --adopt`, `sync --interactive`, `reset --interactive`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or a team's own settings, ask for a person, or delete data. |
 
 A file such a command names, like `--criteria`, is checked as a read:
