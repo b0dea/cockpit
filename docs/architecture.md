@@ -1,7 +1,5 @@
 # Architecture and design
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for integrators and contributors who want the reasoning behind cockpit: the problem it
 solves, the design decisions that follow, and where in the source to extend it. The fields and
 commands themselves are in the generated [configuration reference](configuration-reference.md) and

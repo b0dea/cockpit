@@ -1,7 +1,5 @@
 # AGENTS.md
 
-<!-- cockpit:verified version=0.0.0 -->
-
 Guide for AI coding agents and humans changing cockpit itself. For using cockpit, see the
 [README](README.md); for contribution process (branches, changesets, review), see
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -20,7 +18,7 @@ code, comments, fixtures, tests, commit messages or docs. Fixtures are synthetic
 system teaches you something, encode the property in a synthetic fixture and write the lesson in
 a comment, never paste the artefact.
 
-The hygiene scan (`node scripts/hygiene-scan.mjs`, also run by `npm test`) has two classes.
+The hygiene scan (`node scripts/hygiene-scan.ts`, also run by `npm test`) has two classes.
 Credential shapes and private paths are universal, so CI enforces them. Consumer names are
 site-specific and absent from this tree, so CI cannot catch a site-name leak: that class is
 enforced only where a maintainer-held private site-identifier list is present. A green CI is not
@@ -73,7 +71,9 @@ npm ci --ignore-scripts
 npm run test:changed -- <base-commit>  # fast-tier tests adjacent to your changes; --wide adds the slow tier
 npm test -- <test file>                # targeted run; bare `npm test` is the full suite
 npm run typecheck
-npm run lint:docs
+npm run lint:docs                      # cockpit:ref targets, codes, glossary links, docs indexes
+npm run lint:markdown                  # markdownlint
+npm run lint:links                     # lychee, offline; needs lychee installed
 npm run references                     # regenerate generated docs (see Keep docs current)
 ```
 
@@ -101,11 +101,10 @@ marked ready, or when a shared seam changes.
 
 ## Keep docs current
 
-- After changing `command-table.ts`, `schema.ts` or a diagnostic code: commit, run `npm run references`, commit the regenerated pages. It refuses while implementation changes are uncommitted.
+- After changing `command-table.ts`, `schema.ts`, a shipped skill or guard, or a diagnostic code: run `npm run references` and commit the regenerated pages with the change. CI fails while they differ.
 - A user-visible behaviour change updates the hand-written page that owns that fact in the same change; find the owner through the `docs/README.md` index (grep the old wording).
 - Never write counts, tool versions, dates or line numbers in prose: link to the generated page, `package.json` or the schema.
 - Add a changeset for package changes: `npx changeset`.
-- Re-reviewing a page means bumping its `cockpit:verified` marker; `npm run lint:docs` must pass.
 
 ## Harness capabilities
 

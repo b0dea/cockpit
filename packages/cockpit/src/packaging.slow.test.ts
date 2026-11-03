@@ -1,13 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { parseNpmPackJson, type NpmPackArtifact } from './test-support/npm-pack-json.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
-import { expectedPackageFiles } from '../../../scripts/supply-chain-check.mjs'
-import { inspectInternalLinks } from '../../../scripts/docs-lint.mjs'
+import { expectedPackageFiles } from '../../../scripts/supply-chain-check.ts'
+import { walkMarkdownProse } from '../../../scripts/docs-lint.ts'
 
 // What a consumer installs is a different surface from what this repository contains, and
 // only one of them is checked by reading the tree. Without an allow-list npm ships every
@@ -262,12 +262,11 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const pages = files.filter((f) => f.startsWith('docs/') && f.endsWith('.md'))
         for (const page of pages) {
             const body = readFileSync(join(installed, page), 'utf8')
-            const readInstalledPage = (path: string) => {
-                if (!path.startsWith('docs/')) throw new Error(`${path} is outside the installed guide`)
-                return readFileSync(join(installed, path), 'utf8')
-            }
-            expect(inspectInternalLinks({ path: page, body, readTarget: readInstalledPage })
-                .filter((row) => row.code !== 'DOC041_REFERENCE_UNRESOLVED'), page).toEqual([])
+            // Fragments are checked on the source pages by lychee; the copy changes only link targets.
+            const leaving = walkMarkdownProse(body).links.map(link => link.target.split('#', 1)[0]!)
+                .filter(target => target !== '' && !/^[a-z][a-z0-9+.-]*:/i.test(target))
+                .filter(target => { const resolved = posix.join(posix.dirname(page), target); return !resolved.startsWith('docs/') || !existsSync(join(installed, resolved)) })
+            expect(leaving, page).toEqual([])
             for (const [, path] of body.matchAll(/\]\(https:\/\/github\.com\/b0dea\/cockpit\/blob\/main\/([^)#\s]+)/g)) {
                 expect(tracked.has(path!) || [...tracked].some((file) => file.startsWith(`${path}/`)), `${page} -> ${source}${path}`).toBe(true)
             }

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const mechanism = {
     id: 'cockpit-package-build',
-    module: 'scripts/build-cockpit.mjs',
+    module: 'scripts/build-cockpit.ts',
     exports: ['cleanOwnedPackageDist', 'packagedDocumentationPages', 'writePackagedDocumentation'],
 }
 
@@ -17,7 +17,7 @@ const GUIDE = 'docs'
 const CONTRIBUTOR_PAGES = 'docs/contributing'
 const PUBLIC_SOURCE = 'https://github.com/b0dea/cockpit/blob/main/'
 
-async function canonicalPackageRoot(packageRoot) {
+async function canonicalPackageRoot(packageRoot: string): Promise<string> {
     const requestedRoot = resolve(packageRoot)
     const rootStat = await lstat(requestedRoot)
     const root = await realpath(requestedRoot)
@@ -36,13 +36,13 @@ async function canonicalPackageRoot(packageRoot) {
     return root
 }
 
-async function removeOwnedDirectory(root, name, code) {
+async function removeOwnedDirectory(root: string, name: string, code: string): Promise<void> {
     const directory = join(root, name)
     let stat
     try {
         stat = await lstat(directory)
     } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
         throw error
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
@@ -51,14 +51,14 @@ async function removeOwnedDirectory(root, name, code) {
     await rm(directory, { recursive: true })
 }
 
-export async function cleanOwnedPackageDist(packageRoot) {
+export async function cleanOwnedPackageDist(packageRoot: string): Promise<void> {
     await removeOwnedDirectory(await canonicalPackageRoot(packageRoot), 'dist', 'PACKAGE_DIST_INVALID')
 }
 
 /** Repository paths of the guide pages the package ships, in code-unit order. */
-export function packagedDocumentationPages(repositoryRoot) {
-    const pages = []
-    const visit = directory => {
+export function packagedDocumentationPages(repositoryRoot: string): string[] {
+    const pages: string[] = []
+    const visit = (directory: string) => {
         for (const entry of readdirSync(join(repositoryRoot, directory), { withFileTypes: true })) {
             const path = posix.join(directory, entry.name)
             if (path === CONTRIBUTOR_PAGES) continue
@@ -76,10 +76,10 @@ export function packagedDocumentationPages(repositoryRoot) {
  * is redirected to the public source. Fenced blocks and code spans are left alone: the
  * configuration reference quotes schema patterns shaped like link destinations.
  */
-function packagedPageText(repositoryRoot, page, body, shipped) {
-    const redirect = (link, target) => {
+function packagedPageText(repositoryRoot: string, page: string, body: string, shipped: ReadonlySet<string>): string {
+    const redirect = (link: string, target: string) => {
         if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#')) return link
-        const [path, fragment] = target.split('#', 2)
+        const [path, fragment] = target.split('#', 2) as [string, string | undefined]
         const resolved = posix.normalize(posix.join(posix.dirname(page), path))
         if (shipped.has(resolved)) return link
         if (resolved === '..' || resolved.startsWith('../') || !existsSync(join(repositoryRoot, resolved))) {
@@ -87,18 +87,18 @@ function packagedPageText(repositoryRoot, page, body, shipped) {
         }
         return `](${PUBLIC_SOURCE}${resolved}${fragment === undefined ? '' : `#${fragment}`})`
     }
-    let fence = null
+    let fence: string | null = null
     return body.split('\n').map(line => {
         const marker = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
         if (fence !== null) {
-            if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && marker[2].trim() === '') fence = null
+            if (marker && marker[1]![0] === fence[0] && marker[1]!.length >= fence.length && marker[2]!.trim() === '') fence = null
             return line
         }
         if (marker) {
-            fence = marker[1]
+            fence = marker[1]!
             return line
         }
-        let codeSpan = null
+        let codeSpan: string | null = null
         return line.split(/(`+)/).map(part => {
             if (/^`+$/.test(part)) {
                 if (codeSpan === null) codeSpan = part
@@ -110,7 +110,7 @@ function packagedPageText(repositoryRoot, page, body, shipped) {
     }).join('\n')
 }
 
-export async function writePackagedDocumentation(repositoryRoot, packageRoot) {
+export async function writePackagedDocumentation(repositoryRoot: string, packageRoot: string): Promise<void> {
     const root = await canonicalPackageRoot(packageRoot)
     await removeOwnedDirectory(root, GUIDE, 'PACKAGE_DOCS_INVALID')
     const pages = packagedDocumentationPages(repositoryRoot)

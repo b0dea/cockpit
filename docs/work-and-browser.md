@@ -1,7 +1,5 @@
 # Work, grading, browser and testing
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for anyone deciding whether a change needs a direct fix or a durable
 [work order](concepts.md#work-order), and then getting it graded independently, checked in a
 browser, and proven with the right test tier.

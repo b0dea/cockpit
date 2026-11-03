@@ -1,7 +1,5 @@
 # Releasing
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for the maintainer: how a change becomes a published release, what is automated, and
 the manual steps the automation depends on.
 
@@ -125,7 +123,7 @@ npm run bundle:rulesync --workspace @b00dea/cockpit
 npm run lint:supply-chain
 ```
 
-When `lint:supply-chain` refuses, update the pins in `scripts/supply-chain-check.mjs` to the
+When `lint:supply-chain` refuses, update the pins in `scripts/supply-chain-check.ts` to the
 versions now in `package-lock.json`: `REVIEWED_EXECUTABLE_LOCK_NODES` for
 `LOCK_EXECUTABLE_POLICY_CHANGED` and `EXPECTED_RUNTIME_DEPENDENCIES` for
 `RUNTIME_DEPENDENCIES_CHANGED`. For `ALLOW_SCRIPTS_POLICY_MISMATCH`, update `allowScripts` in the
@@ -144,7 +142,7 @@ The automation above needs these settings, done once by the maintainer:
 - **Pre-publication wording:** in the same change, rewrite every statement that the package is not
   yet published or that sends readers to the source install first: `README.md`, `llms.txt`,
   `docs/tutorial.md`, `docs/getting-started.md`, `examples/synthetic/README.md` and the adopt skill
-  source `packages/cockpit/src/references/adopt-cockpit.skill.md`, then run `npm run references`.
+  source `scripts/adopt-cockpit.skill.md`, then run `npm run references`.
   `docs-ownership.test.ts` fails while this list misses a file with such wording, and fails on any
   that remains once the package is public.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`
@@ -167,8 +165,10 @@ npm run build
 npm test
 npm run typecheck
 npm run lint:docs
+npm run lint:markdown
+npm run lint:links
 npm run lint:supply-chain
-node scripts/hygiene-scan.mjs --history
+node scripts/hygiene-scan.ts --history
 npm audit --ignore-scripts
 ```
 

@@ -1,7 +1,5 @@
 # FAQ
 
-<!-- cockpit:verified version=0.0.0 -->
-
 Short answers to the questions people ask before and while adopting cockpit, each linking to the
 page with the detail.
 

@@ -22,7 +22,7 @@ import {
     siteTerms,
     trackedContents,
     untrackedPaths,
-} from '../../../scripts/hygiene-scan.mjs'
+} from '../../../scripts/hygiene-scan.ts'
 
 // Universal credential and private-path patterns apply in every clone. Site identifiers
 // belong in an ignored local list; they must never be embedded in the published detector.
@@ -30,7 +30,7 @@ import {
 
 const HOOK = '.githooks/pre-commit'
 const COMMIT_MESSAGE_HOOK = '.githooks/commit-msg'
-const SCANNER = fileURLToPath(new URL('scripts/hygiene-scan.mjs', ROOT_URL))
+const SCANNER = fileURLToPath(new URL('scripts/hygiene-scan.ts', ROOT_URL))
 
 const site = siteTerms()
 const COVERAGE = coverage(site)

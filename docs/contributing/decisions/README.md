@@ -1,7 +1,5 @@
 # Normative contracts
 
-<!-- cockpit:verified version=0.0.0 -->
-
 These contracts define behavior contributors must keep consistent across several modules,
 alongside the architecture and policy documentation.
 

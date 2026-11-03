@@ -1,7 +1,5 @@
 # Contributor Covenant Code of Conduct
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This code of conduct applies to everyone taking part in the cockpit project: issues, pull
 requests, reviews and any other project space.
 

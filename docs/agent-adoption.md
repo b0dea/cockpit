@@ -1,7 +1,5 @@
 # Agent adoption guide
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This guide is for an AI coding agent asked to "set up cockpit for our project", and for the human
 watching it. It maps each starting situation to exact non-interactive commands and a completion
 check. The [getting started guide](getting-started.md) is the same journey for a person at a
@@ -242,7 +240,6 @@ several: instructions, guards and settings. Each step stops for the human.
    order, each with a `why` and the values it could propose. A trimmed real preview for three
    repositories:
 
-   <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
    ```console
    $ cockpit init "$(pwd)" --target claudecode --json
    {"result":{"stage":"surface-previewed","previewSha256":"5f16c475...",
@@ -284,8 +281,7 @@ several: instructions, guards and settings. Each step stops for the human.
    needs a completed first bring-up. The diagnostics beside it are every other gap found without
    a running stack; `result.readiness` groups them ([Walk through readiness](#walk-through-readiness)).
    Clear them, then rerun the same command:
-   - The cockpit repository must be committed and clean
-     ([Preflight observations](environment.md#preflight-observations)). A new one reports
+   - The cockpit repository must be committed and clean. A new one reports
      `GIT_STATE_UNHEALTHY` (no commits yet). A person approves or runs the staging and the
      commit, not you: the guard asks on `git add <paths>` and denies a broad `git add -A` that
      covers a secrets directory, and the first commit stages the guard's own files. Show them
@@ -442,7 +438,7 @@ human the file, ask, then adopt it:
 
 Repeat `--adopt` once per file. OpenCode needs no adoption. What is merged, and which settings are
 refused with `SURFACE_ADOPTION_REFUSED`, is in
-[Adopt existing agent settings](adoption.md#adopt-existing-agent-settings).
+[Adopt existing agent settings](getting-started.md#adopt-existing-agent-settings).
 
 ### Add a repository
 

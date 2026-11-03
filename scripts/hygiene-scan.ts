@@ -32,7 +32,7 @@ export const IMPLEMENTED_MECHANISMS = Object.freeze([
 ])
 
 // Tests and commit hooks share these rules so index and working-tree checks cannot drift.
-// Plain ESM keeps mandatory hooks independent of a compiler or package-manager startup.
+// Node strips the types itself, so mandatory hooks start no compiler or package manager.
 
 export const ROOT_URL = new URL('../', import.meta.url)
 export const ROOT = fileURLToPath(ROOT_URL)
@@ -53,7 +53,7 @@ const HISTORY_BATCH_BYTE_LIMIT = 64 * 1024 * 1024
  * Hits that are known-good. An entry is a decision with a reason beside it, and a stale entry
  * is as much a defect as a missing one.
  */
-export const ALLOWED = [
+export const ALLOWED: readonly { file: string; lineSha256: readonly string[]; why: string }[] = [
     {
         file: FIXTURE,
         lineSha256: Object.freeze([
@@ -77,7 +77,7 @@ export const ALLOWED = [
 ]
 
 /** Rebuilt at runtime so the source of this file contains none of them. */
-export function universalPatterns() {
+export function universalPatterns(): string[] {
     const paths = [
         '/Us' + 'ers/',
         '/ro' + 'ot(?:/|\\b)',
@@ -101,8 +101,8 @@ export function universalPatterns() {
 }
 
 /** Null when unconfigured — distinct from a configured empty list. */
-export function siteTerms(rootUrl = ROOT_URL) {
-    let body
+export function siteTerms(rootUrl: URL = ROOT_URL): string[] | null {
+    let body: string
     try {
         body = readFileSync(new URL(SITE_NEEDLES, rootUrl), 'utf8')
     } catch {
@@ -115,11 +115,11 @@ export function siteTerms(rootUrl = ROOT_URL) {
         .filter((l) => l !== '' && !l.startsWith('#'))
 }
 
-export function hasInternal(rootUrl = ROOT_URL) {
+export function hasInternal(rootUrl: URL = ROOT_URL): boolean {
     return existsSync(new URL(INTERNAL, rootUrl))
 }
 
-function boundedPatterns(terms) {
+function boundedPatterns(terms: readonly string[]): string[] {
     // Word-bounded. Unbounded substrings match ordinary English — one of these names is a
     // substring of "assembled" — and a check with false positives is one that gets widened
     // until it finds nothing at all. Escaped because the file holds names, not patterns: an
@@ -127,27 +127,27 @@ function boundedPatterns(terms) {
     return terms.map((t) => `\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
 }
 
-export function buildNeedle(terms) {
+export function buildNeedle(terms: readonly string[]): RegExp {
     return new RegExp([...boundedPatterns(terms), ...universalPatterns()].join('|'), 'i')
 }
 
 /** What this run can and cannot see. Both callers print it; neither may imply more. */
-export function coverage(site) {
+export function coverage(site: readonly string[] | null): string {
     return site === null
         ? `UNIVERSAL CLASSES ONLY — ${SITE_NEEDLES} absent, site names unscanned`
         : `universal classes + ${site.length} site terms`
 }
 
 /** 1-based line numbers of `body` that trip `needle`. */
-export function scanText(body, needle) {
-    const hits = []
+export function scanText(body: string, needle: RegExp): number[] {
+    const hits: number[] = []
     for (const [i, line] of body.split('\n').entries()) {
         if (needle.test(line)) hits.push(i + 1)
     }
     return hits
 }
 
-export function scanPathText(path, body, site) {
+export function scanPathText(path: string, body: string, site: readonly string[]): number[] {
     const allowance = ALLOWED.find((item) => item.file === path)
     if (!allowance) {
         return scanText(body, buildNeedle(site))
@@ -156,7 +156,7 @@ export function scanPathText(path, body, site) {
     const sitePatterns = boundedPatterns(site)
     const siteNeedle = sitePatterns.length === 0 ? null : new RegExp(sitePatterns.join('|'), 'i')
     const allowedLines = new Set(allowance.lineSha256)
-    const hits = []
+    const hits: number[] = []
     for (const [index, line] of body.split('\n').entries()) {
         const digest = createHash('sha256').update(line).digest('hex')
         const needle = allowedLines.has(digest) ? siteNeedle : fullNeedle
@@ -165,7 +165,7 @@ export function scanPathText(path, body, site) {
     return hits
 }
 
-function publicationNeedle(commitMessage = false) {
+function publicationNeedle(commitMessage = false): RegExp {
     const patterns = [
         '\\bphase[-_\\s]*\\d+',
         '\\bwave[-_\\s]*\\d+',
@@ -191,7 +191,7 @@ function publicationNeedle(commitMessage = false) {
     return new RegExp(patterns.join('|'), 'i')
 }
 
-function isNecessaryIgnoreRule(line) {
+function isNecessaryIgnoreRule(line: string): boolean {
     const rule = line.trim()
     if (rule === '' || rule.startsWith('#') || rule.startsWith('!')) return false
     const relativeRule = rule.replace(/^\//, '')
@@ -199,10 +199,10 @@ function isNecessaryIgnoreRule(line) {
         relativeRule === '.codex/work' + 'trees/'
 }
 
-export function scanPublicationPathText(path, body) {
+export function scanPublicationPathText(path: string, body: string): number[] {
     const needle = publicationNeedle(path === 'commit-message')
     const pathHits = needle.test(path) ? [1] : []
-    const bodyHits = []
+    const bodyHits: number[] = []
     for (const [index, line] of body.split('\n').entries()) {
         if (path === '.gitignore' && isNecessaryIgnoreRule(line)) continue
         if (path === 'package-lock.json' && /^\s*"resolved":\s*"https:\/\/registry\.npmjs\.org\//.test(line)) continue
@@ -219,14 +219,14 @@ const SCISSORS = /^# -{24} >8 -{24}$/
  * would reject any commit whose diff contains a link. Lines are blanked, not removed, so reported
  * line numbers still match the file the author edits.
  */
-export function commitMessageText(raw) {
+export function commitMessageText(raw: string): string {
     const lines = raw.split('\n')
     const cut = lines.findIndex((line) => SCISSORS.test(line))
     return (cut < 0 ? lines : lines.slice(0, cut)).map((line) => (line.startsWith('#') ? '' : line)).join('\n')
 }
 
 /** Both classes for one commit message: credentials and private names, then development ceremony. */
-export function scanCommitMessage(raw, rootUrl = ROOT_URL) {
+export function scanCommitMessage(raw: string, rootUrl: URL = ROOT_URL): { coverage: string; identifying: number[]; ceremony: number[] } {
     const site = siteTerms(rootUrl)
     if (hasInternal(rootUrl) && (site === null || site.length === 0)) {
         throw new Error(`hygiene-scan: ${SITE_NEEDLES} must be a readable, non-empty file when ${INTERNAL}/ exists`)
@@ -240,13 +240,13 @@ export function scanCommitMessage(raw, rootUrl = ROOT_URL) {
 }
 
 /** Batched object reads preserve NUL-delimited paths and avoid a subprocess per file. */
-function gitContents(paths, root, objectName, label) {
+function gitContents(paths: readonly string[], root: string, objectName: (path: string) => string, label: string): Map<string, string> {
     const out = execFileSync('git', ['cat-file', '--batch', '-Z'], {
         cwd: root,
         input: paths.map((path) => `${objectName(path)}\0`).join(''),
         maxBuffer: 256 * 1024 * 1024,
     })
-    const bodies = new Map()
+    const bodies = new Map<string, string>()
     let at = 0
     for (const path of paths) {
         const eol = out.indexOf(0x00, at)
@@ -258,33 +258,37 @@ function gitContents(paths, root, objectName, label) {
             )
         }
         const start = eol + 1
-        const size = Number(parsed[1])
+        const size = Number(parsed[1]!)
         bodies.set(path, out.toString('utf8', start, start + size))
         at = start + size + 1
     }
     return bodies
 }
 
-function nulPaths(args, root) {
+function nulPaths(args: readonly string[], root: string): string[] {
     return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean)
 }
 
-export function trackedContents(root = ROOT) {
+export function trackedContents(root = ROOT): Map<string, string> {
     const paths = nulPaths(['ls-files', '--cached', '-z'], root)
     return gitContents(paths, root, (path) => `:${path}`, 'tracked')
 }
 
-export function untrackedPaths(root = ROOT) {
+export function untrackedPaths(root = ROOT): string[] {
     return nulPaths(['ls-files', '--others', '--exclude-standard', '-z'], root)
 }
 
-export function scanGitHistory(root = ROOT) {
+interface HistoryFinding { commit: string; path: string; kind: string; line: number }
+
+export function scanGitHistory(root = ROOT): {
+    surface: string; coverage: string; commits: number; blobs: number; complete: boolean; clean: boolean; findings: HistoryFinding[]; gaps: string[]
+} {
     root = resolve(root)
     const site = siteTerms(pathToFileURL(`${root}${sep}`))
-    const findings = []
-    const gaps = []
+    const findings: HistoryFinding[] = []
+    const gaps: string[] = []
     const deadline = Date.now() + 300_000
-    const git = (args, input) => {
+    const git = (args: readonly string[], input?: string): Buffer => {
         try {
             return execFileSync('git', args, { cwd: root, input, maxBuffer: 128 * 1024 * 1024,
                 timeout: Math.max(1, Math.min(30_000, deadline - Date.now())), stdio: ['pipe', 'pipe', 'pipe'] })
@@ -292,7 +296,7 @@ export function scanGitHistory(root = ROOT) {
             throw new Error(`hygiene-scan: history Git ${args[0]} failed or exceeded its time/output bound`)
         }
     }
-    const report = (commits, blobs) => ({ surface: 'reachable-git-history', coverage: coverage(site),
+    const report = (commits: number, blobs: number) => ({ surface: 'reachable-git-history', coverage: coverage(site),
         commits, blobs, complete: gaps.length === 0, clean: gaps.length === 0 && findings.length === 0,
         findings, gaps })
     if (hasInternal(pathToFileURL(`${root}${sep}`)) && (site === null || site.length === 0)) {
@@ -307,9 +311,9 @@ export function scanGitHistory(root = ROOT) {
         gaps.push('reachable commit count is empty or exceeds 10000')
         return report(0, 0)
     }
-    const rows = []
-    const seen = new Set()
-    const add = (commit, path, object, size) => {
+    const rows: { commit: string; path: string; object: string; size: number }[] = []
+    const seen = new Set<string>()
+    const add = (commit: string, path: string, object: string, size: number) => {
         const key = `${object}\0${path}`
         if (seen.has(key)) return
         seen.add(key)
@@ -322,7 +326,7 @@ export function scanGitHistory(root = ROOT) {
     const refs = git(['for-each-ref', '--format=%(refname)%00%(objecttype)%00%(objectname)%00'])
     let refCursor = 0
     while (refCursor < refs.length) {
-        const fields = []
+        const fields: Buffer[] = []
         for (let index = 0; index < 3; index++) {
             const end = refs.indexOf(0, refCursor)
             if (end < 0) throw new Error('hygiene-scan: history ref inventory is truncated')
@@ -330,12 +334,12 @@ export function scanGitHistory(root = ROOT) {
             refCursor = end + 1
         }
         if (refs[refCursor++] !== 10) throw new Error('hygiene-scan: history ref inventory is malformed')
-        const [, typeBytes, objectBytes] = fields
+        const [nameBytes, typeBytes, objectBytes] = fields as [Buffer, Buffer, Buffer]
         const type = typeBytes.toString('ascii')
         const object = objectBytes.toString('ascii')
         if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(object)) throw new Error('hygiene-scan: history returned an invalid ref object')
-        let name
-        try { name = new TextDecoder('utf-8', { fatal: true }).decode(fields[0]) }
+        let name: string
+        try { name = new TextDecoder('utf-8', { fatal: true }).decode(nameBytes) }
         catch { gaps.push('a reachable ref name is invalid UTF-8'); continue } // The decode failure is the gap named here.
         if (scanPathText('(ref)', name, site ?? []).length > 0) {
             const category = name.startsWith('refs/heads/') ? 'heads' : name.startsWith('refs/tags/') ? 'tags' : 'other'
@@ -358,7 +362,7 @@ export function scanGitHistory(root = ROOT) {
             const header = entries.toString('ascii', cursor, tab)
             const pathname = entries.subarray(tab + 1, end)
             cursor = end + 1
-            let path
+            let path: string
             try { path = new TextDecoder('utf-8', { fatal: true }).decode(pathname) }
             catch {
                 // The decode failure is the gap named here.
@@ -367,7 +371,7 @@ export function scanGitHistory(root = ROOT) {
             }
             const match = /^\d+ (blob|commit) ([a-f0-9]+)\s+(\d+|-)$/.exec(header)
             if (!match) throw new Error('hygiene-scan: history returned an unreadable tree entry')
-            const [, type, object, size] = match
+            const [, type, object, size] = match as unknown as [string, string, string, string]
             if (type !== 'blob') { gaps.push(`${commit}:${JSON.stringify(path)} is an external submodule`); continue }
             add(commit, path, object, Number(size))
         }
@@ -376,7 +380,7 @@ export function scanGitHistory(root = ROOT) {
         let end = offset
         let batchBytes = 0
         while (end < rows.length && end - offset < HISTORY_BATCH_OBJECT_LIMIT) {
-            const nextBytes = batchBytes + rows[end].size
+            const nextBytes = batchBytes + rows[end]!.size
             if (end > offset && nextBytes > HISTORY_BATCH_BYTE_LIMIT) break
             batchBytes = nextBytes
             end += 1
@@ -394,7 +398,7 @@ export function scanGitHistory(root = ROOT) {
             const body = output.subarray(start, start + row.size)
             if (body.length !== row.size || output[start + row.size] !== 0) throw new Error('hygiene-scan: history object is truncated')
             cursor = start + row.size + 1
-            let text
+            let text: string
             try {
                 if (body.includes(0)) throw new Error('binary')
                 text = new TextDecoder('utf-8', { fatal: true }).decode(body)
@@ -430,7 +434,7 @@ export function scanGitHistory(root = ROOT) {
     return report(commits.length, rows.filter(row => row.path !== '(commit)' && row.path !== '(tag)').length)
 }
 
-function stagedContents(paths) {
+function stagedContents(paths: readonly string[]): Map<string, string> {
     return gitContents(paths, process.cwd(), (path) => `:${path}`, 'staged')
 }
 
@@ -457,9 +461,9 @@ function scanIndex() {
         .filter(Boolean)
     if (paths.length === 0) return
 
-    const hits = []
-    const publicationHits = []
-    let contents
+    const hits: string[] = []
+    const publicationHits: string[] = []
+    let contents: Map<string, string>
     try {
         contents = stagedContents(paths)
     } catch (error) {

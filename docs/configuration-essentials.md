@@ -1,7 +1,5 @@
 # Configuration essentials
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people writing or reviewing their first `cockpit.toml`. It covers the tables a
 typical cockpit sets, the ones `init` asks about and the bundled examples declare, each with a
 minimal snippet and a link to its full entry in the generated

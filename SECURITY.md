@@ -1,7 +1,5 @@
 # Security policy
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This policy is for anyone who finds a security problem in cockpit: how to report it privately,
 what response to expect, and what is in scope.
 

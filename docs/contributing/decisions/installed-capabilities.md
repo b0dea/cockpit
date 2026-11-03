@@ -1,7 +1,5 @@
 # Installed capabilities
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This contract is for contributors extending environment execution or generated surfaces: who
 observes, decides and executes, who owns each generated file, and where the framework ends.
 

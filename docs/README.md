@@ -1,7 +1,5 @@
 # Cockpit documentation
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This index lists every page for people using cockpit on their own products, grouped by what you
 are trying to do. To work on cockpit itself, start with [CONTRIBUTING.md](../CONTRIBUTING.md); the
 contributor pages live separately under docs/contributing/.
@@ -9,7 +7,8 @@ contributor pages live separately under docs/contributing/.
 ## Learn
 
 - [Tutorial](tutorial.md): run the synthetic example end to end.
-- [Getting started](getting-started.md): install cockpit and bring up your own product.
+- [Getting started](getting-started.md): install cockpit, bring up your own product, or move an
+  existing setup over one layer at a time.
 - [Agent adoption guide](agent-adoption.md): the situations and exact commands for an AI agent
   setting cockpit up, with the safety contract it works under.
 - [Concepts](concepts.md): the glossary and the terms diagnostics use.
@@ -17,7 +16,6 @@ contributor pages live separately under docs/contributing/.
 
 ## Guides
 
-- [Incremental adoption](adoption.md): move an existing setup over one layer at a time.
 - [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
 - [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
@@ -38,8 +36,8 @@ generated diagnostic index.
 - [CLI reference](cli-reference.md)
 - [Configuration reference](configuration-reference.md)
 - [Capability matrix](capability-matrix.md)
-- [Troubleshooting](troubleshooting.md): hand-written remedies followed by the generated
-  diagnostic index.
+- [Troubleshooting](troubleshooting.md): hand-written remedies followed by the generated table
+  of codes with a fixed remedy.
 
 ## Examples
 

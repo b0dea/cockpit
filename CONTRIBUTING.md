@@ -1,7 +1,5 @@
 # Contributing
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This guide is for people and AI coding agents changing cockpit itself: setup, the test loop, what
 a pull request needs, and what will be refused. To use cockpit on your own product, start with the
 [README](README.md). Taking part means following the [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -16,7 +14,7 @@ and `AGENTS.md` are for working on this codebase. See [Architecture](docs/archit
 ## Setup
 
 You need the prerequisites in [Getting started](docs/getting-started.md#install-cockpit), Bash,
-zsh, and a Git recent enough for the [`git cat-file -Z` call the hygiene scanner makes](scripts/hygiene-scan.mjs).
+zsh, and a Git recent enough for the [`git cat-file -Z` call the hygiene scanner makes](scripts/hygiene-scan.ts).
 
 ```sh
 npm ci --ignore-scripts
@@ -59,17 +57,19 @@ request:
 npm test
 npm run typecheck
 npm run lint:docs
+npm run lint:markdown
+npm run lint:links
 npm run lint:supply-chain
 ```
 
-A targeted pass proves only its target.
+A targeted pass proves only its target. `lint:links` runs [lychee](https://github.com/lycheeverse/lychee)
+offline, so install it first; CI pins the version it runs.
 
 **Generated references.** The CLI reference, configuration reference, command list, capability
-matrix and troubleshooting index are checked against committed `HEAD`, so `npm run lint:docs`
-refuses while an implementation change is uncommitted. Commit the change, run
-`npm run references` (it builds first), commit the regenerated pages, then lint again. Never edit
-a generated page by hand. How publication verifies them is in
-[CLI completion and generated references](docs/contributing/cli-completion-and-references.md);
+matrix, adopt-cockpit skill and the remedies table in troubleshooting are rendered from source by
+`npm run references`. Run it after changing what they describe and commit the result with the
+change; CI fails while a page differs from what the script writes. Never edit a generated page by
+hand. More in [CLI completion and generated references](docs/contributing/cli-completion-and-references.md);
 the other maintainer pages are in the [contributor documentation index](docs/contributing/README.md).
 
 CI (`.github/workflows/ci.yml`) runs the build, tests, typecheck, documentation lint, the

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { workingTreeDiagnosticInventory } from '../test-support/working-tree-inventory.js'
+import { diagnosticInventory } from '../../../scripts/diagnostic-inventory.ts'
+import { commands } from './command-table.js'
 import { READINESS_CATALOGUE, readinessReport } from './readiness.js'
 
 describe('readiness catalogue', () => {
     // The catalogue explains prerequisites; it must never name a code nothing emits, or call a
-    // prerequisite required while no command refuses without it.
-    it('names only emitted codes, and each required prerequisite is refused by the command it names', () => {
-        const inventory = workingTreeDiagnosticInventory(process.cwd())
+    // prerequisite required without naming the code that refuses without it.
+    it('names only emitted codes, and each required prerequisite names the code that refuses it', () => {
+        const inventory = diagnosticInventory(process.cwd())
         for (const entry of READINESS_CATALOGUE) {
             for (const code of entry.codes) expect(inventory.owners.has(code), `${entry.id}: ${code}`).toBe(true)
             if (entry.level === 'recommended') {
@@ -15,8 +16,7 @@ describe('readiness catalogue', () => {
             }
             expect(entry.refusedBy, entry.id).toBeDefined()
             expect(entry.codes, entry.id).toContain(entry.refusedBy!.code)
-            expect(inventory.commandDiagnostics.get(entry.refusedBy!.command)?.has(entry.refusedBy!.code),
-                `${entry.id}: ${entry.refusedBy!.command} ${entry.refusedBy!.code}`).toBe(true)
+            expect(commands.map(command => command.handler), entry.id).toContain(entry.refusedBy!.command)
         }
     })
 

@@ -356,7 +356,7 @@ const ENVIRONMENT_CODE_PATTERN = /^(?:CONFIG|STATE|SETUP|PORT|CLAIM|INSTALL|TEMP
 
 function environmentCodeViolations(sources: Sources): string[] {
     const independentDiagnosticCodes = new Map<string, ReadonlySet<string>>([
-        ['scripts/supply-chain-check.mjs', new Set(['INSTALL_SCRIPT_PRESENT', 'RUNTIME_DEPENDENCIES_CHANGED'])],
+        ['scripts/supply-chain-check.ts', new Set(['INSTALL_SCRIPT_PRESENT', 'RUNTIME_DEPENDENCIES_CHANGED'])],
     ])
     for (const [path, source] of sources) {
         if (canonicalModulePath(path) === ENVIRONMENT_CONTRACT) continue
@@ -948,7 +948,6 @@ function cycleViolations(graph: ReadonlyMap<string, readonly string[]>): string[
 }
 
 function importDirectionViolations(sources: Sources): string[] {
-    sources = new Map([...sources].map(([path, source]) => [path, boundedMaintainerImports(path, source)]))
     const graph = graphFor(sources)
     const violations = new Set(cycleViolations(graph))
 
@@ -2892,55 +2891,22 @@ function guardArchitectureViolations(
     return [...violations]
 }
 
+// Maintainer tooling under scripts/ reads product source; the shipped package never reaches back
+// into the tooling or the TypeScript compiler it uses.
 function referenceArchitectureViolations(sources: Sources): string[] {
     const violations = new Set<string>()
     for (const [path, body] of sources) {
+        if (!path.startsWith('packages/cockpit/src/')) continue
         const file = parseModule(body)
         const runtime = file.statements.filter(node => !ts.isImportDeclaration(node) || !node.importClause?.isTypeOnly)
             .map(node => node.getText(file)).join('\n')
         for (const dependency of importSpecifiers(runtime)) {
-            const target = resolveImport(path, dependency, sources)
-            if (path === 'scripts/diagnostic-inventory.mjs' && target === 'scripts/docs-lint.mjs'
-                || path.startsWith('packages/cockpit/src/') && (['typescript', '@typescript/typescript6'].includes(dependency)
-                    || target === 'scripts/diagnostic-inventory.mjs' || target === 'scripts/docs-lint.mjs')) {
+            if (['typescript', '@typescript/typescript6'].includes(dependency) || resolveImport(path, dependency, sources)?.startsWith('scripts/')) {
                 violations.add('ARCH058_REFERENCE_GRAPH')
             }
         }
     }
     return [...violations]
-}
-
-function boundedMaintainerImports(path: string, source: string): string {
-    if (path !== 'scripts/diagnostic-inventory.mjs') return source
-    const compact = source.replace(/\s+/g, '')
-    const preparation = compact.slice(compact.indexOf('asyncfunctionprepareRender('), compact.indexOf('functionregion('))
-    if (!preparation.includes('awaitauthenticateBuiltReferenceOwner(record)')
-        || preparation.indexOf('awaitauthenticateBuiltReferenceOwner(record)') >= preparation.indexOf('awaitloadReferenceOwners(root)')
-        || !compact.includes("constBUILT_EXECUTION_OWNER=newURL('../packages/cockpit/dist/environment-exec/execute.js',import.meta.url)")
-        || !compact.includes("constBUILT_EXECUTABLE_OWNER=newURL('../packages/cockpit/dist/environment/executable.js',import.meta.url)")) return source
-    const allowed = new Map([
-        ['loadBootstrapOwners:BUILT_EXECUTION_OWNER.href', '../packages/cockpit/dist/environment-exec/execute.js'],
-        ['loadBootstrapOwners:BUILT_EXECUTABLE_OWNER.href', '../packages/cockpit/dist/environment/executable.js'],
-        ["loadReferenceOwners:pathToFileURL(join(root,'packages/cockpit/dist/references/generate.js')).href", '../packages/cockpit/dist/references/generate.js'],
-        ["loadReferenceOwners:pathToFileURL(join(root,'packages/cockpit/dist/generated-environment/transaction.js')).href", '../packages/cockpit/dist/generated-environment/transaction.js'],
-        ["loadReferenceOwners:pathToFileURL(join(root,'packages/cockpit/dist/environment-exec/execute.js')).href", '../packages/cockpit/dist/environment-exec/execute.js'],
-        ["loadReferenceOwners:pathToFileURL(join(root,'packages/cockpit/dist/environment/executable.js')).href", '../packages/cockpit/dist/environment/executable.js'],
-    ])
-    const file = parseModule(source)
-    const replacements: { start: number; end: number; bytes: string }[] = []
-    const visit = (node: ts.Node): void => {
-        if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length === 1) {
-            let parent: ts.Node | undefined = node.parent
-            while (parent && !ts.isFunctionDeclaration(parent)) parent = parent.parent
-            const key = `${parent?.name?.getText(file)}:${node.arguments[0]!.getText(file).replace(/\s+/g, '')}`
-            const dependency = allowed.get(key)
-            if (dependency) replacements.push({ start: node.getStart(file), end: node.end, bytes: `import('${dependency}')` })
-        }
-        ts.forEachChild(node, visit)
-    }
-    visit(file)
-    return replacements.sort((left, right) => right.start - left.start).reduce(
-        (bytes, replacement) => bytes.slice(0, replacement.start) + replacement.bytes + bytes.slice(replacement.end), source)
 }
 
 function inspectArchitecture(sources: Sources): string[] {
@@ -5577,36 +5543,22 @@ describe('product architecture contract', () => {
 
 describe('maintainer reference dependency controls', () => {
     it.each([
-        ['scripts/diagnostic-inventory.mjs', "import './docs-lint.mjs'", 'scripts/docs-lint.mjs'],
-        ['packages/cockpit/src/references/generate.ts', "import '../../../../scripts/diagnostic-inventory.mjs'", 'scripts/diagnostic-inventory.mjs'],
-        ['packages/cockpit/src/references/generate.ts', "import ts from 'typescript'", 'typescript'],
-        ['packages/cockpit/src/references/generate.ts', "import ts from '@typescript/typescript6'", '@typescript/typescript6'],
-    ])('refuses reversed maintainer reference dependency in %s', (path, body, dependency) => {
-        const sources = new Map([[path, body], [dependency, '']])
-        expect(referenceArchitectureViolations(sources)).toContain('ARCH058_REFERENCE_GRAPH')
+        ['packages/cockpit/src/surfaces/render.ts', "import '../../../../scripts/diagnostic-inventory.ts'", 'scripts/diagnostic-inventory.ts'],
+        ['packages/cockpit/src/surfaces/render.ts', "import ts from 'typescript'", 'typescript'],
+        ['packages/cockpit/src/surfaces/render.ts', "import ts from '@typescript/typescript6'", '@typescript/typescript6'],
+    ])('refuses a product module that reaches maintainer tooling: %s %s', (path, body, dependency) => {
+        expect(referenceArchitectureViolations(new Map([[path, body], [dependency, '']]))).toContain('ARCH058_REFERENCE_GRAPH')
+        expect(referenceArchitectureViolations(new Map([['scripts/references.ts', body], [dependency, '']]))).toEqual([])
     })
 
-    it('rejects an unbounded loader or a reference import before build authentication', () => {
-        const path = 'scripts/diagnostic-inventory.mjs'
-        const source = readFileSync(resolve(ROOT, path), 'utf8')
-        for (const [from, to] of [
-            ["join(root, 'packages/cockpit/dist/references/generate.js')", "join(root, 'other.js')"],
-            ['await authenticateBuiltReferenceOwner(record)', 'void record'],
-        ]) {
-            expect(source).toContain(from)
-            expect(importDirectionViolations(new Map([[path, source.replace(from, to)]]))).toContain('ARCH017_COMPUTED_DYNAMIC_IMPORT')
-        }
-    })
-
-    it('keeps the diagnostic scanner and shared AST helper implementations at one maintainer owner', () => {
+    it('keeps the diagnostic scanner at one maintainer owner outside the shipped package', () => {
         const sources = productionSources()
-        const owner = 'scripts/diagnostic-inventory.mjs'
-        for (const name of ['diagnosticInventory', 'productionTypeScriptPaths', 'typeScriptSource', 'exported']) {
+        for (const name of ['diagnosticInventory', 'diagnosticInventoryFromSources', 'productionSources']) {
             const implementations = [...sources].filter(([, body]) => {
                 const file = parseModule(body)
                 return file.statements.some(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
             }).map(([path]) => path)
-            expect(implementations, name).toEqual([owner])
+            expect(implementations, name).toEqual(['scripts/diagnostic-inventory.ts'])
         }
         const manifest = JSON.parse(readFileSync(resolve(ROOT, 'packages/cockpit/package.json'), 'utf8'))
         expect(manifest.files).not.toContain('scripts')
@@ -5782,7 +5734,7 @@ describe('clean-checkout controls', () => {
         }
 
         expect(manifest.scripts?.build).toBe('npm run build --workspace @b00dea/cockpit')
-        expect(manifest.scripts?.['lint:docs']).toBe('node scripts/docs-lint.mjs')
+        expect(manifest.scripts?.['lint:docs']).toBe('tsx scripts/docs-lint.ts')
     })
 
     it('runs one full Linux cell and adjacent macOS tests per pull request, full platforms on main, the Node upper edge weekly, and the Node 20 negative control', () => {
@@ -5898,7 +5850,6 @@ const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[]
     ['packages/cockpit/src/environment/setup-observation.ts#stableFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/state.ts#acquireLock', 'a partly created lock is authority evidence that must survive for recovery; the acquisition error is rethrown'],
     ['packages/cockpit/src/generated-environment/transaction.ts#admitPlan', PARSE_REFUSED_NEXT],
-    ['packages/cockpit/src/generated-environment/transaction.ts#admitReferencePlan', PARSE_REFUSED_NEXT],
     ['packages/cockpit/src/generated-environment/transaction.ts#digestFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', 'the recovery record was synced before its directory handle is closed'],

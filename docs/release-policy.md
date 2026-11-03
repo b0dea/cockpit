@@ -1,7 +1,5 @@
 # Runtime, deprecation, and migration policy
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people choosing or upgrading cockpit: which runtimes are supported, how much
 notice a breaking change gets, and what a migration note contains.
 

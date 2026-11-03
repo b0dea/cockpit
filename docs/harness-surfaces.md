@@ -1,7 +1,5 @@
 # Harness surfaces
 
-<!-- cockpit:verified version=0.0.0 -->
-
 This page is for people reviewing the agent configuration `cockpit sync` generates, and for
 integrators extending it. It covers what cockpit writes for each supported agent tool (Claude Code,
 Codex CLI, OpenCode, Cursor and Grok Build), how product-specific additions enter, and how far
@@ -31,7 +29,7 @@ contents changed stays a conflict for you to resolve; [Check and sync](environme
 has the full procedure.
 
 A team's existing `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` is not
-overwritten: [adopt it](adoption.md#adopt-existing-agent-settings) and cockpit renders a merge of
+overwritten: [adopt it](getting-started.md#adopt-existing-agent-settings) and cockpit renders a merge of
 the team's copy and its own output.
 
 Common root instructions are written once, in the region of **AGENTS.md** that cockpit owns.

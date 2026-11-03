@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { cleanOwnedPackageDist } from '../../../scripts/build-cockpit.mjs'
+import { cleanOwnedPackageDist } from '../../../scripts/build-cockpit.ts'
 
 const scratch: string[] = []
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -25,7 +25,7 @@ describe('package build output ownership', () => {
         const root = mkdtempSync(join(tmpdir(), 'cockpit-build-entry-'))
         scratch.push(root)
         const packageRoot = join(root, 'packages/cockpit')
-        const buildScript = join(root, 'scripts/build-cockpit.mjs')
+        const buildScript = join(root, 'scripts/build-cockpit.ts')
         const compiler = join(root, 'node_modules/typescript/bin/tsc')
         mkdirSync(join(packageRoot, 'dist'), { recursive: true })
         mkdirSync(dirname(buildScript), { recursive: true })
@@ -50,7 +50,7 @@ describe('package build output ownership', () => {
         ].join('\n')
         writeFileSync(join(root, 'docs/README.md'), guide)
         writeFileSync(join(root, 'docs/setup.md'), '# Setup\n\n## Install\n')
-        cpSync(join(repositoryRoot, 'scripts/build-cockpit.mjs'), buildScript)
+        cpSync(join(repositoryRoot, 'scripts/build-cockpit.ts'), buildScript)
         writeFileSync(compiler, [
             "const { existsSync, mkdirSync, writeFileSync } = require('node:fs')",
             "if (existsSync('dist/stale-wrapper.js')) throw new Error('stale output survived')",
@@ -72,7 +72,7 @@ describe('package build output ownership', () => {
             '--project', 'tsconfig.build.json', '--declaration', '--singleThreaded',
         ])
         const manifest = JSON.parse(readFileSync(join(repositoryRoot, 'packages/cockpit/package.json'), 'utf8'))
-        expect(manifest.scripts.build).toBe('node ../../scripts/build-cockpit.mjs')
+        expect(manifest.scripts.build).toBe('node ../../scripts/build-cockpit.ts')
     })
 
     it('refuses a linked dist directory without touching its target', async () => {
