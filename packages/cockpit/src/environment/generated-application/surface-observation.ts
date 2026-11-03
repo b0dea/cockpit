@@ -4,6 +4,10 @@ import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, type EnvironmentObse
 import { stackId } from '../identity.js'
 import { type GeneratedApplicationProjection, OWNER, issuedApplicationProjections, issuedSurfaceObservations } from './shared.js'
 
+// The rows only this observation answers; when it cannot be made they report missing evidence.
+export const SURFACE_OBSERVATION_CODES: readonly string[] = [ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE,
+    ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE]
+
 export function observeGeneratedApplicationSurfaces(
     application: GeneratedApplicationProjection,
 ): readonly EnvironmentObservation[] | undefined {

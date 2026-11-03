@@ -7,7 +7,7 @@ import { createWorkStore } from '../work-orders/store.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { type DoctorCommandAdapters } from './application/doctor.js'
-import { type HealthObservationProducers, type PreflightCommandAdapters } from './application/health.js'
+import { ObservationProducerRefusal, type HealthObservationProducers, type PreflightCommandAdapters } from './application/health.js'
 import { decodeLifecycleRecord, revalidateService } from './application/lifecycle.js'
 import { type RuntimeReadiness } from './application/lifecycle-context.js'
 import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } from './claims.js'
@@ -243,11 +243,15 @@ function producers(input: {
             && stored.kind === 'complete' && JSON.stringify(stored.value) === session.lifecycleSnapshot && leaseCurrent
             ? session : undefined
     }
+    // What stood in the way when the generated publication could not be checked: check's own errors.
+    // Their codes belong to check's owners (GENERATED_*, COMPOSE_*), which the environment registry does not list.
+    let checkRefusal: readonly EnvironmentDiagnostic[] = []
     const checkedApplication = (async () => {
         const session = await runtimeSession
         if (runningStack && !session) return undefined
         const checked = await checkGeneratedEnvironment({ configPath: input.config.result.source.path },
             { execute: input.execute })
+        if (checked.kind !== 'complete') checkRefusal = checked.diagnostics.filter(({ severity }) => severity === 'error') as readonly EnvironmentDiagnostic[]
         return checked.kind === 'complete' ? generatedApplicationProjection(checked.result.application) : undefined
     })()
     const machineFloor = !runningStack && input.config.result.config.environment.machine ? (async () => {
@@ -282,6 +286,7 @@ function producers(input: {
         surfaces: async () => {
             const application = await checkedApplication
             const observations = application && observeGeneratedApplicationSurfaces(application)
+            if (!observations && checkRefusal.length > 0) throw new ObservationProducerRefusal('surface health needs a checked generated publication, and check refused it', checkRefusal)
             if (!observations) throw new RefusalError('surface health needs a current checked generated publication; run npx --no cockpit sync --config <your cockpit.toml>')
             return observations
         },

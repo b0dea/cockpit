@@ -25,6 +25,7 @@ import {
     type PreflightEvaluation,
 } from '../observations.js'
 import { envSchemaToolMissing, VARLOCK_INSTALL_URL } from '../env-schema-observation.js'
+import { SURFACE_OBSERVATION_CODES } from '../generated-application/surface-observation.js'
 import {
     createComparisonRemoteRefStep,
     createGitObservationStep,
@@ -135,10 +136,21 @@ export interface RuntimeEvidenceObservation {
     readonly evidence: CapturedRuntimeEvidence
 }
 
+/**
+ * A producer that cannot observe because another command's refusal stands in the way. Its diagnostics
+ * are that command's own, with their fixes, so they replace the producer's "evidence unavailable" and
+ * the rows that depend on it; any other thrown error stays unexposed.
+ */
+export class ObservationProducerRefusal extends RefusalError {
+    constructor(message: string, readonly diagnostics: readonly EnvironmentDiagnostic[]) { super(message) }
+}
+
 export interface HealthEvaluation {
     readonly preflight: PreflightEvaluation
     readonly comparisons: readonly ComparisonRemoteEvaluation[]
     readonly producerFailures: readonly typeof healthProducerNames[number][]
+    /** The diagnostics of producers that failed on a refusal; their dependent evidence rows are left out of the report. */
+    readonly producerRefusals: readonly EnvironmentDiagnostic[]
     readonly verdict: PreflightEvaluation['verdict']
     readonly stopped: EnvironmentDiagnostic | null
     readonly notices: readonly EnvironmentDiagnostic[]
@@ -423,6 +435,8 @@ export async function evaluateApplicationHealth(
 ): Promise<HealthEvaluation> {
     const produced = await Promise.allSettled(healthProducerNames.map((name) => input.producers[name]()))
     const producerFailures = healthProducerNames.filter((_, index) => produced[index]?.status === 'rejected')
+    const producerRefusals = produced.flatMap((result) =>
+        result.status === 'rejected' && result.reason instanceof ObservationProducerRefusal ? result.reason.diagnostics : [])
     const observations = produced.map((result) => result.status === 'fulfilled'
         ? result.value
         : [] as readonly EnvironmentObservation[])
@@ -450,6 +464,7 @@ export async function evaluateApplicationHealth(
         preflight,
         comparisons: frozenComparisons,
         producerFailures,
+        producerRefusals,
         verdict: incomplete && observedVerdict === 'pass' ? 'unavailable' : observedVerdict,
         stopped: input.stopped,
         notices: [...input.notices()],
@@ -457,8 +472,11 @@ export async function evaluateApplicationHealth(
 }
 
 export function healthDiagnostics(health: HealthEvaluation): readonly EnvironmentDiagnostic[] {
+    // Rows a refused producer would have answered only repeat that refusal as missing evidence.
+    const dependent = new Set<string>(health.producerRefusals.length > 0 ? SURFACE_OBSERVATION_CODES : [])
     const checks = health.preflight.checks
         .filter(({ verdict }) => verdict === 'fail' || verdict === 'unavailable')
+        .filter(({ code }) => !dependent.has(code))
         .map(({ code, reason, source, remedy }) => applicationDiagnostic(code, reason, source, remedy))
     const comparisons = health.comparisons.flatMap(({ sibling, result }) => {
         if ((result.kind === 'complete' && result.state === 'match') || result.kind === 'not-applicable') return []
@@ -469,7 +487,7 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
             'in the sibling checkout, run `git status --short --branch` and `git remote -v`; reconcile the selected upstream and declared repository, then rerun the command',
         )]
     })
-    const producerFailures = health.producerFailures.map((producer) => applicationDiagnostic(
+    const producerFailures = health.producerFailures.filter((producer) => producer !== 'surfaces' || health.producerRefusals.length === 0).map((producer) => applicationDiagnostic(
         ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
         `${producer} observation producer failed`,
         producer,
@@ -485,7 +503,7 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         fix: `install Varlock (${VARLOCK_INSTALL_URL}) and put it on PATH`,
     })))
     return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
-        ...checks, ...advisories, ...producerFailures, ...comparisons]
+        ...health.producerRefusals, ...checks, ...advisories, ...producerFailures, ...comparisons]
 }
 
 function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {

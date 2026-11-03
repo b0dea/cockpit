@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application/check.js'
 import { RefusalError } from './contract.js'
+import { ObservationProducerRefusal } from './application/health.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
 const applicationOwners = vi.hoisted(() => ({
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'collectLogs' | 'planLogs'>>,
@@ -610,6 +611,21 @@ describe('observation application runners', () => {
             code: 'EVIDENCE_UNAVAILABLE', message: 'runtime observation producer failed', target: 'runtime',
         })]))
         expect(JSON.stringify(result)).not.toContain('private runtime detail')
+    })
+
+    it('reports the refusal a producer failed on in place of its own evidence-unavailable finding', async () => {
+        applicationOwners.observations.aggregateObservations = vi.fn(() => passed) as never
+        const refusal = { severity: 'error' as const, code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000', message: 'web publishes a fixed port', fix: 'publish it from a ports.bases variable' }
+        const source = await healthSourceFixture(context, (name) => async () => {
+            if (name === 'surfaces') throw new ObservationProducerRefusal('check refused the publication', [refusal as never])
+            return []
+        })
+
+        const result = await runPreflight(source.input, { load: source.load, execute: vi.fn() } as never)
+
+        expect(result).toMatchObject({ kind: 'blocked', result: { verdict: 'unavailable' } })
+        expect(result.diagnostics).toContainEqual(refusal)
+        expect(result.diagnostics.map(({ message }) => message)).not.toContain('surfaces observation producer failed')
     })
 
     it.each(['missing', 'extra'] as const)('rejects a %s producer cohort before execution', async (shape) => {

@@ -246,6 +246,18 @@ describe('the compose-first and docs-only example cockpits', () => {
             severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
     })
 
+    it('reports the unleased port in doctor, not the surface evidence it makes unavailable', () => {
+        const root = syncedComposeFirst('compose-first-doctor-port')
+        const path = join(root, 'compose.yml')
+        writeFileSync(path, readFileSync(path, 'utf8').replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '"127.0.0.1:4300:3000"'))
+        const doctor = run(root, ['cockpit', 'doctor', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(doctor)) return
+        const codes = doctor.response.diagnostics.map((row: { code: string }) => row.code)
+        expect(codes).toContain('COMPOSE_PORT_NOT_LEASED')
+        for (const dependent of ['GUIDE_CAP_EXCEEDED', 'HARNESS_SURFACE_UNAVAILABLE', 'SKILL_BUDGET_UNAVAILABLE', 'DIRECTORY_GRANTS_UNAVAILABLE']) expect(codes).not.toContain(dependent)
+        expect(doctor.response.diagnostics).not.toContainEqual(expect.objectContaining({ target: 'surfaces', message: 'surfaces observation producer failed' }))
+    })
+
     it('warns in check on a published port with no host interface and stays quiet for a loopback one', () => {
         const root = syncedComposeFirst('compose-first-interface')
         const path = join(root, 'compose.yml')
