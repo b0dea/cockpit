@@ -764,9 +764,12 @@ function complete(
     return Object.freeze({
         kind: 'complete', artifact: null, destination: null,
         diagnostics: Object.freeze([
-            ...prepared.warnings.map(({ severity, code, target, path, message }) => Object.freeze({
-                severity, code, target: `${target}:${path}`, message,
-            })),
+            // A trust warning is a review prompt for settings being written; repeating it for an
+            // unchanged file on every sync and check trained people to ignore it.
+            ...prepared.warnings.filter(warning => changes.some(change => change.operation === 'write' && change.path === warning.path))
+                .map(({ severity, code, target, path, message }) => Object.freeze({
+                    severity, code, target: `${target}:${path}`, message,
+                })),
             ...prepared.unapprovedMcpServers.map(server => Object.freeze({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current command, arguments, working directory and environment names (sha256 ${server.sha256}), so every harness keeps it disabled`,

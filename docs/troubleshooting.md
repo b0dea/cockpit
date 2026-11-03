@@ -119,9 +119,11 @@ at the generated-environment boundary.
 stopped, so it keeps the private staging path the diagnostic names. Stop the remaining workers
 before removing that directory, then retry.
 
-`SURFACE_GENERATOR_TRUST_WARNING` is a warning attached to an emitted Claude settings file that
-changes additional-directory or MCP trust. Review that file before applying it; a warning does
-not mean the harness enforces anything.
+`SURFACE_GENERATOR_TRUST_WARNING` is a warning from a `sync` that writes `.claude/settings.json`
+granting something: the sibling directories Claude Code may edit, the MCP servers it approves, and
+the command patterns it runs without asking. It names each grant; review them before applying the
+sync. A sync that leaves the file unchanged, and `check`, do not repeat it. A warning does not mean
+the harness enforces anything.
 
 ### MCP and restrictions
 
