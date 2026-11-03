@@ -1,17 +1,13 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { parse, stringify } from 'smol-toml'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { evaluateGuard } from '../guards/evaluator.js'
-import { parseGuardInput } from '../guards/invocation-parser.js'
-import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
-import { parseOwnershipManifest } from '../surfaces/ownership.js'
-import type { ExecutionStep, StackId } from './contract.js'
+import type { StackId } from './contract.js'
 import { createMachineFloorPlan, collectMachineFloorEvidence, issueMachineFloorAuthority } from './runtime.js'
 import { observeHostCapacity } from './host-observation.js'
 import { projectMachineFloorConfig } from '../config/load.js'
@@ -20,221 +16,89 @@ const executionFence = (id: string) => {
     const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
     return { attemptId, markerPath: join(tmpdir(), `cockpit-test-${attemptId}.json`), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
 }
-type LifecycleOverrides = Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'planAdmittedUp' | 'planSleep' | 'planDown' | 'planResetLifecycle' | 'consumeLifecycleIssuance'>>
-type RuntimeOverrides = Partial<Pick<typeof import('./runtime.js'),
-    | 'createRuntimeServicePlan' | 'createRuntimeServiceHealthPlan'
-    | 'admitRuntimeServiceStageOutcome'
-    | 'admitRuntimeServiceInspectFailure' | 'admitRuntimeServiceObservation' | 'admitRuntimeServiceHealth'
-    | 'createRuntimeServiceRevalidationPlan' | 'admitRuntimeServiceRevalidationStatus' | 'admitRuntimeServiceRevalidation'
-    | 'createRuntimeStopPlan' | 'createRuntimeStopObservationPlan' | 'admitRuntimeStopped'
-    | 'consumeRuntimeStopped' | 'admitRuntimeStopFailure' | 'consumeRuntimeStopFailure'
-    | 'resolveRuntimeServiceOrder' | 'observeRuntimeServiceColdStart'>>
-type LogOverrides = Partial<Pick<typeof import('./logs.js'), 'planFailureLogs' | 'admitFailureLogs' | 'planLogs' | 'collectLogs'>>
-type ObservationOverrides = Partial<Pick<typeof import('./observations.js'), 'aggregateObservations' | 'projectDoctor'>>
-type GitObservationOverrides = Partial<Pick<typeof import('./git-observation.js'),
-    'createGitObservationStep' | 'observeGit' | 'createComparisonRemoteRefStep'
-    | 'observeComparisonRemoteRef' | 'observeComparisonRemoteUrl' | 'observeComparisonRemoteRevalidation'>>
-type EvidenceOverrides = Partial<Pick<typeof import('./evidence.js'), 'recordEnvironmentBaseline' | 'environmentBaselineConfirmation'>>
-type ClaimsOverrides = Partial<Pick<typeof import('./claims.js'),
-    'reserveDrain' | 'recoverDrainReservation' | 'inspectSleepDrainRecovery' | 'recoverSleepDrainReservation' | 'reserveDrainAttempt'
-    | 'prepareDrainOutcomePublication' | 'finalizeDrainOutcome'>>
-type ReclaimOverrides = Partial<Pick<typeof import('./reclaim.js'),
-    'planReset' | 'planTeardown' | 'projectResetActionTargets' | 'projectTeardownActionTargets'
-    | 'redeemReclaimAction' | 'reconcileReclaimAction' | 'admitReclaimFailure'
-    | 'consumeReclaimFailure' | 'consumeReclaimCompleted'>>
-type StateOverrides = Partial<Pick<typeof import('./state.js'), 'readState'>>
-type RegistryDerivationOverrides = Partial<Pick<typeof import('../registry-derivation.js'), 'deriveRegistry'>>
 const applicationOwners = vi.hoisted(() => ({
-    lifecycle: {} as LifecycleOverrides,
-    runtime: {} as RuntimeOverrides,
-    logs: {} as LogOverrides,
-    observations: {} as ObservationOverrides,
-    gitObservation: {} as GitObservationOverrides,
-    evidence: {} as EvidenceOverrides,
-    claims: {} as ClaimsOverrides,
-    reclaim: {} as ReclaimOverrides,
-    state: {} as StateOverrides,
-    ports: {} as Partial<Pick<typeof import('./ports.js'),
-        'observeRetainedPortFamily' | 'deriveEntrypoints' | 'projectRetainedPortFamilyResult' | 'releasePortFamily'
-        | 'compensateAcquiredPortHolder'>>,
-    registryDerivation: {} as RegistryDerivationOverrides,
+    lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp' | 'planSleep'>>,
+    runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'admitRuntimeServiceInspectFailure' | 'admitRuntimeServiceObservation' | 'admitRuntimeServiceRevalidation' | 'admitRuntimeServiceRevalidationStatus' | 'admitRuntimeServiceStageOutcome' | 'admitRuntimeStopped' | 'consumeRuntimeStopped' | 'createRuntimeServiceHealthPlan' | 'createRuntimeServicePlan' | 'createRuntimeServiceRevalidationPlan' | 'createRuntimeStopObservationPlan' | 'createRuntimeStopPlan' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder'>>,
+    logs: {} as Partial<Pick<typeof import('./logs.js'), 'admitFailureLogs' | 'planFailureLogs'>>,
+    claims: {} as Partial<Pick<typeof import('./claims.js'), 'finalizeDrainOutcome' | 'inspectSleepDrainRecovery' | 'prepareDrainOutcomePublication' | 'recoverSleepDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
+    ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder' | 'deriveEntrypoints' | 'observeRetainedPortFamily' | 'projectRetainedPortFamilyResult' | 'releasePortFamily'>>,
 }))
-vi.mock('../registry-derivation.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../registry-derivation.js')>()
-    return {
-        ...actual,
-        deriveRegistry: (...args: Parameters<typeof actual.deriveRegistry>) =>
-            applicationOwners.registryDerivation.deriveRegistry?.(...args) ?? actual.deriveRegistry(...args),
-    }
-})
 vi.mock('./lifecycle.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./lifecycle.js')>()
     return {
         ...actual,
         admitUpProgress: (...args: Parameters<typeof actual.admitUpProgress>) => applicationOwners.lifecycle.admitUpProgress?.(...args) ?? actual.admitUpProgress(...args),
+        consumeLifecycleIssuance: (...args: Parameters<typeof actual.consumeLifecycleIssuance>) => applicationOwners.lifecycle.consumeLifecycleIssuance?.(...args) ?? actual.consumeLifecycleIssuance(...args),
         planAdmittedUp: (...args: Parameters<typeof actual.planAdmittedUp>) => applicationOwners.lifecycle.planAdmittedUp?.(...args) ?? actual.planAdmittedUp(...args),
         planSleep: (...args: Parameters<typeof actual.planSleep>) => applicationOwners.lifecycle.planSleep?.(...args) ?? actual.planSleep(...args),
-        planDown: (...args: Parameters<typeof actual.planDown>) => applicationOwners.lifecycle.planDown?.(...args) ?? actual.planDown(...args),
-        planResetLifecycle: (...args: Parameters<typeof actual.planResetLifecycle>) => applicationOwners.lifecycle.planResetLifecycle?.(...args) ?? actual.planResetLifecycle(...args),
-        consumeLifecycleIssuance: (...args: Parameters<typeof actual.consumeLifecycleIssuance>) => applicationOwners.lifecycle.consumeLifecycleIssuance?.(...args) ?? actual.consumeLifecycleIssuance(...args),
-    }
-})
-vi.mock('./ports.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./ports.js')>()
-    return {
-        ...actual,
-        observeRetainedPortFamily: (...args: Parameters<typeof actual.observeRetainedPortFamily>) => applicationOwners.ports.observeRetainedPortFamily?.(...args) ?? actual.observeRetainedPortFamily(...args),
-        deriveEntrypoints: (...args: Parameters<typeof actual.deriveEntrypoints>) => applicationOwners.ports.deriveEntrypoints?.(...args) ?? actual.deriveEntrypoints(...args),
-        projectRetainedPortFamilyResult: (...args: Parameters<typeof actual.projectRetainedPortFamilyResult>) => applicationOwners.ports.projectRetainedPortFamilyResult?.(...args) ?? actual.projectRetainedPortFamilyResult(...args),
-        releasePortFamily: (...args: Parameters<typeof actual.releasePortFamily>) => applicationOwners.ports.releasePortFamily?.(...args) ?? actual.releasePortFamily(...args),
-        compensateAcquiredPortHolder: (...args: Parameters<typeof actual.compensateAcquiredPortHolder>) => applicationOwners.ports.compensateAcquiredPortHolder?.(...args) ?? actual.compensateAcquiredPortHolder(...args),
     }
 })
 vi.mock('./runtime.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./runtime.js')>()
     return {
         ...actual,
-        createRuntimeServicePlan: (...args: Parameters<typeof actual.createRuntimeServicePlan>) => applicationOwners.runtime.createRuntimeServicePlan?.(...args) ?? actual.createRuntimeServicePlan(...args),
-        admitRuntimeServiceStageOutcome: (...args: Parameters<typeof actual.admitRuntimeServiceStageOutcome>) => applicationOwners.runtime.admitRuntimeServiceStageOutcome?.(...args) ?? actual.admitRuntimeServiceStageOutcome(...args),
-        createRuntimeServiceHealthPlan: (...args: Parameters<typeof actual.createRuntimeServiceHealthPlan>) => applicationOwners.runtime.createRuntimeServiceHealthPlan?.(...args) ?? actual.createRuntimeServiceHealthPlan(...args),
+        admitRuntimeServiceHealth: (...args: Parameters<typeof actual.admitRuntimeServiceHealth>) => applicationOwners.runtime.admitRuntimeServiceHealth?.(...args) ?? actual.admitRuntimeServiceHealth(...args),
         admitRuntimeServiceInspectFailure: (...args: Parameters<typeof actual.admitRuntimeServiceInspectFailure>) => applicationOwners.runtime.admitRuntimeServiceInspectFailure?.(...args) ?? actual.admitRuntimeServiceInspectFailure(...args),
         admitRuntimeServiceObservation: (...args: Parameters<typeof actual.admitRuntimeServiceObservation>) => applicationOwners.runtime.admitRuntimeServiceObservation?.(...args) ?? actual.admitRuntimeServiceObservation(...args),
-        admitRuntimeServiceHealth: (...args: Parameters<typeof actual.admitRuntimeServiceHealth>) => applicationOwners.runtime.admitRuntimeServiceHealth?.(...args) ?? actual.admitRuntimeServiceHealth(...args),
-        createRuntimeServiceRevalidationPlan: (...args: Parameters<typeof actual.createRuntimeServiceRevalidationPlan>) => applicationOwners.runtime.createRuntimeServiceRevalidationPlan?.(...args) ?? actual.createRuntimeServiceRevalidationPlan(...args),
-        admitRuntimeServiceRevalidationStatus: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidationStatus>) => applicationOwners.runtime.admitRuntimeServiceRevalidationStatus?.(...args) ?? actual.admitRuntimeServiceRevalidationStatus(...args),
         admitRuntimeServiceRevalidation: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidation>) => applicationOwners.runtime.admitRuntimeServiceRevalidation?.(...args) ?? actual.admitRuntimeServiceRevalidation(...args),
-        createRuntimeStopPlan: (...args: Parameters<typeof actual.createRuntimeStopPlan>) => applicationOwners.runtime.createRuntimeStopPlan?.(...args) ?? actual.createRuntimeStopPlan(...args),
-        createRuntimeStopObservationPlan: (...args: Parameters<typeof actual.createRuntimeStopObservationPlan>) => applicationOwners.runtime.createRuntimeStopObservationPlan?.(...args) ?? actual.createRuntimeStopObservationPlan(...args),
+        admitRuntimeServiceRevalidationStatus: (...args: Parameters<typeof actual.admitRuntimeServiceRevalidationStatus>) => applicationOwners.runtime.admitRuntimeServiceRevalidationStatus?.(...args) ?? actual.admitRuntimeServiceRevalidationStatus(...args),
+        admitRuntimeServiceStageOutcome: (...args: Parameters<typeof actual.admitRuntimeServiceStageOutcome>) => applicationOwners.runtime.admitRuntimeServiceStageOutcome?.(...args) ?? actual.admitRuntimeServiceStageOutcome(...args),
         admitRuntimeStopped: (...args: Parameters<typeof actual.admitRuntimeStopped>) => applicationOwners.runtime.admitRuntimeStopped?.(...args) ?? actual.admitRuntimeStopped(...args),
         consumeRuntimeStopped: (...args: Parameters<typeof actual.consumeRuntimeStopped>) => applicationOwners.runtime.consumeRuntimeStopped?.(...args) ?? actual.consumeRuntimeStopped(...args),
-        admitRuntimeStopFailure: (...args: Parameters<typeof actual.admitRuntimeStopFailure>) => applicationOwners.runtime.admitRuntimeStopFailure?.(...args) ?? actual.admitRuntimeStopFailure(...args),
-        consumeRuntimeStopFailure: (...args: Parameters<typeof actual.consumeRuntimeStopFailure>) => applicationOwners.runtime.consumeRuntimeStopFailure?.(...args) ?? actual.consumeRuntimeStopFailure(...args),
-        resolveRuntimeServiceOrder: (...args: Parameters<typeof actual.resolveRuntimeServiceOrder>) => applicationOwners.runtime.resolveRuntimeServiceOrder?.(...args) ?? actual.resolveRuntimeServiceOrder(...args),
+        createRuntimeServiceHealthPlan: (...args: Parameters<typeof actual.createRuntimeServiceHealthPlan>) => applicationOwners.runtime.createRuntimeServiceHealthPlan?.(...args) ?? actual.createRuntimeServiceHealthPlan(...args),
+        createRuntimeServicePlan: (...args: Parameters<typeof actual.createRuntimeServicePlan>) => applicationOwners.runtime.createRuntimeServicePlan?.(...args) ?? actual.createRuntimeServicePlan(...args),
+        createRuntimeServiceRevalidationPlan: (...args: Parameters<typeof actual.createRuntimeServiceRevalidationPlan>) => applicationOwners.runtime.createRuntimeServiceRevalidationPlan?.(...args) ?? actual.createRuntimeServiceRevalidationPlan(...args),
+        createRuntimeStopObservationPlan: (...args: Parameters<typeof actual.createRuntimeStopObservationPlan>) => applicationOwners.runtime.createRuntimeStopObservationPlan?.(...args) ?? actual.createRuntimeStopObservationPlan(...args),
+        createRuntimeStopPlan: (...args: Parameters<typeof actual.createRuntimeStopPlan>) => applicationOwners.runtime.createRuntimeStopPlan?.(...args) ?? actual.createRuntimeStopPlan(...args),
         observeRuntimeServiceColdStart: (...args: Parameters<typeof actual.observeRuntimeServiceColdStart>) => applicationOwners.runtime.observeRuntimeServiceColdStart?.(...args) ?? actual.observeRuntimeServiceColdStart(...args),
-    }
-})
-vi.mock('./claims.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./claims.js')>()
-    return {
-        ...actual,
-        reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
-        recoverDrainReservation: (...args: Parameters<typeof actual.recoverDrainReservation>) => applicationOwners.claims.recoverDrainReservation?.(...args) ?? actual.recoverDrainReservation(...args),
-        inspectSleepDrainRecovery: (...args: Parameters<typeof actual.inspectSleepDrainRecovery>) => applicationOwners.claims.inspectSleepDrainRecovery?.(...args) ?? actual.inspectSleepDrainRecovery(...args),
-        recoverSleepDrainReservation: (...args: Parameters<typeof actual.recoverSleepDrainReservation>) => applicationOwners.claims.recoverSleepDrainReservation?.(...args) ?? actual.recoverSleepDrainReservation(...args),
-        reserveDrainAttempt: (...args: Parameters<typeof actual.reserveDrainAttempt>) => applicationOwners.claims.reserveDrainAttempt?.(...args) ?? actual.reserveDrainAttempt(...args),
-        prepareDrainOutcomePublication: (...args: Parameters<typeof actual.prepareDrainOutcomePublication>) => applicationOwners.claims.prepareDrainOutcomePublication?.(...args) ?? actual.prepareDrainOutcomePublication(...args),
-        finalizeDrainOutcome: (...args: Parameters<typeof actual.finalizeDrainOutcome>) => applicationOwners.claims.finalizeDrainOutcome?.(...args) ?? actual.finalizeDrainOutcome(...args),
-    }
-})
-vi.mock('./reclaim.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./reclaim.js')>()
-    return {
-        ...actual,
-        planReset: (...args: Parameters<typeof actual.planReset>) => applicationOwners.reclaim.planReset?.(...args) ?? actual.planReset(...args),
-        planTeardown: (...args: Parameters<typeof actual.planTeardown>) => applicationOwners.reclaim.planTeardown?.(...args) ?? actual.planTeardown(...args),
-        projectResetActionTargets: (...args: Parameters<typeof actual.projectResetActionTargets>) => applicationOwners.reclaim.projectResetActionTargets?.(...args) ?? actual.projectResetActionTargets(...args),
-        projectTeardownActionTargets: (...args: Parameters<typeof actual.projectTeardownActionTargets>) => applicationOwners.reclaim.projectTeardownActionTargets?.(...args) ?? actual.projectTeardownActionTargets(...args),
-        redeemReclaimAction: (...args: Parameters<typeof actual.redeemReclaimAction>) => applicationOwners.reclaim.redeemReclaimAction?.(...args) ?? actual.redeemReclaimAction(...args),
-        reconcileReclaimAction: (...args: Parameters<typeof actual.reconcileReclaimAction>) => applicationOwners.reclaim.reconcileReclaimAction?.(...args) ?? actual.reconcileReclaimAction(...args),
-        admitReclaimFailure: (...args: Parameters<typeof actual.admitReclaimFailure>) => applicationOwners.reclaim.admitReclaimFailure?.(...args) ?? actual.admitReclaimFailure(...args),
-        consumeReclaimFailure: (...args: Parameters<typeof actual.consumeReclaimFailure>) => applicationOwners.reclaim.consumeReclaimFailure?.(...args) ?? actual.consumeReclaimFailure(...args),
-        consumeReclaimCompleted: (...args: Parameters<typeof actual.consumeReclaimCompleted>) => applicationOwners.reclaim.consumeReclaimCompleted?.(...args) ?? actual.consumeReclaimCompleted(...args),
-    }
-})
-vi.mock('./state.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./state.js')>()
-    return {
-        ...actual,
-        readState: (...args: Parameters<typeof actual.readState>) => applicationOwners.state.readState?.(...args) ?? actual.readState(...args),
+        resolveRuntimeServiceOrder: (...args: Parameters<typeof actual.resolveRuntimeServiceOrder>) => applicationOwners.runtime.resolveRuntimeServiceOrder?.(...args) ?? actual.resolveRuntimeServiceOrder(...args),
     }
 })
 vi.mock('./logs.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./logs.js')>()
     return {
         ...actual,
-        planLogs: (...args: Parameters<typeof actual.planLogs>) => applicationOwners.logs.planLogs?.(...args) ?? actual.planLogs(...args),
-        collectLogs: (...args: Parameters<typeof actual.collectLogs>) => applicationOwners.logs.collectLogs?.(...args) ?? actual.collectLogs(...args),
-        planFailureLogs: (...args: Parameters<typeof actual.planFailureLogs>) => applicationOwners.logs.planFailureLogs?.(...args) ?? actual.planFailureLogs(...args),
         admitFailureLogs: (...args: Parameters<typeof actual.admitFailureLogs>) => applicationOwners.logs.admitFailureLogs?.(...args) ?? actual.admitFailureLogs(...args),
+        planFailureLogs: (...args: Parameters<typeof actual.planFailureLogs>) => applicationOwners.logs.planFailureLogs?.(...args) ?? actual.planFailureLogs(...args),
     }
 })
-vi.mock('./observations.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./observations.js')>()
+vi.mock('./claims.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./claims.js')>()
     return {
         ...actual,
-        aggregateObservations: (...args: Parameters<typeof actual.aggregateObservations>) => applicationOwners.observations.aggregateObservations?.(...args) ?? actual.aggregateObservations(...args),
-        projectDoctor: (...args: Parameters<typeof actual.projectDoctor>) => applicationOwners.observations.projectDoctor?.(...args) ?? actual.projectDoctor(...args),
+        finalizeDrainOutcome: (...args: Parameters<typeof actual.finalizeDrainOutcome>) => applicationOwners.claims.finalizeDrainOutcome?.(...args) ?? actual.finalizeDrainOutcome(...args),
+        inspectSleepDrainRecovery: (...args: Parameters<typeof actual.inspectSleepDrainRecovery>) => applicationOwners.claims.inspectSleepDrainRecovery?.(...args) ?? actual.inspectSleepDrainRecovery(...args),
+        prepareDrainOutcomePublication: (...args: Parameters<typeof actual.prepareDrainOutcomePublication>) => applicationOwners.claims.prepareDrainOutcomePublication?.(...args) ?? actual.prepareDrainOutcomePublication(...args),
+        recoverSleepDrainReservation: (...args: Parameters<typeof actual.recoverSleepDrainReservation>) => applicationOwners.claims.recoverSleepDrainReservation?.(...args) ?? actual.recoverSleepDrainReservation(...args),
+        reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
+        reserveDrainAttempt: (...args: Parameters<typeof actual.reserveDrainAttempt>) => applicationOwners.claims.reserveDrainAttempt?.(...args) ?? actual.reserveDrainAttempt(...args),
     }
 })
-vi.mock('./git-observation.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./git-observation.js')>()
+vi.mock('./ports.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./ports.js')>()
     return {
         ...actual,
-        createGitObservationStep: (...args: Parameters<typeof actual.createGitObservationStep>) => applicationOwners.gitObservation.createGitObservationStep?.(...args) ?? actual.createGitObservationStep(...args),
-        observeGit: (...args: Parameters<typeof actual.observeGit>) => applicationOwners.gitObservation.observeGit?.(...args) ?? actual.observeGit(...args),
-        createComparisonRemoteRefStep: (...args: Parameters<typeof actual.createComparisonRemoteRefStep>) => applicationOwners.gitObservation.createComparisonRemoteRefStep?.(...args) ?? actual.createComparisonRemoteRefStep(...args),
-        observeComparisonRemoteRef: (...args: Parameters<typeof actual.observeComparisonRemoteRef>) => applicationOwners.gitObservation.observeComparisonRemoteRef?.(...args) ?? actual.observeComparisonRemoteRef(...args),
-        observeComparisonRemoteUrl: (...args: Parameters<typeof actual.observeComparisonRemoteUrl>) => applicationOwners.gitObservation.observeComparisonRemoteUrl?.(...args) ?? actual.observeComparisonRemoteUrl(...args),
-        observeComparisonRemoteRevalidation: (...args: Parameters<typeof actual.observeComparisonRemoteRevalidation>) => applicationOwners.gitObservation.observeComparisonRemoteRevalidation?.(...args) ?? actual.observeComparisonRemoteRevalidation(...args),
+        compensateAcquiredPortHolder: (...args: Parameters<typeof actual.compensateAcquiredPortHolder>) => applicationOwners.ports.compensateAcquiredPortHolder?.(...args) ?? actual.compensateAcquiredPortHolder(...args),
+        deriveEntrypoints: (...args: Parameters<typeof actual.deriveEntrypoints>) => applicationOwners.ports.deriveEntrypoints?.(...args) ?? actual.deriveEntrypoints(...args),
+        observeRetainedPortFamily: (...args: Parameters<typeof actual.observeRetainedPortFamily>) => applicationOwners.ports.observeRetainedPortFamily?.(...args) ?? actual.observeRetainedPortFamily(...args),
+        projectRetainedPortFamilyResult: (...args: Parameters<typeof actual.projectRetainedPortFamilyResult>) => applicationOwners.ports.projectRetainedPortFamilyResult?.(...args) ?? actual.projectRetainedPortFamilyResult(...args),
+        releasePortFamily: (...args: Parameters<typeof actual.releasePortFamily>) => applicationOwners.ports.releasePortFamily?.(...args) ?? actual.releasePortFamily(...args),
     }
 })
-vi.mock('./evidence.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./evidence.js')>()
-    return {
-        ...actual,
-        environmentBaselineConfirmation: (...args: Parameters<typeof actual.environmentBaselineConfirmation>) => applicationOwners.evidence.environmentBaselineConfirmation?.(...args) ?? actual.environmentBaselineConfirmation(...args),
-        recordEnvironmentBaseline: (...args: Parameters<typeof actual.recordEnvironmentBaseline>) => applicationOwners.evidence.recordEnvironmentBaseline?.(...args) ?? actual.recordEnvironmentBaseline(...args),
-    }
-})
-import { consumeLoadedConfigProjection, loadCockpitConfig, type LoadedCockpitConfig } from '../config/load.js'
+import { loadCockpitConfig } from '../config/load.js'
 import {
-    beginOperatorReset,
-    issueDestructiveRunContext,
-    issueSetupRunContext,
-    issueLifecycleRunContext,
-    prepareGuardEvaluationPolicy,
-    runGuardEvaluationApplication,
-    type GuardEvaluationApplicationInput,
-    withLifecycleConfiguration,
-    decodeLifecycleRecord,
-    runDown,
     runSleep,
-    runPreflight,
-    runDoctor,
-    runLogs,
-    runBaselineRecord,
-    beginOperatorBaselineRecord,
-    runReset,
-    runSession,
-    runSetup as runSetupSequence,
     runUp,
-    setupEnvironment,
-    type SetupCommandAdapters,
-    type LifecycleRunContextInput,
     type LifecycleRunContext,
-    type SetupRunContextInput,
-    type SetupRunContext,
-    type HealthObservationSource,
-    type HealthObservationSourceInput,
-    type DoctorSurfaceOverrideInspection,
 } from './application.js'
-import type { SetupObservation, SetupResult } from './setup.js'
 import {
     observeSetupCheckout,
     withSetupCheckoutProjection,
 } from './setup-observation.js'
-import { decodeCoordinationRecord } from './claims.js'
-import { lifecycleHistoryAddress, readState, selectStateRoot, transactState } from './state.js'
-import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage, projectLifecycleStage } from './lifecycle-stage.js'
-import type { PreflightContext } from './observations.js'
-import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
-import type { InstallPolicy, Sibling } from '../schema.js'
+import { readState, transactState } from './state.js'
+import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { CockpitConfig } from '../schema.js'
-import { GuardCommandArgv } from '../schema.js'
-import { renderGuardProjectCommand } from './install-policy.js'
-import type { EnvironmentSeedPlan } from './templates.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
-
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
 const RUNTIME_INPUTS = Object.freeze({ 'cockpit.toml': 'd'.repeat(64) })
 
@@ -846,10 +710,7 @@ describe('lifecycle application contracts', () => {
         ] })
     })
 
-    it.each([
-        ['admitted output', { kind: 'complete', records: [{ service: 'api', timestamp: '2026-09-10T08:00:00.000Z', stream: 'stderr', message: 'database unavailable' }] }, 'database unavailable'],
-        ['collection failure', { kind: 'unavailable', code: 'EXECUTION_TIMEOUT', service: 'api', records: [] }, 'failure log collection failed'],
-    ] as const)('surfaces %s for a failed runtime service', async (_label, logAdmission, expectedMessage) => {
+    it('surfaces a failure log collection failure for a failed runtime service', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         const projection = Object.freeze({
@@ -875,7 +736,7 @@ describe('lifecycle application contracts', () => {
         applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => ({ kind: 'failure', evidence: failureEvidence } as never)
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
         applicationOwners.logs.planFailureLogs = () => logPlan as never
-        applicationOwners.logs.admitFailureLogs = () => logAdmission as never
+        applicationOwners.logs.admitFailureLogs = () => ({ kind: 'unavailable', code: 'EXECUTION_TIMEOUT', service: 'api', records: [] }) as never
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
@@ -891,7 +752,7 @@ describe('lifecycle application contracts', () => {
 
         expect(result).toMatchObject({
             kind: 'refusal',
-            diagnostics: expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining(expectedMessage), target: 'api' })]),
+            diagnostics: expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining('failure log collection failed'), target: 'api' })]),
         })
     })
 
@@ -1287,12 +1148,9 @@ afterEach(() => {
     applicationOwners.runtime = {}
     applicationOwners.logs = {}
     applicationOwners.claims = {}
-    applicationOwners.reclaim = {}
-    applicationOwners.state = {}
     applicationOwners.ports = {}
-    applicationOwners.registryDerivation = {}
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
 })
 afterAll(() => rmSync(gitDirectory, { recursive: true, force: true }))
 
-const { fixture, derivedRegistrySource, unissuedContextFixture, authorizeContext, runContextInput, issueContext, lifecycleContextFixture, issueLifecycleContext, issueFromFreshCheckout, available, cloneObservations, fileIdentity, readySeed, baseSibling, tomlValue, sequenceSource, sequenceFixture } = createApplicationFixtureSupport(scratch, gitExecutable)
+const { unissuedContextFixture, runContextInput, lifecycleContextFixture, issueLifecycleContext } = createApplicationFixtureSupport(scratch, gitExecutable)
