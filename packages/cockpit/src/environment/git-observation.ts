@@ -590,8 +590,8 @@ export async function inspectTrackedSecretFiles(input: {
 }, execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>): Promise<readonly EnvironmentDiagnostic[]> {
     const executable = resolvedGitExecutable(input.executable)
     if (!executable) throw new TypeError('tracked secret inspection needs a resolved Git executable')
-    const findings: EnvironmentDiagnostic[] = []
-    for (const repository of input.repositories) {
+    // One independent read-only Git call per repository; the findings are joined in repository order.
+    const perRepository = await Promise.all(input.repositories.map(async (repository): Promise<readonly EnvironmentDiagnostic[]> => {
         const step = snapshotExecutionStep({
             id: `git:tracked-secrets:${repository.slug}`,
             argv: [executable.canonicalPath, '-C', repository.root, 'ls-files', '-z', '--', '.env', '*/.env', '.env.*', '*/.env.*'],
@@ -607,31 +607,30 @@ export async function inspectTrackedSecretFiles(input: {
         const outcome = authenticatedExecutionOutcome(await execute(step), step)
         // Git exits non-zero in a directory that is not a repository, which tracks nothing; that gap is
         // reported where Git state is. Any other refusal is a probe that did not run, and says so.
-        if (outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) continue
+        if (outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return []
         if (!outcome || outcome.kind !== 'complete') {
-            findings.push(Object.freeze({
+            return [Object.freeze({
                 severity: 'warning' as const,
                 code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 message: `whether sibling ${repository.slug} commits secret-shaped files could not be checked (${outcome?.code ?? 'unauthenticated Git outcome'})`,
                 target: `sibling:${repository.slug}`,
                 fix: `run git -C ${repository.root} ls-files to see why Git cannot list the repository, fix that, then rerun this command`,
-            }))
-            continue
+            })]
         }
         const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => {
             const name = path.slice(path.lastIndexOf('/') + 1)
             return path !== '' && SECRET_FILE.test(name) && !SECRET_TEMPLATE.test(name)
         })
-        if (tracked.length === 0) continue
+        if (tracked.length === 0) return []
         const shown = tracked.slice(0, 8).join(', ')
-        findings.push(Object.freeze({
+        return [Object.freeze({
             severity: 'warning' as const,
             // A literal, so the diagnostic inventory captures the fix beside the code.
             code: 'SECRET_FILE_TRACKED' satisfies typeof ENVIRONMENT_CODES.SECRET_FILE_TRACKED,
             message: `sibling ${repository.slug} commits ${tracked.length === 1 ? 'a secret-shaped file' : `${tracked.length} secret-shaped files`} (${shown}${tracked.length > 8 ? ', ...' : ''}); the guard keeps agents from reading ${tracked.length === 1 ? 'it' : 'them'}, but every clone of the repository already holds the values. cockpit did not read ${tracked.length === 1 ? 'it' : 'them'}`,
             target: `sibling:${repository.slug}`,
             fix: 'a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead',
-        }))
-    }
-    return Object.freeze(findings)
+        })]
+    }))
+    return Object.freeze(perRepository.flat())
 }

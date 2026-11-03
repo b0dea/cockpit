@@ -34,6 +34,8 @@ export interface ProjectReadinessInput {
     readonly timeoutMs: number
 }
 
+type LoadedConfigResult = Awaited<ReturnType<typeof loadCockpitConfig>>
+
 async function isDirectory(path: string): Promise<boolean> {
     try { return (await lstat(path)).isDirectory() } catch (error) {
         if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return false
@@ -44,9 +46,11 @@ async function isDirectory(path: string): Promise<boolean> {
 export async function inspectProjectReadiness(
     input: ProjectReadinessInput,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+    // A caller that already loaded cockpit.toml hands the result over rather than reading it again.
+    preloaded?: LoadedConfigResult,
 ): Promise<readonly EnvironmentDiagnostic[]> {
     // A cockpit.toml that does not load is the finding; its own refusal says what to fix first.
-    const loaded = input.configPath === undefined ? undefined : await loadCockpitConfig(input.configPath)
+    const loaded = preloaded ?? (input.configPath === undefined ? undefined : await loadCockpitConfig(input.configPath))
     if (loaded && loaded.kind !== 'complete') return Object.freeze([])
     const findings: EnvironmentDiagnostic[] = input.configPath === undefined ? [] : [...await inspectTeamReadiness(input.configPath)]
     // The guard reads the PATH its hook inherits from the harness, which is started from a shell like
@@ -119,8 +123,8 @@ export async function inspectInitReadiness(
     binding: Readonly<{ env: ProjectReadinessInput['env']; timeoutMs: number; execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome> }>,
 ): Promise<Readonly<{ state: ReadinessReport['state']; findings: readonly EnvironmentDiagnostic[] }>> {
     const { classification, ...probe } = input
-    const findings = await inspectProjectReadiness({ ...probe, env: binding.env, timeoutMs: binding.timeoutMs }, binding.execute)
     const loaded = input.configPath === undefined ? undefined : await loadCockpitConfig(input.configPath)
+    const findings = await inspectProjectReadiness({ ...probe, env: binding.env, timeoutMs: binding.timeoutMs }, binding.execute, loaded)
     const state: ReadinessReport['state'] = loaded?.kind === 'complete'
         ? declaresNothingToRun(loaded.result.config.environment) ? 'surfaces-only' : 'runtime'
         : classification === undefined ? 'undetermined' : classification === 'no-runnable-product' ? 'surfaces-only' : 'runtime'
