@@ -17,7 +17,7 @@ import type { SurfaceSelftestDraftInput, SurfaceSelftestHandlerInput } from './e
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { effectivePolicy } from './autonomy.js'
 import { Autonomy, Work } from './schema.js'
-import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
+import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
 
@@ -340,7 +340,7 @@ describe('CLI help', () => {
 
     it.each([
         ['session', 'Usage: cockpit session [options] -- <command> [args...]'],
-        ['init', 'Usage: cockpit init <root> [options]'],
+        ['init', 'Usage: cockpit init [<root>] [options]'],
         ['runtime', 'Usage: cockpit runtime measure [options]'],
         ['sibling', 'Usage: cockpit sibling add|remove <slug> [options]'],
     ])('prints the operands `%s` takes besides its options', async (verb, usage) => {
@@ -2011,6 +2011,7 @@ describe('init command admission', () => {
             ...GUARD_SURFACE_TARGETS.map(tool => [['--target', tool], tool, [tool]] as const),
             [['--target', 'claudecode,cursor'], 'claudecode', ['claudecode', 'cursor']],
             [['--target', 'cursor,opencode'], 'cursor', ['cursor', 'opencode']],
+            [[], DEFAULT_SURFACE_TOOLS[0], DEFAULT_SURFACE_TOOLS],
         ] as const) {
             let stdout = ''
             const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
@@ -2027,6 +2028,13 @@ describe('init command admission', () => {
             expect(JSON.parse(stdout).result).toMatchObject({ root: process.cwd(), target })
             expect(stdout.split('\n')).toHaveLength(2)
         }
+        // A bare `cockpit init` sets up the current directory for the default tools.
+        const bare = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
+            kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
+            result: { stage: 'surface-previewed' as const, root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] },
+        }))
+        expect(await runCli(['init', '--json'], { stdout: { write: () => true }, stderr: { write: () => true } }, { init: bare })).toBe(0)
+        expect(bare.mock.calls[0]![0]).toMatchObject({ root: realpathSync(process.cwd()), target: DEFAULT_SURFACE_TOOLS[0], tools: [...DEFAULT_SURFACE_TOOLS] })
     })
 
     it('routes a structured configuration question through the interactive CLI hook', async () => {
@@ -2185,9 +2193,9 @@ describe('init command admission', () => {
         }
     })
 
-    it('refuses missing, extra or duplicate root and target before dispatch', async () => {
+    it('refuses extra or duplicate roots and targets before dispatch', async () => {
         for (const args of [
-            [], ['--target', 'codexcli'], ['.'], ['.', '.', '--target', 'codexcli'],
+            ['.', '.', '--target', 'codexcli'], ['.', '.'],
             ['.', '--target', 'unknown'], ['.', '--target', 'codexcli', '--target', 'opencode'], ['.', '--target', 'codexcli,codexcli'], ['.', '--target', 'codexcli,unknown'],
             ['.', '--target', 'cursor,grokcli'],
             ['.', '--target', 'codexcli', '--registry', 'a', '--registry', 'b'],

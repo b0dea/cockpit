@@ -14,7 +14,7 @@ import { commandGroups, commandSpelling, commandStages, commands, describePublic
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
-import { GUARD_SURFACE_TARGETS, isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
+import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, documentObservedCommand, observeCockpitRoot, observePublicEstate } from './init/draft.js'
@@ -987,19 +987,22 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config, request: captured } }
     }
     if (handler === 'init') {
-        const [root, ...extraRoots] = parsed.positionals
-        if (parsed.values['scaffold-compose'] !== undefined) return decodeComposeScaffold(root, extraRoots, parsed.values)
+        const [explicitRoot, ...extraRoots] = parsed.positionals
+        if (parsed.values['scaffold-compose'] !== undefined) return decodeComposeScaffold(explicitRoot, extraRoots, parsed.values)
+        // A bare `cockpit init` sets up the current directory for the default tools.
+        const root = explicitRoot ?? '.'
         const scaffoldOnly = ['command', 'port', 'with'].find(name => parsed.values[name] !== undefined)
         if (scaffoldOnly) return usageOutcome('CLI_USAGE_INVALID', `--${scaffoldOnly} belongs to --scaffold-compose`, `--${scaffoldOnly}`)
         const registry = parsed.values.registry
         // `--target a,b` chooses several tools; the first is the one whose setup skill init publishes
         // before the interview. One comma list rather than a repeated flag keeps the guard's
         // single-value grammar for --target.
-        const tools = typeof parsed.values.target === 'string' ? parsed.values.target.split(',') : []
-        if (!root || extraRoots.length || tools.length === 0 || !tools.every(tool => SURFACE_TARGETS.some(value => value === tool))
+        const tools = typeof parsed.values.target === 'string' ? parsed.values.target.split(',')
+            : parsed.values.target === undefined ? [...DEFAULT_SURFACE_TOOLS] : []
+        if (extraRoots.length || tools.length === 0 || !tools.every(tool => SURFACE_TARGETS.some(value => value === tool))
             || new Set(tools).size !== tools.length
             || registry !== undefined && (typeof registry !== 'string' || registry.length === 0)) {
-            return usageOutcome('CLI_USAGE_INVALID', `init requires one explicit root and --target with one or more distinct tools, comma-separated: ${SURFACE_TARGETS.join('|')}`)
+            return usageOutcome('CLI_USAGE_INVALID', `init takes at most one root (default: the current directory) and --target with one or more distinct tools, comma-separated: ${SURFACE_TARGETS.join('|')} (default: ${DEFAULT_SURFACE_TOOLS.join(',')})`)
         }
         if (!tools.some(tool => isGuardSurfaceTarget(tool))) {
             return usageOutcome('CLI_USAGE_INVALID', `--target must include a tool cockpit has a guard for (${GUARD_SURFACE_TARGETS.join(', ')})`, '--target')

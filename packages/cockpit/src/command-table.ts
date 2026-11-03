@@ -204,7 +204,7 @@ const sources = [
         name: 'init',
         stage: 'set-up',
         summary: 'Preview, then accept, a first cockpit setup for one or more agent tools',
-        usage: '<root> [options]',
+        usage: '[<root>] [options]',
         handler: 'init',
         visibility: 'public',
         ordinary: ordinary('init', {
