@@ -639,7 +639,7 @@ describe('guard policy construction', () => {
             if (change === 'missing') rmSync(join(root, 'app/package-lock.json'))
             if (change === 'symlink') { rmSync(join(root, 'app/package-lock.json')); symlinkSync(configPath, join(root, 'app/package-lock.json')) }
             if (change === 'ambiguous') {
-                config.environment.install_policies.push({ ...config.environment.install_policies[0]!, volume: 'other', lockfile: 'other.lock' })
+                config.environment.install_policies.push({ ...config.environment.install_policies[0]!, lockfile: 'other.lock' })
                 writeFileSync(join(root, 'app/other.lock'), '{}')
             }
             writeFileSync(configPath, stringify(config))

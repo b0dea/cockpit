@@ -24,9 +24,6 @@ APP_HOST_PORT = 4100
 
 [[environment.install_policies]]
 toolchain = "node"
-volume = "dependencies"
 lockfile = "package-lock.json"
-install = [ "npm", "ci" ]
-load_probe = [ "node", "probe.mjs", "load" ]
 build = [ "npm", "run", "build" ]
 test = [ "npm", "test", "--", "unit.test.ts" ]

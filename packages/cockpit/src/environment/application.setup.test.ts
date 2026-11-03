@@ -69,7 +69,7 @@ describe('setup application choreography', () => {
         expect(context.siblings).toContainEqual(expect.objectContaining({ slug: 'worker' }))
         expect(context.siblings.find(({ slug }) => slug === 'worker')).not.toHaveProperty('derives')
         expect(context.policyCatalog).toContainEqual(expect.objectContaining({
-            volume: 'worker-dependencies', lockfile: 'worker/package-lock.json',
+            lockfile: 'worker/package-lock.json',
         }))
     })
 
@@ -390,17 +390,16 @@ describe('setup application choreography', () => {
 
     it('issues from the hidden policy snapshot after a nested public array is mutated', async () => {
         const policy = {
-            toolchain: 'node' as const, volume: 'node-modules', lockfile: 'package-lock.json',
-            install: ['npm', 'ci'], load_probe: ['npm', 'test'],
+            toolchain: 'node' as const, lockfile: 'package-lock.json', build: ['npm', 'run', 'build'],
         }
         const { loaded, candidate } = await unissuedContextFixture(sequenceSource({ toolchain: 'node' }, [policy], []))
-        loaded.config.environment.install_policies[0]!.install[0] = 'forged'
+        loaded.config.environment.install_policies[0]!.build![0] = 'forged'
 
         const issued = await issueContext(candidate, loaded)
 
         expect(issued).toMatchObject({
             kind: 'complete',
-            result: { policyCatalog: [expect.objectContaining({ install: ['npm', 'ci'] })] },
+            result: { policyCatalog: [expect.objectContaining({ build: ['npm', 'run', 'build'] })] },
         })
     })
 
@@ -1240,10 +1239,7 @@ describe('setup application choreography', () => {
         try {
             const policy = {
                 toolchain: 'node' as const,
-                volume: 'node-modules',
                 lockfile: 'package-lock.json',
-                install: ['npm', 'ci'],
-                load_probe: ['npm', 'test'],
             }
             const { configPath, context, adapters } = await sequenceFixture({
                 toolchain: 'node',
@@ -1367,10 +1363,7 @@ describe('setup application choreography', () => {
     ] as const)('refuses a complete policy result with mismatched %s', async (_label, alter) => {
         const policy = {
             toolchain: 'node' as const,
-            volume: 'node-modules',
             lockfile: 'package-lock.json',
-            install: ['npm', 'ci'],
-            load_probe: ['npm', 'test'],
         }
         const { configPath, context, adapters } = await sequenceFixture({ toolchain: 'node' }, [policy])
         adapters.resolvePolicy = ({ siblingIndex, sibling, checkoutRoot, checkoutId }) => {
@@ -1396,7 +1389,7 @@ describe('setup application choreography', () => {
     })
 
     it('keeps the complete sequence adjacent for each sibling', async () => {
-        const policy = { toolchain: 'node' as const, lockfile: 'package-lock.json', install: ['npm', 'ci'], load_probe: ['npm', 'test'], volume: 'node_modules' }
+        const policy = { toolchain: 'node' as const, lockfile: 'package-lock.json' }
         const source = sequenceSource(
             { toolchain: 'node', environment_files: [{ template: '.env.example', instance: '.env' }] },
             [policy],
@@ -1459,8 +1452,7 @@ describe('setup application choreography', () => {
 
         beforeEach(async () => {
             policy = {
-                toolchain: 'node', volume: 'node-modules', lockfile: 'package-lock.json',
-                install: ['npm', 'ci'], load_probe: ['npm', 'test'],
+                toolchain: 'node', lockfile: 'package-lock.json',
             }
             const fixture = await unissuedContextFixture(sequenceSource({
                 toolchain: 'node',

@@ -121,7 +121,7 @@ resettable_volumes = ["api-session-data"]
 generated_host_paths = [".cockpit/generated/session"]
 compose_files = ["compose.yml"]
 entrypoint_derivatives = [{ name = "web", kind = "entrypoint", port = "APP_PORT", path = "/" }]
-install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["node", "--eval", "require('zod')"] }]
+install_policies = [{ toolchain = "node", lockfile = "package-lock.json", test = ["node", "--eval", "require('zod')"] }]
 
 [environment.machine]
 runtime_memory_mb = 4096
@@ -358,14 +358,14 @@ cold_start_seconds = 30
     it('keeps an inaccessible source and nested config snapshot behind the public result identity', async () => {
         const source = `${validConfig}
 [environment]
-install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]
+install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build = ["npm", "run", "build"] }]
 `
         const loaded = await loadCockpitConfig(fixture(source))
         if (loaded.kind === 'refusal') throw new Error('fixture configuration did not load')
         const expectedPath = loaded.result.source.path
         ;(loaded.result.source as { path: string }).path = '/synthetic/forged.toml'
         loaded.result.config.sibling[0]!.dir = 'forged'
-        loaded.result.config.environment.install_policies[0]!.install[0] = 'forged'
+        loaded.result.config.environment.install_policies[0]!.build![0] = 'forged'
 
         const consumed = consumeLoadedConfigProjection(loaded.result)
 
@@ -373,7 +373,7 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
             source: { path: expectedPath },
             config: {
                 sibling: [expect.objectContaining({ dir: 'api-service' })],
-                environment: { install_policies: [expect.objectContaining({ install: ['npm', 'ci'] })] },
+                environment: { install_policies: [expect.objectContaining({ build: ['npm', 'run', 'build'] })] },
             },
         })
     })

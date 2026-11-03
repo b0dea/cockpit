@@ -38,7 +38,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         'posture_requirements = [{ requirement = "synthetic-browser", addressing = "port", authentication = "real" }]',
         'compose_files = ["compose.yml"]', 'resettable_volumes = []',
         `generated_host_paths = ${JSON.stringify(declarations)}`,
-        'install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]',
+        'install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build = ["npm", "run", "build"] }]',
         '[environment.machine]', 'runtime_memory_mb = 1024', 'runtime_cpus = 1', 'free_disk_mb = 1024', 'cold_start_seconds = 30', '',
     ].join('\n'))
     const siblingPath = join(root, 'siblings', 'web')

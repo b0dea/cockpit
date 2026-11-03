@@ -30,8 +30,8 @@ describe('bounded exact project command declarations', () => {
         expect(Sibling.safeParse({ ...sibling, var: 'SIBLING_COMPOSE_PRODUCT_DIR' }).success).toBe(true)
     })
 
-    it('bounds build and test by Unicode scalars without changing install or load probes', () => {
-        const base = { toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'x'.repeat(20_000)], load_probe: ['node', ...Array(4_097).fill('probe')] }
+    it('bounds build and test by Unicode scalars', () => {
+        const base = { toolchain: 'node', lockfile: 'package-lock.json' }
         expect(InstallPolicy.safeParse(base).success).toBe(true)
         for (const field of ['build', 'test']) {
             for (const word of ['a'.repeat(127), 'a'.repeat(128), '😀'.repeat(128), "'".repeat(128)]) {
@@ -89,7 +89,7 @@ const stackConfig = {
         compose_files: ['compose.yml'],
         resettable_volumes: ['product-data'],
         seed: { argv: ['npm', 'run', 'seed'], timeout_seconds: 300 },
-        install_policies: [{ toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'ci'], load_probe: ['node', 'synthetic-probe.mjs'] }],
+        install_policies: [{ toolchain: 'node', lockfile: 'package-lock.json', test: ['node', 'synthetic-probe.mjs'] }],
     },
 }
 

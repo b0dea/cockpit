@@ -59,7 +59,7 @@ function derivedRegistrySource(): string {
         toolchain: 'node', purpose: 'Synthetic profile worker',
         derives: { mcp_sources: [{ path: '.mcp.json', provenance }] },
     })
-    config.environment.install_policies.push({ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' })
+    config.environment.install_policies.push({ ...policy, lockfile: 'worker/package-lock.json' })
     return stringify(config)
 }
 

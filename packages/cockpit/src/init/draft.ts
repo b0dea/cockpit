@@ -752,7 +752,7 @@ const QUESTION_WHY = {
     siblingEstate: 'the source does not establish schema-shaped sibling declarations',
     siblingRegistry: 'the registry leaves required sibling configuration unresolved',
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
-    policies: 'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands',
+    policies: 'declare one row per toolchain and lockfile with any build or test command the guard should allow',
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
     composeFiles: 'list the Compose files, relative to the cockpit root, that run the product, such as ["compose.yml"]; cockpit runs them as written. A small app with no Compose file gets a starting one, which it then owns, from npx --no cockpit init <cockpit root> --scaffold-compose <app dir> --port <port>',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements a person states: cockpit never proposes them, because no product file records them and this machine\'s capacity is not what the product needs',
@@ -1109,7 +1109,7 @@ async function completeConfigurationDocument(
         if (policyRead.kind === 'refusal') return policyRead.outcome
         const parsedPolicies = InstallPolicy.array().max(256).safeParse(policyRead.value)
         if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed dependency install protocols do not match the schema: ${issueSummary(parsedPolicies.error)}`,
+            `the operator-confirmed install policies do not match the schema: ${issueSummary(parsedPolicies.error)}`,
             policyQuestion.field)
         record('environment.install_policies', policyRead.provenance)
         answerIndex += 1

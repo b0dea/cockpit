@@ -276,17 +276,19 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
     await writeFile(join(f.root, 'app/package.json'), JSON.stringify({ scripts: { start: 'node server.mjs' } }))
     await writeFile(join(f.root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
     const sourceConfig = parseToml(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
-        sibling: { purpose: string }[]; ports: { bases: Record<string, number> }; environment: {
-            install_policies: { load_probe: string[] }[]
-        }
+        sibling: { purpose: string }[]; ports: { bases: Record<string, number> }; environment: { install_policies: unknown[] }
     }
     const guards = { hosted_db_hosts: [] as string[], vendor_endpoint_hosts: [] as string[] }
-    if (bound === 'scalar') {
-        sourceConfig.environment.install_policies[0]!.load_probe.push(...Array.from({ length: 14_000 }, () => 'a'))
-    } else {
+    // TOML spends one byte more per array item than JSON, so this answer fits the 64 KiB answer
+    // bound and still renders one line over it.
+    const scalarComposeFiles = Array.from({ length: 6_300 }, (_, index) => `${index.toString(36).padStart(3, '0')}.yml`)
+    if (bound === 'artifact') {
         sourceConfig.sibling[0]!.purpose = 'p'.repeat(60_000)
         sourceConfig.ports.bases['A'.repeat(60_000)] = 4101
-        sourceConfig.environment.install_policies[0]!.load_probe.push('a'.repeat(60_000))
+        const word = 'w'.repeat(127)
+        sourceConfig.environment.install_policies.push(...Array.from({ length: 7 }, (_, index) => ({
+            toolchain: 'node', lockfile: `locks/${index}/package-lock.json`, build: Array(32).fill(word), test: Array(32).fill(word),
+        })))
         for (let index = 0; index < 128; index += 1) {
             const host = `${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${index}.example.test`
             guards.hosted_db_hosts.push(`db.${host}`)
@@ -319,7 +321,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
                     : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
                         : question.field === 'environment.compose_files' ? ['compose.yml',
-                            ...bound === 'artifact' ? Array.from({ length: 5 }, (_, index) => `${'c'.repeat(8_000)}${index}.yml`) : []]
+                            ...bound === 'artifact' ? Array.from({ length: 7 }, (_, index) => `${'c'.repeat(8_000)}${index}.yml`) : scalarComposeFiles]
                             : question.field === 'environment.machine'
                                 ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
                                 : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }

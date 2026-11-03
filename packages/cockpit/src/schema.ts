@@ -142,11 +142,8 @@ export const GuardCommandArgv = z.array(z.string().regex(new RegExp(GUARD_COMMAN
 
 export const InstallPolicy = z
     .object({
-        toolchain: Toolchain.exclude(['none']).describe('Toolchain whose dependencies this policy installs.'),
-        volume: ResettableVolumeId.describe('Resettable volume that holds the installed dependencies.'),
-        lockfile: SafeRelativePath.describe('Lockfile, relative to the sibling, that this policy applies to.'),
-        install: CommandArgv.describe('Command, as an argument list, that installs the dependencies.'),
-        load_probe: CommandArgv.describe('Command, as an argument list, that proves the installed dependencies load.'),
+        toolchain: Toolchain.exclude(['none']).describe('Toolchain of the siblings this policy applies to.'),
+        lockfile: SafeRelativePath.describe('Lockfile, relative to the sibling, that selects this policy.'),
         build: GuardCommandArgv.optional().describe('Build command, as an argument list, when the product owns one.'),
         test: GuardCommandArgv.optional().describe('Test command, as an argument list, when the product owns one.'),
     })
@@ -193,7 +190,7 @@ export const Environment = z
         generated_host_paths: z.array(GeneratedHostPath).default([]).describe('Host paths cockpit generates and owns, relative to the cockpit.'),
         compose_files: z.array(LocalComposePath).default([]).describe('Compose files, relative to the cockpit, that make up the stack; cockpit runs them as written.'),
         entrypoint_derivatives: z.array(EntrypointDerivative).default([]).describe('Addresses derived from leased ports, such as application origins and callback URLs.'),
-        install_policies: z.array(InstallPolicy).default([]).describe('How dependencies are installed for each toolchain.'),
+        install_policies: z.array(InstallPolicy).default([]).describe('The build and test commands the guard admits for each toolchain and lockfile.'),
         // Product data lives in the resettable volumes, so the seed reruns exactly when one of them is
         // new: after `reset`, a `docker volume rm`, or the first start.
         seed: z.object({
@@ -208,7 +205,6 @@ export const Environment = z
             generated_host_paths: environment.generated_host_paths,
             compose_files: environment.compose_files,
             entrypoint_derivatives: environment.entrypoint_derivatives.map((row) => row.name),
-            install_policies: environment.install_policies.map((row) => row.volume),
             posture_requirements: environment.posture_requirements?.map((row) => row.requirement) ?? [],
         }
 

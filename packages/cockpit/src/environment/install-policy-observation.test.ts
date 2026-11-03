@@ -16,8 +16,7 @@ import {
 const scratch: string[] = []
 const source = { path: '/synthetic/cockpit.toml', byteLength: 17, sha256: 'a'.repeat(64) }
 const policies: readonly InstallPolicy[] = [{
-    toolchain: 'node', volume: 'node-modules', lockfile: 'package-lock.json',
-    install: ['npm', 'ci'], load_probe: ['node', '--version'],
+    toolchain: 'node', lockfile: 'package-lock.json',
 }]
 
 async function checkout(): Promise<string> {
@@ -210,7 +209,7 @@ describe('install policy lockfile observation', () => {
         await writeFile(join(root, 'locks', 'package-lock.json'), '{}')
         const catalog = [
             { ...policies[0]!, lockfile: 'locks/package-lock.json' },
-            { ...policies[0]!, volume: 'shrinkwrap', lockfile: 'locks/npm-shrinkwrap.json' },
+            { ...policies[0]!, lockfile: 'locks/npm-shrinkwrap.json' },
         ]
         const absence = await issue(root, catalog)
         await writeFile(join(root, 'locks', 'npm-shrinkwrap.json'), '{}')
@@ -228,7 +227,7 @@ describe('install policy lockfile observation', () => {
     it('authenticates a reordered but otherwise identical catalog', async () => {
         const root = await checkout()
         await writeFile(join(root, 'package-lock.json'), '{}')
-        const catalog = [policies[0]!, { ...policies[0]!, toolchain: 'python' as const, volume: 'python', lockfile: 'requirements.lock' }]
+        const catalog = [policies[0]!, { ...policies[0]!, toolchain: 'python' as const, lockfile: 'requirements.lock' }]
         const issued = await issue(root, catalog)
         const result = await withInstallPolicyProjection(
             issued.observation,
@@ -238,12 +237,12 @@ describe('install policy lockfile observation', () => {
         expect(result).toBe('authenticated')
     })
 
-    it('rejects duplicate runtime catalog volumes before observing files', async () => {
+    it('rejects duplicate runtime catalog selectors before observing files', async () => {
         const root = await checkout()
-        const duplicateVolume = [policies[0]!, { ...policies[0]!, toolchain: 'python' as const, lockfile: 'requirements.lock' }]
+        const duplicateSelector = [policies[0]!, { ...policies[0]!, build: ['npm', 'run', 'build'] }]
         await expect(observeInstallPolicyLockfiles({
             source, siblingIndex: 0, siblingSlug: 'service', checkoutRoot: root,
-            checkoutId: checkoutId({ checkoutPath: root }), policies: duplicateVolume,
+            checkoutId: checkoutId({ checkoutPath: root }), policies: duplicateSelector,
             observedAt: new Date().toISOString(),
         })).resolves.toMatchObject({ state: 'failed', code: 'INSTALL_POLICY_OBSERVATION_INVALID' })
     })

@@ -26,8 +26,7 @@ const baseSibling = {
 } satisfies Omit<Sibling, 'toolchain'>
 
 const policy = (patch: Partial<InstallPolicy> = {}): InstallPolicy => ({
-    toolchain: 'node', volume: 'node-modules', lockfile: 'package-lock.json',
-    install: ['npm', 'ci'], load_probe: ['node', '--version'], ...patch,
+    toolchain: 'node', lockfile: 'package-lock.json', ...patch,
 })
 
 async function checkout(lockfiles: readonly string[]): Promise<string> {
@@ -213,7 +212,7 @@ describe('install policy resolution', () => {
             .toMatchObject({ kind: 'refusal', code: 'INSTALL_POLICY_MISSING', siblingSlug: 'service' })
 
         const ambiguousRoot = await checkout(['package-lock.json', 'npm-shrinkwrap.json'])
-        const ambiguousPolicies = [policy({ lockfile: 'npm-shrinkwrap.json', volume: 'shrinkwrap' }), policy()]
+        const ambiguousPolicies = [policy({ lockfile: 'npm-shrinkwrap.json' }), policy()]
         const outcome = await resolveObserved(ambiguousRoot, 0, { ...baseSibling, toolchain: 'node' }, ambiguousPolicies)
         expect(outcome).toMatchObject({ kind: 'refusal', code: 'INSTALL_POLICY_AMBIGUOUS', siblingSlug: 'service' })
         expect(outcome?.kind === 'refusal' && outcome.candidates)
@@ -222,7 +221,7 @@ describe('install policy resolution', () => {
 
     it('rejects forged, replayed, mismatched-catalog and cross-checkout projections', async () => {
         const root = await checkout(['package-lock.json', 'npm-shrinkwrap.json'])
-        const catalog = [policy(), policy({ volume: 'shrinkwrap', lockfile: 'npm-shrinkwrap.json' })]
+        const catalog = [policy(), policy({ lockfile: 'npm-shrinkwrap.json' })]
         expect(resolveInstallPolicies(input(catalog, { ...baseSibling, toolchain: 'node' }, 0, {
             checkoutRoot: root,
             checkoutId: checkoutId({ checkoutPath: root }),
@@ -274,15 +273,15 @@ describe('install policy resolution', () => {
         expect(reads).toBe(0)
     })
 
-    it('rejects duplicate runtime catalog volumes independently of schema loading', () => {
-        const duplicateVolume = [policy(), policy({ toolchain: 'python', lockfile: 'requirements.lock' })]
-        expect(resolveInstallPolicies(input(duplicateVolume, { ...baseSibling, toolchain: 'none' })))
+    it('rejects duplicate runtime catalog selectors independently of schema loading', () => {
+        const duplicateSelector = [policy(), policy({ build: ['npm', 'run', 'build'] })]
+        expect(resolveInstallPolicies(input(duplicateSelector, { ...baseSibling, toolchain: 'none' })))
             .toMatchObject({ kind: 'unavailable', reason: 'install policy catalog is invalid' })
     })
 
     it('keeps the selected policy invariant when catalog diagnostic order changes', async () => {
         const root = await checkout(['package-lock.json'])
-        const firstCatalog = [policy({ toolchain: 'python', lockfile: 'requirements.lock', volume: 'python' }), policy()]
+        const firstCatalog = [policy({ toolchain: 'python', lockfile: 'requirements.lock' }), policy()]
         const secondCatalog = [...firstCatalog].reverse()
         const first = await resolveObserved(root, 0, { ...baseSibling, toolchain: 'node' }, firstCatalog)
         const second = await resolveObserved(root, 0, { ...baseSibling, toolchain: 'node' }, secondCatalog)

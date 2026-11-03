@@ -244,7 +244,7 @@ vendor_endpoint_hosts = []
 | `sibling` | one `[[sibling]]` table per repository |
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
 | `ports.bases` | the host-published base port map; `{}` means none |
-| `environment.install_policies` | the dependency install protocols; `[]` for none |
+| `environment.install_policies` | the build and test commands per toolchain and lockfile; `[]` for none |
 | `environment.test_data` | exactly the boolean keys `seeded_data` and `signed_in_users`; `false` states it is not needed, `true` keeps the product-owned work visible |
 | `environment.compose_files` | the Compose files that run the product, relative to the cockpit root |
 | `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |

@@ -799,8 +799,7 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
             if (question.field === 'ports.bases') return '{}'
             if (question.field === 'guards') return JSON.stringify({ hosted_db_hosts: [], vendor_endpoint_hosts: [] })
             if (question.field === 'environment.install_policies') return JSON.stringify([{
-                toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json',
-                install: ['npm', 'ci'], load_probe: ['node', '--version'],
+                toolchain: 'node', lockfile: 'package-lock.json', test: ['node', '--version'],
             }])
             if (question.field === 'environment.test_data') return JSON.stringify({ seeded_data: false, signed_in_users: false })
             // The interview now continues past the local test-data decision, so the fifth question is

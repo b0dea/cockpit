@@ -155,8 +155,7 @@ function snapshotPolicies(value: unknown): readonly InstallPolicyValue[] | undef
     if (parsed.some((row) => !row.success)) return undefined
     const policies = parsed.map((row) => (row as Extract<typeof row, { success: true }>).data)
     const selectors = policies.map(({ toolchain, lockfile }) => `${toolchain}\0${lockfile}`)
-    const volumes = policies.map(({ volume }) => volume)
-    return new Set(selectors).size === selectors.length && new Set(volumes).size === volumes.length
+    return new Set(selectors).size === selectors.length
         ? policies
         : undefined
 }

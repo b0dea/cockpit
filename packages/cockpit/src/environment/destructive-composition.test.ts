@@ -122,7 +122,7 @@ describe('destructive command composition', () => {
             'compose_files = ["compose.yml"]',
             'resettable_volumes = []',
             'generated_host_paths = []',
-            'install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]',
+            'install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build = ["npm", "run", "build"] }]',
             '',
             '[environment.machine]',
             'runtime_memory_mb = 1024',

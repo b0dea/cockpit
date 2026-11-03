@@ -51,7 +51,7 @@ describe('project command scalar schema parity', () => {
     it('uses the same scalar pattern through runtime, emitted draft-04 and checked-in draft-04 schemas', () => {
         const schemas = [JSON.parse(renderCockpitSchema()), JSON.parse(readFileSync(new URL('../cockpit.schema.json', import.meta.url), 'utf8'))]
         const validators = schemas.map(schema => compileDraft04Schema(schema.properties.environment.properties.install_policies.items))
-        const base = { toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'ci'], load_probe: ['node', '--version'] }
+        const base = { toolchain: 'node', lockfile: 'package-lock.json' }
         const cases: Array<[string[], boolean]> = [
             [['a'.repeat(127)], true], [['a'.repeat(128)], true], [['a'.repeat(129)], false],
             [['😀'.repeat(127)], true], [['😀'.repeat(128)], true], [['😀'.repeat(129)], false],
@@ -442,14 +442,11 @@ describe('the published cockpit schema', () => {
         ['query in path-only entrypoint field', {
             entrypoint_derivatives: [{ name: 'web', kind: 'origin', port: 'WEB_PORT', path: '/api?next=/' }],
         }],
-        ['empty install command', {
-            install_policies: [{
-                toolchain: 'node',
-                volume: 'node-modules',
-                lockfile: 'package-lock.json',
-                install: [],
-                load_probe: ['node', '--version'],
-            }],
+        ['empty build command', {
+            install_policies: [{ toolchain: 'node', lockfile: 'package-lock.json', build: [] }],
+        }],
+        ['an install command, which nothing runs', {
+            install_policies: [{ toolchain: 'node', lockfile: 'package-lock.json', install: ['npm', 'ci'] }],
         }],
         ['incomplete machine floor', { machine: { runtime_memory_mb: 4096 } }],
         ['machine floor with an unknown field', {
@@ -510,24 +507,12 @@ describe('the published cockpit schema', () => {
                 { name: 'web', kind: 'callback_url', port: 'WEB_PORT', path: '/callback' },
             ],
         }],
-        ['install policy volume', {
-            install_policies: [
-                { toolchain: 'node', volume: 'node-modules', lockfile: 'a.lock', install: ['install-a'], load_probe: ['probe-a'] },
-                { toolchain: 'node', volume: 'node-modules', lockfile: 'b.lock', install: ['install-b'], load_probe: ['probe-b'] },
-            ],
-        }],
     ])('rejects duplicate %s declarations at runtime', (_label, environment) => {
         expect(CockpitConfig.safeParse({ ...structuredClone(validConfig), environment }).success).toBe(false)
     })
 
     it('requires a non-none toolchain and rejects duplicate toolchain-lockfile selectors', () => {
-        const valid = {
-            toolchain: 'node',
-            volume: 'node-modules',
-            lockfile: 'package-lock.json',
-            install: ['npm', 'ci'],
-            load_probe: ['node', '--version'],
-        }
+        const valid = { toolchain: 'node', lockfile: 'package-lock.json' }
 
         expect(InstallPolicy.safeParse(valid).success).toBe(true)
         expect(InstallPolicy.safeParse({ ...valid, toolchain: 'none' }).success).toBe(false)
@@ -537,7 +522,7 @@ describe('the published cockpit schema', () => {
         const environment = {
             install_policies: [
                 valid,
-                { ...valid, volume: 'other-node-modules', install: ['npm', 'install'] },
+                { ...valid, build: ['npm', 'run', 'build'] },
             ],
         }
         const config = { ...structuredClone(validConfig), environment }
@@ -614,7 +599,7 @@ describe('the published cockpit schema', () => {
         expect(object(object(policy.properties).toolchain).enum).toEqual([
             'node', 'python', 'ruby', 'go', 'rust', 'dotnet',
         ])
-        expect(policy.required).toEqual(['toolchain', 'volume', 'lockfile', 'install', 'load_probe'])
+        expect(policy.required).toEqual(['toolchain', 'lockfile'])
     })
 
     it('publishes the exact risky-lane implication instead of an advisory gate field', () => {
@@ -842,7 +827,6 @@ describe('the published cockpit schema', () => {
                 { path: 'environment.generated_host_paths[]', rule: 'unique' },
                 { path: 'environment.compose_files[]', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].name', rule: 'unique' },
-                { path: 'environment.install_policies[].volume', rule: 'unique' },
                 { path: 'environment.install_policies[].toolchain+lockfile', rule: 'unique' },
                 { path: 'environment.posture_requirements[].requirement', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
@@ -865,7 +849,6 @@ describe('the published cockpit schema', () => {
                 ...derivedRowAndSeedRuntimeChecks,
                 { path: 'environment.entrypoint_derivatives[].name', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
-                { path: 'environment.install_policies[].volume', rule: 'unique' },
                 { path: 'environment.install_policies[].toolchain+lockfile', rule: 'unique' },
                 { path: 'environment.posture_requirements[].requirement', rule: 'unique' },
                 { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },

@@ -102,17 +102,17 @@ seed = { argv = ["npm", "run", "db:seed"], timeout_seconds = 300 }
 
 ## `[[environment.install_policies]]`
 
-How dependencies are installed for one toolchain: the volume they live in, the lockfile, the
-install command and a probe that proves they load. Full entry: the
-[`install_policies` shape](configuration-reference.md#install_policies-shape).
+The project build and test commands for one toolchain, selected by the lockfile a sibling
+checkout holds. `setup` needs exactly one matching row for each sibling whose `toolchain` is not
+`none`, and the guard allows the declared `build` and `test` argument vectors in that checkout.
+Full entry: the [`install_policies` shape](configuration-reference.md#install_policies-shape).
 
 ```toml
 [[environment.install_policies]]
 toolchain = "node"
-volume = "dependencies"
 lockfile = "package-lock.json"
-install = ["npm", "ci"]
-load_probe = ["node", "probe.mjs", "load"]
+build = ["npm", "run", "build"]
+test = ["npm", "test"]
 ```
 
 ## `[testing]`

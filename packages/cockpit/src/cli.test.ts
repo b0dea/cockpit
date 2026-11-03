@@ -1326,7 +1326,7 @@ describe('setup process contract', () => {
             ],
             sections: [
                 '[environment]',
-                'install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]',
+                'install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build = ["npm", "run", "build"] }]',
                 '',
             ],
         }))

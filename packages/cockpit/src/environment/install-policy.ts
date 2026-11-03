@@ -39,14 +39,7 @@ export interface ResolvedInstallPolicyBinding {
     readonly siblingSlug: string
     readonly checkoutRoot: string
     readonly checkoutId: CheckoutId
-    readonly policy: ResolvedInstallPolicy
-}
-
-export type ResolvedInstallPolicy = Omit<InstallPolicyValue, 'install' | 'load_probe' | 'build' | 'test'> & {
-    readonly install: readonly string[]
-    readonly load_probe: readonly string[]
-    readonly build?: readonly string[]
-    readonly test?: readonly string[]
+    readonly policy: InstallPolicyValue
 }
 
 export type InstallPolicyResolution =
@@ -65,16 +58,6 @@ export type InstallPolicyResolution =
           readonly siblingSlug: string
           readonly candidates: readonly string[]
       }
-
-function immutablePolicy(policy: InstallPolicyValue): ResolvedInstallPolicy {
-    return {
-        ...policy,
-        install: [...policy.install],
-        load_probe: [...policy.load_probe],
-        ...(policy.build ? { build: [...policy.build] } : {}),
-        ...(policy.test ? { test: [...policy.test] } : {}),
-    }
-}
 
 function unavailable(siblingIndex: number, siblingSlug: string, reason: string): InstallPolicyResolution {
     return {
@@ -155,8 +138,7 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
     }
     const catalog = policies.map((policy) => (policy as Extract<typeof policy, { success: true }>).data)
     const selectors = catalog.map(({ toolchain, lockfile }) => `${toolchain}\0${lockfile}`)
-    const volumes = catalog.map(({ volume }) => volume)
-    if (new Set(selectors).size !== selectors.length || new Set(volumes).size !== volumes.length) {
+    if (new Set(selectors).size !== selectors.length) {
         return unavailable(siblingIndex as number, sibling.data.slug, 'install policy catalog is invalid')
     }
     if (sibling.data.toolchain === 'none') return { kind: 'complete', bindings: [] }
@@ -203,7 +185,7 @@ export function resolveInstallPolicies(input: InstallPolicyResolutionInput): Ins
         siblingSlug: sibling.data.slug,
         checkoutRoot: observation.checkoutRoot,
         checkoutId: observation.checkoutId,
-        policy: immutablePolicy(selected.policy),
+        policy: selected.policy,
     }
     return { kind: 'complete', bindings: [binding] }
 }
