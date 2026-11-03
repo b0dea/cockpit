@@ -24,7 +24,7 @@ help, for example `cockpit sync --help`.
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `npx --no cockpit sync --config cockpit.toml`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached or identified. | Start it and verify `docker info`; if the message names a Docker or Compose version with no X.Y.Z core, install a release that prints one. Then retry. |
 | `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
-| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. |
+| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. When the message names a process restoring the stack's data, wait for it or stop it, then retry: the retry releases a restore whose process has ended. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `npx --no cockpit setup --config cockpit.toml`. |
@@ -245,7 +245,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `BOOTSTRAP_ANSWER_RESET_STALE` | see the message |
 | `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` | see the message |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` | see the message |
-| `CLAIM_CO_TENANT` | see the message |
+| `CLAIM_CO_TENANT` | depends on what failed; see the message |
 | `CLAIM_LIVENESS_UNKNOWN` | see the message |
 | `CLAIM_STATE_UNHEALTHY` | see the message |
 | `CLI_COMMAND_REQUIRED` | see the message |
@@ -496,6 +496,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `RESET_CONFIRMATION_MISMATCH` | see the message |
 | `RESET_CONFIRMATION_REQUIRED` | see the message |
 | `RESET_CO_TENANT` | see the message |
+| `RESTORE_INTERRUPTED` | run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again |
 | `RESTRICTION_ADAPTER_INVALID` | see the message |
 | `RESTRICTION_EVENT_UNADAPTED` | see the message |
 | `RESTRICTION_INPUT_INVALID` | see the message |

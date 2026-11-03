@@ -239,6 +239,9 @@ function joinStack(state: StateNamespace, now: string) {
 
 describe('restore execution authority', () => {
     const stepSha256 = '3'.repeat(64)
+    // The restoring process's start identity as `observeProcessStart` would read it.
+    const restoringStart = 'lstart:2026-09-07T11:58:00.000Z'
+    const observe = async () => ({ state: 'present' as const, start: restoringStart })
 
     async function config(state: StateNamespace) {
         const configPath = join(state.cockpitRoot, 'restore-config.toml')
@@ -252,7 +255,7 @@ describe('restore execution authority', () => {
         const state = await namespace()
         const { configPath, configSha256 } = await config(state)
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256 })
+        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
         if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
 
         await expect(consumeRestoreExecutionAuthority({
@@ -270,7 +273,7 @@ describe('restore execution authority', () => {
         if (consumed.kind !== 'complete') throw new Error('expected restore lease')
         await expect(settleRestoreExecutionAuthority({ namespace: state, lease: consumed.lease })).resolves.toEqual({ kind: 'complete' })
 
-        const mismatched = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256 })
+        const mismatched = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
         if (mismatched.kind !== 'complete') throw new Error('expected restore authority')
         await expect(consumeRestoreExecutionAuthority({
             namespace: state, authority: mismatched.authority, stackId, holderId: holderA,
@@ -285,7 +288,7 @@ describe('restore execution authority', () => {
         const state = await namespace()
         const { configPath, configSha256 } = await config(state)
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
-        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256 })
+        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
         if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
         await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
 
@@ -304,13 +307,39 @@ describe('restore execution authority', () => {
         })).resolves.toMatchObject({ kind: 'refusal' })
     })
 
+    // A restore whose process died before settling (SIGKILL, out of memory, a closed terminal) left
+    // its reservation behind, and every later up, sleep, down and reset refused with no way out.
+    it('releases a restore whose process is gone, and keeps one that is running or unconfirmed', async () => {
+        const state = await namespace()
+        const { configPath, configSha256 } = await config(state)
+        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
+        const issued = await issueRestoreExecutionAuthority({ namespace: state, stackId, holderId: holderA, requesterId: holderA, configPath, configSha256, stepSha256, observe })
+        if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
+        // The authority is never consumed or settled, as when its process dies mid-restore.
+        const reap = (observed: Awaited<ReturnType<typeof observeProcessStart>>) => releaseDeadSessionHolders({
+            namespace: state, stackId, successor: { holderId: holderA, checkoutId: checkoutA },
+            now: '2026-09-07T12:00:00.000Z', observe: async (pid) => pid === process.pid ? observed : { state: 'unknown', reason: `unexpected process ${pid}` },
+        })
+
+        for (const observed of [{ state: 'present', start: restoringStart }, { state: 'unknown', reason: 'ps is not installed' }] as const) {
+            expect(await reap(observed)).toEqual({ kind: 'complete', released: [] })
+            await expect(joinStack(state, '2026-09-07T12:00:01.000Z')).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{
+                code: ENVIRONMENT_CODES.CLAIM_CO_TENANT, message: `port leasing waits while process ${process.pid} restores the stack's data`,
+                fix: expect.stringContaining('then rerun this command, which releases a restore whose process has ended'),
+            }] })
+        }
+        expect(await reap({ state: 'absent' })).toEqual({ kind: 'complete', released: [], interruptedRestore: expect.objectContaining({
+            severity: 'warning', code: 'RESTORE_INTERRUPTED', message: expect.stringContaining(`by process ${process.pid}, reserved at `) }) })
+        await expect(joinStack(state, '2026-09-07T12:00:02.000Z')).resolves.toMatchObject({ kind: 'complete' })
+    })
+
     it('keeps a reservation active when a malformed envelope cannot authenticate its authority', async () => {
         const state = await namespace()
         const { configPath, configSha256 } = await config(state)
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const issued = await issueRestoreExecutionAuthority({
             namespace: state, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256,
+            configPath, configSha256, stepSha256, observe,
         })
         if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
 
@@ -335,12 +364,12 @@ describe('restore execution authority', () => {
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         await expect(issueRestoreExecutionAuthority({
             namespace: { ...state } as StateNamespace, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256,
+            configPath, configSha256, stepSha256, observe,
         })).resolves.toMatchObject({ kind: 'refusal' })
 
         const issued = await issueRestoreExecutionAuthority({
             namespace: state, stackId, holderId: holderA, requesterId: holderA,
-            configPath, configSha256, stepSha256,
+            configPath, configSha256, stepSha256, observe,
         })
         if (issued.kind !== 'complete') throw new Error(JSON.stringify(issued))
         await writeFile(configPath, 'synthetic = false\n')
@@ -1473,6 +1502,32 @@ describe('dead session holders', () => {
 
         expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderC }, { holderId: holderB }] })
         expect((await holders(state)).holders.map(({ holderId }) => holderId)).toEqual([holderD, holderA])
+    })
+
+    // Each probe spawns node and ps, and a record may name thousands of holders; probing them all at
+    // once spawned them all at once.
+    it('probes at most four holders at a time and releases the dead ones in holder order', async () => {
+        const state = await namespace()
+        const seeded = Array.from({ length: 10 }, (_, index) => ({
+            holderId: `holder:${(index + 16).toString(16).padStart(64, '0')}:session` as HolderId,
+            checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: 4000 + index,
+        }))
+        await seedCoordination(state, seeded)
+        let active = 0
+        let peak = 0
+        const observe = async (pid: number) => {
+            peak = Math.max(peak, ++active)
+            // Later holders answer first, so completion order differs from holder order.
+            await new Promise((resolve) => setTimeout(resolve, (4010 - pid) * 2))
+            active -= 1
+            return pid % 2 === 0 ? { state: 'absent' as const } : { state: 'unknown' as const, reason: 'synthetic' }
+        }
+
+        const result = await releaseDeadSessionHolders({ namespace: state, stackId, successor: { holderId: holderA, checkoutId: checkoutA },
+            now: '2026-09-07T12:00:00.000Z', observe })
+
+        expect(peak).toBe(4)
+        expect(result).toMatchObject({ kind: 'complete', released: seeded.filter(({ pid }) => pid % 2 === 0).map(({ holderId }) => ({ holderId })) })
     })
 
     it('refuses a malformed or oversized holder list without observing any process', async () => {

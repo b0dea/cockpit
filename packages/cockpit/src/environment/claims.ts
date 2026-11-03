@@ -267,6 +267,8 @@ const RestoreReservationSchema = z.object({
     configSha256: z.string().regex(sha256Identity),
     stepSha256: z.string().regex(sha256Identity),
     reservedAt: z.string().refine(isCanonicalTimestamp),
+    pid: z.number().int().min(1).max(2_147_483_647),
+    processStart: z.string().refine(isProcessStart).optional(),
 }).strict().refine((value) => value.holderId === value.requesterId)
 
 const CoordinationValueSchema = z.object({
@@ -362,6 +364,10 @@ interface RestoreReservation {
     readonly configSha256: string
     readonly stepSha256: string
     readonly reservedAt: string
+    // The process running the restore, recorded like a session's hold so that a restore whose
+    // process died before settling can be proven abandoned and released.
+    readonly pid: number
+    readonly processStart?: string
 }
 
 declare const restoreExecutionLeaseBrand: unique symbol
@@ -763,8 +769,16 @@ export function liveHolderMessage(holders: readonly ClaimHolder[]): string {
 }
 
 export type ReleaseDeadSessionHoldersResult =
-    | { readonly kind: 'complete'; readonly released: readonly ClaimHolder[] }
+    | {
+          readonly kind: 'complete'
+          readonly released: readonly ClaimHolder[]
+          // A warning, present when a restore whose process is gone was released first.
+          readonly interruptedRestore?: EnvironmentDiagnostic
+      }
     | ClaimMutationRefusal
+
+// Every probe is a child process; a record may name thousands of holders.
+const MAX_CONCURRENT_HOLDER_PROBES = 4
 
 /**
  * Remove the holds of `cockpit session` wrappers whose process is gone. A session killed with
@@ -772,6 +786,10 @@ export type ReleaseDeadSessionHoldersResult =
  * `down`, `reset` and `sleep` refuse forever while naming a session nobody could end. When every
  * holder is dead, the requesting holder takes the stack over in the same transaction: the stack is
  * still running, and a lease no holder retains reads as a stopped stack whose ports are free.
+ *
+ * A restore reservation is released first, the same way: a restore that died before settling
+ * (SIGKILL, out of memory, a closed terminal) otherwise blocked every later up, sleep, down and
+ * reset, and only editing the state by hand recovered.
  */
 export async function releaseDeadSessionHolders(input: {
     readonly namespace: StateNamespace
@@ -783,27 +801,65 @@ export async function releaseDeadSessionHolders(input: {
     const stored = await readState(input.namespace.paths.coordination(input.stackId))
     if (stored.kind === 'missing') return { kind: 'complete', released: [] }
     if (stored.kind !== 'complete') return stateRefusal(stored)
-    const value = decodeCoordinationRecord(stored.value, input.stackId)
+    let value = decodeCoordinationRecord(stored.value, input.stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
-    if (isDrainActive(value) || isRestoreActive(value)) return { kind: 'complete', released: [] }
-    // Probes are independent child processes; Promise.all keeps the verdicts in holder order.
+    if (isDrainActive(value)) return { kind: 'complete', released: [] }
+    let interruptedRestore: EnvironmentDiagnostic | undefined
+    if (value.restore) {
+        const restore = value.restore
+        // A running restore, or one whose process cannot be proven gone, keeps the stack; the
+        // refusal that follows names it.
+        if (!isProcessGone(restore.processStart, await input.observe(restore.pid))) return { kind: 'complete', released: [] }
+        let latest: CoordinationRecord | undefined
+        const result = await transactClaim<ReleaseDeadSessionHoldersResult>(input.namespace, input.stackId, input.successor.holderId, (current) => {
+            latest = decodeCoordinationRecord(current, input.stackId)
+            if (!latest) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
+            // Only the reservation still recorded exactly as it was observed is released; a restore
+            // that started since is a running one.
+            if (latest.restore?.reservationId !== restore.reservationId || latest.restore.pid !== restore.pid
+                || latest.restore.processStart !== restore.processStart) return abortStateTransaction({ kind: 'complete', released: [] })
+            latest = { ...latest, restore: null }
+            return coordinationStateRecord(input.namespace, input.stackId, current, input.now, latest)
+        })
+        if ('diagnostics' in result || 'released' in result) return result
+        if (result.kind !== 'complete') return result.kind === 'missing'
+            ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
+        value = latest!
+        interruptedRestore = Object.freeze({
+            severity: 'warning' as const,
+            // Code and fix are literals, so the diagnostic inventory captures the fix beside the code.
+            code: 'RESTORE_INTERRUPTED' satisfies typeof ENVIRONMENT_CODES.RESTORE_INTERRUPTED,
+            message: `a restore of this stack's data by process ${restore.pid}, reserved at ${restore.reservedAt}, ended before it finished; cockpit released its reservation, and the stack's data may be partially restored`,
+            target: input.stackId,
+            fix: 'run npx --no cockpit reset --config <your cockpit.toml>, which only previews the data it would delete; a person who agrees runs it again with --interactive and confirms. Then npx --no cockpit up --config <your cockpit.toml> restores the data again',
+        })
+    }
+    const restoreOutcome = interruptedRestore ? { interruptedRestore } : {}
     const candidates = value.holders.filter((holder) => holder.holderId !== input.successor.holderId && holder.pid !== undefined)
-    const observed = await Promise.all(candidates.map((holder) => input.observe(holder.pid!)))
+    // Indexed slots keep the verdicts in holder order whatever order the probes finish in.
+    const observed: ProcessStartObservation[] = new Array(candidates.length)
+    let next = 0
+    await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_HOLDER_PROBES, candidates.length) }, async () => {
+        while (next < candidates.length) {
+            const index = next++
+            observed[index] = await input.observe(candidates[index]!.pid!)
+        }
+    }))
     const dead = candidates.filter((holder, index) => isProcessGone(holder.processStart, observed[index]!))
-    if (dead.length === 0) return { kind: 'complete', released: [] }
+    if (dead.length === 0) return { kind: 'complete', released: [], ...restoreOutcome }
     let committed: readonly ClaimHolder[] = []
     const result = await transactClaim<ReleaseDeadSessionHoldersResult>(input.namespace, input.stackId, input.successor.holderId, (current) => {
         const latest = decodeCoordinationRecord(current, input.stackId)
         if (!latest) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
         if (isDrainActive(latest) || isRestoreActive(latest) || latest.lease === null || latest.lease.released) {
-            return abortStateTransaction({ kind: 'complete', released: [] })
+            return abortStateTransaction({ kind: 'complete', released: [], ...restoreOutcome })
         }
         // Only a holder still recorded exactly as it was observed is released; one that changed
         // since is someone else's to judge.
         const released = dead.filter((holder) => latest.holders.some((candidate) => candidate.holderId === holder.holderId
             && candidate.claimedAt === holder.claimedAt && candidate.pid === holder.pid
             && candidate.processStart === holder.processStart))
-        if (released.length === 0) return abortStateTransaction({ kind: 'complete', released: [] })
+        if (released.length === 0) return abortStateTransaction({ kind: 'complete', released: [], ...restoreOutcome })
         committed = released
         const remaining = latest.holders.filter((holder) => !released.some(({ holderId }) => holderId === holder.holderId))
         const reduced: CoordinationRecord = { ...latest, holders: remaining, lastReleasedHolder: released.at(-1)!.holderId }
@@ -814,7 +870,7 @@ export async function releaseDeadSessionHolders(input: {
     if ('diagnostics' in result || 'released' in result) return result
     if (result.kind !== 'complete') return result.kind === 'missing'
         ? refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim transaction returned no record', result.path) : stateRefusal(result)
-    return { kind: 'complete', released: Object.freeze(committed) }
+    return { kind: 'complete', released: Object.freeze(committed), ...restoreOutcome }
 }
 
 export type ActiveStackInventoryResult =
@@ -1449,7 +1505,9 @@ export async function reserveDrain(input: {
         if (!value || current === null || current.revision !== request.expectedCoordinationRevision) {
             return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'drain reservation requires the exact current coordination revision', request.stackId))
         }
-        if (value.drain !== null || value.restore !== null) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'the stack already has an exclusive mutation', request.stackId))
+        if (value.restore) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `the drain waits while process ${value.restore.pid} restores the stack's data`, request.stackId,
+            'wait for the cockpit command restoring this stack to finish, or stop it with kill <pid> for the process the message names; then rerun this command, which releases a restore whose process has ended'))
+        if (value.drain !== null) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'the stack already has an exclusive mutation', request.stackId))
         if (request.holderId !== request.requesterId
             || value.holders.length !== 1
             || value.holders[0]?.holderId !== request.holderId
@@ -2731,11 +2789,11 @@ function restoreAuthorityRefusal(message: string, target: string): ClaimMutation
     )
 }
 
-function restoreAuthorityInput(input: unknown): Omit<RestoreExecutionContract, 'revision' | 'reservationId'> | undefined {
+function restoreAuthorityInput(input: unknown, extraKeys: readonly string[] = []): Omit<RestoreExecutionContract, 'revision' | 'reservationId'> | undefined {
     try {
         if (input === null || typeof input !== 'object' || Array.isArray(input)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(input)
-        const expected = ['namespace', 'stackId', 'holderId', 'requesterId', 'configPath', 'configSha256', 'stepSha256']
+        const expected = ['namespace', 'stackId', 'holderId', 'requesterId', 'configPath', 'configSha256', 'stepSha256', ...extraKeys]
         if (Reflect.ownKeys(descriptors).length !== expected.length
             || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
         const namespace = authenticateStateNamespace(descriptors.namespace!.value)
@@ -2768,13 +2826,29 @@ export async function issueRestoreExecutionAuthority(input: {
     readonly configPath: string
     readonly configSha256: string
     readonly stepSha256: string
+    /** Reads this process's start identity; production binds `observeProcessStart` with `processHost`. */
+    readonly observe: (pid: number) => Promise<ProcessStartObservation>
 }): Promise<RestoreExecutionAuthorityResult> {
-    const request = restoreAuthorityInput(input)
-    if (!request) return restoreAuthorityRefusal('restore authority input is malformed', 'restore authority input')
+    const request = restoreAuthorityInput(input, ['observe'])
+    let observe: unknown
+    try { observe = Object.getOwnPropertyDescriptor(input, 'observe')?.value } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        observe = undefined
+    }
+    if (!request || typeof observe !== 'function') return restoreAuthorityRefusal('restore authority input is malformed', 'restore authority input')
     const source = await observeConfigSource(request.configPath)
     if (source.state !== 'available' || source.sha256 !== request.configSha256) {
         return restoreAuthorityRefusal('restore configuration is no longer current', request.configPath)
     }
+    // The restore runs in this process, so its death is what leaves the reservation behind. A start
+    // that cannot be read leaves a pid-only record, released only once that pid is gone.
+    let own: ProcessStartObservation | undefined
+    try { own = await (observe as (pid: number) => Promise<ProcessStartObservation>)(process.pid) } catch {
+        // An observer that throws read no start, which leaves the pid-only record described above.
+        own = undefined
+    }
+    const restoringProcess = own?.state === 'present' && isProcessStart(own.start)
+        ? { pid: process.pid, processStart: own.start } : { pid: process.pid }
     const reservationId = randomBytes(32).toString('hex')
     const reservedAt = new Date().toISOString()
     const result = await transactClaim<ClaimMutationRefusal>(
@@ -2790,6 +2864,7 @@ export async function issueRestoreExecutionAuthority(input: {
                     reservationId, stackId: request.stackId, holderId: request.holderId,
                     requesterId: request.requesterId, configPath: request.configPath,
                     configSha256: request.configSha256, stepSha256: request.stepSha256, reservedAt,
+                    ...restoringProcess,
                 }),
             })
         },
@@ -2998,7 +3073,9 @@ export async function releaseClaim(input: {
         (current) => {
             const value = decodeCoordinationRecord(current, request.stackId)
             if (!value) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', request.stackId))
-            if (isDrainActive(value) || isRestoreActive(value)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'claim release is blocked while the stack has an exclusive mutation', request.stackId))
+            if (value.restore) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `claim release waits while process ${value.restore.pid} restores the stack's data`, request.stackId,
+                'wait for the cockpit command restoring this stack to finish, or stop it with kill <pid> for the process the message names; then rerun this command, which releases a restore whose process has ended'))
+            if (isDrainActive(value)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'claim release is blocked while the stack has an exclusive mutation', request.stackId))
             const holders = value.holders.filter((holder) => holder.holderId !== request.holderId)
             if (holders.length === value.holders.length) {
                 if (holders.length === 0) {

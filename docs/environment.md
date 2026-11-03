@@ -296,6 +296,15 @@ still running is kept, and so is one whose start could not be read while its pro
 the `CLAIM_CO_TENANT` refusal names each such holder and its process ID, so you can end that
 command, for example with `kill <pid>`, and retry.
 
+A `restored` data mode reserves the stack for the command that runs the restore and records that
+command's process the same way. If the command dies mid-restore, the next `up`, `sleep`, `down` or
+`reset` sees that the process is gone and releases the reservation. While that process runs, or
+when cockpit cannot confirm it is gone, they refuse with `CLAIM_CO_TENANT` and name its process ID.
+Releasing it warns with `RESTORE_INTERRUPTED`, naming the process and when the restore began: the
+restore is not recorded as applied, and the product-data volume may hold part of it. Run `reset`,
+which only previews what it deletes until a person confirms it with `--interactive`, and then `up`
+to restore the data again.
+
 The wrapper passes its process ID and start identity to its command in `COCKPIT_SESSION_PROCESS`, so
 a hold that a `sleep` and then an `up` inside the session drop and re-add is still tied to the
 wrapper, and is released the same way once the wrapper is gone. `up` reads that process's start

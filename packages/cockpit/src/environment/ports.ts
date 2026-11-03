@@ -7,7 +7,6 @@ import {
     coordinationStateRecord,
     decodeCoordinationRecord,
     isDrainActive,
-    isRestoreActive,
     removeExactCoordinationHolder,
     releaseClaim,
     readRootPortInventory,
@@ -1104,7 +1103,8 @@ export async function leasePortFamily(supplied: {
     const prior = decodeCoordinationRecord(priorResult.kind === 'complete' ? priorResult.value : null, input.stackId)
     if (!prior) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
     if (isDrainActive(prior)) return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId)
-    if (isRestoreActive(prior)) return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is being restored', input.stackId)
+    if (prior.restore) return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `port leasing waits while process ${prior.restore.pid} restores the stack's data`, input.stackId,
+        'wait for the cockpit command restoring this stack to finish, or stop it with kill <pid> for the process the message names; then rerun this command, which releases a restore whose process has ended')
     const observed = observePortFamilies({
         config: input.config,
         requestedAt: input.now,
@@ -1122,7 +1122,8 @@ export async function leasePortFamily(supplied: {
         const currentValue = decodeCoordinationRecord(current, input.stackId)
         if (!currentValue) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
         if (isDrainActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId))
-        if (isRestoreActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is being restored', input.stackId))
+        if (currentValue.restore) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `port leasing waits while process ${currentValue.restore.pid} restores the stack's data`, input.stackId,
+            'wait for the cockpit command restoring this stack to finish, or stop it with kill <pid> for the process the message names; then rerun this command, which releases a restore whose process has ended'))
         const added = addCoordinationHolder(currentValue, { holderId: input.holderId, checkoutId: input.checkoutId, ...input.holderProcess }, input.now)
         if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', input.holderId))
         const currentLease = currentValue.lease

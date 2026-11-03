@@ -866,9 +866,9 @@ export function createHealthCommandAdapters(
         checkRoot: false, env: input.env, timeoutMs: input.timeoutMs }, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
-        if (!selectedNamespace) return Object.freeze([])
+        if (!selectedNamespace) return Object.freeze({ kind: 'complete', skipped: Object.freeze([]) })
         const inventory = await readRootPortInventory(selectedNamespace)
-        return inventory.kind === 'complete' ? inventory.skipped : Object.freeze([])
+        return inventory.kind === 'complete' ? Object.freeze({ kind: 'complete', skipped: inventory.skipped }) : inventory
     }
     return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}),
         ...(inspectEvaluator ? { inspectEvaluator } : {}), ...(inspectReadiness ? { inspectReadiness } : {}), readUnreadableState,

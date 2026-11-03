@@ -6,6 +6,7 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load.js'
 import {
     issueDestructiveRunContext,
+    noticeLifecycleRun,
     type DestructiveObservation,
     type DestructiveObservationRefusal,
     type DestructiveReclaimObservation,
@@ -440,52 +441,62 @@ export function createDestructiveCommandAdapters(
                 now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
             })
             if (reaped.kind === 'refusal') return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: reaped.diagnostics })
-            let inventory = await readActiveStackInventory(context.namespace)
-            if (inventory.kind !== 'complete') return refusal(context.stackId)
-            const currentRecord = inventory.value.find(({ stackId }) => stackId === context.stackId)?.record
-            if (!currentRecord?.holders.some(({ holderId, checkoutId }) => (
-                holderId === context.holderId && checkoutId === context.checkoutId
-            ))) {
-                // The active inventory omits a stack whose final holder released it, so the
-                // coordination record itself says whether this stack ever ran.
-                const stored = await readState(context.namespace.paths.coordination(context.stackId))
-                if (stored.kind === 'missing') {
-                    const earlier = await findStackUnderEarlierName({ namespace: context.namespace, cockpitId: context.cockpitId, checkoutId: context.checkoutId })
-                    if (earlier.kind === 'refusal') return refusal(earlier.target, earlier.message, earlier.code)
-                    if (earlier.name !== undefined) return refusal(context.stackId,
-                        earlierNameRefusalMessage(context.source.path, earlier.name), ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME)
-                    return refusal(context.stackId, `this checkout has never claimed the stack, so down and reset have nothing to act on; run \`${cockpitCommand('up')}\` first`)
-                }
-                const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
-                if (!coordination) return refusal(context.stackId)
-                if (coordination.holders.length > 0) {
-                    return refusal(context.stackId, liveHolderMessage(coordination.holders), ENVIRONMENT_CODES.CLAIM_CO_TENANT)
-                }
-                // `sleep` and an ended `session` release the final holder and stop the runtime,
-                // but its containers, networks and images remain. Claiming the stack here, as
-                // `up` would without starting anything, gives down the holder authority to retire
-                // them; refusing sent the operator to start a stack only to remove it.
-                let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
-                const claimed = await lifecycle.withAcquiredPorts(context, async () => true,
-                    (diagnostics) => { claimRefusal = diagnostics; return undefined })
-                if (claimRefusal) return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal })
-                if (!claimed) return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
-                inventory = await readActiveStackInventory(context.namespace)
+            // A restore released above leaves data that may be half applied; the warning rides on
+            // whatever this load returns.
+            const outcome = await (async (): Promise<EnvironmentCommandOutcome<DestructiveRunContext>> => {
+                let inventory = await readActiveStackInventory(context.namespace)
                 if (inventory.kind !== 'complete') return refusal(context.stackId)
+                const currentRecord = inventory.value.find(({ stackId }) => stackId === context.stackId)?.record
+                if (!currentRecord?.holders.some(({ holderId, checkoutId }) => (
+                    holderId === context.holderId && checkoutId === context.checkoutId
+                ))) {
+                    // The active inventory omits a stack whose final holder released it, so the
+                    // coordination record itself says whether this stack ever ran.
+                    const stored = await readState(context.namespace.paths.coordination(context.stackId))
+                    if (stored.kind === 'missing') {
+                        const earlier = await findStackUnderEarlierName({ namespace: context.namespace, cockpitId: context.cockpitId, checkoutId: context.checkoutId })
+                        if (earlier.kind === 'refusal') return refusal(earlier.target, earlier.message, earlier.code)
+                        if (earlier.name !== undefined) return refusal(context.stackId,
+                            earlierNameRefusalMessage(context.source.path, earlier.name), ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME)
+                        return refusal(context.stackId, `this checkout has never claimed the stack, so down and reset have nothing to act on; run \`${cockpitCommand('up')}\` first`)
+                    }
+                    const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
+                    if (!coordination) return refusal(context.stackId)
+                    if (coordination.holders.length > 0) {
+                        return refusal(context.stackId, liveHolderMessage(coordination.holders), ENVIRONMENT_CODES.CLAIM_CO_TENANT)
+                    }
+                    // `sleep` and an ended `session` release the final holder and stop the runtime,
+                    // but its containers, networks and images remain. Claiming the stack here, as
+                    // `up` would without starting anything, gives down the holder authority to retire
+                    // them; refusing sent the operator to start a stack only to remove it.
+                    let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
+                    const claimed = await lifecycle.withAcquiredPorts(context, async () => true,
+                        (diagnostics) => { claimRefusal = diagnostics; return undefined })
+                    if (claimRefusal) return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal })
+                    if (!claimed) return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
+                    inventory = await readActiveStackInventory(context.namespace)
+                    if (inventory.kind !== 'complete') return refusal(context.stackId)
+                }
+                const claimInventory = Object.freeze(inventory.value.flatMap(({ stackId, record }) => (
+                    record.holders.map(({ checkoutId }) => Object.freeze({ stackId, checkoutId }))
+                )))
+                const current = Object.freeze({ stackId: context.stackId, checkoutId: context.checkoutId })
+                const destructive = issueDestructiveRunContext({
+                    lifecycle: context,
+                    instance: Object.freeze({
+                        launcher: current,
+                        claimInventory,
+                    }),
+                })
+                if (destructive.kind === 'complete') issued.set(destructive.result, context)
+                return destructive
+            })()
+            if (!reaped.interruptedRestore) return outcome
+            if (outcome.kind === 'complete') {
+                noticeLifecycleRun(outcome.result, reaped.interruptedRestore)
+                return outcome
             }
-            const claimInventory = Object.freeze(inventory.value.flatMap(({ stackId, record }) => (
-                record.holders.map(({ checkoutId }) => Object.freeze({ stackId, checkoutId }))
-            )))
-            const current = Object.freeze({ stackId: context.stackId, checkoutId: context.checkoutId })
-            const destructive = issueDestructiveRunContext({
-                lifecycle: context,
-                instance: Object.freeze({
-                    launcher: current,
-                    claimInventory,
-                }),
-            })
-            if (destructive.kind === 'complete') issued.set(destructive.result, context)
-            return destructive
+            return Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, reaped.interruptedRestore]) })
         },
         async observe(context: DestructiveRunContext): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined> {
             const lifecycleContext = issued.get(context)

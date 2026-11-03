@@ -144,7 +144,7 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     // every check. Codex creates its home on first run; without one no Codex session can skip the hook.
     try { await stat(home) } catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
-        return unverified(`reading ${home} failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'}`)
+        return unverified(`reading ${home} failed: ${errorCause(error)}`)
     }
     const codexConfig = join(home, 'config.toml')
     let states: Record<string, unknown> = {}
@@ -160,7 +160,7 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
         // smol-toml quotes the lines around a syntax error, and Codex's configuration can hold
         // credentials, so only the position is reported.
         if (error instanceof TomlError) return unverified(`${codexConfig} is not valid TOML at line ${error.line}, column ${error.column}`)
-        return unverified(`reading ${codexConfig} failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'}`)
+        return unverified(`reading ${codexConfig} failed: ${errorCause(error)}`)
     }
     // Codex keys trust by the hooks.json path as the session directory spells it, which may or may
     // not resolve symbolic links, so trust recorded under either spelling counts.

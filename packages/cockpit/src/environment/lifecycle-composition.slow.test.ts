@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -12,7 +12,8 @@ import type { ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
-import { readState } from './state.js'
+import { readState, transactState } from './state.js'
+import { coordinationStateRecord, decodeCoordinationRecord } from './claims.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { deriveCacheKey, observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection } from './generated-application.js'
@@ -180,6 +181,46 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             kind: 'complete', result: { stackId: scenario.context.stackId, change: 'stopped' },
         })
         expect(sessionSteps.filter(({ id }) => id.includes(':stop:'))).toHaveLength(1)
+    }, 120_000)
+
+    // A restore killed mid-run leaves data that may be half applied. Releasing its reservation
+    // silently let the next up report a healthy stack over that data with nobody told.
+    it('warns once, from up and from sleep, when it releases a restore whose process is gone', async () => {
+        const scenario = await runGeneratedScenario()
+        expect(scenario.result, JSON.stringify(scenario.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const interrupted = (result: { diagnostics: readonly { code: string }[] }) => result.diagnostics.filter(({ code }) => code === 'RESTORE_INTERRUPTED')
+        expect(interrupted(scenario.result)).toEqual([])
+        const { namespace, stackId } = scenario.context
+        const leaveRestore = async () => {
+            const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
+            await once(child, 'exit')
+            const written = await transactState(namespace, namespace.paths.coordination(stackId), { ownerId: scenario.context.holderId }, (current) => {
+                const record = decodeCoordinationRecord(current, stackId)!
+                const holderId = record.holders[0]!.holderId
+                return coordinationStateRecord(namespace, stackId, current, new Date().toISOString(), { ...record, restore: {
+                    reservationId: '7'.repeat(64), stackId, holderId, requesterId: holderId, configPath: scenario.candidate.configPath,
+                    configSha256: '8'.repeat(64), stepSha256: '9'.repeat(64), reservedAt: '2026-11-03T05:00:00.000Z', pid: child.pid!,
+                } })
+            })
+            if (written.kind !== 'complete') throw new Error(JSON.stringify(written))
+            return child.pid!
+        }
+        const warning = (pid: number) => [expect.objectContaining({ severity: 'warning', code: 'RESTORE_INTERRUPTED', target: stackId,
+            message: expect.stringContaining(`by process ${pid}, reserved at 2026-11-03T05:00:00.000Z, ended before it finished`),
+            fix: expect.stringContaining('npx --no cockpit reset --config <your cockpit.toml>, which only previews') })]
+
+        const upPid = await leaveRestore()
+        const resumed = await runUp({ configPath: scenario.candidate.configPath }, scenario.adapters)
+        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete' })
+        expect(interrupted(resumed)).toEqual(warning(upPid))
+        const again = await runUp({ configPath: scenario.candidate.configPath }, scenario.adapters)
+        expect(again, JSON.stringify(again)).toMatchObject({ kind: 'complete' })
+        expect(interrupted(again)).toEqual([])
+
+        const sleepPid = await leaveRestore()
+        const slept = await runSleep({ configPath: scenario.candidate.configPath }, scenario.adapters)
+        expect(slept, JSON.stringify(slept)).toMatchObject({ kind: 'complete' })
+        expect(interrupted(slept)).toEqual(warning(sleepPid))
     }, 120_000)
 
     // A data volume removed after its data was applied (reset, a volume prune) comes back empty, and

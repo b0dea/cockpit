@@ -607,6 +607,13 @@ describe('tracked secret files', () => {
             const forged = await inspectTrackedSecretFiles({ executable: git.value, timeoutMs: 5_000,
                 repositories: [{ slug: 'api', root: repository }] }, async step => ({ ...await executeProbe(step), stdout: Buffer.from('') }))
             expect(forged).toEqual([expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'sibling:api' })])
+            // Git exits 128 for a repository it cannot read as it does outside one; the first is no
+            // clean repository, while the directory above still reads as no repository.
+            await writeFile(join(repository, '.git', 'index'), 'not an index')
+            const unreadable = await inspectTrackedSecretFiles({ executable: git.value, timeoutMs: 5_000,
+                repositories: [{ slug: 'api', root: repository }, { slug: 'docs', root }] }, executeProbe)
+            expect(unreadable).toEqual([expect.objectContaining({ severity: 'warning', code: 'EVIDENCE_UNAVAILABLE', target: 'sibling:api',
+                message: expect.stringMatching(/could not be checked: Git failed: fatal: .*index/) })])
         } finally {
             await rm(root, { recursive: true, force: true })
         }
