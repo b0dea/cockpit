@@ -203,12 +203,14 @@ describe('public surface publication transaction', () => {
             expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
         })
 
-        // cockpit renders no browser runner, so the browser is always a local launch: no playwright
-        // MCP server or browser skill is published, and the work authorities still carry the project.
+        // Without a declared endpoint the browser is a local launch: no playwright MCP server or
+        // browser skill is published, and the work authorities still carry the project. With a
+        // loopback endpoint that one Compose service publishes, both are published.
         it.each([
-            { name: 'a nested configuration', layout: 'nested', preapproved: true, serialized: false, openCode: true },
-            { name: 'a linked worktree without preapproval', layout: 'worktree', preapproved: false, serialized: true, openCode: false },
-            { name: 'a standalone directory', layout: 'standalone', preapproved: true, serialized: false, openCode: true },
+            { name: 'a nested configuration', layout: 'nested', preapproved: true, serialized: false, openCode: true, endpoint: false },
+            { name: 'a linked worktree without preapproval', layout: 'worktree', preapproved: false, serialized: true, openCode: false, endpoint: false },
+            { name: 'a standalone directory', layout: 'standalone', preapproved: true, serialized: false, openCode: true, endpoint: false },
+            { name: 'a standalone directory with a loopback endpoint', layout: 'standalone', preapproved: true, serialized: false, openCode: true, endpoint: true },
         ])('publishes source-bound browser and testing surfaces through the canonical transaction ($name)', async variant => {
             let mainCheckout: string | undefined
             let currentCheckoutPath: string | undefined
@@ -247,8 +249,12 @@ addressing = "hostname"
 authentication = "${variant.serialized ? 'real' : 'bypassed'}"
 posture_requirements = [{ requirement = "synthetic-browser", addressing = "hostname", authentication = "${variant.serialized ? 'real' : 'bypassed'}" }]
 generated_host_paths = ${JSON.stringify(artifactPaths)}
-
+${variant.endpoint ? 'compose_files = ["compose.yml"]\n' : ''}
 `
+            if (variant.endpoint) await writeFile(join(fixture.root, 'compose.yml'), [
+                'services:', '  browser:', `    image: node@sha256:${'8'.repeat(64)}`,
+                '    ports: ["127.0.0.1:${BROWSER_PORT}:3001"]',
+                '    volumes: ["${APP_DIR}:/workspace/app", "./.browser/mcp:/browser/mcp", "./.browser/cli:/browser/cli", "./.browser/auth:/browser/auth"]', ''].join('\n'))
             const additions = `
 [[sibling]]
 slug = "browser-source"
@@ -270,7 +276,7 @@ harnesses = [{ target = "claudecode", version = "2.1.220" }, { target = "codexcl
 images = { mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
 project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(digest(manifestBytes))}, lockfile = "app/package-lock.json", sha256 = ${JSON.stringify(projectSha256)}, driver_version = "1.2.3" }
 max_clients = 4
-proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
+${variant.endpoint ? 'endpoint = "ws://localhost:3001/"\n' : ''}proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
 resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
 authentication = ${variant.serialized ? '{ policy = "serialized", states = [{ worker = "shared", path = ".browser/auth/shared.json" }] }' : '{ policy = "none", states = [] }'}
 data = { mode = "empty", isolated = true, reaches_production = false }
@@ -367,14 +373,16 @@ native_hooks = { install = "inspect" }
                 })
                 expect(authorities.testing.registry).toMatchObject({ kind: 'bound', gates: [{ id: 'focused' }] })
                 const mcp = JSON.parse(await readFile(join(fixture.root, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
-                expect(Object.keys(mcp.mcpServers).sort()).toEqual(['unrelated'])
+                expect(Object.keys(mcp.mcpServers).sort()).toEqual(variant.endpoint ? ['playwright', 'unrelated'] : ['unrelated'])
                 const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
                     mcp_servers: Record<string, unknown>
                 }
-                expect(Object.keys(codex.mcp_servers).sort()).toEqual(['unrelated'])
-                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(false)
+                expect(Object.keys(codex.mcp_servers).sort()).toEqual(variant.endpoint ? ['playwright', 'unrelated'] : ['unrelated'])
+                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.endpoint)
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
-                    await expect(lstat(join(fixture.root, prefix, 'skills/cockpit-browser/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+                    const skill = expect(lstat(join(fixture.root, prefix, 'skills/cockpit-browser/SKILL.md')))
+                    if (variant.endpoint) await skill.resolves.toBeDefined()
+                    else await skill.rejects.toMatchObject({ code: 'ENOENT' })
                 }
                 expect(await readFile(join(fixture.root, 'CLAUDE.md'), 'utf8')).toContain('@AGENTS.md')
                 expect(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')).toContain('`focused` (unit)')
