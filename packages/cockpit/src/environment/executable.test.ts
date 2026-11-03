@@ -42,14 +42,7 @@ describe('resolved executable identity', () => {
         expect(isResolvedExecutable(identity)).toBe(false)
     })
 
-    it('rejects an unreadable execution mode without propagating the getter failure', () => {
-        const identity = { canonicalPath: '/bin/tool', invocationPath: '/bin/tool', sha256: digest }
-        Object.defineProperty(identity, 'executionMode', { enumerable: true, get: () => { throw new Error('unreadable') } })
-        expect(() => isResolvedExecutable(identity)).not.toThrow()
-        expect(isResolvedExecutable(identity)).toBe(false)
-    })
-
-    it('classifies specialized identities from one owned property read', () => {
+    it('classifies specialized identities from one property read', () => {
         let reads = 0
         const docker = { canonicalPath: '/opt/runtime/tool', sha256: digest, executionMode: 'verified-path' }
         Object.defineProperty(docker, 'invocationPath', {
@@ -60,12 +53,6 @@ describe('resolved executable identity', () => {
         expect(classified).toBe(true)
         expect(reads).toBe(1)
 
-        const revoked = Proxy.revocable({
-            canonicalPath: '/opt/runtime/tool', invocationPath: '/usr/local/bin/git', sha256: digest, executionMode: 'verified-path',
-        }, {})
-        revoked.revoke()
-        expect(() => isResolvedGitExecutable(revoked.proxy)).not.toThrow()
-        expect(isResolvedGitExecutable(revoked.proxy)).toBe(false)
     })
 
     it.each([

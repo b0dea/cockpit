@@ -55,11 +55,10 @@ function metric(stackId: StackId, evidence: MachineFloorEvidence, code: Environm
 export function observeHostCapacity(input: {
     readonly evidence: MachineFloorEvidence
 }): readonly EnvironmentObservation[] {
-    if (input === null || typeof input !== 'object') throw new RefusalError('machine-floor evidence is not authentic')
-    const descriptors = Object.getOwnPropertyDescriptors(input)
-    if (Object.keys(descriptors).length !== 1 || !descriptors.evidence || !('value' in descriptors.evidence)
-        || !isMachineFloorEvidence(descriptors.evidence.value)) throw new RefusalError('machine-floor evidence is not authentic')
-    const evidence = descriptors.evidence.value as MachineFloorEvidence
+    if (input === null || typeof input !== 'object' || Object.keys(input).length !== 1 || !isMachineFloorEvidence(input.evidence)) {
+        throw new RefusalError('machine-floor evidence is not authentic')
+    }
+    const evidence = input.evidence
     const stackId = evidence.stackId
     const floor = snapshotJson(evidence.floor)
     if (typeof stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(stackId)

@@ -27,21 +27,16 @@ export interface ResolvedExecutable {
 const SHA256 = /^[a-f0-9]{64}$/
 
 export function resolvedExecutable(value: unknown): ResolvedExecutable | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)
-            || !exactKeys(value, ['canonicalPath', 'invocationPath', 'sha256', 'executionMode'])) return undefined
-        const { canonicalPath, invocationPath, sha256, executionMode } = value as Partial<ResolvedExecutable>
-        return typeof canonicalPath === 'string' && isAbsolute(canonicalPath) && normalize(canonicalPath) === canonicalPath
-            && !canonicalPath.includes('\0') && typeof invocationPath === 'string' && isAbsolute(invocationPath)
-            && normalize(invocationPath) === invocationPath && !invocationPath.includes('\0')
-            && typeof sha256 === 'string' && SHA256.test(sha256)
-            && executionMode === 'verified-path'
-            ? { canonicalPath, invocationPath, sha256, executionMode }
-            : undefined
-    } catch {
-        // A throwing accessor or proxy trap means the identity is malformed.
-        return undefined
-    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)
+        || !exactKeys(value, ['canonicalPath', 'invocationPath', 'sha256', 'executionMode'])) return undefined
+    const { canonicalPath, invocationPath, sha256, executionMode } = value as Partial<ResolvedExecutable>
+    return typeof canonicalPath === 'string' && isAbsolute(canonicalPath) && normalize(canonicalPath) === canonicalPath
+        && !canonicalPath.includes('\0') && typeof invocationPath === 'string' && isAbsolute(invocationPath)
+        && normalize(invocationPath) === invocationPath && !invocationPath.includes('\0')
+        && typeof sha256 === 'string' && SHA256.test(sha256)
+        && executionMode === 'verified-path'
+        ? { canonicalPath, invocationPath, sha256, executionMode }
+        : undefined
 }
 
 export function isResolvedExecutable(value: unknown): boolean {

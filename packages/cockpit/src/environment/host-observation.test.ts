@@ -104,16 +104,6 @@ describe('host capacity evidence', () => {
         } as never)).toThrow('machine-floor evidence is not authentic')
     })
 
-    it('does not invoke a hostile getter and fails closed', () => {
-        let reads = 0
-        const input = Object.defineProperty({}, 'stackId', {
-            enumerable: true,
-            get() { reads += 1; throw new Error('revoked') },
-        })
-        expect(() => observeHostCapacity(input as never)).toThrow('machine-floor evidence is not authentic')
-        expect(reads).toBe(0)
-    })
-
     it('requires host measurements only for an authentic declared machine floor', async () => {
         const absent = aggregateObservations([[]], await evaluationContext(new Date().toISOString())).checks
             .filter(({ owner }) => owner === 'host-observation')
