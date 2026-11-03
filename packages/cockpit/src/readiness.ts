@@ -90,8 +90,8 @@ export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
         needs: 'Codex runs the guard hook only once a person on this machine has trusted it',
         fix: 'a person trusts the hook from codex in a terminal in the cockpit root' },
     { id: 'work-evaluator', level: 'recommended', appliesTo: BOTH, codes: [C.EVALUATOR_UNAVAILABLE],
-        needs: 'work review and work grade run the agent tool workorders.evaluator selects as the evaluator independent of the agent that did the work',
-        fix: 'install the selected evaluator tool and sign in to it, or set workorders.evaluator to one you have' },
+        needs: 'work review and work grade run the first agent tool workorders.evaluators lists that can run, as the evaluator independent of the agent that did the work',
+        fix: 'install and sign in to an evaluator tool workorders.evaluators lists, or list one you have' },
 ]
 
 export interface ReadinessFinding {

@@ -592,9 +592,9 @@ describe('work and browser declarations', () => {
 
     it('keeps WIP and attempt controls lower-only', () => {
         expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3,
-            verification_timeout_seconds: 1_800, evaluator_timeout_seconds: 900, evaluator: 'codexcli' })
-        for (const evaluator of ['claudecode', 'opencode']) expect(Workorders.parse({ evaluator })).toMatchObject({ evaluator })
-        expect(Workorders.safeParse({ evaluator: 'cursor' }).success).toBe(false)
+            verification_timeout_seconds: 1_800, evaluator_timeout_seconds: 900, evaluators: ['codexcli', 'claudecode', 'opencode'] })
+        expect(Workorders.parse({ evaluators: ['opencode', 'claudecode'] })).toMatchObject({ evaluators: ['opencode', 'claudecode'] })
+        for (const evaluators of [[], ['cursor'], ['claudecode', 'claudecode']]) expect(Workorders.safeParse({ evaluators }).success, JSON.stringify(evaluators)).toBe(false)
         for (const field of ['verification_timeout_seconds', 'evaluator_timeout_seconds']) {
             for (const value of [0, 7_201, 1.5]) expect(Workorders.safeParse({ [field]: value }).success, `${field}=${value}`).toBe(false)
         }

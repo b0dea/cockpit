@@ -2935,15 +2935,24 @@
           "minimum": 1,
           "maximum": 7200
         },
-        "evaluator": {
-          "default": "codexcli",
-          "description": "Agent tool that runs the independent reviewers and grader for work review and work grade: codexcli, claudecode or opencode.",
-          "type": "string",
-          "enum": [
+        "evaluators": {
+          "default": [
             "codexcli",
             "claudecode",
             "opencode"
-          ]
+          ],
+          "description": "Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode.",
+          "minItems": 1,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "codexcli",
+              "claudecode",
+              "opencode"
+            ]
+          }
         }
       },
       "additionalProperties": false

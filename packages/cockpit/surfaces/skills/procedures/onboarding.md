@@ -367,8 +367,8 @@ contract and the independent grading, not the thinking: reuse the planning skill
    findings and re-run affected proof. Then run
    `./node_modules/.bin/cockpit work review --config cockpit.toml --work-order WO-001 --json` to run and persist cockpit's independent
    simplification, code/spec and security findings. Fix every blocking finding and repeat the command until
-   all required review lanes pass. The reviews and the grade run in the agent tool `workorders.evaluator`
-   selects (the Codex CLI unless it names Claude Code or OpenCode), which must be on `PATH` and signed in;
+   all required review lanes pass. The reviews and the grade run in the first agent tool
+   `workorders.evaluators` lists that can run, so one must be on `PATH` and signed in;
    if a refusal says it could not run, report that cause to the human instead of retrying.
 5. **Pass the work to the evaluator** through `./node_modules/.bin/cockpit work grade --config cockpit.toml --work-order WO-001 --json`. Never grade
    your own work: the evaluator is the grader and there is no separate grader skill. The result lists each

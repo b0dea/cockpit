@@ -63,9 +63,9 @@ function renderAttributions(attributions: readonly Attribution[]): string {
 function draftConfig(model: DocumentModel): Record<string, unknown> {
     // Written, the guard hosts read as a decision that none exists, even as the schema default [].
     const { hosted_db_hosts: _hosted, vendor_endpoint_hosts: _vendors, ...guards } = model.defaults.guards
-    // No registry dialect records the work-order time budgets or the evaluator tool, so a draft that
+    // No registry dialect records the work-order time budgets or the evaluator tools, so a draft that
     // wrote the schema's values would present them as this product's; left out, the loader applies the same defaults.
-    const { verification_timeout_seconds: _verification, evaluator_timeout_seconds: _timeout, evaluator: _evaluator, ...workorders } = model.defaults.workorders
+    const { verification_timeout_seconds: _verification, evaluator_timeout_seconds: _timeout, evaluators: _evaluators, ...workorders } = model.defaults.workorders
     const bases = model.inferred?.['ports.bases']
     const composeFiles = model.inferred?.['environment.compose_files']
     return {

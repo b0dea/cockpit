@@ -291,7 +291,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('an empty entry is the working directory') }))
     })
 
-    it('warns from doctor when the cockpit has work orders but the evaluator workorders.evaluator selects is not on PATH', async () => {
+    it('warns from doctor when the cockpit has work orders but no evaluator workorders.evaluators lists is on PATH', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const doctor = async () => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
             configPath: candidate.configPath, env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
@@ -303,10 +303,10 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect((await doctor()).diagnostics).toContainEqual(warning)
         await writeFile(join(candidate.root, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
-        // Codex on PATH says nothing about a cockpit that grades with Claude Code.
-        await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[workorders]\nevaluator = "claudecode"\n`)
+        // Codex on PATH says nothing about a cockpit whose list names only Claude Code and OpenCode.
+        await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n[workorders]\nevaluators = ["claudecode", "opencode"]\n`)
         expect((await doctor()).diagnostics).toContainEqual(expect.objectContaining({ code: 'EVALUATOR_UNAVAILABLE',
-            message: expect.stringContaining('claude, which workorders.evaluator = "claudecode" selects') }))
+            message: expect.stringMatching(/Claude Code \(claude\) is not on PATH .*; OpenCode \(opencode\) is not on PATH/) }))
         await writeFile(join(candidate.root, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
         expect((await doctor()).diagnostics).not.toContainEqual(warning)
     })

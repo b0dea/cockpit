@@ -1,7 +1,8 @@
 import { lstat, realpath } from 'node:fs/promises'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
-import { EVALUATOR_COMMANDS, type EvaluatorTool } from '../schema.js'
+import type { EvaluatorTool } from '../schema.js'
+import { evaluatorUnavailable, findEvaluators } from '../grading/evaluate.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
@@ -26,7 +27,7 @@ import {
     type ExecutionStep,
 } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
+import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import {
     observeExternalDependencies,
     observeExternalDependency,
@@ -644,34 +645,28 @@ async function checkoutProjection(
     }, consumeSetupCheckoutProjection)
 }
 
-// Work orders exist once workorders/ does, and from then on work review and work grade run the tool
-// workorders.evaluator selects as the independent evaluator whichever agent tool did the work; doctor
-// names a missing one before a grade fails on it.
-async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>, evaluator: EvaluatorTool): Promise<readonly EnvironmentDiagnostic[]> {
+// Work orders exist once workorders/ does, and from then on work review and work grade run the first
+// tool workorders.evaluators lists that can run, whichever agent tool did the work; doctor names the case
+// where none is on PATH before a grade fails on it.
+async function inspectWorkEvaluator(root: string, env: Readonly<Record<string, string | undefined>>, evaluators: readonly EvaluatorTool[]): Promise<readonly EnvironmentDiagnostic[]> {
     try { if (!(await lstat(join(root, 'workorders'))).isDirectory()) return Object.freeze([]) }
     catch (error) {
         if (hasErrorCode(error, 'ENOENT')) return Object.freeze([])
         throw error
     }
-    const command = EVALUATOR_COMMANDS[evaluator]
     // work review searches only canonical PATH directories, so doctor does too.
+    const directories: string[] = []
     for (const directory of (env.PATH ?? '').split(delimiter)) {
         if (!directory || !isAbsolute(directory) || resolve(directory) !== directory) continue
-        let canonical: string
-        try { canonical = await realpath(directory) } catch (error) {
+        try { if (await realpath(directory) === directory) directories.push(directory) } catch (error) {
             if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES')) continue
             throw error
         }
-        if (canonical === directory && (await resolveExecutablePath(join(directory, command))).state === 'available') return Object.freeze([])
     }
-    return Object.freeze([Object.freeze({
-        severity: 'warning' as const,
-        // A literal, so the diagnostic inventory captures the fix beside the code.
-        code: 'EVALUATOR_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.EVALUATOR_UNAVAILABLE,
-        message: `this cockpit has work orders, but ${command}, which workorders.evaluator = "${evaluator}" selects to run work review and work grade as the independent evaluator, is not on PATH`,
-        target: 'workorders',
-        fix: 'install the evaluator workorders.evaluator selects and sign in to it (codexcli: npm install -g @openai/codex, then codex login; claudecode: npm install -g @anthropic-ai/claude-code, then claude auth login; opencode: npm install -g opencode-ai, then opencode auth login), or set workorders.evaluator to one you have, then run npx --no cockpit doctor --config <your cockpit.toml>',
-    })])
+    const { found, missing } = await findEvaluators(evaluators, directories)
+    if (found.length) return Object.freeze([])
+    return Object.freeze([Object.freeze({ severity: 'warning' as const, target: 'workorders',
+        ...evaluatorUnavailable(`this cockpit has work orders, but no evaluator workorders.evaluators lists is on PATH to run work review and work grade: ${missing.map(row => row.message).join('; ')}`) })])
 }
 
 export function createHealthCommandAdapters(
@@ -863,7 +858,7 @@ export function createHealthCommandAdapters(
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
     const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), env: input.env })
         : undefined
-    const inspectEvaluator = input ? (evaluator: EvaluatorTool) => inspectWorkEvaluator(dirname(input.configPath), input.env, evaluator) : undefined
+    const inspectEvaluator = input ? (evaluators: readonly EvaluatorTool[]) => inspectWorkEvaluator(dirname(input.configPath), input.env, evaluators) : undefined
     const inspectReadiness = input ? () => inspectProjectReadiness({ root: dirname(input.configPath), configPath: input.configPath,
         checkRoot: false, env: input.env, timeoutMs: input.timeoutMs }, execute) : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.

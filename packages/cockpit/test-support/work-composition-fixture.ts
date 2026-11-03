@@ -112,7 +112,7 @@ if (tool === 'codex') {
 `
 
 export function createWorkCompositionFixtureSupport(roots: string[]) {
-async function configuredFixture(options: Readonly<{ rootSibling?: boolean; externalSibling?: boolean; authority?: readonly string[]; hardlinkedGit?: boolean; evaluator?: EvaluatorTool; evaluatorTimeoutSeconds?: number }> = {}) {
+async function configuredFixture(options: Readonly<{ rootSibling?: boolean; externalSibling?: boolean; authority?: readonly string[]; hardlinkedGit?: boolean; evaluators?: readonly EvaluatorTool[]; evaluatorTimeoutSeconds?: number }> = {}) {
     const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-work-application-'))); roots.push(fixtureRoot)
     const root = options.externalSibling ? join(fixtureRoot, 'cockpit') : fixtureRoot
     if (options.externalSibling) await mkdir(root)
@@ -133,6 +133,9 @@ purpose = "Synthetic root declaration"
     let declaration = (await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')).replace(
         'name = "generated-environment"', `name = "generated-environment"\nsiblings_root = "${options.externalSibling ? '..' : '.'}"`,
     ) + rootSibling + '\n[testing]\nstages = [{ id = "unit", command = ["npm", "test", "--", "cache-1"], requires_stack = false }, { id = "stack", command = ["npm", "test", "--", "stack"], requires_stack = true }]\ngates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Isolated behavior" }, { id = "stacked", tier = "targeted", stages = ["stack"], changes = "Runtime behavior" }]\nnative_hooks = { install = "inspect" }\n'
+    // One evaluator unless a case asks for more, so a fake that is moved away is not answered for by the next.
+    declaration += `\n[workorders]\nevaluators = ${JSON.stringify(options.evaluators ?? ['codexcli'])}\n${
+        options.evaluatorTimeoutSeconds ? `evaluator_timeout_seconds = ${options.evaluatorTimeoutSeconds}\n` : ''}`
     if (options.externalSibling) {
         const external = CockpitConfig.parse(parseToml(declaration))
         external.environment.generated!.vendors = []
@@ -140,8 +143,6 @@ purpose = "Synthetic root declaration"
             .filter(entry => entry.subject !== 'vendor')
         declaration = stringifyToml(CockpitConfig.parse(external))
     }
-    if (options.evaluator) declaration += `\n[workorders]\nevaluator = "${options.evaluator}"\n${
-        options.evaluatorTimeoutSeconds ? `evaluator_timeout_seconds = ${options.evaluatorTimeoutSeconds}\n` : ''}`
     await writeFile(configPath, declaration)
     await writeFile(join(root, '.gitignore'), '.native-calls\n.native-mode\n.native-expect-artifact\n.verification-fail\n.gate-mutate\n.completion-observations\n.completion-artifact-race\n.execution-hold\n.execution-started\n.identity-inventory-unavailable\n.identity-inventory-malformed\n.identity-worktree-malformed\n.identity-inventory-change\n.identity-inventory-count\n.repository-status-malformed\n.git-temp-warning\n')
     await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')

@@ -154,8 +154,9 @@ their subcommands. Every command and flag is in the [CLI reference](docs/cli-ref
 - **Running the stack needs Docker Compose** and a measured local runtime. Generation and `check`
   work without Docker; see [which commands need a runtime](docs/environment.md#measure-the-container-runtime).
 - **Work orders need one headless agent tool.** `work review` and `work grade` run the independent
-  reviewers and grader in the Codex CLI, Claude Code or OpenCode, as `workorders.evaluator` selects
-  (Codex by default), so that tool must be on `PATH` and signed in, whichever tool did the work; see
+  reviewers and grader in the first of the Codex CLI, Claude Code and OpenCode that
+  `workorders.evaluators` lists and that can run, so one of them must be on `PATH` and signed in,
+  whichever tool did the work; see
   [Verify and grade independently](docs/work-and-browser.md#verify-and-grade-independently).
 - **Not a sandbox.** Guards, ignore rules and file permissions stop mistakes, not malicious code
   running as your user.

@@ -105,7 +105,7 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly workOrderPolicy: ValidatedWorkOrderPolicy
     readonly verificationTimeoutSeconds: number
     readonly evaluatorTimeoutSeconds: number
-    readonly evaluator: EvaluatorTool
+    readonly evaluators: readonly EvaluatorTool[]
     readonly generatedHostPaths: readonly string[]
     readonly browser?: ReturnType<typeof projectBrowserConfig>
     readonly testing?: ReturnType<typeof projectTestingConfig>
@@ -211,7 +211,7 @@ export function projectWorkEnvironmentConfig(
         workOrderPolicy: policy.policy,
         verificationTimeoutSeconds: loaded.config.workorders.verification_timeout_seconds,
         evaluatorTimeoutSeconds: loaded.config.workorders.evaluator_timeout_seconds,
-        evaluator: loaded.config.workorders.evaluator,
+        evaluators: Object.freeze([...loaded.config.workorders.evaluators]),
         generatedHostPaths: Object.freeze([...loaded.config.environment.generated_host_paths]),
         ...(browser === undefined ? {} : { browser }),
         ...(testing === undefined ? {} : { testing }),

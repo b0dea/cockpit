@@ -4606,7 +4606,7 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** A warning when work orders exist but their independent evaluator cannot run on this machine. */
-    readonly inspectEvaluator?: (evaluator: EvaluatorTool) => Promise<readonly EnvironmentDiagnostic[]>
+    readonly inspectEvaluator?: (evaluators: readonly EvaluatorTool[]) => Promise<readonly EnvironmentDiagnostic[]>
     /** Warnings about prerequisites the stack checks do not cover: the local install, sibling remotes, committed secrets. */
     readonly inspectReadiness?: () => Promise<readonly EnvironmentDiagnostic[]>
     /** Other cockpits' state namespaces this version skipped, or why the inventory could not be read; read after load has selected this cockpit's state root. */
@@ -4706,7 +4706,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
 // a docs-only cockpit has no product to test and stays quiet.
 async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, adapters: DoctorCommandAdapters): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
-    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(loaded.result.config.workorders.evaluator) : Object.freeze([])
+    return loaded.kind === 'complete' && adapters.inspectEvaluator ? adapters.inspectEvaluator(loaded.result.config.workorders.evaluators) : Object.freeze([])
 }
 
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {

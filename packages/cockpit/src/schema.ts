@@ -860,8 +860,11 @@ export const Workorders = z
             .describe('Seconds one declared work-order verification command may run before it is stopped and reported as not run.'),
         evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds one independent review or grading run of the evaluator may take before it is stopped.'),
-        evaluator: z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[]).default('codexcli')
-            .describe('Agent tool that runs the independent reviewers and grader for work review and work grade: codexcli, claudecode or opencode.'),
+        // An ordered fallback list: the first that runs answers, and one that is missing, signed out or
+        // rate-limited is recorded and passed over. It never falls back to the agent grading itself.
+        evaluators: z.array(z.enum(['codexcli', 'claudecode', 'opencode'] as const satisfies readonly EvaluatorTool[])).min(1).max(3)
+            .refine(tools => new Set(tools).size === tools.length, 'list each evaluator once').default(['codexcli', 'claudecode', 'opencode'])
+            .describe('Agent tools that run the independent reviewers and grader for work review and work grade, tried in order: codexcli, claudecode, opencode.'),
     })
     .strict()
 
