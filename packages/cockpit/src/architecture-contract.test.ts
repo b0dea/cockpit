@@ -4034,17 +4034,10 @@ describe('product architecture contract', () => {
         ['reclaim progress type', 'packages/cockpit/src/environment/reclaim.ts', 'interface Continuation { readonly progressAuthority: DrainProgressAuthority }'],
         ['runtime sealed store', 'packages/cockpit/src/environment/runtime.ts', 'const outcomes = new WeakMap<object, DrainAttemptSuccessAuthority>()'],
         ['runtime inferred progress store', 'packages/cockpit/src/environment/runtime.ts', 'const drainProgressAuthorities = new WeakMap()'],
-    ])('confines finite claims-broker ownership: %s', (_label, path, source) => {
-        expect(claimsBrokerOwnershipViolations(new Map([[path, source]]))).toContain(
-            'ARCH037_DRAIN_REDEMPTION_BOUNDARY',
-        )
-    })
-
-    it.each([
         ['runtime permit record', 'packages/cockpit/src/environment/runtime.ts', 'interface Contract { readonly permit: object }'],
         ['reclaim progress record', 'packages/cockpit/src/environment/reclaim.ts', 'type Continuation = { readonly progressAuthority: object | null }'],
         ['reclaim failure record', 'packages/cockpit/src/environment/reclaim.ts', 'const continuation = { failureAuthority: Object.freeze({}) }'],
-    ])('reserves broker capability data-field names in runtime and reclaim: %s', (_label, path, source) => {
+    ])('confines finite claims-broker ownership and reserves its capability field names: %s', (_label, path, source) => {
         expect(claimsBrokerOwnershipViolations(new Map([[path, source]]))).toContain(
             'ARCH037_DRAIN_REDEMPTION_BOUNDARY',
         )
@@ -4117,23 +4110,13 @@ describe('product architecture contract', () => {
         ]))).toContain('ARCH037_DRAIN_REDEMPTION_BOUNDARY')
     })
 
-    it('rejects publication result escape from its application owner', () => {
+    it.each([
+        ['returned', "import { prepareDrainOutcomePublication } from './claims.js'; function expose() { return prepareDrainOutcomePublication({}) }"],
+        ['awaited', "import { prepareDrainOutcomePublication } from './claims.js'; async function expose() { return await prepareDrainOutcomePublication({}) }"],
+        ['conditionally awaited', "import { prepareDrainOutcomePublication } from './claims.js'; async function expose(enabled: boolean) { return enabled ? await prepareDrainOutcomePublication({}) : undefined }"],
+    ])('rejects %s publication result escape from its application owner', (_label, source) => {
         expect(claimsBrokerOwnershipViolations(new Map([
-            ['packages/cockpit/src/environment/application.ts', "import { prepareDrainOutcomePublication } from './claims.js'; function expose() { return prepareDrainOutcomePublication({}) }"],
-            ['packages/cockpit/src/environment/claims.ts', operationClaimsFixture()],
-        ]))).toContain('ARCH037_DRAIN_REDEMPTION_BOUNDARY')
-    })
-
-    it('rejects awaited publication result escape from its application owner', () => {
-        expect(claimsBrokerOwnershipViolations(new Map([
-            ['packages/cockpit/src/environment/application.ts', "import { prepareDrainOutcomePublication } from './claims.js'; async function expose() { return await prepareDrainOutcomePublication({}) }"],
-            ['packages/cockpit/src/environment/claims.ts', operationClaimsFixture()],
-        ]))).toContain('ARCH037_DRAIN_REDEMPTION_BOUNDARY')
-    })
-
-    it('rejects conditional awaited publication result escape from its application owner', () => {
-        expect(claimsBrokerOwnershipViolations(new Map([
-            ['packages/cockpit/src/environment/application.ts', "import { prepareDrainOutcomePublication } from './claims.js'; async function expose(enabled: boolean) { return enabled ? await prepareDrainOutcomePublication({}) : undefined }"],
+            ['packages/cockpit/src/environment/application.ts', source],
             ['packages/cockpit/src/environment/claims.ts', operationClaimsFixture()],
         ]))).toContain('ARCH037_DRAIN_REDEMPTION_BOUNDARY')
     })
@@ -4432,33 +4415,19 @@ describe('product architecture contract', () => {
     )
 
     it.each([
-        'LifecyclePlan',
-        'LifecycleProgress',
-        'LifecycleStageProjection',
-        'LifecycleIssuanceReceipt',
-        'LifecycleObservationWindow',
-        'RuntimeServiceFailureAuthority',
-    ])('does not expose %s through command results', (forbiddenType) => {
+        'internal: LifecyclePlan',
+        'internal: LifecycleProgress',
+        'internal: LifecycleStageProjection',
+        'internal: LifecycleIssuanceReceipt',
+        'internal: LifecycleObservationWindow',
+        'internal: RuntimeServiceFailureAuthority',
+        'authority: object',
+    ])('does not expose { %s } through command results', (field) => {
         const sources = new Map([
             [APPLICATION_MODULE, `
                 export interface UpCommandInput {}
                 export interface UpCommandAdapters {}
-                export interface UpCommandResult { internal: ${forbiddenType} }
-                export interface SleepCommandInput {}
-                export interface SleepCommandAdapters {}
-                export type SleepCommandResult = { change: 'stopped' }
-            `],
-        ])
-
-        expect(applicationBoundaryViolations(sources)).toContain('ARCH047_COMMAND_AUTHORITY_ESCAPE')
-    })
-
-    it('does not expose an opaque authority property through command results', () => {
-        const sources = new Map([
-            [APPLICATION_MODULE, `
-                export interface UpCommandInput {}
-                export interface UpCommandAdapters {}
-                export interface UpCommandResult { authority: object }
+                export interface UpCommandResult { ${field} }
                 export interface SleepCommandInput {}
                 export interface SleepCommandAdapters {}
                 export type SleepCommandResult = { change: 'stopped' }
@@ -4544,18 +4513,6 @@ describe('product architecture contract', () => {
         expect(lifecyclePlanningViolations(new Map([[LIFECYCLE_MODULE, lifecycle]]))).toEqual([])
     })
 
-    it('confines lifecycle issuance consumption to the application and its owner test', () => {
-        const sources = new Map([
-            [LIFECYCLE_MODULE, 'export function consumeLifecycleIssuance() {}'],
-            [
-                'packages/cockpit/src/environment/runtime.test.ts',
-                "import { consumeLifecycleIssuance } from './lifecycle.js'; consumeLifecycleIssuance()",
-            ],
-        ])
-
-        expect(lifecycleIssuanceConsumerViolations(sources)).toContain('ARCH041_LIFECYCLE_ISSUANCE_CONSUMER')
-    })
-
     it.each([
         'packages/cockpit/src/environment/lifecycle.mts',
         'packages/cockpit/src/environment/lifecycle.cts',
@@ -4581,6 +4538,11 @@ describe('product architecture contract', () => {
     })
 
     it.each([
+        [
+            'a test other than the owner test',
+            'packages/cockpit/src/environment/runtime.test.ts',
+            "import { consumeLifecycleIssuance } from './lifecycle.js'; consumeLifecycleIssuance()",
+        ],
         [
             'another production module',
             'packages/cockpit/src/environment/runtime.ts',
@@ -4886,14 +4848,6 @@ describe('product architecture contract', () => {
         "import('../environment-exec/execute.js').then(({ executePlan }) => executePlan({}))",
         "require('../environment-exec/execute.js').executePlan({})",
         "const { executePlan } = module.require('../environment-exec/execute.js'); executePlan({})",
-    ])('rejects a disguised executePlan call from a command module: %s', (source) => {
-        expect(executionBoundaryViolations(new Map([
-            ['packages/cockpit/src/setup/command.ts', source],
-            ['packages/cockpit/src/environment-exec/execute.ts', 'export function executePlan() {}'],
-        ]))).toContain('ARCH026_EXECUTE_PLAN_CALLER')
-    })
-
-    it.each([
         "import execution from '../environment-exec/execute.js'",
         "import execution, { executeProbe } from '../environment-exec/execute.js'",
         "import * as execution from '../environment-exec/execute.js'",
@@ -4902,7 +4856,7 @@ describe('product architecture contract', () => {
         "export * from '../environment-exec/execute.js'",
         "import execution = require('../environment-exec/execute.js')",
         "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load('../environment-exec/execute.js')",
-    ])('rejects every runtime executor reference from a command module: %s', (source) => {
+    ])('rejects every runtime executor reference or disguised executePlan call from a command module: %s', (source) => {
         expect(executionBoundaryViolations(new Map([
             ['packages/cockpit/src/setup/command.ts', source],
             ['packages/cockpit/src/environment-exec/execute.ts', 'export function executePlan() {}'],
@@ -5086,31 +5040,13 @@ describe('product architecture contract', () => {
         "export function executePlan(step: any) { const alias = step; return alias['ports'][0] }",
         "export function executePlan(step: any) { const expected = step.argv; return expected }",
         "export function executePlan(step: any) { const { ['paths']: value } = step; return value }",
-    ])('rejects executor policy aliases and computed access', (executor) => {
+        "export function executePlan(step: any) { if (step.labels.mode === 'host') return 'chosen'; return 'exact' }",
+        'export function executePlan(step: any) { return step.ports[0] + 100 }',
+        'function routeValue(step: any) { return step.expected.length ? step.paths[0] : undefined }; export function executePlan(step: any) { return routeValue(step) }',
+    ])('rejects an executor that aliases, computes or interprets resolved policy fields: %s', (executor) => {
         expect(executionBoundaryViolations(new Map([
             ['packages/cockpit/src/environment-exec/execute.ts', executor],
         ]))).toContain('ARCH025_EXECUTOR_POLICY')
-    })
-
-    it.each([
-        [
-            'inline decision',
-            "export function executePlan(step: any) { if (step.labels.mode === 'host') return 'chosen'; return 'exact' }",
-        ],
-        [
-            'inline arithmetic',
-            'export function executePlan(step: any) { return step.ports[0] + 100 }',
-        ],
-        [
-            'renamed helper',
-            'function routeValue(step: any) { return step.expected.length ? step.paths[0] : undefined }; export function executePlan(step: any) { return routeValue(step) }',
-        ],
-    ])('rejects %s that interprets resolved executor policy fields', (_label, executor) => {
-        const sources = new Map([
-            ['packages/cockpit/src/environment-exec/execute.ts', executor],
-        ])
-
-        expect(executionBoundaryViolations(sources)).toContain('ARCH025_EXECUTOR_POLICY')
     })
 
     it('does not mistake a duplicate mechanism claim for a second parser implementation', () => {
@@ -5176,17 +5112,6 @@ describe('product architecture contract', () => {
         expect(registryParserViolations(substituted)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
     })
 
-    it('rejects a canonical parser import shadowed at the resolver call site', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; const decodeSiblingTable = (source: string) => source; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; { const parseRegistry = decodeSiblingTable; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) } }`,
-            ],
-        ])
-
-        expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
-    })
-
     it('rejects a dead canonical call beside a differently named imported parser', () => {
         const sources = new Map([
             [
@@ -5202,74 +5127,36 @@ describe('product architecture contract', () => {
         expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
     })
 
-    it('rejects a private local reader consuming raw registry source after dead evidence', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; function readRows(source: string) { return source }; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; const canonical = resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}); return readRows(registrySource) ?? canonical }`,
-            ],
-        ])
+    it.each([
+        ['a canonical parser import shadowed at the resolver call site', `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; const decodeSiblingTable = (source: string) => source; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; { const parseRegistry = decodeSiblingTable; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) } }`],
+        ['a private local reader consuming raw registry source after dead evidence', `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; function readRows(source: string) { return source }; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; const canonical = resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}); return readRows(registrySource) ?? canonical }`],
+        ['raw registry source smuggled through a resolved transform field', `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE.replace('registrySha256,', 'registrySha256: registrySource.trim(),')}) }`],
+        ['raw registry source aliased as the expected registry hash', `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; const revision = await sourceRevision(input.cockpitSourceRevision); export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; const registrySha256 = registryDecoded; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) }`],
+        ['raw registry source aliased as the resolved source revision', `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; const registrySha256 = createHash('sha256').update(registryRead).digest('hex'); const revision = registryDecoded; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) }`],
+        ['a private reader consuming a decoded registry alias', `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; function readRows(source: string) { return source }; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; const registryDecoded = decodeInput(registryRead); const canonical = resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}); return readRows(registryDecoded) ?? canonical }`],
+    ])('rejects %s', (_evasion, command) => {
+        const sources = new Map([['packages/cockpit/src/registry-resolve/command.ts', command]])
 
         expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
     })
 
-    it('rejects raw registry source smuggled through a resolved transform field', () => {
+    it.each([
+        ['a dynamic import', 'schema.ts', "export async function load() { await import('./document/command.js') }", 'document/command.ts'],
+        ['an mts command edge', 'schema.mts', "import './document/command.mjs'", 'document/command.mts'],
+        ['a CommonJS require alias', 'schema.cjs', "const load = require; load('./document/command.cjs')", 'document/command.cjs'],
+        ['a bound CommonJS require alias', 'schema.cts', "const load = module.require.bind(module); load('./document/command.cjs')", 'document/command.cts'],
+        ['a relative createRequire edge', 'schema.ts', "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url); require('./document/command.js')", 'document/command.ts'],
+        ['createRequire through a required module-object alias', 'schema.ts', "const moduleApi = require('node:module'); const load = moduleApi.createRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+        ['createRequire through a module.require module-object alias', 'schema.ts', "const moduleApi = module.require('node:module'); const load = moduleApi.createRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+        ['createRequire through direct property access on require', 'schema.ts', "const load = require('node:module').createRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+        ['createRequire through direct property access on module.require', 'schema.ts', "const load = module.require('node:module').createRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+        ['an aliased createRequire factory import', 'schema.ts', "import { createRequire as makeRequire } from 'node:module'; const load = makeRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+        ['a namespace createRequire binding', 'schema.ts', "import * as moduleApi from 'node:module'; const load = moduleApi.createRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+        ['a destructured createRequire binding', 'schema.ts', "const { createRequire: makeRequire } = require('node:module'); const load = makeRequire(import.meta.url); load('./document/command.js')", 'document/command.ts'],
+    ])('detects %s that reverses the kernel direction', (_edge, schemaPath, schema, commandPath) => {
         const sources = new Map([
-            [
-                'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE.replace('registrySha256,', 'registrySha256: registrySource.trim(),')}) }`,
-            ],
-        ])
-
-        expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
-    })
-
-    it('rejects raw registry source aliased as the expected registry hash', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; const revision = await sourceRevision(input.cockpitSourceRevision); export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; const registrySha256 = registryDecoded; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) }`,
-            ],
-        ])
-
-        expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
-    })
-
-    it('rejects raw registry source aliased as the resolved source revision', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; const registrySha256 = createHash('sha256').update(registryRead).digest('hex'); const revision = registryDecoded; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; return resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}) }`,
-            ],
-        ])
-
-        expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
-    })
-
-    it('rejects a private reader consuming a decoded registry alias', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/registry-resolve/command.ts',
-                `${RESOLVER_IMPORT_FIXTURE}; ${RESOLVER_TRANSFORM_FIXTURE}; ${RESOLVER_METADATA_FIXTURE}; function readRows(source: string) { return source }; export async function registryResolveCommand() { ${RESOLVER_SOURCE_FIXTURE}; const registryDecoded = decodeInput(registryRead); const canonical = resolveRegistry(parseRegistry(registrySource), ${RESOLVER_CONTEXT_FIXTURE}); return readRows(registryDecoded) ?? canonical }`,
-            ],
-        ])
-
-        expect(registryParserViolations(sources)).toContain('ARCH021_RESOLVER_PARSER_BINDING')
-    })
-
-    it('detects dynamic imports that reverse the kernel direction', () => {
-        const sources = new Map([
-            ['packages/cockpit/src/schema.ts', "export async function load() { await import('./document/command.js') }"],
-            ['packages/cockpit/src/document/command.ts', 'export const command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it('resolves and classifies an mts command edge that reverses the kernel direction', () => {
-        const sources = new Map([
-            ['packages/cockpit/src/schema.mts', "import './document/command.mjs'"],
-            ['packages/cockpit/src/document/command.mts', 'export const command = true'],
+            [`packages/cockpit/src/${schemaPath}`, schema],
+            [`packages/cockpit/src/${commandPath}`, /\.c[jt]s$/.test(commandPath) ? 'exports.command = true' : 'export const command = true'],
         ])
 
         expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
@@ -5299,39 +5186,8 @@ describe('product architecture contract', () => {
         expect(importDirectionViolations(sources)).toContain('ARCH001_CYCLE')
     })
 
-    it('detects a CommonJS require alias that reverses the kernel direction', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.cjs',
-                "const load = require; load('./document/command.cjs')",
-            ],
-            ['packages/cockpit/src/document/command.cjs', 'exports.command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it('detects a bound CommonJS require alias that reverses the kernel direction', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.cts',
-                "const load = module.require.bind(module); load('./document/command.cjs')",
-            ],
-            ['packages/cockpit/src/document/command.cts', 'exports.command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it('keeps ordinary descriptor properties outside CommonJS global references', () => {
-        expect(unsupportedCommonJsSyntax(`
-            const descriptor = { module: 'owner.ts', exports: ['apply'] }
-            const owned = descriptor.exports
-            const owner = descriptor.module
-        `)).toBe(false)
-    })
-
     it.each([
+        `const descriptor = { module: 'owner.ts', exports: ['apply'] }; const owned = descriptor.exports; const owner = descriptor.module`,
         `interface Descriptor { readonly module: string; exports: readonly string[]; require: string }`,
         `type Descriptor = { module: string }; const descriptor = { module: 'synthetic.mjs' }`,
         `const { module, exports: publicNames, require: loaderName } = descriptor; const receipt = { module, exports: publicNames, require: loaderName }`,
@@ -5341,19 +5197,8 @@ describe('product architecture contract', () => {
         expect(unsupportedCommonJsSyntax(source)).toBe(false)
     })
 
-    it("rejects an unmodelled bracketed CommonJS require alias", () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.cts',
-                "const load = module['require']; load('./document/command.cjs')",
-            ],
-            ['packages/cockpit/src/document/command.cts', 'exports.command = true'],
-        ])
-
-        expect(inspectArchitecture(sources)).toContain('ARCH021_UNMODELLED_COMMONJS')
-    })
-
     it.each([
+        "const load = module['require']; load('./document/command.cjs')",
         "const { require: load } = module; load('./document/command.cjs')",
         "module.require.call(module, './document/command.cjs')",
         "module.require.apply(module, ['./document/command.cjs'])",
@@ -5392,72 +5237,6 @@ describe('product architecture contract', () => {
         expect(importDirectionViolations(sources)).toContain('ARCH017_COMPUTED_DYNAMIC_IMPORT')
     })
 
-    it('detects relative createRequire edges that reverse the kernel direction', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.ts',
-                "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url); require('./document/command.js')",
-            ],
-            ['packages/cockpit/src/document/command.ts', 'export const command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it.each([
-        "const moduleApi = require('node:module')",
-        "const moduleApi = module.require('node:module')",
-    ])('detects createRequire edges reached through a CommonJS module-object alias: %s', (moduleBinding) => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.ts',
-                `${moduleBinding}; const load = moduleApi.createRequire(import.meta.url); load('./document/command.js')`,
-            ],
-            ['packages/cockpit/src/document/command.ts', 'export const command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it.each([
-        "require('node:module').createRequire(import.meta.url)",
-        "module.require('node:module').createRequire(import.meta.url)",
-    ])('detects createRequire edges reached through direct property access: %s', (factory) => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.ts',
-                `const load = ${factory}; load('./document/command.js')`,
-            ],
-            ['packages/cockpit/src/document/command.ts', 'export const command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it('detects relative createRequire edges when the factory import is aliased', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/schema.ts',
-                "import { createRequire as makeRequire } from 'node:module'; const load = makeRequire(import.meta.url); load('./document/command.js')",
-            ],
-            ['packages/cockpit/src/document/command.ts', 'export const command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
-    it.each([
-        "import * as moduleApi from 'node:module'; const load = moduleApi.createRequire(import.meta.url); load('./document/command.js')",
-        "const { createRequire: makeRequire } = require('node:module'); const load = makeRequire(import.meta.url); load('./document/command.js')",
-    ])('detects a supported createRequire binding: %s', (schema) => {
-        const sources = new Map([
-            ['packages/cockpit/src/schema.ts', schema],
-            ['packages/cockpit/src/document/command.ts', 'export const command = true'],
-        ])
-
-        expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
-    })
-
     it('names command writers and execution-edge reclassification', () => {
         const sources = new Map([
             [
@@ -5494,43 +5273,16 @@ describe('product architecture contract', () => {
         }
     })
 
-    it('names decision helpers introduced after handler dispatch', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/document/command.ts',
-                'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
-            ],
-            [
-                'packages/cockpit/src/cli.ts',
-                "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers.document({}); parseRegistry(outcome); return outcome.status }",
-            ],
-        ])
-
-        expect(boundaryViolations(sources)).toContain('ARCH009_EXECUTION_RECLASSIFIES')
-    })
-
-    it('finds the handler boundary structurally across formatting changes', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/document/command.ts',
-                'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
-            ],
-            [
-                'packages/cockpit/src/cli.ts',
-                "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome =\n await handlers[definition.handler]({}); parseRegistry(outcome) }",
-            ],
-        ])
-
-        expect(boundaryViolations(sources)).toContain('ARCH009_EXECUTION_RECLASSIFIES')
-    })
-
     it.each([
         "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }",
         "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers[definition.handler]({}); parseRegistry(outcome); outcome = await handlers[definition.handler]({}) }",
         "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers[definition.handler]({}); outcome = usageOutcome('X', 'x') }",
         "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers[definition.handler]({}) || usageOutcome('X', 'x') }",
         "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { try { outcome = await handlers[definition.handler]({}) } catch (error) { if (outcome.status) outcome = usageOutcome('X', 'x') } }",
-    ])('fails closed when the dispatch contract is missing or replaced: %s', (cli) => {
+        "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers.document({}); parseRegistry(outcome); return outcome.status }",
+        "async function executeOutcome(outcome: unknown) { await writeFile('x', 'y', { flag: 'wx' }) }\nasync function runCli() { outcome =\n await handlers[definition.handler]({}); parseRegistry(outcome) }",
+        "async function executeOutcome(outcome: any) { await writeFile(outcome.destination, outcome.artifact, { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers[definition.handler]({}); outcome = outcome.status ? usageOutcome('X', 'x') : outcome }",
+    ])('rejects post-dispatch reclassification or a missing dispatch contract in the CLI: %s', (cli) => {
         const sources = new Map([
             [
                 'packages/cockpit/src/document/command.ts',
@@ -5542,29 +5294,15 @@ describe('product architecture contract', () => {
         expect(boundaryViolations(sources)).toContain('ARCH009_EXECUTION_RECLASSIFIES')
     })
 
-    it('rejects an arbitrary decision helper at the mechanical execution edge', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/document/command.ts',
-                'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
-            ],
-            [
-                'packages/cockpit/src/cli.ts',
-                "async function executeOutcome(outcome: unknown) { applyPolicy(outcome); await writeFile('x', 'y', { flag: 'wx' }) }",
-            ],
-        ])
-
-        expect(boundaryViolations(sources)).toContain('ARCH009_EXECUTION_RECLASSIFIES')
-    })
-
     it.each([
+        'applyPolicy(outcome)',
         'applyPolicy?.(outcome)',
         '(applyPolicy)(outcome)',
         "globalThis['applyPolicy'](outcome)",
         'const message = `policy: ${applyPolicy(outcome)}`',
         'const message = `policy: ${applyPolicy({ outcome })}`',
         'const destination = outcome.status === 0 ? outcome.destination : null',
-    ])('rejects a disguised decision helper at the execution edge: %s', (decision) => {
+    ])('rejects a plain or disguised decision helper at the execution edge: %s', (decision) => {
         const sources = new Map([
             [
                 'packages/cockpit/src/document/command.ts',
@@ -5628,21 +5366,6 @@ describe('product architecture contract', () => {
         expect(boundaryViolations(sources)).not.toContain('ARCH010_EXECUTION_NOT_MECHANICAL')
     })
 
-    it('rejects post-dispatch outcome policy expressed as a conditional', () => {
-        const sources = new Map([
-            [
-                'packages/cockpit/src/document/command.ts',
-                'interface OutcomeBase { artifact: string; destination: string; diagnostics: []; status: number }',
-            ],
-            [
-                'packages/cockpit/src/cli.ts',
-                "async function executeOutcome(outcome: any) { await writeFile(outcome.destination, outcome.artifact, { flag: 'wx' }) }\nasync function runCli() { outcome = await handlers[definition.handler]({}); outcome = outcome.status ? usageOutcome('X', 'x') : outcome }",
-            ],
-        ])
-
-        expect(boundaryViolations(sources)).toContain('ARCH009_EXECUTION_RECLASSIFIES')
-    })
-
     it('discovers a second implementation from declarations beside the implementations', () => {
         const sources = new Map([
             [
@@ -5683,31 +5406,17 @@ describe('product architecture contract', () => {
     })
 
     it.each([
-        "// export const mechanism = { id: 'fake', module: 'packages/cockpit/src/policy.ts' } as const\nexport default function applyPolicy() {}",
-        "const marker = \"export const mechanism = { id: 'fake', module: 'packages/cockpit/src/policy.ts' } as const\"; export default class Policy {}",
-        'const applyPolicy = () => true; export { applyPolicy }',
-    ])('rejects pseudo-declarations and every real export form: %s', (source) => {
-        expect(ownershipViolations(new Map([['packages/cockpit/src/policy.ts', source]]))).toContain(
-            'ARCH016_IMPLEMENTATION_OWNER_MISSING',
-        )
-    })
-
-    it.each([
-        'export const applyPolicy = () => true',
-        'export class Policy {}',
-        'export enum Policy { Strict }',
-        'export namespace Policy { export const strict = true }',
-    ])('requires local ownership for exported implementations: %s', (source) => {
-        expect(ownershipViolations(new Map([['packages/cockpit/src/policy.ts', source]]))).toContain(
-            'ARCH016_IMPLEMENTATION_OWNER_MISSING',
-        )
-    })
-
-    it.each([
-        'module.exports = function applyPolicy() {}',
-        'exports.applyPolicy = function applyPolicy() {}',
-    ])('requires local ownership for CommonJS implementation exports: %s', (source) => {
-        expect(ownershipViolations(new Map([['packages/cockpit/src/policy.cts', source]]))).toContain(
+        ['policy.ts', "// export const mechanism = { id: 'fake', module: 'packages/cockpit/src/policy.ts' } as const\nexport default function applyPolicy() {}"],
+        ['policy.ts', "const marker = \"export const mechanism = { id: 'fake', module: 'packages/cockpit/src/policy.ts' } as const\"; export default class Policy {}"],
+        ['policy.ts', 'const applyPolicy = () => true; export { applyPolicy }'],
+        ['policy.ts', 'export const applyPolicy = () => true'],
+        ['policy.ts', 'export class Policy {}'],
+        ['policy.ts', 'export enum Policy { Strict }'],
+        ['policy.ts', 'export namespace Policy { export const strict = true }'],
+        ['policy.cts', 'module.exports = function applyPolicy() {}'],
+        ['policy.cts', 'exports.applyPolicy = function applyPolicy() {}'],
+    ])('requires local ownership for every implementation export form, whatever a pseudo-declaration claims: %s %s', (file, source) => {
+        expect(ownershipViolations(new Map([[`packages/cockpit/src/${file}`, source]]))).toContain(
             'ARCH016_IMPLEMENTATION_OWNER_MISSING',
         )
     })
