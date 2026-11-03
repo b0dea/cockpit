@@ -134,39 +134,21 @@ function captureProbeEnvironment(value: unknown): Readonly<Record<string, string
 }
 
 function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const required = ['application', 'env', 'root', 'specifications']
-        const allowed = new Set(required)
-        if (Reflect.ownKeys(descriptors).some((key) => typeof key !== 'string' || !allowed.has(key))
-            || required.some((key) => !Object.hasOwn(descriptors, key) || !Object.hasOwn(descriptors[key]!, 'value'))
-            || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
-        const root = descriptors.root!.value
-        const env = captureProbeEnvironment(descriptors.env!.value)
-        const specifications = descriptors.specifications!.value
-        if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
-        return { application: descriptors.application!.value, root, specifications, env } as SurfaceSelftestCommandInput
-    } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const { application, env: rawEnv, root, specifications } = value as Record<string, unknown>
+    const env = captureProbeEnvironment(rawEnv)
+    if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
+    return { application, root, specifications, env } as SurfaceSelftestCommandInput
 }
 
 function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestCommandInput | undefined {
-    try {
-        if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return undefined
-        const descriptors = Object.getOwnPropertyDescriptors(value)
-        const required = ['configPath', 'env', 'probeSpecificationsPath']
-        const allowed = new Set(required)
-        if (Reflect.ownKeys(descriptors).some((key) => typeof key !== 'string' || !allowed.has(key))
-            || required.some((key) => !Object.hasOwn(descriptors, key) || !Object.hasOwn(descriptors[key]!, 'value'))
-            || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
-        const configPath = descriptors.configPath!.value
-        const probeSpecificationsPath = descriptors.probeSpecificationsPath!.value
-        const env = captureProbeEnvironment(descriptors.env!.value)
-        if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
-            || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
-            || probeSpecificationsPath.includes('\0') || !env) return undefined
-        return { configPath, probeSpecificationsPath, env }
-    } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const { configPath, env: rawEnv, probeSpecificationsPath } = value as Record<string, unknown>
+    const env = captureProbeEnvironment(rawEnv)
+    if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
+        || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
+        || probeSpecificationsPath.includes('\0') || !env) return undefined
+    return { configPath, probeSpecificationsPath, env }
 }
 
 function sha256(value: string | Buffer): string {
