@@ -224,23 +224,21 @@ export async function runSyncAdoption(
             }
         }
         if (restoreConfig) {
+            const fix = `restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`
             try {
                 const restored = await writeVerifiedConfig({
                     path: configPath, expectedSha256: digest(nextText), temporaryTag: 'adopt',
                     edit: () => originalText,
                     isExactChange: (value) => canonical(value) === canonical(config),
-                    messages: (() => {
-                        const fix = `restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`
-                        return {
-                            changedBefore: { message: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place', fix },
-                            changedDuring: { message: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place', fix },
-                            invalid: (detail: string) => ({ message: `undoing the adoption would leave cockpit.toml invalid (${detail})`, fix }),
-                            notExact: { message: 'undoing the adoption would change more than the [[surfaces.adopted]] rows', fix },
-                            writtenMismatch: { message: 'cockpit.toml was restored, but re-reading it shows a further change', fix },
-                        }
-                    })(),
+                    messages: {
+                        changedBefore: { message: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place', fix },
+                        changedDuring: { message: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place', fix },
+                        invalid: (detail) => ({ message: `undoing the adoption would leave cockpit.toml invalid (${detail})`, fix }),
+                        notExact: { message: 'undoing the adoption would change more than the [[surfaces.adopted]] rows', fix },
+                        writtenMismatch: { message: 'cockpit.toml was restored, but re-reading it shows a further change', fix },
+                    },
                 })
-                if (restored.kind !== 'complete') failures.push(`${restored.message}. ${restored.fix}`)
+                if (restored.kind !== 'complete') failures.push(`${restored.message}; ${restored.fix}`)
             } catch (error) {
                 failures.push(`cockpit.toml restoration failed (${errorCause(error)}). Restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`)
             }
